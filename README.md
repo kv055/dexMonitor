@@ -1,6 +1,14 @@
 # Orderbook Snapshot
 
-Captures P2P Bitcoin exchange orderbook data from Bisq, HodlHodl, and Robosats, stores it in SQLite, and provides a REST API.
+Captures P2P Bitcoin exchange orderbook data from HodlHodl and Robosats, stores it in SQLite, and provides a REST API.
+
+## Quick Start with Docker
+
+```bash
+docker-compose up --build
+```
+
+API will be available at http://localhost:5000
 
 ## Architecture
 
@@ -12,24 +20,49 @@ Captures P2P Bitcoin exchange orderbook data from Bisq, HodlHodl, and Robosats, 
 │  HodlHodl API ──Tor──► nokyc.py ──terminal output──► snapshot.py ──► SQLite │
 │  Robosats API ──Tor──► nokyc.py ──terminal output──► snapshot.py ──► SQLite │
 │                                                                              │
-│  Bisq P2P Network ──► local bisq-daemon ──► bisq CLI ──► snapshot.py ──► DB │
-│                                                                              │
 └─────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### How It Works
 
-1. **nokyc** - Fetches offers from HodlHodl and Robosats over Tor
-2. **local Bisq daemon** - Connects to the Bisq P2P network, exposes CLI API on port 9998
-3. **snapshot.py** - Runs every 10 minutes (via cron), parses terminal output from nokyc and bisq CLI, stores in SQLite
+1. **Tor** - Provides anonymity network for connecting to exchanges
+2. **nokyc** - Fetches offers from HodlHodl and Robosats over Tor
+3. **snapshot.py** - Runs every 10 minutes (via cron), parses terminal output from nokyc, stores in SQLite
 4. **server.py** - Flask REST API serving the captured data
 
-## Setup
+## Docker Setup
+
+### Prerequisites
+
+- Docker
+- Docker Compose
+
+### Running
+
+```bash
+# Build and start
+docker-compose up --build
+
+# Run in background
+docker-compose up -d
+
+# View logs
+docker-compose logs -f
+
+# Stop
+docker-compose down
+```
+
+### Ports
+
+- `5000` - Flask API
+- `9050` - Tor SOCKS proxy
+
+## Local Development Setup
 
 ### Prerequisites
 
 - Python 3 with venv support
-- Java 17 (for Bisq daemon)
 - Tor daemon running on port 9050
 - SQLite3
 
@@ -41,37 +74,28 @@ pip3 install flask flasgger
 
 # Install SQLite (if not present)
 sudo apt install sqlite3
-
-# Install Java for Bisq daemon
-sudo apt install openjdk-17-jdk-headless
 ```
 
-### Running the Components
+### Running Locally
 
-1. **Start Tor** (if not already running):
+1. **Start Tor**:
    ```bash
    sudo systemctl start tor
    ```
 
-2. **Start Bisq daemon** (headless):
-   ```bash
-   cd bisq-daemon-1.9.22
-   java -Xmx2000m -jar daemon.jar --maxMemory=1500
-   ```
-
-3. **Initialize the database**:
+2. **Initialize the database**:
    ```bash
    sqlite3 orderbook.db < schema.sql
    ```
 
-4. **Start the API server**:
+3. **Start the API server**:
    ```bash
    python3 server.py
    ```
 
-5. **The cron job** (runs every 10 minutes):
+4. **The cron job** (runs every 10 minutes):
    ```
-   */10 * * * * cd /home/claude_clawd_bot/orderbook && python3 snapshot.py
+   */10 * * * * cd /path/to/orderbook && python3 snapshot.py
    ```
 
 ## API
@@ -91,7 +115,7 @@ sudo apt install openjdk-17-jdk-headless
 
 ### Query Parameters
 
-- `exchange` - Filter by exchange (bisq, hodlhodl, robosats)
+- `exchange` - Filter by exchange (hodlhodl, robosats)
 - `hours` - Only return data from the last N hours (default: 24)
 - `limit` - Maximum number of results (default varies by endpoint)
 - `direction` - Trade direction (buy or sell, default: sell)
@@ -102,8 +126,8 @@ sudo apt install openjdk-17-jdk-headless
 # Get latest offers from all exchanges
 curl http://127.0.0.1:5000/api/latest
 
-# Get Bisq stats for the last hour
-curl "http://127.0.0.1:5000/api/stats?hours=1&exchange=bisq"
+# Get stats for the last hour
+curl "http://127.0.0.1:5000/api/stats?hours=1"
 
 # Get HodlHodl offers from the last 6 hours
 curl "http://127.0.0.1:5000/api/offers?exchange=hodlhodl&hours=6"
@@ -117,7 +141,7 @@ curl "http://127.0.0.1:5000/api/offers?exchange=hodlhodl&hours=6"
 |--------|------|-------------|
 | id | INTEGER | Primary key |
 | timestamp | DATETIME | When the snapshot was taken |
-| exchange | TEXT | Exchange name (bisq, hodlhodl, robosats) |
+| exchange | TEXT | Exchange name (hodlhodl, robosats) |
 | fiat_currency | TEXT | Fiat currency (EUR, USD, etc.) |
 | direction | TEXT | buy or sell |
 | btc_price | REAL | Reference BTC price in fiat |
@@ -142,7 +166,9 @@ curl "http://127.0.0.1:5000/api/offers?exchange=hodlhodl&hours=6"
 - `snapshot.py` - Cron script that captures orderbook data
 - `server.py` - Flask API server with OpenAPI/Swagger docs
 - `schema.sql` - SQLite database schema
-- `orderbook.db` - SQLite database (not in git)
+- `nokyc/` - Directory containing nokyc scripts
+- `Dockerfile` - Docker container definition
+- `docker-compose.yml` - Docker Compose setup
 
 ## License
 

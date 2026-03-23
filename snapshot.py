@@ -10,10 +10,11 @@ import os
 import sys
 import re
 
-DB_PATH = "/home/claudio_clawd_bot/orderbook/orderbook.db"
-NOKYC_DIR = "/home/claudio_clawd_bot/nokyc"
+# Use /app/data for Docker, default to local path for development
+DB_PATH = os.environ.get('DB_PATH', '/home/claudio_clawd_bot/orderbook/orderbook.db')
+NOKYC_DIR = os.environ.get('NOKYC_DIR', '/home/claudio_clawd_bot/nokyc')
 VENV_PYTHON = f"{NOKYC_DIR}/venv/bin/python"
-BISQ_CLI = "/home/claudio_clawd_bot/bisq-cli/bisq-cli-1.9.22"
+BISQ_CLI = os.environ.get('BISQ_CLI', '/home/claudio_clawd_bot/bisq-cli/bisq-cli-1.9.22')
 
 def get_db_connection():
     return sqlite3.connect(DB_PATH)

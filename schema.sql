@@ -6,7 +6,7 @@ CREATE TABLE snapshots (
     direction TEXT NOT NULL,
     btc_price REAL NOT NULL
 );
-CREATE TABLE sqlite_sequence(name,seq);
+
 CREATE TABLE offers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     snapshot_id INTEGER REFERENCES snapshots(id) ON DELETE CASCADE,

@@ -1,0 +1,29 @@
+version: '3.8'
+
+services:
+  orderbook:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "5000:5000"   # Flask API
+      - "9050:9050"   # Tor SOCKS
+    environment:
+      - DB_PATH=/app/data/orderbook.db
+      - NOKYC_DIR=/app/nokyc
+    volumes:
+      # Persist database and logs across restarts
+      - orderbook-data:/app/data
+    # Run with increased privileges for Tor
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  orderbook-data:

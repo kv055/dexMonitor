@@ -6,7 +6,11 @@ Flask web server for orderbook data with OpenAPI documentation
 from flask import Flask, jsonify, request
 from flasgger import Swagger
 import sqlite3
+import os
 from datetime import datetime
+
+# Use /app/data for Docker, default to local path for development
+DB_PATH = os.environ.get('DB_PATH', '/home/claudio_clawd_bot/orderbook/orderbook.db')
 
 app = Flask(__name__)
 
@@ -21,8 +25,6 @@ app.config['SWAGGER'] = {
     }
 }
 swagger = Swagger(app)
-
-DB_PATH = "/home/claudio_clawd_bot/orderbook/orderbook.db"
 
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
