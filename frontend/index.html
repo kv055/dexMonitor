@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>DEX Monitor</title>
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
 <style>
   :root {
     --bg: #0d1117;
@@ -147,6 +148,21 @@
     height: 280px;
   }
 
+  /* OHLC Chart */
+  .ohlc-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .ohlc-card h3 {
+    font-size: 0.95rem;
+    margin-bottom: 1rem;
+    color: var(--text-muted);
+  }
+
   /* Table */
   .table-card {
     background: var(--surface);
@@ -283,6 +299,12 @@
     </div>
   </div>
 
+  <!-- OHLC Chart -->
+  <div class="ohlc-card">
+    <h3>Kraken BTC/EUR — DEX Offer Overlay</h3>
+    <div id="ohlcChart" style="height:480px;"></div>
+  </div>
+
   <!-- Offer Table -->
   <div class="table-card">
     <div class="table-header">
@@ -313,11 +335,12 @@
           <th data-sort="btc_min">BTC Min <span class="sort-arrow"></span></th>
           <th data-sort="btc_max">BTC Max <span class="sort-arrow"></span></th>
           <th data-sort="payment_method">Payment <span class="sort-arrow"></span></th>
-          <th data-sort="timestamp">Time <span class="sort-arrow"></span></th>
+          <th data-sort="first_seen">First Seen <span class="sort-arrow"></span></th>
+          <th data-sort="duration">Duration <span class="sort-arrow"></span></th>
         </tr>
       </thead>
       <tbody id="offerTableBody">
-        <tr><td colspan="8" class="loading">Loading...</td></tr>
+        <tr><td colspan="9" class="loading">Loading...</td></tr>
       </tbody>
     </table>
   </div>
@@ -376,6 +399,7 @@ async function loadDashboard() {
     renderPaymentChart(offers);
     populatePaymentFilter(offers);
     renderTable();
+    loadOHLC(hours);
     document.getElementById('lastUpdated').textContent =
       `Updated ${new Date().toLocaleTimeString()}`;
   } catch (e) {
@@ -521,6 +545,113 @@ function renderPaymentChart(offers) {
   });
 }
 
+// --- OHLC Chart ---
+
+async function loadOHLC(hours) {
+  try {
+    const data = await apiFetch(`/api/ohlc?hours=${hours}`);
+    renderOHLC(data);
+  } catch (e) {
+    console.error('OHLC load failed:', e);
+  }
+}
+
+function renderOHLC(data) {
+  const candles = data.candles;
+  const offers = data.offers;
+
+  const traces = [];
+
+  // Candlestick trace
+  if (candles.length) {
+    traces.push({
+      type: 'candlestick',
+      x: candles.map(c => c.time),
+      open: candles.map(c => c.open),
+      high: candles.map(c => c.high),
+      low: candles.map(c => c.low),
+      close: candles.map(c => c.close),
+      increasing: { line: { color: '#3fb950' } },
+      decreasing: { line: { color: '#f85149' } },
+      name: 'Kraken BTC/EUR',
+    });
+  }
+
+  // Group offers by exchange + direction for separate scatter traces
+  const groups = {};
+  const dotColors = {
+    bisq: '#f7931a',
+    hodlhodl: '#3fb950',
+    robosats: '#bc8cff',
+  };
+  const dirSymbol = { sell: 'triangle-down', buy: 'triangle-up' };
+
+  offers.forEach(o => {
+    const key = `${o.exchange}_${o.direction}`;
+    if (!groups[key]) {
+      groups[key] = {
+        x: [], y: [], text: [],
+        exchange: o.exchange,
+        direction: o.direction,
+      };
+    }
+    const g = groups[key];
+    g.x.push(o.time.replace(' ', 'T') + 'Z');
+    g.y.push(o.price);
+    const pct = o.premium != null ? o.premium.toFixed(1) + '%' : '—';
+    g.text.push(
+      `${o.exchange} ${o.direction === 'buy' ? 'Bid' : 'Ask'}<br>` +
+      `€${Number(o.price).toLocaleString('de-DE')}<br>` +
+      `Premium: ${pct}<br>${o.payment_method || ''}`
+    );
+  });
+
+  Object.values(groups).forEach(g => {
+    traces.push({
+      type: 'scatter',
+      mode: 'markers',
+      x: g.x,
+      y: g.y,
+      text: g.text,
+      hoverinfo: 'text',
+      name: `${g.exchange} ${g.direction === 'buy' ? 'Bids' : 'Asks'}`,
+      marker: {
+        color: dotColors[g.exchange] || '#888',
+        size: 7,
+        symbol: dirSymbol[g.direction] || 'circle',
+        line: { width: 1, color: '#0d1117' },
+      },
+    });
+  });
+
+  const layout = {
+    paper_bgcolor: '#161b22',
+    plot_bgcolor: '#0d1117',
+    font: { color: '#8b949e', size: 11 },
+    xaxis: {
+      type: 'date',
+      gridcolor: '#21262d',
+      rangeslider: { visible: false },
+    },
+    yaxis: {
+      title: 'Price (EUR)',
+      gridcolor: '#21262d',
+      side: 'right',
+    },
+    legend: {
+      orientation: 'h',
+      y: -0.15,
+      font: { size: 10 },
+    },
+    margin: { l: 10, r: 60, t: 10, b: 40 },
+  };
+
+  Plotly.newPlot('ohlcChart', traces, layout, {
+    responsive: true,
+    displayModeBar: false,
+  });
+}
+
 // --- Table ---
 
 function populatePaymentFilter(offers) {
@@ -539,7 +670,13 @@ function renderTable() {
   if (pmFilter) filtered = filtered.filter(o => o.payment_method === pmFilter);
 
   filtered.sort((a, b) => {
-    let va = a[sortCol], vb = b[sortCol];
+    let va, vb;
+    if (sortCol === 'duration') {
+      va = durationMinutes(a.first_seen, a.last_seen);
+      vb = durationMinutes(b.first_seen, b.last_seen);
+    } else {
+      va = a[sortCol]; vb = b[sortCol];
+    }
     if (typeof va === 'string') va = va.toLowerCase();
     if (typeof vb === 'string') vb = vb.toLowerCase();
     if (va < vb) return sortAsc ? -1 : 1;
@@ -549,11 +686,13 @@ function renderTable() {
 
   const tbody = document.getElementById('offerTableBody');
   if (!filtered.length) {
-    tbody.innerHTML = '<tr><td colspan="8" class="loading">No offers found</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="9" class="loading">No offers found</td></tr>';
     return;
   }
 
-  tbody.innerHTML = filtered.map(o => `
+  tbody.innerHTML = filtered.map(o => {
+    o.duration = durationMinutes(o.first_seen, o.last_seen);
+    return `
     <tr>
       <td><span class="exchange-tag ${o.exchange}">${o.exchange}</span></td>
       <td class="${o.direction === 'buy' ? 'premium-low' : 'premium-high'}">${o.direction === 'buy' ? 'Bid' : 'Ask'}</td>
@@ -562,9 +701,10 @@ function renderTable() {
       <td>${o.btc_min}</td>
       <td>${o.btc_max}</td>
       <td>${o.payment_method || '—'}</td>
-      <td>${formatTime(o.timestamp)}</td>
-    </tr>
-  `).join('');
+      <td>${formatTime(o.first_seen)}</td>
+      <td>${formatDuration(o.first_seen, o.last_seen)}</td>
+    </tr>`;
+  }).join('');
 
   // Update sort arrows
   document.querySelectorAll('th[data-sort]').forEach(th => {
@@ -584,6 +724,24 @@ function formatTime(ts) {
   if (!ts) return '—';
   const d = new Date(ts.replace(' ', 'T') + 'Z');
   return d.toLocaleString('de-DE', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function durationMinutes(first, last) {
+  if (!first || !last) return 0;
+  const a = new Date(first.replace(' ', 'T') + 'Z');
+  const b = new Date(last.replace(' ', 'T') + 'Z');
+  return Math.round((b - a) / 60000);
+}
+
+function formatDuration(first, last) {
+  const mins = durationMinutes(first, last);
+  if (mins < 1) return 'new';
+  if (mins < 60) return `${mins}m`;
+  const h = Math.floor(mins / 60);
+  const m = mins % 60;
+  if (h < 24) return `${h}h ${m}m`;
+  const d = Math.floor(h / 24);
+  return `${d}d ${h % 24}h`;
 }
 
 function premiumClass(pct) {

@@ -3,14 +3,17 @@
 Flask web server for orderbook data with OpenAPI documentation
 """
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, send_from_directory
+from flask_cors import CORS
 from flasgger import Swagger
 import sqlite3
 import os
+import requests
 from datetime import datetime
 
 # Use /app/data for Docker, default to local path for development
 DB_PATH = os.environ.get('DB_PATH', '/home/claudio_clawd_bot/orderbook/orderbook.db')
+SNAPSHOT_INTERVAL_MIN = int(os.environ.get('SNAPSHOT_INTERVAL_MIN', 15))
 
 app = Flask(__name__)
 
@@ -24,7 +27,16 @@ app.config['SWAGGER'] = {
         'url': 'https://github.com/your-repo/orderbook'
     }
 }
+CORS(app)
 swagger = Swagger(app)
+
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')
+
+
+@app.route('/')
+def serve_frontend():
+    return send_from_directory(FRONTEND_DIR, 'index.html')
+
 
 def get_db_connection():
     conn = sqlite3.connect(DB_PATH)
@@ -161,29 +173,29 @@ def get_offers():
     limit = request.args.get('limit', 1000, type=int)
     hours = request.args.get('hours', 24, type=int)
     direction = request.args.get('direction', 'sell')
-    
+
     conn = get_db_connection()
     cursor = conn.cursor()
-    
+
     query = """
-        SELECT o.*, s.exchange, s.timestamp, s.fiat_currency, s.btc_price as ref_price
-        FROM offers o
-        JOIN snapshots s ON o.snapshot_id = s.id
-        WHERE s.timestamp >= datetime('now', ?) AND s.direction = ?
+        SELECT * FROM offers
+        WHERE last_seen >= datetime('now', ?) AND direction = ?
+          AND ((direction = 'sell' AND price <= ref_price)
+            OR (direction = 'buy' AND price >= ref_price))
     """
     params = [f'-{hours} hours', direction]
-    
+
     if exchange:
-        query += " AND s.exchange = ?"
+        query += " AND exchange = ?"
         params.append(exchange)
-    
-    query += " ORDER BY s.timestamp DESC LIMIT ?"
+
+    query += " ORDER BY last_seen DESC LIMIT ?"
     params.append(limit)
-    
+
     cursor.execute(query, params)
     offers = [dict(row) for row in cursor.fetchall()]
     conn.close()
-    
+
     return jsonify(offers)
 
 @app.route('/api/stats', methods=['GET'])
@@ -241,13 +253,12 @@ def get_stats():
     
     price_stats = [dict(row) for row in cursor.fetchall()]
     
-    # Offer count by exchange
+    # Offer count by exchange (deduplicated)
     cursor.execute("""
-        SELECT s.exchange, COUNT(o.id) as offer_count
-        FROM offers o
-        JOIN snapshots s ON o.snapshot_id = s.id
-        WHERE s.timestamp >= datetime('now', ?)
-        GROUP BY s.exchange
+        SELECT exchange, COUNT(*) as offer_count
+        FROM offers
+        WHERE last_seen >= datetime('now', ?)
+        GROUP BY exchange
     """, (f'-{hours} hours',))
     
     offer_counts = [dict(row) for row in cursor.fetchall()]
@@ -280,26 +291,95 @@ def get_latest():
     cursor = conn.cursor()
     
     cursor.execute("""
-        SELECT s.*, 
-               (SELECT COUNT(*) FROM offers WHERE snapshot_id = s.id) as offer_count
+        SELECT s.*,
+               (SELECT COUNT(*) FROM offers
+                WHERE exchange = s.exchange
+                  AND last_seen >= datetime('now', '-1 hours')) as offer_count
         FROM snapshots s
         WHERE s.timestamp = (
-            SELECT MAX(s2.timestamp) 
-            FROM snapshots s2 
+            SELECT MAX(s2.timestamp)
+            FROM snapshots s2
             WHERE s2.exchange = s.exchange
         )
     """)
-    
+
     latest = [dict(row) for row in cursor.fetchall()]
-    
-    # Get offers for each
-    for snapshot in latest:
-        cursor.execute("SELECT * FROM offers WHERE snapshot_id = ?", (snapshot['id'],))
-        snapshot['offers'] = [dict(row) for row in cursor.fetchall()]
-    
     conn.close()
-    
+
     return jsonify(latest)
+
+@app.route('/api/ohlc', methods=['GET'])
+def get_ohlc():
+    """
+    Get Kraken OHLC candles and DEX offers for chart overlay
+    ---
+    tags:
+      - Charts
+    parameters:
+      - name: hours
+        in: query
+        type: integer
+        default: 24
+        description: Hours of history
+    responses:
+      200:
+        description: OHLC candles and offer dots
+    """
+    hours = request.args.get('hours', 24, type=int)
+
+    # Fetch Kraken OHLC candles at the snapshot interval
+    candles = []
+    try:
+        resp = requests.get(
+            'https://api.kraken.com/0/public/OHLC',
+            params={'pair': 'XBTEUR', 'interval': SNAPSHOT_INTERVAL_MIN},
+            timeout=15,
+        )
+        data = resp.json()
+        result = data.get('result', {})
+        ohlc_data = result.get(next(
+            (k for k in result if k != 'last'), ''
+        ), [])
+        cutoff = datetime.utcnow().timestamp() - hours * 3600
+        for c in ohlc_data:
+            if c[0] >= cutoff:
+                candles.append({
+                    'time': datetime.utcfromtimestamp(c[0]).isoformat(),
+                    'open': float(c[1]),
+                    'high': float(c[2]),
+                    'low': float(c[3]),
+                    'close': float(c[4]),
+                })
+    except Exception as e:
+        print(f"[OHLC] Kraken error: {e}")
+
+    # Fetch offers from DB for the same period
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT price, price_diff_percent, payment_method,
+               exchange, direction, first_seen
+        FROM offers
+        WHERE last_seen >= datetime('now', ?)
+          AND ((direction = 'sell' AND price <= ref_price)
+            OR (direction = 'buy' AND price >= ref_price))
+    """, (f'-{hours} hours',))
+    offers = [{
+        'time': row['first_seen'],
+        'price': row['price'],
+        'premium': row['price_diff_percent'],
+        'exchange': row['exchange'],
+        'direction': row['direction'],
+        'payment_method': row['payment_method'],
+    } for row in cursor.fetchall()]
+    conn.close()
+
+    return jsonify({
+        'candles': candles,
+        'offers': offers,
+        'interval_min': SNAPSHOT_INTERVAL_MIN,
+    })
+
 
 @app.route('/health', methods=['GET'])
 def health():
@@ -406,4 +486,5 @@ app.config['SWAGGER']['definitions'] = {
 if __name__ == '__main__':
     print("Starting orderbook API server on http://127.0.0.1:5000")
     print("API docs available at http://127.0.0.1:5000/apidocs")
-    app.run(host='127.0.0.1', port=5000, debug=True)
+    debug = os.environ.get('FLASK_DEBUG', '0') == '1'
+    app.run(host='0.0.0.0', port=5000, debug=debug)
