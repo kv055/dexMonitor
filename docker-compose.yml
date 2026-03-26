@@ -1,29 +1,78 @@
-version: '3.8'
-
 services:
-  orderbook:
+  tor:
     build:
       context: .
-      dockerfile: Dockerfile
-    ports:
-      - "5000:5000"   # Flask API
-      - "9050:9050"   # Tor SOCKS
+      dockerfile: Dockerfile.tor
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+    healthcheck:
+      test: ["CMD", "curl", "-sf", "--socks5", "127.0.0.1:9050", "http://example.com"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
+    restart: unless-stopped
+
+  bisq:
+    build:
+      context: ..
+      dockerfile: dexMonitor/Dockerfile.bisq
+    network_mode: host
+    depends_on:
+      tor:
+        condition: service_healthy
+    environment:
+      - BISQ_VERSION=1.9.22
+    volumes:
+      - bisq-data:/home/appuser/.local/share/Bisq
+    deploy:
+      resources:
+        limits:
+          memory: 2560M
+          cpus: '1.5'
+    restart: unless-stopped
+
+  app:
+    build:
+      context: ..
+      dockerfile: dexMonitor/Dockerfile
+    network_mode: host
+    depends_on:
+      tor:
+        condition: service_healthy
     environment:
       - DB_PATH=/app/data/orderbook.db
       - NOKYC_DIR=/app/nokyc
+      - VENV_PYTHON=/app/venv/bin/python
+      - BISQ_VERSION=1.9.22
+      - BISQ_CLI_JAR=/opt/bisq/bisq-cli-1.9.22/cli.jar
+      - PRICE_PROVIDER=bisq_tor
+      - SNAPSHOT_INTERVAL_MIN=15
     volumes:
-      # Persist database and logs across restarts
       - orderbook-data:/app/data
-    # Run with increased privileges for Tor
-    cap_add:
-      - NET_ADMIN
+      - ./server.py:/app/server.py
+      - ./snapshot.py:/app/snapshot.py
+      - ./start.sh:/app/start.sh
+      - ./frontend:/app/frontend
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
       timeout: 10s
       retries: 3
-      start_period: 60s
+      start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '1.0'
     restart: unless-stopped
 
 volumes:
   orderbook-data:
+  bisq-data:
