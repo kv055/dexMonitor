@@ -1,61 +1,56 @@
 FROM ubuntu:24.04
 
-# Set environment variables
 ENV DEBIAN_FRONTEND=noninteractive
 
-# Install system dependencies
+# Install system dependencies (no Tor, no Java — those are in separate containers)
 RUN apt-get update && apt-get install -y \
     curl \
-    wget \
-    gnupg \
-    # Python
     python3 \
     python3-pip \
     python3-venv \
-    # Tor
-    tor \
-    # SQLite
     sqlite3 \
-    # Other utilities
     procps \
     cron \
     && rm -rf /var/lib/apt/lists/*
 
-# Set working directory
+# Bisq CLI is still needed by snapshot.py to query the Bisq container's gRPC
+ENV BISQ_VERSION=1.9.22
+RUN apt-get update && apt-get install -y wget unzip openjdk-11-jre-headless \
+    && mkdir -p /opt/bisq \
+    && wget -q "https://github.com/bisq-network/bisq/releases/download/v${BISQ_VERSION}/bisq-cli-${BISQ_VERSION}.zip" -O /tmp/bisq-cli.zip \
+    && unzip -q /tmp/bisq-cli.zip -d /opt/bisq/ \
+    && chmod -R o+rX /opt/bisq/ \
+    && rm /tmp/bisq-cli.zip \
+    && apt-get purge -y wget unzip && apt-get autoremove -y \
+    && rm -rf /var/lib/apt/lists/*
+
 WORKDIR /app
 
 # Copy application files
-COPY . ./
+COPY dexMonitor/ ./
+RUN chmod +x /app/start.sh
+
+# Copy nokyc tool
+COPY nokyc/ /app/nokyc/
 
 # Set up Python virtual environment
 RUN python3 -m venv venv && \
     venv/bin/pip install --upgrade pip && \
-    venv/bin/pip install -r requirements.txt
+    venv/bin/pip install -r requirements.txt && \
+    venv/bin/pip install -r /app/nokyc/requirements.txt
 
-# Create data directory for persistence
 RUN mkdir -p /app/data
-
-# Pre-create /var/run for cron
 RUN mkdir -p /var/run && chmod 755 /var/run
 
-# Create non-root user
 RUN useradd -m -s /bin/bash appuser && \
     chown -R appuser:appuser /app
 
-# Switch to user
 USER appuser
-
-# Make data directory writable
 WORKDIR /app/data
 
-# Expose ports
-# 9050: Tor SOCKS proxy
-# 5000: Flask API
-EXPOSE 9050 5000
+EXPOSE 5000
 
-# Health check for Tor
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=3 \
-    CMD curl -s --socks5 127.0.0.1:9050 https://check.torproject.org/api/ip || exit 1
+HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+    CMD curl -f http://localhost:5000/health || exit 1
 
-# Start script
 CMD ["/app/start.sh"]

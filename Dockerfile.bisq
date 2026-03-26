@@ -1,0 +1,37 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+ENV BISQ_VERSION=1.9.22
+
+RUN apt-get update && apt-get install -y \
+    wget \
+    unzip \
+    curl \
+    openjdk-11-jre-headless \
+    procps \
+    && rm -rf /var/lib/apt/lists/*
+
+# Download and install Bisq daemon + CLI
+RUN mkdir -p /opt/bisq && \
+    wget -q "https://github.com/bisq-network/bisq/releases/download/v${BISQ_VERSION}/bisq-daemon-${BISQ_VERSION}.zip" -O /tmp/bisq-daemon.zip && \
+    wget -q "https://github.com/bisq-network/bisq/releases/download/v${BISQ_VERSION}/bisq-cli-${BISQ_VERSION}.zip" -O /tmp/bisq-cli.zip && \
+    unzip -q /tmp/bisq-daemon.zip -d /opt/bisq/ && \
+    unzip -q /tmp/bisq-cli.zip -d /opt/bisq/ && \
+    chmod -R o+rX /opt/bisq/ && \
+    rm /tmp/bisq-daemon.zip /tmp/bisq-cli.zip
+
+RUN useradd -m -s /bin/bash appuser && \
+    mkdir -p /home/appuser/.local/share/Bisq && \
+    chown -R appuser:appuser /home/appuser/.local
+
+COPY dexMonitor/start-bisq.sh /start-bisq.sh
+RUN chmod +x /start-bisq.sh
+
+USER appuser
+
+EXPOSE 9998 9999
+
+HEALTHCHECK --interval=30s --timeout=15s --start-period=300s --retries=3 \
+    CMD java -jar /opt/bisq/bisq-cli-${BISQ_VERSION}/cli.jar --port 9998 --password= getversion > /dev/null 2>&1 || exit 1
+
+CMD ["/start-bisq.sh"]

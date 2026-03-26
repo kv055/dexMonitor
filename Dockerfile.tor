@@ -1,0 +1,18 @@
+FROM ubuntu:24.04
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN apt-get update && apt-get install -y \
+    tor \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+RUN useradd -m -s /bin/bash toruser
+
+EXPOSE 9050 9051
+
+HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
+    CMD curl -sf --socks5 127.0.0.1:9050 http://example.com > /dev/null 2>&1 || exit 1
+
+USER toruser
+CMD ["tor", "--SocksPort", "0.0.0.0:9050", "--ControlPort", "9051", "--CookieAuthentication", "0"]
