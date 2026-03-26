@@ -1,0 +1,620 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DEX Monitor</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0d1117;
+    --surface: #161b22;
+    --border: #30363d;
+    --text: #e6edf3;
+    --text-muted: #8b949e;
+    --accent: #f7931a;
+    --green: #3fb950;
+    --red: #f85149;
+    --blue: #58a6ff;
+    --purple: #bc8cff;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.5;
+  }
+
+  header {
+    background: var(--surface);
+    border-bottom: 1px solid var(--border);
+    padding: 1rem 2rem;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  header h1 {
+    font-size: 1.4rem;
+    font-weight: 600;
+    color: var(--accent);
+  }
+
+  .header-controls {
+    display: flex;
+    gap: 0.75rem;
+    align-items: center;
+  }
+
+  .header-controls select, .header-controls button {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.4rem 0.75rem;
+    font-size: 0.85rem;
+    cursor: pointer;
+  }
+
+  .header-controls button:hover {
+    border-color: var(--accent);
+  }
+
+  .last-updated {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+  }
+
+  .container {
+    max-width: 1400px;
+    margin: 0 auto;
+    padding: 1.5rem;
+  }
+
+  /* KPI Cards */
+  .kpi-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .kpi-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+  }
+
+  .kpi-card .label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    margin-bottom: 0.4rem;
+  }
+
+  .kpi-card .value {
+    font-size: 1.8rem;
+    font-weight: 700;
+  }
+
+  .kpi-card .sub {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+  }
+
+  .exchange-tag {
+    display: inline-block;
+    padding: 0.15rem 0.5rem;
+    border-radius: 12px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+  }
+
+  .exchange-tag.hodlhodl { background: #1a3a2a; color: var(--green); }
+  .exchange-tag.robosats { background: #2a1a3a; color: var(--purple); }
+  .exchange-tag.bisq { background: #3a2a1a; color: var(--accent); }
+
+  /* Charts */
+  .charts-grid {
+    display: grid;
+    grid-template-columns: 2fr 1fr;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .chart-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+  }
+
+  .chart-card h3 {
+    font-size: 0.95rem;
+    margin-bottom: 1rem;
+    color: var(--text-muted);
+  }
+
+  .chart-wrapper {
+    position: relative;
+    height: 280px;
+  }
+
+  /* Table */
+  .table-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 1.25rem;
+    overflow-x: auto;
+  }
+
+  .table-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1rem;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+  }
+
+  .table-header h3 {
+    font-size: 0.95rem;
+    color: var(--text-muted);
+  }
+
+  .table-filters {
+    display: flex;
+    gap: 0.5rem;
+  }
+
+  .table-filters select {
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 0.3rem 0.5rem;
+    font-size: 0.8rem;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.85rem;
+  }
+
+  th {
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    color: var(--text-muted);
+    font-weight: 600;
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    cursor: pointer;
+    user-select: none;
+    white-space: nowrap;
+  }
+
+  th:hover { color: var(--text); }
+  th .sort-arrow { margin-left: 4px; font-size: 0.65rem; }
+
+  td {
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  tr:hover { background: rgba(255, 255, 255, 0.03); }
+
+  .premium-low { color: var(--green); }
+  .premium-mid { color: var(--accent); }
+  .premium-high { color: var(--red); }
+
+  .loading {
+    text-align: center;
+    padding: 3rem;
+    color: var(--text-muted);
+  }
+
+  .error-banner {
+    background: #2d1b1b;
+    border: 1px solid var(--red);
+    border-radius: 8px;
+    padding: 1rem;
+    margin-bottom: 1rem;
+    color: var(--red);
+    display: none;
+  }
+
+  @media (max-width: 768px) {
+    .charts-grid { grid-template-columns: 1fr; }
+    header { flex-direction: column; gap: 0.75rem; }
+    .container { padding: 1rem; }
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>DEX Monitor</h1>
+  <div class="header-controls">
+    <select id="hoursSelect">
+      <option value="1">Last 1h</option>
+      <option value="6">Last 6h</option>
+      <option value="24" selected>Last 24h</option>
+      <option value="48">Last 48h</option>
+      <option value="168">Last 7d</option>
+    </select>
+    <button id="refreshBtn">Refresh</button>
+    <span class="last-updated" id="lastUpdated"></span>
+  </div>
+</header>
+
+<div class="container">
+  <div id="errorBanner" class="error-banner"></div>
+
+  <!-- KPI Cards -->
+  <div class="kpi-grid" id="kpiGrid">
+    <div class="loading">Loading...</div>
+  </div>
+
+  <!-- Charts -->
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h3>Offer Premiums by Exchange</h3>
+      <div class="chart-wrapper">
+        <canvas id="premiumChart"></canvas>
+      </div>
+    </div>
+    <div class="chart-card">
+      <h3>Offers by Payment Method</h3>
+      <div class="chart-wrapper">
+        <canvas id="paymentChart"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Offer Table -->
+  <div class="table-card">
+    <div class="table-header">
+      <h3>All Offers</h3>
+      <div class="table-filters">
+        <select id="filterDirection">
+          <option value="sell">Asks (Sell)</option>
+          <option value="buy">Bids (Buy)</option>
+        </select>
+        <select id="filterExchange">
+          <option value="">All Exchanges</option>
+          <option value="hodlhodl">HodlHodl</option>
+          <option value="robosats">Robosats</option>
+          <option value="bisq">Bisq</option>
+        </select>
+        <select id="filterPayment">
+          <option value="">All Payments</option>
+        </select>
+      </div>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th data-sort="exchange">Exchange <span class="sort-arrow"></span></th>
+          <th data-sort="direction">Side <span class="sort-arrow"></span></th>
+          <th data-sort="price">Price (EUR) <span class="sort-arrow"></span></th>
+          <th data-sort="price_diff_percent">Premium <span class="sort-arrow"></span></th>
+          <th data-sort="btc_min">BTC Min <span class="sort-arrow"></span></th>
+          <th data-sort="btc_max">BTC Max <span class="sort-arrow"></span></th>
+          <th data-sort="payment_method">Payment <span class="sort-arrow"></span></th>
+          <th data-sort="timestamp">Time <span class="sort-arrow"></span></th>
+        </tr>
+      </thead>
+      <tbody id="offerTableBody">
+        <tr><td colspan="8" class="loading">Loading...</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+const API_BASE = window.location.origin;
+
+const EXCHANGE_COLORS = {
+  hodlhodl: '#3fb950',
+  robosats: '#bc8cff',
+  bisq: '#f7931a'
+};
+
+let allOffers = [];
+let sortCol = 'price_diff_percent';
+let sortAsc = true;
+let premiumChart = null;
+let paymentChart = null;
+
+// --- Fetch helpers ---
+
+async function apiFetch(path) {
+  const res = await fetch(`${API_BASE}${path}`);
+  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  return res.json();
+}
+
+function showError(msg) {
+  const banner = document.getElementById('errorBanner');
+  banner.textContent = msg;
+  banner.style.display = 'block';
+}
+
+function clearError() {
+  document.getElementById('errorBanner').style.display = 'none';
+}
+
+// --- Data loading ---
+
+async function loadDashboard() {
+  const hours = document.getElementById('hoursSelect').value;
+  const direction = document.getElementById('filterDirection').value;
+  clearError();
+
+  try {
+    const [latest, stats, offers] = await Promise.all([
+      apiFetch('/api/latest'),
+      apiFetch(`/api/stats?hours=${hours}`),
+      apiFetch(`/api/offers?hours=${hours}&limit=500&direction=${direction}`)
+    ]);
+
+    allOffers = offers;
+    renderKPIs(latest, stats);
+    renderPremiumChart(offers);
+    renderPaymentChart(offers);
+    populatePaymentFilter(offers);
+    renderTable();
+    document.getElementById('lastUpdated').textContent =
+      `Updated ${new Date().toLocaleTimeString()}`;
+  } catch (e) {
+    showError(`Failed to load data: ${e.message}`);
+  }
+}
+
+// --- KPI Cards ---
+
+function renderKPIs(latest, stats) {
+  const grid = document.getElementById('kpiGrid');
+
+  const totalOffers = stats.offer_counts.reduce((s, e) => s + e.offer_count, 0);
+
+  let html = `
+    <div class="kpi-card">
+      <div class="label">Total Offers</div>
+      <div class="value">${totalOffers}</div>
+      <div class="sub">${stats.offer_counts.map(e =>
+        `<span class="exchange-tag ${e.exchange}">${e.exchange}</span> ${e.offer_count}`
+      ).join(' &nbsp; ')}</div>
+    </div>
+  `;
+
+  for (const snap of latest) {
+    const ps = stats.price_stats.find(p => p.exchange === snap.exchange);
+    html += `
+      <div class="kpi-card">
+        <div class="label">
+          <span class="exchange-tag ${snap.exchange}">${snap.exchange}</span> BTC Price
+        </div>
+        <div class="value">&euro;${formatNum(snap.btc_price)}</div>
+        <div class="sub">
+          ${ps ? `Min &euro;${formatNum(ps.min_price)} / Max &euro;${formatNum(ps.max_price)}` : ''}
+          &middot; ${snap.offer_count} offers
+        </div>
+      </div>
+    `;
+  }
+
+  const avgPremium = allOffers.length
+    ? (allOffers.reduce((s, o) => s + (o.price_diff_percent || 0), 0) / allOffers.length).toFixed(1)
+    : '—';
+
+  html += `
+    <div class="kpi-card">
+      <div class="label">Avg Premium</div>
+      <div class="value ${premiumClass(parseFloat(avgPremium))}">${avgPremium}%</div>
+      <div class="sub">Over reference BTC price</div>
+    </div>
+  `;
+
+  grid.innerHTML = html;
+}
+
+// --- Charts ---
+
+function renderPremiumChart(offers) {
+  const ctx = document.getElementById('premiumChart').getContext('2d');
+  if (premiumChart) premiumChart.destroy();
+
+  const sorted = [...offers].sort((a, b) => (a.price_diff_percent || 0) - (b.price_diff_percent || 0));
+
+  const datasets = {};
+  sorted.forEach((o, i) => {
+    const ex = o.exchange || 'unknown';
+    if (!datasets[ex]) datasets[ex] = { label: ex, data: [], backgroundColor: EXCHANGE_COLORS[ex] || '#888' };
+    datasets[ex].data.push({ x: i, y: o.price_diff_percent || 0 });
+  });
+
+  premiumChart = new Chart(ctx, {
+    type: 'bar',
+    data: { datasets: Object.values(datasets) },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: { labels: { color: '#8b949e', font: { size: 11 } } },
+        tooltip: {
+          callbacks: {
+            label: (c) => {
+              const o = sorted[c.raw.x];
+              return `${c.dataset.label}: ${c.raw.y}% — ${o.payment_method} — €${formatNum(o.price)}`;
+            }
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: 'linear',
+          display: false
+        },
+        y: {
+          title: { display: true, text: 'Premium %', color: '#8b949e' },
+          ticks: { color: '#8b949e', callback: v => v + '%' },
+          grid: { color: '#21262d' }
+        }
+      }
+    }
+  });
+}
+
+function renderPaymentChart(offers) {
+  const ctx = document.getElementById('paymentChart').getContext('2d');
+  if (paymentChart) paymentChart.destroy();
+
+  const counts = {};
+  offers.forEach(o => {
+    const pm = o.payment_method || 'Unknown';
+    counts[pm] = (counts[pm] || 0) + 1;
+  });
+
+  const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
+  const labels = sorted.map(e => e[0]);
+  const data = sorted.map(e => e[1]);
+
+  const palette = [
+    '#f7931a', '#3fb950', '#bc8cff', '#58a6ff', '#f85149',
+    '#d29922', '#8b949e', '#39d353', '#db61a2', '#79c0ff'
+  ];
+
+  paymentChart = new Chart(ctx, {
+    type: 'doughnut',
+    data: {
+      labels,
+      datasets: [{
+        data,
+        backgroundColor: palette.slice(0, labels.length),
+        borderColor: '#161b22',
+        borderWidth: 2
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          position: 'right',
+          labels: { color: '#8b949e', font: { size: 11 }, padding: 8 }
+        }
+      }
+    }
+  });
+}
+
+// --- Table ---
+
+function populatePaymentFilter(offers) {
+  const methods = [...new Set(offers.map(o => o.payment_method).filter(Boolean))].sort();
+  const sel = document.getElementById('filterPayment');
+  sel.innerHTML = '<option value="">All Payments</option>' +
+    methods.map(m => `<option value="${m}">${m}</option>`).join('');
+}
+
+function renderTable() {
+  const exFilter = document.getElementById('filterExchange').value;
+  const pmFilter = document.getElementById('filterPayment').value;
+
+  let filtered = allOffers;
+  if (exFilter) filtered = filtered.filter(o => o.exchange === exFilter);
+  if (pmFilter) filtered = filtered.filter(o => o.payment_method === pmFilter);
+
+  filtered.sort((a, b) => {
+    let va = a[sortCol], vb = b[sortCol];
+    if (typeof va === 'string') va = va.toLowerCase();
+    if (typeof vb === 'string') vb = vb.toLowerCase();
+    if (va < vb) return sortAsc ? -1 : 1;
+    if (va > vb) return sortAsc ? 1 : -1;
+    return 0;
+  });
+
+  const tbody = document.getElementById('offerTableBody');
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="8" class="loading">No offers found</td></tr>';
+    return;
+  }
+
+  tbody.innerHTML = filtered.map(o => `
+    <tr>
+      <td><span class="exchange-tag ${o.exchange}">${o.exchange}</span></td>
+      <td class="${o.direction === 'buy' ? 'premium-low' : 'premium-high'}">${o.direction === 'buy' ? 'Bid' : 'Ask'}</td>
+      <td>&euro;${formatNum(o.price)}</td>
+      <td class="${premiumClass(o.price_diff_percent)}">${o.price_diff_percent != null ? o.price_diff_percent.toFixed(1) + '%' : '—'}</td>
+      <td>${o.btc_min}</td>
+      <td>${o.btc_max}</td>
+      <td>${o.payment_method || '—'}</td>
+      <td>${formatTime(o.timestamp)}</td>
+    </tr>
+  `).join('');
+
+  // Update sort arrows
+  document.querySelectorAll('th[data-sort]').forEach(th => {
+    const arrow = th.querySelector('.sort-arrow');
+    arrow.textContent = th.dataset.sort === sortCol ? (sortAsc ? '▲' : '▼') : '';
+  });
+}
+
+// --- Helpers ---
+
+function formatNum(n) {
+  if (n == null) return '—';
+  return Number(n).toLocaleString('de-DE', { maximumFractionDigits: 0 });
+}
+
+function formatTime(ts) {
+  if (!ts) return '—';
+  const d = new Date(ts.replace(' ', 'T') + 'Z');
+  return d.toLocaleString('de-DE', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+
+function premiumClass(pct) {
+  if (pct == null) return '';
+  if (pct <= 2) return 'premium-low';
+  if (pct <= 4) return 'premium-mid';
+  return 'premium-high';
+}
+
+// --- Event listeners ---
+
+document.querySelectorAll('th[data-sort]').forEach(th => {
+  th.addEventListener('click', () => {
+    const col = th.dataset.sort;
+    if (sortCol === col) { sortAsc = !sortAsc; }
+    else { sortCol = col; sortAsc = true; }
+    renderTable();
+  });
+});
+
+document.getElementById('filterDirection').addEventListener('change', loadDashboard);
+document.getElementById('filterExchange').addEventListener('change', renderTable);
+document.getElementById('filterPayment').addEventListener('change', renderTable);
+document.getElementById('hoursSelect').addEventListener('change', loadDashboard);
+document.getElementById('refreshBtn').addEventListener('click', loadDashboard);
+
+// Auto-refresh every 5 minutes
+setInterval(loadDashboard, 5 * 60 * 1000);
+
+// Initial load
+loadDashboard();
+</script>
+</body>
+</html>
