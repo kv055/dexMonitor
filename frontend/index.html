@@ -20,6 +20,20 @@
     --purple: #bc8cff;
   }
 
+  .theme-btn {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 1rem;
+    padding: 0.15rem 0.45rem;
+    line-height: 1;
+    margin-left: auto;
+    flex-shrink: 0;
+    cursor: not-allowed;
+    opacity: 0.4;
+  }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
 
   body {
@@ -32,32 +46,24 @@
   header {
     background: var(--surface);
     border-bottom: 1px solid var(--border);
-    padding: 0.6rem 1rem;
+    padding: 0.3rem 1rem;
     display: flex;
     align-items: center;
-    gap: 1.5rem;
+    gap: 1rem;
   }
 
   header h1 {
-    font-size: 1.1rem;
+    font-size: 0.9rem;
     font-weight: 600;
     color: var(--accent);
     white-space: nowrap;
   }
 
-  .header-controls {
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-    margin-left: auto;
-  }
-
   .kpi-grid {
     display: flex;
-    flex-wrap: wrap;
-    gap: 1.5rem;
+    flex-wrap: nowrap;
     flex: 1;
-    justify-content: center;
+    justify-content: space-between;
     align-items: center;
   }
 
@@ -65,45 +71,26 @@
     display: flex;
     flex-direction: column;
     border-left: 1px solid var(--border);
-    padding-left: 0.75rem;
+    padding-left: 0.6rem;
+    flex: 1;
   }
 
   .kpi-item .label {
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     color: var(--text-muted);
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
 
   .kpi-item .value {
-    font-size: 0.95rem;
+    font-size: 0.8rem;
     font-weight: 700;
     line-height: 1.2;
   }
 
   .kpi-item .sub {
-    font-size: 0.65rem;
+    font-size: 0.6rem;
     color: var(--text-muted);
-  }
-
-  .header-controls {
-    display: flex;
-    gap: 0.75rem;
-    align-items: center;
-  }
-
-  .header-controls select, .header-controls button {
-    background: var(--bg);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0.4rem 0.75rem;
-    font-size: 0.85rem;
-    cursor: pointer;
-  }
-
-  .header-controls button:hover {
-    border-color: var(--accent);
   }
 
   .last-updated {
@@ -134,7 +121,7 @@
   /* Charts */
   .charts-grid {
     display: grid;
-    grid-template-columns: 2fr 1fr;
+    grid-template-columns: 1fr 1fr 1fr;
     gap: 0.6rem;
     margin-bottom: 0.6rem;
   }
@@ -144,17 +131,21 @@
     border: 1px solid var(--border);
     border-radius: 8px;
     padding: 0.75rem;
+    display: flex;
+    flex-direction: column;
   }
 
   .chart-card h3 {
     font-size: 0.85rem;
     margin-bottom: 0.6rem;
     color: var(--text-muted);
+    flex-shrink: 0;
   }
 
   .chart-wrapper {
     position: relative;
-    height: 200px;
+    flex: 1;
+    min-height: 160px;
   }
 
   /* OHLC Chart */
@@ -195,40 +186,152 @@
     color: var(--text-muted);
   }
 
-  .table-filters {
+  .control-panel {
     display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  .cp-section {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    gap: 0.4rem 0.75rem;
+    padding: 0.5rem 0;
+    width: fit-content;
+  }
+
+  .cp-section + .cp-section {
+    border-top: 1px solid var(--border);
+  }
+
+  .cp-section-grid {
+    display: grid;
+    grid-template-columns: repeat(3, auto);
+    align-items: end;
+    gap: 0.4rem 0.75rem;
+    width: fit-content;
+  }
+
+  .cp-section-grid .cp-section-label {
+    grid-column: 1 / -1;
+  }
+
+  .cp-section-label {
+    font-size: 0.6rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    color: var(--text-muted);
+    width: 100%;
+    margin-bottom: 0.05rem;
+    opacity: 0.6;
+  }
+
+  .cp-actions {
+    display: flex;
+    align-items: center;
     gap: 0.5rem;
   }
 
-  .table-filters select {
+  .control-group {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+  }
+
+  .control-label {
+    font-size: 0.6rem;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+  }
+
+  .control-group select,
+  .control-group input[type="number"] {
     background: var(--bg);
     color: var(--text);
     border: 1px solid var(--border);
     border-radius: 6px;
-    padding: 0.3rem 0.5rem;
+    padding: 0.25rem 0.45rem;
     font-size: 0.8rem;
+    cursor: pointer;
+    outline: none;
+    transition: border-color 0.15s;
+  }
+
+  .control-group select:focus,
+  .control-group input[type="number"]:focus {
+    border-color: var(--accent);
+  }
+
+  .control-group select:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
   }
 
   .range-inputs {
     display: flex;
-    gap: 0.25rem;
+    gap: 0.2rem;
     align-items: center;
   }
 
   .range-inputs input {
-    background: var(--bg);
-    color: var(--text);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    padding: 0.3rem 0.5rem;
-    font-size: 0.8rem;
-    width: 5rem;
+    width: 3.8rem;
   }
 
   .range-inputs span {
     color: var(--text-muted);
     font-size: 0.8rem;
   }
+
+  .toggle-pill {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    background: var(--bg);
+    color: var(--text-muted);
+    border: 1px solid var(--border);
+    border-radius: 20px;
+    padding: 0.25rem 0.7rem;
+    font-size: 0.78rem;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: all 0.15s;
+  }
+
+  .toggle-pill::before {
+    content: '';
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: var(--border);
+    transition: background 0.15s;
+  }
+
+  .toggle-pill.active {
+    background: rgba(247,147,26,0.1);
+    color: var(--accent);
+    border-color: var(--accent);
+  }
+
+  .toggle-pill.active::before {
+    background: var(--accent);
+  }
+
+  .btn-refresh {
+    background: var(--accent);
+    color: #000;
+    border: none;
+    border-radius: 6px;
+    padding: 0.25rem 0.7rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: opacity 0.15s;
+  }
+
+  .btn-refresh:hover { opacity: 0.85; }
 
   .toggle-btn {
     background: var(--bg);
@@ -242,7 +345,7 @@
   }
 
   .toggle-btn.active {
-    background: #2a1f0a;
+    background: rgba(247,147,26,0.1);
     color: var(--accent);
     border-color: var(--accent);
   }
@@ -299,7 +402,7 @@
   }
 
   @media (max-width: 768px) {
-    .charts-grid { grid-template-columns: 1fr; }
+    .charts-grid { grid-template-columns: 1fr; grid-template-rows: auto; }
     header { flex-direction: column; gap: 0.75rem; }
     .container { padding: 1rem; }
   }
@@ -310,17 +413,8 @@
 <header>
   <h1>DEX Monitor</h1>
   <div class="kpi-grid" id="kpiGrid"></div>
-  <div class="header-controls">
-    <select id="hoursSelect">
-      <option value="1">Last 1h</option>
-      <option value="6">Last 6h</option>
-      <option value="24" selected>Last 24h</option>
-      <option value="48">Last 48h</option>
-      <option value="168">Last 7d</option>
-    </select>
-    <button id="refreshBtn">Refresh</button>
-    <span class="last-updated" id="lastUpdated"></span>
-  </div>
+  <button class="theme-btn" id="themeBtn" disabled>🌙</button>
+  <button class="theme-btn" id="settingsBtn" disabled title="Settings — coming soon">⚙️</button>
 </header>
 
 <div class="container">
@@ -329,9 +423,96 @@
   <!-- Charts -->
   <div class="charts-grid">
     <div class="chart-card">
-      <h3>Offer Premiums by Exchange</h3>
-      <div class="chart-wrapper">
-        <canvas id="premiumChart"></canvas>
+      <h3>Control Panel</h3>
+      <div class="control-panel">
+
+        <!-- Market config (coming soon) -->
+        <div class="cp-section">
+          <span class="cp-section-label">Market</span>
+          <div class="control-group">
+            <span class="control-label">Fiat Currency</span>
+            <select id="filterCurrency" disabled>
+              <option value="EUR" selected>EUR — Euro</option>
+              <option value="USD">USD — US Dollar</option>
+              <option value="GBP">GBP — British Pound</option>
+              <option value="CHF">CHF — Swiss Franc</option>
+              <option value="CZK">CZK — Czech Koruna</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <span class="control-label">Reference Price</span>
+            <select id="filterRefPrice" disabled>
+              <option value="kraken_eur" selected>BTC/EUR — Kraken</option>
+            </select>
+          </div>
+        </div>
+
+        <!-- Offer filters -->
+        <div class="cp-section cp-section-grid">
+          <span class="cp-section-label">Filters</span>
+          <div class="control-group">
+            <span class="control-label">Side</span>
+            <select id="filterDirection">
+              <option value="">All</option>
+              <option value="sell">Asks (Sell)</option>
+              <option value="buy">Bids (Buy)</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <span class="control-label">Exchange</span>
+            <select id="filterExchange">
+              <option value="">All Exchanges</option>
+              <option value="hodlhodl">HodlHodl</option>
+              <option value="robosats">Robosats</option>
+              <option value="bisq">Bisq</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <span class="control-label">Payment</span>
+            <select id="filterPayment">
+              <option value="">All Payments</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <span class="control-label">Status</span>
+            <select id="filterStatus">
+              <option value="">All Orders</option>
+              <option value="open" selected>Open</option>
+              <option value="closed">Closed</option>
+            </select>
+          </div>
+          <div class="control-group">
+            <span class="control-label">Premium %</span>
+            <div class="range-inputs">
+              <input type="number" id="filterPremiumMin" placeholder="Min" step="0.1">
+              <span>–</span>
+              <input type="number" id="filterPremiumMax" placeholder="Max" step="0.1">
+            </div>
+          </div>
+          <div class="control-group" style="justify-content:flex-end;">
+            <button class="toggle-pill active" id="togglePremium">Premium Only</button>
+          </div>
+        </div>
+
+        <!-- Timeframe & actions -->
+        <div class="cp-section">
+          <span class="cp-section-label">View</span>
+          <div class="control-group">
+            <span class="control-label">Timeframe</span>
+            <select id="hoursSelect">
+              <option value="1">Last 1h</option>
+              <option value="6">Last 6h</option>
+              <option value="24" selected>Last 24h</option>
+              <option value="48">Last 48h</option>
+              <option value="168">Last 7d</option>
+            </select>
+          </div>
+          <div class="cp-actions">
+            <span class="last-updated" id="lastUpdated"></span>
+            <button id="refreshBtn" class="btn-refresh">↻ Refresh</button>
+          </div>
+        </div>
+
       </div>
     </div>
     <div class="chart-card">
@@ -340,20 +521,26 @@
         <canvas id="paymentChart"></canvas>
       </div>
     </div>
+    <div class="chart-card">
+      <h3>Panel 3</h3>
+      <div class="chart-wrapper" style="display:flex;align-items:center;justify-content:center;">
+        <span style="color:var(--text-muted);font-size:0.8rem;">Coming soon</span>
+      </div>
+    </div>
   </div>
 
   <!-- OHLC + Depth side by side -->
   <div style="display:grid;grid-template-columns:2fr 1fr;gap:0.6rem;margin-bottom:0.6rem;">
     <div class="ohlc-card" style="margin-bottom:0;">
       <h3>Kraken BTC/EUR — DEX Premium Offer Overlay</h3>
-      <div id="ohlcChart" style="height:340px;"></div>
+      <div id="ohlcChart" style="height:420px;"></div>
     </div>
     <div class="ohlc-card" style="margin-bottom:0;">
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;">
         <h3 style="margin-bottom:0;">Orderbook Depth</h3>
         <span id="depthMidPrice" style="font-size:0.85rem;color:var(--text-muted);"></span>
       </div>
-      <div id="depthChart" style="height:340px;"></div>
+      <div id="depthChart" style="height:420px;"></div>
     </div>
   </div>
 
@@ -361,50 +548,6 @@
   <div class="table-card">
     <div class="table-header">
       <h3>All Offers</h3>
-      <div class="table-filters">
-        <div style="display:flex;flex-direction:column;gap:0.25rem;">
-          <span style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Side</span>
-          <select id="filterDirection">
-          <option value="sell">Asks (Sell)</option>
-          <option value="buy">Bids (Buy)</option>
-        </select>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:0.25rem;">
-          <span style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Exchange</span>
-          <select id="filterExchange">
-            <option value="">All Exchanges</option>
-            <option value="hodlhodl">HodlHodl</option>
-            <option value="robosats">Robosats</option>
-            <option value="bisq">Bisq</option>
-          </select>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:0.25rem;">
-          <span style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Payment</span>
-          <select id="filterPayment">
-            <option value="">All Payments</option>
-          </select>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:0.25rem;">
-          <span style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Status</span>
-          <select id="filterStatus">
-            <option value="">All Orders</option>
-            <option value="open">Open</option>
-            <option value="closed">Closed</option>
-          </select>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:0.25rem;">
-          <span style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">Premium %</span>
-          <div class="range-inputs">
-            <input type="number" id="filterPremiumMin" placeholder="Min" step="0.1">
-            <span>–</span>
-            <input type="number" id="filterPremiumMax" placeholder="Max" step="0.1">
-          </div>
-        </div>
-        <div style="display:flex;flex-direction:column;gap:0.25rem;">
-          <span style="font-size:0.7rem;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.05em;">&nbsp;</span>
-          <button class="toggle-btn" id="togglePremium">Premium Only</button>
-        </div>
-      </div>
     </div>
     <table>
       <thead>
@@ -431,6 +574,7 @@
 <script>
 const API_BASE = window.location.origin;
 
+
 const EXCHANGE_COLORS = {
   hodlhodl: '#3fb950',
   robosats: '#bc8cff',
@@ -440,7 +584,6 @@ const EXCHANGE_COLORS = {
 let allOffers = [];
 let sortCol = 'price_diff_percent';
 let sortAsc = true;
-let premiumChart = null;
 let paymentChart = null;
 
 // --- Fetch helpers ---
@@ -476,7 +619,6 @@ async function loadDashboard() {
 
     allOffers = offers;
     renderKPIs(stats);
-    renderPremiumChart(offers);
     renderPaymentChart(offers);
     populatePaymentFilter(offers);
     renderTable();
@@ -532,51 +674,6 @@ function renderKPIs(stats) {
 
 // --- Charts ---
 
-function renderPremiumChart(offers) {
-  const ctx = document.getElementById('premiumChart').getContext('2d');
-  if (premiumChart) premiumChart.destroy();
-
-  const sorted = [...offers].sort((a, b) => (a.price_diff_percent || 0) - (b.price_diff_percent || 0));
-
-  const datasets = {};
-  sorted.forEach((o, i) => {
-    const ex = o.exchange || 'unknown';
-    if (!datasets[ex]) datasets[ex] = { label: ex, data: [], backgroundColor: EXCHANGE_COLORS[ex] || '#888' };
-    datasets[ex].data.push({ x: i, y: o.price_diff_percent || 0 });
-  });
-
-  premiumChart = new Chart(ctx, {
-    type: 'bar',
-    data: { datasets: Object.values(datasets) },
-    options: {
-      responsive: true,
-      maintainAspectRatio: false,
-      plugins: {
-        legend: { labels: { color: '#8b949e', font: { size: 11 } } },
-        tooltip: {
-          callbacks: {
-            label: (c) => {
-              const o = sorted[c.raw.x];
-              return `${c.dataset.label}: ${c.raw.y}% — ${o.payment_method} — €${formatNum(o.price)}`;
-            }
-          }
-        }
-      },
-      scales: {
-        x: {
-          type: 'linear',
-          display: false
-        },
-        y: {
-          title: { display: true, text: 'Premium %', color: '#8b949e' },
-          ticks: { color: '#8b949e', callback: v => v + '%' },
-          grid: { color: '#21262d' }
-        }
-      }
-    }
-  });
-}
-
 function renderPaymentChart(offers) {
   const ctx = document.getElementById('paymentChart').getContext('2d');
   if (paymentChart) paymentChart.destroy();
@@ -588,34 +685,95 @@ function renderPaymentChart(offers) {
   });
 
   const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-  const labels = sorted.map(e => e[0]);
-  const data = sorted.map(e => e[1]);
+  const top = sorted.slice(0, 10);
+  const rest = sorted.slice(10);
+  if (rest.length > 0) {
+    top.push(['Others', rest.reduce((s, e) => s + e[1], 0)]);
+  }
+
+  const labels = top.map(e => e[0]);
+  const data   = top.map(e => e[1]);
 
   const palette = [
     '#f7931a', '#3fb950', '#bc8cff', '#58a6ff', '#f85149',
-    '#d29922', '#8b949e', '#39d353', '#db61a2', '#79c0ff'
+    '#d29922', '#39d353', '#db61a2', '#79c0ff', '#e3b341', '#4a4f58'
   ];
 
+  // Plugin: draw method name + count — inside bar if it fits, outside if not
+  const insideLabels = {
+    id: 'insideLabels',
+    afterDraw(chart) {
+      const { ctx: c, scales } = chart;
+      const meta = chart.getDatasetMeta(0);
+      const baseX = scales.x.getPixelForValue(0);
+      const pad = 8;
+      const font = '600 11px -apple-system, BlinkMacSystemFont, sans-serif';
+      const fontLight = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+      c.save();
+      c.textBaseline = 'middle';
+      meta.data.forEach((bar, i) => {
+        const barRight = bar.x;
+        const barCenterY = bar.y;
+        const barW = barRight - baseX;
+        const name  = labels[i];
+        const count = String(data[i]);
+        c.font = font;
+        const nameW = c.measureText(name).width;
+        c.font = fontLight;
+        const countW = c.measureText(count).width;
+        const totalNeeded = pad + nameW + 6 + countW + pad;
+        if (barW >= totalNeeded) {
+          // fits — draw inside
+          c.font = font;
+          c.fillStyle = 'rgba(255,255,255,0.92)';
+          c.textAlign = 'left';
+          c.fillText(name, baseX + pad, barCenterY);
+          c.font = fontLight;
+          c.fillStyle = 'rgba(255,255,255,0.55)';
+          c.textAlign = 'right';
+          c.fillText(count, barRight - pad, barCenterY);
+        } else {
+          // too short — draw outside to the right
+          c.font = font;
+          c.fillStyle = 'var(--text-muted)' in c ? 'var(--text-muted)' : '#8b949e';
+          c.textAlign = 'left';
+          c.fillText(name, barRight + pad, barCenterY);
+          c.font = fontLight;
+          c.fillStyle = '#606670';
+          c.fillText(count, barRight + pad + nameW + 6, barCenterY);
+        }
+      });
+      c.restore();
+    }
+  };
+
   paymentChart = new Chart(ctx, {
-    type: 'doughnut',
+    type: 'bar',
+    plugins: [insideLabels],
     data: {
       labels,
       datasets: [{
         data,
         backgroundColor: palette.slice(0, labels.length),
-        borderColor: '#161b22',
-        borderWidth: 2
+        borderRadius: 5,
+        borderSkipped: false,
+        barPercentage: 0.82,
+        categoryPercentage: 0.9,
       }]
     },
     options: {
+      indexAxis: 'y',
       responsive: true,
       maintainAspectRatio: false,
       plugins: {
-        legend: {
-          position: 'right',
-          labels: { color: '#8b949e', font: { size: 11 }, padding: 8 }
-        }
-      }
+        legend: { display: false },
+        tooltip: { callbacks: { label: c => ` ${c.raw} offers` } }
+      },
+      scales: {
+        x: { display: false },
+        y: { display: false }
+      },
+      layout: { padding: { top: 2, bottom: 2, left: 2, right: 2 } }
     }
   });
 }
@@ -688,8 +846,8 @@ function renderOHLC(data, offers, hours) {
       title: 'Price (EUR)', gridcolor: '#21262d',
       side: 'left', tickformat: ',.0f',
     },
-    legend: { orientation: 'h', y: -0.15, font: { size: 10 } },
-    margin: { l: 70, r: 10, t: 10, b: 40 },
+    showlegend: false,
+    margin: { l: 70, r: 10, t: 10, b: 20 },
   };
 
   Plotly.newPlot('ohlcChart', traces, layout, { responsive: true, displayModeBar: false });
@@ -767,8 +925,8 @@ function renderDepthChart() {
       side: 'left',
       range: [midPrice - priceRange, midPrice + priceRange],
     },
-    legend: { orientation: 'h', y: -0.2, font: { size: 10 } },
-    margin: { l: 70, r: 20, t: 10, b: 50 },
+    showlegend: false,
+    margin: { l: 70, r: 20, t: 10, b: 20 },
     hovermode: 'y unified',
   };
 
