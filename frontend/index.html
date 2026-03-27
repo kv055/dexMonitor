@@ -530,17 +530,25 @@
       </div>
     </div>
     <div class="chart-card">
-      <h3>Panel 3 (Scroll Test)</h3>
+      <h3>Offers Preview</h3>
       <div class="chart-wrapper">
-        <div style="position:absolute;top:0;left:0;right:0;bottom:0;overflow-y:auto;font-size:0.75rem;color:var(--text-muted);line-height:1.6;">
-          <p style="margin:0 0 0.5rem;">Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua. Ut enim ad minim veniam, quis nostrud exercitation ullamco laboris nisi ut aliquip ex ea commodo consequat.</p>
-          <p style="margin:0 0 0.5rem;">Duis aute irure dolor in reprehenderit in voluptate velit esse cillum dolore eu fugiat nulla pariatur. Excepteur sint occaecat cupidatat non proident, sunt in culpa qui officia deserunt mollit anim id est laborum.</p>
-          <p style="margin:0 0 0.5rem;">Pellentesque habitant morbi tristique senectus et netus et malesuada fames ac turpis egestas. Vestibulum tortor quam, feugiat vitae, ultricies eget, tempor sit amet, ante. Donec eu libero sit amet quam egestas semper.</p>
-          <p style="margin:0 0 0.5rem;">Aenean ultricies mi vitae est. Mauris placerat eleifend leo. Quisque sit amet est et sapien ullamcorper pharetra. Vestibulum erat wisi, condimentum sed, commodo vitae, ornare sit amet, wisi.</p>
-          <p style="margin:0 0 0.5rem;">Eros ipsum rutrum orci, sagittis tempus lacus enim ac dui. Donec non enim in turpis pulvinar facilisis. Ut felis. Praesent dapibus, neque id cursus faucibus, tortor neque egestas augue.</p>
-          <p style="margin:0 0 0.5rem;">Aliquam erat volutpat. Nam dui mi, tincidunt quis, accumsan porttitor, facilisis luctus, metus. Phasellus ultrices nulla quis nibh. Quisque a lectus. Donec consectetuer ligula vulputate sem tristique cursus.</p>
-          <p style="margin:0 0 0.5rem;">Nam nulla quam, gravida non, commodo a, sodales sit amet, nisi. Nullam in massa. Suspendisse vitae nisl sit amet augue bibendum aliquam.</p>
-          <p style="margin:0;">— end of scroll test —</p>
+        <div style="position:absolute;top:0;left:0;right:0;bottom:0;overflow-y:auto;">
+          <table style="width:100%;border-collapse:collapse;font-size:0.72rem;">
+            <thead>
+              <tr>
+                <th style="position:sticky;top:0;background:var(--surface);padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.65rem;text-transform:uppercase;text-align:left;white-space:nowrap;">Exch</th>
+                <th style="position:sticky;top:0;background:var(--surface);padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.65rem;text-transform:uppercase;text-align:left;white-space:nowrap;">Side</th>
+                <th style="position:sticky;top:0;background:var(--surface);padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.65rem;text-transform:uppercase;text-align:right;white-space:nowrap;">Price</th>
+                <th style="position:sticky;top:0;background:var(--surface);padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.65rem;text-transform:uppercase;text-align:right;white-space:nowrap;">Prem.</th>
+                <th style="position:sticky;top:0;background:var(--surface);padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.65rem;text-transform:uppercase;text-align:right;white-space:nowrap;">Min BTC</th>
+                <th style="position:sticky;top:0;background:var(--surface);padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.65rem;text-transform:uppercase;text-align:right;white-space:nowrap;">Max BTC</th>
+                <th style="position:sticky;top:0;background:var(--surface);padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);color:var(--text-muted);font-size:0.65rem;text-transform:uppercase;text-align:left;white-space:nowrap;">Payment</th>
+              </tr>
+            </thead>
+            <tbody id="offerTableBody2">
+              <tr><td colspan="7" style="padding:1rem;text-align:center;color:var(--text-muted);">Loading...</td></tr>
+            </tbody>
+          </table>
         </div>
       </div>
     </div>
@@ -1040,6 +1048,26 @@ function renderTable() {
     arrow.textContent = th.dataset.sort === sortCol ? (sortAsc ? '▲' : '▼') : '↕';
     arrow.style.opacity = th.dataset.sort === sortCol ? '1' : '0.3';
   });
+
+  renderTable2(filtered);
+}
+
+function renderTable2(filtered) {
+  const tbody = document.getElementById('offerTableBody2');
+  if (!filtered.length) {
+    tbody.innerHTML = '<tr><td colspan="7" style="padding:1rem;text-align:center;color:var(--text-muted);">No offers found</td></tr>';
+    return;
+  }
+  tbody.innerHTML = filtered.map(o => `
+    <tr>
+      <td style="padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);white-space:nowrap;"><span class="exchange-tag ${o.exchange}">${o.exchange}</span></td>
+      <td style="padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);" class="${o.direction === 'buy' ? 'premium-low' : 'premium-high'}">${o.direction === 'buy' ? 'Bid' : 'Ask'}</td>
+      <td style="padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;">&euro;${formatNum(o.price)}</td>
+      <td style="padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;" class="${premiumClass(o.price_diff_percent)}">${o.price_diff_percent != null ? o.price_diff_percent.toFixed(1) + '%' : '—'}</td>
+      <td style="padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;">${o.btc_min != null ? o.btc_min : '—'}</td>
+      <td style="padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);text-align:right;white-space:nowrap;">${o.btc_max != null ? o.btc_max : '—'}</td>
+      <td style="padding:0.25rem 0.4rem;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:90px;">${o.payment_method || '—'}</td>
+    </tr>`).join('');
 }
 
 // --- Helpers ---
