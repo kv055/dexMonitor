@@ -19,8 +19,16 @@ for i in $(seq 1 30); do
     sleep 2
 done
 
+export MALLOC_ARENA_MAX=4
+
+
 cd "$BISQ_DAEMON_DIR"
-exec java -Xmx2g -jar daemon.jar \
+exec java \
+    -Xmx2g \
+    -XX:MaxMetaspaceSize=256m \
+    -XX:ReservedCodeCacheSize=128m \
+    -XX:MaxDirectMemorySize=128m \
+    -jar daemon.jar \
     --apiPort=9998 \
     --apiPassword="" \
     --appDataDir=/home/appuser/.local/share/Bisq \
