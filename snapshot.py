@@ -5,18 +5,20 @@ Orderbook snapshot script - captures orderbook data from Bisq, HodlHodl, and Rob
 
 import sqlite3
 import subprocess
-import json
 import os
-import sys
-import re
 import requests
 
 # Use /app/data for Docker, default to local path for development
 DB_PATH = os.environ.get('DB_PATH', '/home/claudio_clawd_bot/orderbook/orderbook.db')
-NOKYC_DIR = os.environ.get('NOKYC_DIR', '/home/claudio_clawd_bot/nokyc')
-VENV_PYTHON = os.environ.get('VENV_PYTHON', f"{NOKYC_DIR}/venv/bin/python")
 BISQ_CLI_JAR = os.environ.get('BISQ_CLI_JAR', '/opt/bisq/bisq-cli-1.9.22/cli.jar')
 PRICE_PROVIDER = os.environ.get('PRICE_PROVIDER', 'bisq_tor')
+
+ROBOSATS_ONIONS = [
+    'http://ngdk7ocdzmz5kzsysa3om6du7ycj2evxp2f2olfkyq37htx3gllwp2yd.onion',
+    'http://mmhaqzuirth5rx7gl24d4773lknltjhik57k7ahec5iefktezv4b3uid.onion',
+    'http://4t4jxmivv6uqej6xzx2jx3fxh75gtt65v3szjoqmc4ugdlhipzdat6yd.onion',
+    'http://otmoonrndnrddqdlhu6b36heunmbyw3cgvadqo2oqeau3656wfv7fwad.onion',
+]
 
 def _tor_session():
     session = requests.Session()
@@ -186,97 +188,96 @@ def fetch_bisq(direction='sell', btc_price=None):
         'offers': offers
     }
 
-def parse_nokyc_output(output, exchange_name):
-    """Parse nokyc output for offers"""
-    offers = []
-    btc_price = 0
-    
-    # First, extract the reference price
-    for line in output.split('\n'):
-        if 'Price:' in line:
-            try:
-                price_match = re.search(r'Price:\s*(\d+)', line)
-                if price_match:
-                    btc_price = float(price_match.group(1))
-            except:
-                pass
-    
-    if not btc_price:
-        return {'btc_price': 0, 'offers': []}
-    
-    # Parse offer lines
-    # Format: Exchange Price EUR Dif BTC_min BTC_max Fiat_min Fiat_max Payment_Method
-    for line in output.split('\n'):
-        if exchange_name in line and 'EUR' in line:
-            # Use regex for more robust parsing
-            match = re.search(
-                rf'{exchange_name}\s+(\d+)\s+EUR\s+([\d.]+)%\s+([\d.]+)\s+([\d.]+)\s+(\d+)\s+(\d+)\s+(.+)',
-                line
-            )
-            if match:
-                try:
-                    price = float(match.group(1))
-                    dif_pct = float(match.group(2))
-                    btc_min = float(match.group(3))
-                    btc_max = float(match.group(4))
-                    fiat_min = int(match.group(5))
-                    fiat_max = int(match.group(6))
-                    payment_method = match.group(7).strip()
-                    
-                    offers.append({
-                        'price': price,
-                        'price_diff_percent': dif_pct,
-                        'btc_min': btc_min,
-                        'btc_max': btc_max,
-                        'fiat_min': fiat_min,
-                        'fiat_max': fiat_max,
-                        'payment_method': payment_method,
-                        'offer_id': None
-                    })
-                except (ValueError, IndexError):
-                    continue
-    
-    return {
-        'btc_price': btc_price,
-        'offers': offers
-    }
-
-def fetch_hodlhodl(direction='sell'):
-    """Fetch offers from HodlHodl via nokyc"""
+def fetch_hodlhodl(direction='sell', btc_price=None):
+    """Fetch offers directly from HodlHodl REST API"""
     try:
-        result = subprocess.run(
-            [VENV_PYTHON, f"{NOKYC_DIR}/nokyc.py", "-f", "eur", "-t", direction, "-d", "5", "-e", "hodlhodl"],
-            capture_output=True, text=True, timeout=60, cwd=NOKYC_DIR
+        resp = requests.get(
+            'https://hodlhodl.com/api/v1/offers',
+            params={
+                'filters[side]': direction,
+                'filters[include_global]': 'true',
+                'filters[currency_code]': 'EUR',
+                'filters[only_working_now]': 'true',
+                'sort[by]': 'price',
+            },
+            timeout=30,
         )
-        output = result.stdout + result.stderr
-        data = parse_nokyc_output(output, 'HodlHodl')
-        print(f"[HodlHodl] Found {len(data['offers'])} {direction} offers, ref price: {data['btc_price']}")
-        return data
+        offers = []
+        for o in resp.json().get('offers', []):
+            try:
+                price = float(o['price'])
+                fiat_min = int(float(o['min_amount']))
+                fiat_max = int(float(o['max_amount']))
+                if direction == 'buy':
+                    method = o['payment_methods'][0]['name']
+                else:
+                    method = o['payment_method_instructions'][0]['payment_method_name']
+                if 'SEPA' in method:
+                    method = 'SEPA'
+                elif 'Any national bank' in method:
+                    method = 'NATIONAL_BANK'
+                offers.append({
+                    'offer_id': o['id'],
+                    'price': price,
+                    'price_diff_percent': round((price / btc_price - 1) * 100, 2) if btc_price else None,
+                    'btc_min': fiat_min / price,
+                    'btc_max': fiat_max / price,
+                    'fiat_min': fiat_min,
+                    'fiat_max': fiat_max,
+                    'payment_method': method,
+                })
+            except (KeyError, IndexError, ValueError, ZeroDivisionError):
+                continue
+        print(f"[HodlHodl] Found {len(offers)} {direction} offers")
+        return {'btc_price': btc_price or 0, 'offers': offers}
     except Exception as e:
         print(f"[HodlHodl] Error: {e}")
         return {'btc_price': 0, 'offers': []}
 
-def fetch_robosats(direction='sell'):
-    """Fetch offers from Robosats via nokyc"""
-    try:
-        result = subprocess.run(
-            [VENV_PYTHON, f"{NOKYC_DIR}/nokyc.py", "-f", "eur", "-t", direction, "-d", "5", "-e", "robosats"],
-            capture_output=True, text=True, timeout=60, cwd=NOKYC_DIR
-        )
-        output = result.stdout + result.stderr
-        data = parse_nokyc_output(output, 'Robosats')
-        print(f"[Robosats] Found {len(data['offers'])} offers, ref price: {data['btc_price']}")
-        return data
-    except Exception as e:
-        print(f"[Robosats] Error: {e}")
-        return {'btc_price': 0, 'offers': []}
+def fetch_robosats(direction='sell', btc_price=None):
+    """Fetch offers directly from Robosats via Tor. EUR=2; sell=type1, buy=type0."""
+    offer_type = 1 if direction == 'sell' else 0
+    session = _tor_session()
+    for onion in ROBOSATS_ONIONS:
+        try:
+            resp = session.get(
+                f'{onion}/api/book/',
+                params={'currency': 2, 'type': offer_type},
+                timeout=30,
+            )
+            offers = []
+            for line in resp.json():
+                if line == 'not_found':
+                    break
+                try:
+                    price = float(line['price'])
+                    if line['amount'] is not None:
+                        fiat_min = fiat_max = int(float(line['amount']))
+                    else:
+                        fiat_min = int(float(line['min_amount']))
+                        fiat_max = int(float(line['max_amount']))
+                    offers.append({
+                        'offer_id': str(line['id']),
+                        'price': price,
+                        'price_diff_percent': round(float(line['premium']), 2),
+                        'btc_min': fiat_min / price if price else None,
+                        'btc_max': fiat_max / price if price else None,
+                        'fiat_min': fiat_min,
+                        'fiat_max': fiat_max,
+                        'payment_method': line['payment_method'],
+                    })
+                except (KeyError, ValueError, ZeroDivisionError):
+                    continue
+            print(f"[Robosats] Found {len(offers)} {direction} offers")
+            return {'btc_price': btc_price or 0, 'offers': offers}
+        except Exception as e:
+            print(f"[Robosats] {onion} failed: {e}, trying next...")
+    print("[Robosats] All onion addresses failed")
+    return {'btc_price': 0, 'offers': []}
 
 def fetch_and_save(exchange, fetch_fn, direction, ref_price):
     """Fetch offers for a given exchange and direction, then save"""
-    if fetch_fn == fetch_bisq:
-        data = fetch_fn(direction, btc_price=ref_price)
-    else:
-        data = fetch_fn(direction)
+    data = fetch_fn(direction, btc_price=ref_price)
     if data and data['offers']:
         price = data['btc_price'] or ref_price
         save_snapshot(exchange, 'EUR', direction, price, data['offers'])
