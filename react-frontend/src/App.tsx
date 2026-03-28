@@ -8,6 +8,7 @@ import { PaymentChart } from './components/PaymentChart';
 import { OffersPreviewTable } from './components/OffersPreviewTable';
 import { OHLCChart } from './components/OHLCChart';
 import { DepthChart } from './components/DepthChart';
+import { GeneralStats } from './components/GeneralStats';
 
 // Inner component so it can consume FiltersContext
 function MonitorView({ ohlcData, lastUpdated, error, load }: {
@@ -87,10 +88,21 @@ export default function App() {
         )}
 
         {activeTab === 'insights' && (
-          <div className="flex-1 min-h-0 flex items-center justify-center">
-            <div className="bg-surface border border-border rounded-lg p-3 w-full h-full flex flex-col items-center justify-center">
-              <span className="text-[1.5rem] text-muted">Coming Soon</span>
-              <span className="text-[0.85rem] text-muted mt-2">dex Insights is under development</span>
+          <div className="flex-1 min-h-0 flex flex-col gap-3">
+            {/* Top — smaller */}
+            <div className="flex-1 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
+              <span className="text-[0.65rem] uppercase text-muted font-semibold tracking-wide mb-2">General Statistics</span>
+              <div className="flex-1 min-h-0 overflow-y-auto">
+                <GeneralStats />
+              </div>
+            </div>
+            {/* Middle — bigger */}
+            <div className="flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
+              <span className="text-[0.65rem] uppercase text-muted font-semibold tracking-wide mb-2">Taker Opportunities</span>
+            </div>
+            {/* Bottom — bigger */}
+            <div className="flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
+              <span className="text-[0.65rem] uppercase text-muted font-semibold tracking-wide mb-2">Maker Opportunities</span>
             </div>
           </div>
         )}
