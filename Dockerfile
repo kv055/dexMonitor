@@ -13,6 +13,11 @@ RUN apt-get update && apt-get install -y \
     cron \
     && rm -rf /var/lib/apt/lists/*
 
+# Install Node.js 20 (apt ships Node 18 which is too old for Vite 8)
+RUN curl -fsSL https://deb.nodesource.com/setup_20.x | bash - \
+    && apt-get install -y nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
 # Bisq CLI is still needed by snapshot.py to query the Bisq container's gRPC
 ENV BISQ_VERSION=1.9.22
 RUN apt-get update && apt-get install -y wget unzip openjdk-11-jre-headless \
@@ -29,6 +34,9 @@ WORKDIR /app
 # Copy application files
 COPY dexMonitor/ ./
 RUN chmod +x /app/start.sh
+
+# Build React frontend
+RUN cd /app/react-frontend && npm install && npm run build
 
 # Copy nokyc tool
 COPY nokyc/ /app/nokyc/

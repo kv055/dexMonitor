@@ -30,12 +30,17 @@ app.config['SWAGGER'] = {
 CORS(app)
 swagger = Swagger(app)
 
-FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'frontend')
+FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'react-frontend', 'dist')
 
 
 @app.route('/')
 def serve_frontend():
     return send_from_directory(FRONTEND_DIR, 'index.html')
+
+
+@app.route('/assets/<path:filename>')
+def serve_assets(filename):
+    return send_from_directory(os.path.join(FRONTEND_DIR, 'assets'), filename)
 
 
 def get_db_connection():
