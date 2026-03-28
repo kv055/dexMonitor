@@ -7,7 +7,7 @@ interface Props {
   offers: Offer[];
 }
 
-export function KpiGrid({ stats, offers }: Props) {
+export function KpiGrid({ stats }: Props) {
   const totalOffers = stats.offer_counts.reduce((s, e) => s + e.offer_count, 0);
   return (
     <div className="flex flex-nowrap items-center gap-4 overflow-hidden">

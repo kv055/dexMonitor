@@ -1,4 +1,5 @@
 export interface Offer {
+  id: number;
   exchange: string;
   direction: string;
   price: number;

@@ -1,4 +1,4 @@
-import { createContext, useContext, useReducer, useMemo, type ReactNode } from 'react';
+import { createContext, useContext, useReducer, useState, useMemo, type ReactNode } from 'react';
 import type { Filters, Offer } from '../types';
 
 // ── State ──────────────────────────────────────────────────────────────────
@@ -37,6 +37,8 @@ interface FiltersContextValue {
   filteredOffers: Offer[];        // all filters applied
   depthOffers: Offer[];           // all filters except direction (orderbook always shows both sides)
   paymentMethods: string[];
+  selectedOfferId: number | null;
+  setSelectedOfferId: (id: number | null) => void;
 }
 
 const FiltersContext = createContext<FiltersContextValue | null>(null);
@@ -50,6 +52,7 @@ interface Props {
 
 export function FiltersProvider({ offers, children }: Props) {
   const [filters, dispatch] = useReducer(filtersReducer, DEFAULT_FILTERS);
+  const [selectedOfferId, setSelectedOfferId] = useState<number | null>(null);
 
   const setFilters = (partial: Partial<Filters>) => dispatch({ type: 'SET', payload: partial });
   const resetFilters = () => dispatch({ type: 'RESET' });
@@ -93,7 +96,7 @@ export function FiltersProvider({ offers, children }: Props) {
   }, [offers, filters, lastSeenMap]);
 
   return (
-    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods }}>
+    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, selectedOfferId, setSelectedOfferId }}>
       {children}
     </FiltersContext.Provider>
   );

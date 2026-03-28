@@ -6,12 +6,27 @@ interface Props {
   data: OHLCData | null;
 }
 
-const DOT_COLORS: Record<string, string> = { bisq: '#f7931a', hodlhodl: '#3fb950', robosats: '#bc8cff' };
-const DIR_SYMBOL: Record<string, string> = { sell: 'triangle-down', buy: 'triangle-up' };
+const EXCHANGE_COLORS: Record<string, string> = { bisq: '#f7931a', hodlhodl: '#3fb950', robosats: '#bc8cff' };
+
+/** Snap a timestamp (ms) to the nearest candle center (ms). */
+function snapToCandle(offerMs: number, candleTimesMs: number[]): number {
+  if (candleTimesMs.length === 0) return offerMs;
+  let nearest = candleTimesMs[0];
+  let minDiff = Math.abs(offerMs - nearest);
+  for (const t of candleTimesMs) {
+    const diff = Math.abs(offerMs - t);
+    if (diff < minDiff) { minDiff = diff; nearest = t; }
+  }
+  return nearest;
+}
+
+function normalizeTs(ts: string): string {
+  return ts.replace(' ', 'T') + (ts.endsWith('Z') ? '' : 'Z');
+}
 
 export function OHLCChart({ data }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
-  const { filteredOffers: premiumOffers, filters: { hours } } = useFilters();
+  const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferId, setSelectedOfferId } = useFilters();
 
   useEffect(() => {
     if (!divRef.current || !data) return;
@@ -20,6 +35,14 @@ export function OHLCChart({ data }: Props) {
 
     const candles = data.candles;
     const traces: unknown[] = [];
+
+    // Candle width in ms (fallback: 1 hour)
+    const candleWidthMs = candles.length > 1
+      ? new Date(candles[1].time + 'Z').getTime() - new Date(candles[0].time + 'Z').getTime()
+      : 3_600_000;
+    const halfWidthMs = candleWidthMs / 2;
+    const candleTimesMs = candles.map(c => new Date(c.time + 'Z').getTime());
+    const chartEndMs = Date.now();
 
     if (candles.length) {
       traces.push({
@@ -35,30 +58,79 @@ export function OHLCChart({ data }: Props) {
       });
     }
 
-    const groups: Record<string, { x: string[]; y: number[]; text: string[]; exchange: string; direction: string }> = {};
+    // Determine the most recent last_seen per exchange to identify open offers
+    const lastSeenMap: Record<string, string> = {};
+    premiumOffers.forEach(o => {
+      if (o.last_seen && (!lastSeenMap[o.exchange] || o.last_seen > lastSeenMap[o.exchange]))
+        lastSeenMap[o.exchange] = o.last_seen;
+    });
+
+    const groups: Record<string, {
+      x: string[]; lastSeen: string[]; y: number[]; text: string[]; ids: number[];
+      exchange: string; direction: string;
+    }> = {};
+
     premiumOffers.forEach(o => {
       const key = `${o.exchange}_${o.direction}`;
-      if (!groups[key]) groups[key] = { x: [], y: [], text: [], exchange: o.exchange, direction: o.direction };
+      if (!groups[key]) groups[key] = { x: [], lastSeen: [], y: [], text: [], ids: [], exchange: o.exchange, direction: o.direction };
       const g = groups[key];
       g.x.push((o.first_seen || o.time || '').replace(' ', 'T') + 'Z');
+      g.lastSeen.push(o.last_seen ?? '');
       g.y.push(o.price);
       const pct = (o.price_diff_percent ?? o.premium) != null
         ? ((o.price_diff_percent ?? o.premium) as number).toFixed(1) + '%' : '—';
       g.text.push(`${o.exchange} ${o.direction === 'buy' ? 'Bid' : 'Ask'}<br>€${Number(o.price).toLocaleString('de-DE')}<br>Premium: ${pct}<br>${o.payment_method || ''}`);
+      g.ids.push(o.id);
     });
 
+    // Each offer is a horizontal line from first_seen → last_seen (or chart end for open offers).
+    // Start snaps to the left edge of nearest candle; end snaps to the right edge (open offers go to now).
     Object.values(groups).forEach((g) => {
-      traces.push({
-        type: 'scatter', mode: 'markers',
-        x: g.x, y: g.y, text: g.text, hoverinfo: 'text',
-        name: `${g.exchange} ${g.direction === 'buy' ? 'Bids' : 'Asks'}`,
-        marker: {
-          color: DOT_COLORS[g.exchange] || '#888',
-          size: 7,
-          symbol: DIR_SYMBOL[g.direction] || 'circle',
-          line: { width: 1, color: '#0d1117' },
-        },
+      const baseColor = EXCHANGE_COLORS[g.exchange] || '#888';
+      const traceName = `${g.exchange} ${g.direction === 'buy' ? 'Bids' : 'Asks'}`;
+
+      type Seg = { x: (string | null)[]; y: (number | null)[]; text: (string | null)[]; customdata: (number | null)[] };
+      const normal: Seg = { x: [], y: [], text: [], customdata: [] };
+      const selected: Seg = { x: [], y: [], text: [], customdata: [] };
+
+      g.ids.forEach((id, i) => {
+        const firstMs = new Date(g.x[i]).getTime();
+        const isOpen = !g.lastSeen[i] || g.lastSeen[i] === lastSeenMap[g.exchange];
+        const lastMs = isOpen
+          ? chartEndMs
+          : new Date(normalizeTs(g.lastSeen[i])).getTime();
+
+        // Snap start to left edge of nearest candle, end to right edge (open → chart end)
+        const x0 = new Date(snapToCandle(firstMs, candleTimesMs) - halfWidthMs).toISOString();
+        const x1 = isOpen
+          ? new Date(chartEndMs).toISOString()
+          : new Date(snapToCandle(lastMs, candleTimesMs) + halfWidthMs).toISOString();
+
+        const seg = id === selectedOfferId ? selected : normal;
+        seg.x.push(x0, x1, null);
+        seg.y.push(g.y[i], g.y[i], null);
+        seg.text.push(g.text[i], g.text[i], null);
+        seg.customdata.push(id, id, null);
       });
+
+      if (normal.x.length) {
+        traces.push({
+          type: 'scatter', mode: 'lines',
+          x: normal.x, y: normal.y, text: normal.text, hoverinfo: 'text',
+          customdata: normal.customdata,
+          name: traceName,
+          line: { color: baseColor, width: 2 },
+        });
+      }
+      if (selected.x.length) {
+        traces.push({
+          type: 'scatter', mode: 'lines',
+          x: selected.x, y: selected.y, text: selected.text, hoverinfo: 'text',
+          customdata: selected.customdata,
+          name: `${traceName} (selected)`,
+          line: { color: '#ffffff', width: 3 },
+        });
+      }
     });
 
     const layout = {
@@ -75,9 +147,18 @@ export function OHLCChart({ data }: Props) {
       margin: { l: 70, r: 10, t: 10, b: 20 },
     };
 
+    const plotEl = divRef.current;
     (Plotly as { newPlot: (el: HTMLDivElement, traces: unknown[], layout: unknown, config: unknown) => void })
-      .newPlot(divRef.current, traces, layout, { responsive: true, displayModeBar: false });
-  }, [data, premiumOffers, hours]);
+      .newPlot(plotEl, traces, layout, { responsive: true, displayModeBar: false });
+
+    // Click handler — toggle selection (skip null separators)
+    (plotEl as unknown as { on: (ev: string, fn: (d: unknown) => void) => void })
+      .on('plotly_click', (eventData: unknown) => {
+        const pts = (eventData as { points?: { customdata?: number | null }[] }).points;
+        const id = pts?.[0]?.customdata ?? null;
+        if (id != null) setSelectedOfferId(id === selectedOfferId ? null : id);
+      });
+  }, [data, premiumOffers, hours, selectedOfferId]);
 
   return (
     <div className="relative h-full">
