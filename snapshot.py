@@ -174,7 +174,7 @@ def fetch_bisq(direction='sell', btc_price=None):
                             'fiat_min': fiat_min,
                             'fiat_max': fiat_max,
                             'payment_method': payment_method,
-                            'offer_id': None
+                            'offer_id': parts[-1]
                         })
                     except (ValueError, IndexError):
                         continue
