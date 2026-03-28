@@ -100,17 +100,25 @@ export function OHLCChart({ data }: Props) {
           ? chartEndMs
           : new Date(normalizeTs(g.lastSeen[i])).getTime();
 
-        // Snap start to left edge of nearest candle, end to right edge (open → chart end)
-        const x0 = new Date(snapToCandle(firstMs, candleTimesMs) - halfWidthMs).toISOString();
-        const x1 = isOpen
-          ? new Date(chartEndMs).toISOString()
-          : new Date(snapToCandle(lastMs, candleTimesMs) + halfWidthMs).toISOString();
+        const startCandleMs = snapToCandle(firstMs, candleTimesMs);
+        const endCandleMs = isOpen ? chartEndMs : snapToCandle(lastMs, candleTimesMs);
+
+        // Densify: one data point per candle center within the offer's duration so
+        // clicking anywhere along the line hits a nearby point and triggers selection.
+        const pointsMs = candleTimesMs.filter(t => t >= startCandleMs - halfWidthMs && t <= endCandleMs + halfWidthMs);
+        if (pointsMs.length === 0) pointsMs.push(startCandleMs);
 
         const seg = id === selectedOfferId ? selected : normal;
-        seg.x.push(x0, x1, null);
-        seg.y.push(g.y[i], g.y[i], null);
-        seg.text.push(g.text[i], g.text[i], null);
-        seg.customdata.push(id, id, null);
+        pointsMs.forEach(t => {
+          seg.x.push(new Date(t).toISOString());
+          seg.y.push(g.y[i]);
+          seg.text.push(g.text[i]);
+          seg.customdata.push(id);
+        });
+        seg.x.push(null);
+        seg.y.push(null);
+        seg.text.push(null);
+        seg.customdata.push(null);
       });
 
       if (normal.x.length) {
