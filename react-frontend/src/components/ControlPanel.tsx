@@ -1,14 +1,13 @@
-import type { Filters } from '../types';
+import { useFilters } from '../context/FiltersContext';
 
 interface Props {
-  filters: Filters;
-  paymentMethods: string[];
-  onFiltersChange: (f: Partial<Filters>) => void;
   onRefresh: () => void;
   lastUpdated: string;
 }
 
-export function ControlPanel({ filters, paymentMethods, onFiltersChange, onRefresh, lastUpdated }: Props) {
+export function ControlPanel({ onRefresh, lastUpdated }: Props) {
+  const { filters, setFilters, resetFilters, paymentMethods } = useFilters();
+
   const inputCls = "bg-bg text-text border border-border rounded-md px-2 py-1 text-[0.8rem] cursor-pointer outline-none focus:border-accent transition-colors";
   const disabledInputCls = `${inputCls} opacity-45 cursor-not-allowed`;
 
@@ -40,7 +39,7 @@ export function ControlPanel({ filters, paymentMethods, onFiltersChange, onRefre
         <span className="col-span-3 text-[0.6rem] font-semibold uppercase tracking-widest text-muted opacity-60 w-full mb-0.5">Filters</span>
         <div className="flex flex-col gap-0.5">
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Side</span>
-          <select className={inputCls} value={filters.direction} onChange={e => onFiltersChange({ direction: e.target.value })}>
+          <select className={inputCls} value={filters.direction} onChange={e => setFilters({ direction: e.target.value })}>
             <option value="">All</option>
             <option value="sell">Asks (Sell)</option>
             <option value="buy">Bids (Buy)</option>
@@ -48,7 +47,7 @@ export function ControlPanel({ filters, paymentMethods, onFiltersChange, onRefre
         </div>
         <div className="flex flex-col gap-0.5">
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Exchange</span>
-          <select className={inputCls} value={filters.exchange} onChange={e => onFiltersChange({ exchange: e.target.value })}>
+          <select className={inputCls} value={filters.exchange} onChange={e => setFilters({ exchange: e.target.value })}>
             <option value="">All Exchanges</option>
             <option value="hodlhodl">HodlHodl</option>
             <option value="robosats">Robosats</option>
@@ -57,14 +56,14 @@ export function ControlPanel({ filters, paymentMethods, onFiltersChange, onRefre
         </div>
         <div className="flex flex-col gap-0.5">
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Payment</span>
-          <select className={inputCls} value={filters.payment} onChange={e => onFiltersChange({ payment: e.target.value })}>
+          <select className={inputCls} value={filters.payment} onChange={e => setFilters({ payment: e.target.value })}>
             <option value="">All Payments</option>
             {paymentMethods.map(m => <option key={m} value={m}>{m}</option>)}
           </select>
         </div>
         <div className="flex flex-col gap-0.5">
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Status</span>
-          <select className={inputCls} value={filters.status} onChange={e => onFiltersChange({ status: e.target.value })}>
+          <select className={inputCls} value={filters.status} onChange={e => setFilters({ status: e.target.value })}>
             <option value="">All Orders</option>
             <option value="open">Open</option>
             <option value="closed">Closed</option>
@@ -74,15 +73,15 @@ export function ControlPanel({ filters, paymentMethods, onFiltersChange, onRefre
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Premium %</span>
           <div className="flex gap-1 items-center">
             <input type="number" className={`${inputCls} w-[3.8rem]`} placeholder="Min" step="0.1"
-              value={filters.premiumMin} onChange={e => onFiltersChange({ premiumMin: e.target.value })} />
+              value={filters.premiumMin} onChange={e => setFilters({ premiumMin: e.target.value })} />
             <span className="text-muted text-[0.8rem]">–</span>
             <input type="number" className={`${inputCls} w-[3.8rem]`} placeholder="Max" step="0.1"
-              value={filters.premiumMax} onChange={e => onFiltersChange({ premiumMax: e.target.value })} />
+              value={filters.premiumMax} onChange={e => setFilters({ premiumMax: e.target.value })} />
           </div>
         </div>
         <div className="flex flex-col gap-0.5 justify-end">
           <button
-            onClick={() => onFiltersChange({ premiumOnly: !filters.premiumOnly })}
+            onClick={() => setFilters({ premiumOnly: !filters.premiumOnly })}
             className={`inline-flex items-center gap-1.5 border rounded-full px-3 py-1 text-[0.78rem] cursor-pointer whitespace-nowrap transition-all before:content-[''] before:w-[7px] before:h-[7px] before:rounded-full before:transition-colors
               ${filters.premiumOnly
                 ? 'bg-[rgba(247,147,26,0.1)] text-accent border-accent before:bg-accent'
@@ -99,7 +98,7 @@ export function ControlPanel({ filters, paymentMethods, onFiltersChange, onRefre
         <span className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted opacity-60 w-full mb-0.5">View</span>
         <div className="flex flex-col gap-0.5">
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Timeframe</span>
-          <select className={inputCls} value={filters.hours} onChange={e => onFiltersChange({ hours: e.target.value })}>
+          <select className={inputCls} value={filters.hours} onChange={e => setFilters({ hours: e.target.value })}>
             <option value="1">Last 1h</option>
             <option value="6">Last 6h</option>
             <option value="24">Last 24h</option>
@@ -109,6 +108,9 @@ export function ControlPanel({ filters, paymentMethods, onFiltersChange, onRefre
         </div>
         <div className="flex items-center gap-2">
           <span className="text-[0.8rem] text-muted">{lastUpdated}</span>
+          <button onClick={resetFilters} className="bg-red text-black border-none rounded-md px-3 py-1 text-[0.8rem] font-semibold cursor-pointer whitespace-nowrap hover:opacity-85 transition-opacity">
+            ↺ Reset
+          </button>
           <button onClick={onRefresh} className="bg-accent text-black border-none rounded-md px-3 py-1 text-[0.8rem] font-semibold cursor-pointer whitespace-nowrap hover:opacity-85 transition-opacity">
             ↻ Refresh
           </button>

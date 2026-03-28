@@ -1,11 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
-import type { Offer } from '../types';
+import { useFilters } from '../context/FiltersContext';
 
-interface Props {
-  offers: Offer[];
-}
-
-export function DepthChart({ offers }: Props) {
+export function DepthChart() {
+  const { depthOffers: offers } = useFilters();
   const divRef = useRef<HTMLDivElement>(null);
   const [midInfo, setMidInfo] = useState('');
 

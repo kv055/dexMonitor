@@ -1,17 +1,17 @@
 import { useEffect, useRef } from 'react';
-import type { OHLCData, Offer } from '../types';
+import type { OHLCData } from '../types';
+import { useFilters } from '../context/FiltersContext';
 
 interface Props {
   data: OHLCData | null;
-  premiumOffers: Offer[];
-  hours: string;
 }
 
 const DOT_COLORS: Record<string, string> = { bisq: '#f7931a', hodlhodl: '#3fb950', robosats: '#bc8cff' };
 const DIR_SYMBOL: Record<string, string> = { sell: 'triangle-down', buy: 'triangle-up' };
 
-export function OHLCChart({ data, premiumOffers, hours }: Props) {
+export function OHLCChart({ data }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
+  const { filteredOffers: premiumOffers, filters: { hours } } = useFilters();
 
   useEffect(() => {
     if (!divRef.current || !data) return;

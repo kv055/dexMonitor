@@ -1,14 +1,11 @@
-import type { Offer } from '../types';
 import { ExchangeTag } from './ExchangeTag';
 import { formatNum, premiumClass } from '../utils/formatters';
-
-interface Props {
-  offers: Offer[];
-}
+import { useFilters } from '../context/FiltersContext';
 
 const thCls = "sticky top-0 bg-surface px-1.5 py-1 border-b border-border text-muted text-[0.65rem] uppercase text-left whitespace-nowrap";
 
-export function OffersPreviewTable({ offers }: Props) {
+export function OffersPreviewTable() {
+  const { filteredOffers: offers } = useFilters();
   return (
     <div className="absolute inset-0 overflow-y-auto">
       <table className="w-full border-collapse text-[0.72rem]">

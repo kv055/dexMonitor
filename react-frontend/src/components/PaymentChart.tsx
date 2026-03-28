@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js';
-import type { Offer } from '../types';
+import { useFilters } from '../context/FiltersContext';
 
 Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
 
@@ -9,11 +9,8 @@ const PALETTE = [
   '#d29922', '#39d353', '#db61a2', '#79c0ff', '#e3b341', '#4a4f58',
 ];
 
-interface Props {
-  offers: Offer[];
-}
-
-export function PaymentChart({ offers }: Props) {
+export function PaymentChart() {
+  const { filteredOffers: offers } = useFilters();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<Chart | null>(null);
 
