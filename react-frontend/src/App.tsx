@@ -7,7 +7,6 @@ import { PaymentChart } from './components/PaymentChart';
 import { OffersPreviewTable } from './components/OffersPreviewTable';
 import { OHLCChart } from './components/OHLCChart';
 import { DepthChart } from './components/DepthChart';
-import { OffersTable } from './components/OffersTable';
 
 const DEFAULT_FILTERS: Filters = {
   direction: '',
@@ -66,21 +65,20 @@ export default function App() {
   }, [offers, filters, lastSeenMap]);
 
   return (
-    <div className="min-h-screen bg-bg text-text">
+    <div className="h-screen overflow-hidden flex flex-col bg-bg text-text p-3 gap-3">
       <Header stats={stats} offers={offers} lastUpdated={lastUpdated} />
 
-      <div className="max-w-full mx-auto px-2.5 py-3">
+      <div className="flex-1 min-h-0 flex flex-col gap-3">
         {error && (
-          <div className="bg-[#2d1b1b] border border-red rounded-lg p-4 mb-4 text-red">
+          <div className="bg-[#2d1b1b] border border-red rounded-lg px-3 py-2 text-red text-sm shrink-0">
             {error}
           </div>
         )}
 
-        {/* Top row: 3 panels */}
-        <div className="grid grid-cols-3 gap-2.5 mb-2.5">
-          {/* Control Panel */}
+        {/* Top row: 3 panels — fixed height driven by content */}
+        <div className="grid grid-cols-3 gap-3 shrink-0">
           <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
-            <h3 className="text-[0.85rem] text-muted mb-2.5 flex-shrink-0">Control Panel</h3>
+            <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Control Panel</h3>
             <ControlPanel
               filters={filters}
               paymentMethods={paymentMethods}
@@ -90,34 +88,31 @@ export default function App() {
             />
           </div>
 
-          {/* Payment Chart */}
           <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
-            <h3 className="text-[0.85rem] text-muted mb-2.5 flex-shrink-0">Offers by Payment Method</h3>
+            <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Offers by Payment Method</h3>
             <PaymentChart offers={offers} />
           </div>
 
-          {/* Offers Preview */}
           <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
-            <h3 className="text-[0.85rem] text-muted mb-2.5 flex-shrink-0">Offers Preview</h3>
-            <div className="relative flex-1 min-h-[160px]">
+            <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Offers Preview</h3>
+            <div className="relative flex-1 min-h-35">
               <OffersPreviewTable offers={filteredForPreview} />
             </div>
           </div>
         </div>
 
-        {/* OHLC + Depth */}
-        <div className="grid gap-2.5 mb-2.5" style={{ gridTemplateColumns: '2fr 1fr' }}>
-          <div className="bg-surface border border-border rounded-lg p-3">
-            <h3 className="text-[0.85rem] text-muted mb-2.5">Kraken BTC/EUR — DEX Premium Offer Overlay</h3>
-            <OHLCChart data={ohlcData} premiumOffers={premiumOffers} hours={filters.hours} />
+        {/* Bottom row: fills all remaining height */}
+        <div className="flex-1 min-h-0 grid gap-3" style={{ gridTemplateColumns: '2fr 1fr' }}>
+          <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
+            <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Kraken BTC/EUR — DEX Premium Offer Overlay</h3>
+            <div className="flex-1 min-h-0 relative">
+              <OHLCChart data={ohlcData} premiumOffers={premiumOffers} hours={filters.hours} />
+            </div>
           </div>
-          <div className="bg-surface border border-border rounded-lg p-3">
+          <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
             <DepthChart offers={offers} />
           </div>
         </div>
-
-        {/* All Offers Table */}
-        <OffersTable offers={offers} filters={filters} />
       </div>
     </div>
   );

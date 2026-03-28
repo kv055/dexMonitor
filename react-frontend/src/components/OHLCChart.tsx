@@ -79,5 +79,9 @@ export function OHLCChart({ data, premiumOffers, hours }: Props) {
       .newPlot(divRef.current, traces, layout, { responsive: true, displayModeBar: false });
   }, [data, premiumOffers, hours]);
 
-  return <div ref={divRef} style={{ height: 420 }} />;
+  return (
+    <div className="relative h-full">
+      <div ref={divRef} style={{ position: 'absolute', inset: 0 }} />
+    </div>
+  );
 }

@@ -95,12 +95,14 @@ export function DepthChart({ offers }: Props) {
   }, [offers]);
 
   return (
-    <div className="flex flex-col h-full">
-      <div className="flex justify-between items-center mb-4">
+    <div className="flex flex-col h-full min-h-0">
+      <div className="flex justify-between items-center mb-2 shrink-0">
         <h3 className="text-[0.85rem] text-muted">Orderbook Depth</h3>
         <span className="text-[0.85rem] text-muted">{midInfo}</span>
       </div>
-      <div ref={divRef} style={{ height: 420 }} />
+      <div className="flex-1 min-h-0 relative">
+        <div ref={divRef} style={{ position: 'absolute', inset: 0 }} />
+      </div>
     </div>
   );
 }
