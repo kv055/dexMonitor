@@ -48,18 +48,10 @@ services:
         condition: service_healthy
     environment:
       - DB_PATH=/app/data/orderbook.db
-      - NOKYC_DIR=/app/nokyc
-      - VENV_PYTHON=/app/venv/bin/python
-      - BISQ_VERSION=1.9.22
-      - BISQ_CLI_JAR=/opt/bisq/bisq-cli-1.9.22/cli.jar
-      - PRICE_PROVIDER=bisq_tor
       - SNAPSHOT_INTERVAL_MIN=15
     volumes:
       - orderbook-data:/app/data
       - ./server.py:/app/server.py
-      - ./snapshot.py:/app/snapshot.py
-      - ./start.sh:/app/start.sh
-      - ./frontend:/app/frontend
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
       interval: 30s
@@ -71,6 +63,30 @@ services:
         limits:
           memory: 512M
           cpus: '1.0'
+    restart: unless-stopped
+
+  snapshot:
+    build:
+      context: ..
+      dockerfile: dexMonitor/Dockerfile.snapshot
+    network_mode: host
+    depends_on:
+      tor:
+        condition: service_healthy
+    environment:
+      - DB_PATH=/app/data/orderbook.db
+      - BISQ_VERSION=1.9.22
+      - BISQ_CLI_JAR=/opt/bisq/bisq-cli-1.9.22/cli.jar
+      - PRICE_PROVIDER=bisq_tor
+      - SNAPSHOT_INTERVAL_MIN=15
+    volumes:
+      - orderbook-data:/app/data
+      - ./snapshot.py:/app/snapshot.py
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.5'
     restart: unless-stopped
 
 volumes:
