@@ -31,3 +31,11 @@ CREATE INDEX idx_offers_direction ON offers(direction);
 CREATE INDEX idx_offers_last_seen ON offers(last_seen);
 CREATE INDEX idx_offers_fingerprint ON offers(exchange, direction, price, btc_min, btc_max, payment_method);
 CREATE UNIQUE INDEX idx_offers_offer_id ON offers(offer_id) WHERE offer_id IS NOT NULL;
+
+CREATE TABLE snapshot_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+    exchanges_ok TEXT NOT NULL,
+    offer_ids TEXT NOT NULL,
+    offers_count INTEGER NOT NULL
+);

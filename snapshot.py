@@ -3,6 +3,7 @@
 Orderbook snapshot script - captures orderbook data from Bisq, HodlHodl, and Robosats
 """
 
+import json
 import sqlite3
 import subprocess
 import os
@@ -275,12 +276,24 @@ def fetch_robosats(direction='sell', btc_price=None):
     print("[Robosats] All onion addresses failed")
     return {'btc_price': 0, 'offers': []}
 
+def write_snapshot_log(exchanges_ok, offer_ids):
+    conn = get_db_connection()
+    conn.execute(
+        "INSERT INTO snapshot_log (exchanges_ok, offer_ids, offers_count) VALUES (?, ?, ?)",
+        (json.dumps(sorted(exchanges_ok)), json.dumps(offer_ids), len(offer_ids))
+    )
+    conn.commit()
+    conn.close()
+
 def fetch_and_save(exchange, fetch_fn, direction, ref_price):
-    """Fetch offers for a given exchange and direction, then save"""
+    """Fetch offers for a given exchange and direction, then save.
+    Returns list of captured offer IDs if exchange responded, None otherwise."""
     data = fetch_fn(direction, btc_price=ref_price)
     if data and data['offers']:
         price = data['btc_price'] or ref_price
         save_snapshot(exchange, 'EUR', direction, price, data['offers'])
+        return [o['offer_id'] for o in data['offers'] if o.get('offer_id')]
+    return None
 
 def main():
     print("=== Starting orderbook snapshot ===")
@@ -291,13 +304,19 @@ def main():
         return
     print(f"Reference price: {ref_price} EUR")
 
+    exchanges_ok = set()
+    all_offer_ids = []
+
     for direction in ('sell', 'buy'):
         print(f"\n--- Fetching {direction} offers ---")
-        fetch_and_save('bisq', fetch_bisq, direction, ref_price)
-        fetch_and_save('hodlhodl', fetch_hodlhodl, direction, ref_price)
-        fetch_and_save('robosats', fetch_robosats, direction, ref_price)
+        for exchange, fn in [('bisq', fetch_bisq), ('hodlhodl', fetch_hodlhodl), ('robosats', fetch_robosats)]:
+            ids = fetch_and_save(exchange, fn, direction, ref_price)
+            if ids is not None:
+                exchanges_ok.add(exchange)
+                all_offer_ids.extend(ids)
 
-    print("\n=== Snapshot complete ===")
+    write_snapshot_log(exchanges_ok, all_offer_ids)
+    print(f"\n=== Snapshot complete — {len(all_offer_ids)} offers from {sorted(exchanges_ok)} ===")
 
 if __name__ == "__main__":
     main()
