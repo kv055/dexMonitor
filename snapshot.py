@@ -5,13 +5,18 @@ Orderbook snapshot script - captures orderbook data from Bisq, HodlHodl, and Rob
 
 import json
 import sqlite3
-import subprocess
 import os
+import sys
 import requests
+import grpc
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), 'bisq_grpc'))
+import grpc_pb2
+import grpc_pb2_grpc
 
 # Use /app/data for Docker, default to local path for development
 DB_PATH = os.environ.get('DB_PATH', '/home/claudio_clawd_bot/orderbook/orderbook.db')
-BISQ_CLI_JAR = os.environ.get('BISQ_CLI_JAR', '/opt/bisq/bisq-cli-1.9.22/cli.jar')
+BISQ_GRPC_HOST = os.environ.get('BISQ_GRPC_HOST', 'localhost:9998')
 PRICE_PROVIDER = os.environ.get('PRICE_PROVIDER', 'bisq_tor')
 
 ROBOSATS_ONIONS = [
@@ -140,54 +145,39 @@ def save_snapshot(exchange, fiat, direction, btc_price, offers):
     print(f"[{exchange}] {inserted} new, {updated} updated ({direction})")
 
 def fetch_bisq(direction='sell', btc_price=None):
-    """Fetch offers from local Bisq daemon"""
-    offers = []
+    """Fetch offers from Bisq daemon via gRPC"""
     if not btc_price:
         btc_price = fetch_reference_price('eur')
     if not btc_price:
         print("[Bisq] Could not get reference price")
         return None
 
-    dir_upper = direction.upper()
+    offers = []
     try:
-        result = subprocess.run(
-            ["java", "-jar", BISQ_CLI_JAR, "--port", "9998", "--password=", "getoffers", f"--direction={direction}", "--currency-code=EUR"],
-            capture_output=True, text=True, timeout=60
+        channel = grpc.insecure_channel(BISQ_GRPC_HOST)
+        stub = grpc_pb2_grpc.OffersStub(channel)
+        reply = stub.GetOffers(
+            grpc_pb2.GetOffersRequest(direction=direction.upper(), currency_code='EUR'),
+            metadata=[('password', '')],
+            timeout=60,
         )
-        if result.returncode == 0:
-            lines = result.stdout.strip().split('\n')
-            for line in lines[1:]:
-                if not line.strip() or line.startswith('Buy/Sell'):
-                    continue
-                parts = line.split()
-                if len(parts) >= 4 and parts[0] == dir_upper:
-                    try:
-                        price = float(parts[1].replace(',', ''))
-                        btc_min = float(parts[2])
-                        btc_max = btc_min
-                        fiat_min = int(parts[3].replace(',', ''))
-                        fiat_max = fiat_min
-                        payment_method = ' '.join(parts[4:-2]) if len(parts) > 4 else 'Unknown'
-
-                        offers.append({
-                            'price': price,
-                            'price_diff_percent': round((price / btc_price - 1) * 100, 2) if btc_price else None,
-                            'btc_min': btc_min,
-                            'btc_max': btc_max,
-                            'fiat_min': fiat_min,
-                            'fiat_max': fiat_max,
-                            'payment_method': payment_method,
-                            'offer_id': parts[-1]
-                        })
-                    except (ValueError, IndexError):
-                        continue
+        for o in reply.offers:
+            price = float(o.price)
+            offers.append({
+                'price': price,
+                'price_diff_percent': round((price / btc_price - 1) * 100, 2) if btc_price else None,
+                'btc_min': o.min_amount / 1e8,
+                'btc_max': o.amount / 1e8,
+                'fiat_min': int(float(o.min_volume)),
+                'fiat_max': int(float(o.volume)),
+                'payment_method': o.payment_method_short_name,
+                'offer_id': o.id,
+            })
+        channel.close()
     except Exception as e:
         print(f"[Bisq] Error getting {direction} offers: {e}")
 
-    return {
-        'btc_price': btc_price,
-        'offers': offers
-    }
+    return {'btc_price': btc_price, 'offers': offers}
 
 def fetch_hodlhodl(direction='sell', btc_price=None):
     """Fetch offers directly from HodlHodl REST API"""
@@ -221,8 +211,8 @@ def fetch_hodlhodl(direction='sell', btc_price=None):
                     'offer_id': o['id'],
                     'price': price,
                     'price_diff_percent': round((price / btc_price - 1) * 100, 2) if btc_price else None,
-                    'btc_min': fiat_min / price,
-                    'btc_max': fiat_max / price,
+                    'btc_min': round(fiat_min / price, 8),
+                    'btc_max': round(fiat_max / price, 8),
                     'fiat_min': fiat_min,
                     'fiat_max': fiat_max,
                     'payment_method': method,
@@ -261,8 +251,8 @@ def fetch_robosats(direction='sell', btc_price=None):
                         'offer_id': str(line['id']),
                         'price': price,
                         'price_diff_percent': round(float(line['premium']), 2),
-                        'btc_min': fiat_min / price if price else None,
-                        'btc_max': fiat_max / price if price else None,
+                        'btc_min': round(fiat_min / price, 8) if price else None,
+                        'btc_max': round(fiat_max / price, 8) if price else None,
                         'fiat_min': fiat_min,
                         'fiat_max': fiat_max,
                         'payment_method': line['payment_method'],
