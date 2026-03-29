@@ -282,6 +282,46 @@ def get_ohlc():
     })
 
 
+@app.route('/api/snapshot-log', methods=['GET'])
+def get_snapshot_log():
+    """
+    Get snapshot run history
+    ---
+    tags:
+      - Snapshots
+    parameters:
+      - name: limit
+        in: query
+        type: integer
+        default: 50
+        description: Maximum number of log entries to return
+    responses:
+      200:
+        description: List of snapshot run log entries
+    """
+    import json
+    limit = request.args.get('limit', 50, type=int)
+
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, timestamp, exchanges, offers_count FROM snapshot_log ORDER BY timestamp DESC LIMIT ?",
+        (limit,)
+    )
+    rows = []
+    for row in cursor.fetchall():
+        exchanges = json.loads(row['exchanges'])
+        rows.append({
+            'id': row['id'],
+            'timestamp': row['timestamp'],
+            'exchanges': exchanges,
+            'offers_count': row['offers_count'],
+        })
+    conn.close()
+
+    return jsonify(rows)
+
+
 @app.route('/health', methods=['GET'])
 def health():
     """
