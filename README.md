@@ -1,136 +1,132 @@
-# Orderbook Snapshot
+# dexMonitor
 
-Captures P2P Bitcoin exchange orderbook data from HodlHodl and Robosats, stores it in SQLite, and provides a REST API.
+Monitors P2P Bitcoin exchange orderbooks (Bisq, HodlHodl, Robosats), stores snapshots in SQLite, and serves a React dashboard with a REST API.
 
-## Quick Start with Docker
+## Quick Start
 
 ```bash
-docker-compose up --build
+docker compose up --build -d
 ```
 
-API will be available at http://localhost:5000
+Dashboard and API available at http://localhost:5000
 
 ## Architecture
 
 ```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│                              Data Flow                                       │
-├─────────────────────────────────────────────────────────────────────────────┤
-│                                                                              │
-│  HodlHodl API ──Tor──► nokyc.py ──terminal output──► snapshot.py ──► SQLite │
-│  Robosats API ──Tor──► nokyc.py ──terminal output──► snapshot.py ──► SQLite │
-│                                                                              │
-└─────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────┐
+│                           Data Flow                               │
+├──────────────────────────────────────────────────────────────────┤
+│                                                                    │
+│  Bisq node ──gRPC──────────────────┐                             │
+│  HodlHodl API ──REST──────────────►│ snapshot (Go) ──► SQLite    │
+│  Robosats API ──Tor onion──────────┘        ▲                    │
+│                                             │                     │
+│  Tor ──SOCKS5 proxy──────────────────────── ┘                    │
+│                                                                    │
+│  SQLite ──────────────────────────► server (Go) ──► React UI     │
+│                                                                    │
+└──────────────────────────────────────────────────────────────────┘
 ```
 
-### How It Works
+### Services
 
-1. **Tor** - Provides anonymity network for connecting to exchanges
-2. **nokyc** - Fetches offers from HodlHodl and Robosats over Tor
-3. **snapshot.py** - Runs every 10 minutes (via cron), parses terminal output from nokyc, stores in SQLite
-4. **server.py** - Flask REST API serving the captured data
+| Service | Description |
+|---------|-------------|
+| **tor** | Tor daemon — SOCKS5 proxy on port 9050 for Robosats and price feeds |
+| **bisq** | Bisq desktop node — exposes gRPC API on port 9998 |
+| **snapshot** | Go binary — fetches offers every `SNAPSHOT_INTERVAL_MIN` minutes, upserts into SQLite |
+| **app** | Go binary — serves REST API + React frontend on port 5000 |
 
-## Docker Setup
-
-### Prerequisites
-
-- Docker
-- Docker Compose
-
-### Running
+## Docker Compose
 
 ```bash
-# Build and start
-docker-compose up --build
-
-# Run in background
-docker-compose up -d
+# Build and start all services
+docker compose up --build -d
 
 # View logs
-docker-compose logs -f
+docker compose logs -f
 
 # Stop
-docker-compose down
+docker compose down
 ```
+
+### Environment Variables
+
+**app / snapshot (shared):**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DB_PATH` | `/app/data/orderbook.db` | SQLite database path |
+| `SNAPSHOT_INTERVAL_MIN` | `15` | Snapshot interval (minutes); also sets Kraken OHLC candle width |
+
+**snapshot only:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BISQ_GRPC_HOST` | `localhost:9998` | Bisq gRPC endpoint |
+| `PRICE_PROVIDER` | `bisq_tor` | BTC reference price source (`bisq_tor`, `kraken`, `coingecko`) |
+
+**app only:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `FRONTEND_DIR` | `<exe dir>/react-frontend/dist` | Path to built React assets |
 
 ### Ports
 
-- `5000` - Flask API
-- `9050` - Tor SOCKS proxy
+| Port | Service |
+|------|---------|
+| `5000` | REST API + React dashboard |
+| `9050` | Tor SOCKS5 proxy |
+| `9998` | Bisq gRPC |
 
-## Local Development Setup
+### Resource Limits
 
-### Prerequisites
-
-- Python 3 with venv support
-- Tor daemon running on port 9050
-- SQLite3
-
-### Installation
-
-```bash
-# Install Python dependencies
-pip3 install flask flasgger
-
-# Install SQLite (if not present)
-sudo apt install sqlite3
-```
-
-### Running Locally
-
-1. **Start Tor**:
-   ```bash
-   sudo systemctl start tor
-   ```
-
-2. **Initialize the database**:
-   ```bash
-   sqlite3 orderbook.db < db/schema.sql
-   ```
-
-3. **Start the API server**:
-   ```bash
-   python3 server.py
-   ```
-
-4. **The cron job** (runs every 10 minutes):
-   ```
-   */10 * * * * cd /path/to/orderbook && python3 snapshot.py
-   ```
+| Service | Memory | CPU |
+|---------|--------|-----|
+| tor | 256M | 0.5 |
+| bisq | 3072M | 1.5 |
+| app | 64M | 0.25 |
+| snapshot | 64M | 0.25 |
 
 ## API
 
 ### Endpoints
 
-| Endpoint | Description |
-|----------|-------------|
-| `GET /api` | List all available endpoints |
-| `GET /api/snapshots` | Get all snapshots with optional filters |
-| `GET /api/snapshots/<id>` | Get a specific snapshot with its offers |
-| `GET /api/offers` | Get all offers with optional filters |
-| `GET /api/stats` | Get summary statistics |
-| `GET /api/latest` | Get latest snapshot from each exchange |
-| `GET /apidocs` | Interactive Swagger API documentation |
-| `GET /health` | Health check |
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/` | React dashboard |
+| GET | `/api/offers` | All offers, ordered by `last_seen` |
+| GET | `/api/premium_offers` | Offers priced better than reference (buy above / sell below market) |
+| GET | `/api/stats` | Price stats and offer counts per exchange |
+| GET | `/api/ohlc` | Kraken OHLC candles + offer overlay data |
+| GET | `/api/snapshot-log` | Recent snapshot run history |
+| GET | `/health` | Health check |
 
 ### Query Parameters
 
-- `exchange` - Filter by exchange (hodlhodl, robosats)
-- `hours` - Only return data from the last N hours (default: 24)
-- `limit` - Maximum number of results (default varies by endpoint)
-- `direction` - Trade direction (buy or sell, default: sell)
+| Parameter | Endpoints | Description |
+|-----------|-----------|-------------|
+| `limit` | offers, premium_offers, snapshot-log | Max results (default: 1000 / 1000 / 50) |
+| `hours` | premium_offers, stats, ohlc | Lookback window in hours (default: all / 24 / 24) |
 
 ### Example Requests
 
 ```bash
-# Get latest offers from all exchanges
-curl http://127.0.0.1:5000/api/latest
+# All current offers
+curl http://localhost:5000/api/offers
 
-# Get stats for the last hour
-curl "http://127.0.0.1:5000/api/stats?hours=1"
+# Offers priced better than market in the last 6 hours
+curl "http://localhost:5000/api/offers?hours=6"
 
-# Get HodlHodl offers from the last 6 hours
-curl "http://127.0.0.1:5000/api/offers?exchange=hodlhodl&hours=6"
+# Price stats for last 24 hours
+curl http://localhost:5000/api/stats
+
+# OHLC candles + offer overlay
+curl "http://localhost:5000/api/ohlc?hours=48"
+
+# Last 10 snapshot runs
+curl "http://localhost:5000/api/snapshot-log?limit=10"
 ```
 
 ## Database Schema
@@ -141,9 +137,9 @@ curl "http://127.0.0.1:5000/api/offers?exchange=hodlhodl&hours=6"
 |--------|------|-------------|
 | id | INTEGER | Primary key |
 | timestamp | DATETIME | When the snapshot was taken |
-| exchange | TEXT | Exchange name (hodlhodl, robosats) |
+| exchange | TEXT | Exchange name |
 | fiat_currency | TEXT | Fiat currency (EUR, USD, etc.) |
-| direction | TEXT | buy or sell |
+| direction | TEXT | `buy` or `sell` |
 | btc_price | REAL | Reference BTC price in fiat |
 
 ### offers
@@ -151,25 +147,45 @@ curl "http://127.0.0.1:5000/api/offers?exchange=hodlhodl&hours=6"
 | Column | Type | Description |
 |--------|------|-------------|
 | id | INTEGER | Primary key |
-| snapshot_id | INTEGER | Foreign key to snapshots |
-| price | REAL | Price per BTC |
-| price_diff_percent | REAL | Difference from reference price |
-| btc_min | REAL | Minimum BTC amount |
-| btc_max | REAL | Maximum BTC amount |
-| fiat_min | INTEGER | Minimum fiat amount |
-| fiat_max | INTEGER | Maximum fiat amount |
+| exchange | TEXT | Exchange name |
+| direction | TEXT | `buy` or `sell` |
+| price | REAL | Price per BTC in fiat |
+| price_diff_percent | REAL | Deviation from reference price (%) |
+| btc_min / btc_max | REAL | BTC trade size range |
+| fiat_min / fiat_max | INTEGER | Fiat trade size range |
 | payment_method | TEXT | Payment method (SEPA, Revolut, etc.) |
-| offer_id | TEXT | Exchange-specific offer ID |
+| offer_id | TEXT | Exchange-specific offer ID (unique) |
+| ref_price | REAL | Reference BTC price at time of snapshot |
+| first_seen | DATETIME | When offer was first observed |
+| last_seen | DATETIME | When offer was last seen (updated on each snapshot) |
 
-## Files
+### snapshot_log
 
-- `snapshot.py` - Cron script that captures orderbook data
-- `server.py` - Flask API server with OpenAPI/Swagger docs
-- `db/schema.sql` - SQLite database schema
-- `db/migrations/migrate_offers.sql` - Migration script for schema changes
-- `nokyc/` - Directory containing nokyc scripts
-- `Dockerfile` - Docker container definition
-- `docker-compose.yml` - Docker Compose setup
+| Column | Type | Description |
+|--------|------|-------------|
+| id | INTEGER | Primary key |
+| timestamp | DATETIME | When the snapshot ran |
+| exchanges | TEXT | JSON object with per-exchange offer counts |
+| offers_count | INTEGER | Total offers upserted |
+
+## Project Structure
+
+```
+.
+├── cmd/
+│   ├── server/main.go       # REST API server
+│   └── snapshot/main.go     # Snapshot fetcher
+├── bisq_grpc/
+│   ├── go/                  # Generated gRPC stubs
+│   └── grpc.proto           # Bisq gRPC source definitions
+├── db/schema.sql            # SQLite schema
+├── react-frontend/          # React + Vite dashboard
+├── Dockerfile               # app container (Node + Go multi-stage)
+├── Dockerfile.snapshot      # snapshot container (Go multi-stage)
+├── Dockerfile.bisq          # Bisq node container
+├── Dockerfile.tor           # Tor daemon container
+└── docker-compose.yml
+```
 
 ## License
 
