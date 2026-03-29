@@ -35,7 +35,6 @@ CREATE UNIQUE INDEX idx_offers_offer_id ON offers(offer_id) WHERE offer_id IS NO
 CREATE TABLE snapshot_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-    exchanges_ok TEXT NOT NULL,
-    offer_ids TEXT NOT NULL,
+    exchanges TEXT NOT NULL,
     offers_count INTEGER NOT NULL
 );
