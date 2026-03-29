@@ -1,13 +1,8 @@
-FROM ubuntu:24.04
+FROM alpine:3.21
 
-ENV DEBIAN_FRONTEND=noninteractive
+RUN apk add --no-cache tor curl
 
-RUN apt-get update && apt-get install -y \
-    tor \
-    curl \
-    && rm -rf /var/lib/apt/lists/*
-
-RUN useradd -m -s /bin/bash toruser
+RUN adduser -D toruser
 
 EXPOSE 9050 9051
 
