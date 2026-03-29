@@ -1,7 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { Offer, Filters } from '../types';
 import { ExchangeTag } from './ExchangeTag';
-import { formatNum, formatTime, formatDuration, durationMinutes, premiumClass } from '../utils/formatters';
+import { formatNum, formatBtc, formatTime, formatDuration, durationMinutes, premiumClass } from '../utils/formatters';
 
 interface Props {
   offers: Offer[];
@@ -106,8 +106,8 @@ export function OffersTable({ offers, filters }: Props) {
               <td className={`px-2.5 py-1.5 border-b border-border ${premiumClass(o.price_diff_percent)}`}>
                 {o.price_diff_percent != null ? o.price_diff_percent.toFixed(1) + '%' : '—'}
               </td>
-              <td className="px-2.5 py-1.5 border-b border-border">{o.btc_min ?? '—'}</td>
-              <td className="px-2.5 py-1.5 border-b border-border">{o.btc_max ?? '—'}</td>
+              <td className="px-2.5 py-1.5 border-b border-border">{formatBtc(o.btc_min)}</td>
+              <td className="px-2.5 py-1.5 border-b border-border">{formatBtc(o.btc_max)}</td>
               <td className="px-2.5 py-1.5 border-b border-border">{o.payment_method || '—'}</td>
               <td className="px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.first_seen)}</td>
               <td className="px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.last_seen)}</td>

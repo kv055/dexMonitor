@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { ExchangeTag } from './ExchangeTag';
-import { formatNum, premiumClass } from '../utils/formatters';
+import { formatNum, formatBtc, premiumClass } from '../utils/formatters';
 import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
 
@@ -57,8 +57,8 @@ export function OffersPreviewTable() {
                   <td className={`px-1.5 py-1 text-right whitespace-nowrap ${premiumClass(o.price_diff_percent)}`}>
                     {o.price_diff_percent != null ? o.price_diff_percent.toFixed(1) + '%' : '—'}
                   </td>
-                  <td className="px-1.5 py-1 text-right whitespace-nowrap">{o.btc_min ?? '—'}</td>
-                  <td className="px-1.5 py-1 text-right whitespace-nowrap">{o.btc_max ?? '—'}</td>
+                  <td className="px-1.5 py-1 text-right whitespace-nowrap">{formatBtc(o.btc_min)}</td>
+                  <td className="px-1.5 py-1 text-right whitespace-nowrap">{formatBtc(o.btc_max)}</td>
                   <td className="px-1.5 py-1 whitespace-nowrap overflow-hidden text-ellipsis max-w-22.5">{o.payment_method || '—'}</td>
                 </tr>
                 {isSelected && (

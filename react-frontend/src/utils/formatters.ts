@@ -1,3 +1,8 @@
+export function formatBtc(n: number | null | undefined): string {
+  if (n == null) return '—';
+  return Number(n).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 5 });
+}
+
 export function formatNum(n: number | null | undefined): string {
   if (n == null) return '—';
   return Number(n).toLocaleString('de-DE', { maximumFractionDigits: 0 });
