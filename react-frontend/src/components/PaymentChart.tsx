@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { Chart, BarController, BarElement, CategoryScale, LinearScale, Tooltip } from 'chart.js';
 import { useFilters } from '../context/FiltersContext';
+import { LoadingSpinner } from './LoadingSpinner';
 
 Chart.register(BarController, BarElement, CategoryScale, LinearScale, Tooltip);
 
@@ -10,7 +11,7 @@ const PALETTE = [
 ];
 
 export function PaymentChart() {
-  const { filteredOffers: offers } = useFilters();
+  const { filteredOffers: offers, loading } = useFilters();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<Chart | null>(null);
 
@@ -112,8 +113,9 @@ export function PaymentChart() {
   }, [offers]);
 
   return (
-    <div className="relative flex-1 min-h-[160px]">
-      <canvas ref={canvasRef} />
+    <div className="relative flex-1 min-h-40">
+      {loading && <LoadingSpinner label="Loading offers" />}
+      <canvas ref={canvasRef} style={{ opacity: loading ? 0 : 1, transition: 'opacity 0.3s ease' }} />
     </div>
   );
 }

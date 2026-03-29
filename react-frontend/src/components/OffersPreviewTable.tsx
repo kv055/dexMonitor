@@ -2,11 +2,12 @@ import React, { useEffect, useRef } from 'react';
 import { ExchangeTag } from './ExchangeTag';
 import { formatNum, premiumClass } from '../utils/formatters';
 import { useFilters } from '../context/FiltersContext';
+import { LoadingSpinner } from './LoadingSpinner';
 
 const thCls = "sticky top-0 bg-surface px-1.5 py-1 border-b border-border text-muted text-[0.65rem] uppercase text-left whitespace-nowrap";
 
 export function OffersPreviewTable() {
-  const { offers: allOffers, filteredOffers: offers, selectedOfferId, setSelectedOfferId } = useFilters();
+  const { offers: allOffers, filteredOffers: offers, selectedOfferId, setSelectedOfferId, loading } = useFilters();
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
 
   // Determine the latest last_seen per exchange to identify live (open) offers
@@ -23,6 +24,7 @@ export function OffersPreviewTable() {
 
   return (
     <div className="absolute inset-0 overflow-y-auto">
+      {loading && offers.length === 0 && <LoadingSpinner label="Loading offers" />}
       <table className="w-full border-collapse text-[0.72rem]">
         <thead>
           <tr>
@@ -37,7 +39,7 @@ export function OffersPreviewTable() {
         </thead>
         <tbody>
           {offers.length === 0 ? (
-            <tr><td colSpan={7} className="p-4 text-center text-muted">Loading...</td></tr>
+            !loading && <tr><td colSpan={7} className="p-4 text-center text-muted">No offers</td></tr>
           ) : offers.map((o) => {
             const isSelected = o.id === selectedOfferId;
             return (

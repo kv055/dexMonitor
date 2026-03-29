@@ -9,7 +9,7 @@ export function useDashboard() {
   const [premiumOffers, setPremiumOffers] = useState<Offer[]>([]);
   const [lastUpdated, setLastUpdated] = useState('');
   const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   const load = useCallback(async (hours: string) => {
     setLoading(true);

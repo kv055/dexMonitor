@@ -20,3 +20,22 @@ body {
   color: #e6edf3;
   line-height: 1.5;
 }
+
+@keyframes dex-spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes dex-pulse-label {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 0.75; }
+}
+
+.dex-spinner {
+  flex-shrink: 0;
+  border-radius: 50%;
+  border: 2.5px solid rgba(247, 147, 26, 0.10);
+  border-top-color: #f7931a;
+  border-right-color: rgba(247, 147, 26, 0.42);
+  animation: dex-spin 0.72s linear infinite;
+  box-shadow: 0 0 10px rgba(247, 147, 26, 0.16);
+}

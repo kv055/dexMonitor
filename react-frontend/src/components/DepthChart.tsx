@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from 'react';
 import { useFilters } from '../context/FiltersContext';
+import { LoadingSpinner } from './LoadingSpinner';
 
 export function DepthChart() {
-  const { depthOffers: offers } = useFilters();
+  const { depthOffers: offers, loading } = useFilters();
   const divRef = useRef<HTMLDivElement>(null);
   const [midInfo, setMidInfo] = useState('');
 
@@ -98,7 +99,8 @@ export function DepthChart() {
         <span className="text-[0.85rem] text-muted">{midInfo}</span>
       </div>
       <div className="flex-1 min-h-0 relative">
-        <div ref={divRef} style={{ position: 'absolute', inset: 0 }} />
+        {loading && <LoadingSpinner label="Loading orderbook" />}
+        <div ref={divRef} style={{ position: 'absolute', inset: 0, opacity: loading ? 0 : 1, transition: 'opacity 0.35s ease' }} />
       </div>
     </div>
   );

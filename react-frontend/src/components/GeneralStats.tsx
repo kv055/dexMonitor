@@ -1,5 +1,6 @@
 import { useMemo } from 'react';
 import { useFilters } from '../context/FiltersContext';
+import { LoadingSpinner } from './LoadingSpinner';
 
 function normalizeTs(ts: string): string {
   return ts.replace(' ', 'T') + (ts.endsWith('Z') ? '' : 'Z');
@@ -48,7 +49,7 @@ function KpiCard({ label, value, sub, valueColor = 'text-text', barFill, barColo
 }
 
 export function GeneralStats() {
-  const { offers } = useFilters();
+  const { offers, loading } = useFilters();
 
   const stats = useMemo(() => {
     const lastSeenMap: Record<string, string> = {};
@@ -84,6 +85,14 @@ export function GeneralStats() {
     v == null ? 'text-text' : v >= 3 ? 'text-green' : v >= 1 ? 'text-yellow' : 'text-red';
   const premiumBarColor = (v: number | null) =>
     v == null ? 'bg-border' : v >= 3 ? 'bg-green' : v >= 1 ? 'bg-yellow' : 'bg-red';
+
+  if (loading && offers.length === 0) {
+    return (
+      <div className="relative h-20">
+        <LoadingSpinner label="Loading statistics" />
+      </div>
+    );
+  }
 
   return (
     <div className="flex gap-3 items-start">

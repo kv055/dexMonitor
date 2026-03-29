@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import type { OHLCData } from '../types';
 import { useFilters } from '../context/FiltersContext';
+import { LoadingSpinner } from './LoadingSpinner';
 
 interface Props {
   data: OHLCData | null;
@@ -26,7 +27,7 @@ function normalizeTs(ts: string): string {
 
 export function OHLCChart({ data }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
-  const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferId, setSelectedOfferId } = useFilters();
+  const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferId, setSelectedOfferId, loading } = useFilters();
 
   useEffect(() => {
     if (!divRef.current || !data) return;
@@ -170,7 +171,8 @@ export function OHLCChart({ data }: Props) {
 
   return (
     <div className="relative h-full">
-      <div ref={divRef} style={{ position: 'absolute', inset: 0 }} />
+      {loading && <LoadingSpinner size={36} label="Loading chart data" />}
+      <div ref={divRef} style={{ position: 'absolute', inset: 0, opacity: loading ? 0 : 1, transition: 'opacity 0.35s ease' }} />
     </div>
   );
 }

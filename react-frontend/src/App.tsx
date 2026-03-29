@@ -70,11 +70,11 @@ function MonitorView({ ohlcData, lastUpdated, error, load }: {
 }
 
 export default function App() {
-  const { offers, stats, ohlcData, lastUpdated, error, load } = useDashboard();
+  const { offers, stats, ohlcData, lastUpdated, error, loading, load } = useDashboard();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
 
   return (
-    <FiltersProvider offers={offers}>
+    <FiltersProvider offers={offers} loading={loading}>
       <div className="h-screen overflow-hidden flex flex-col bg-bg text-text p-3 gap-3">
         <Header stats={stats} offers={offers} activeTab={activeTab} onTabChange={setActiveTab} />
 

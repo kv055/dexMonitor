@@ -39,6 +39,7 @@ interface FiltersContextValue {
   paymentMethods: string[];
   selectedOfferId: number | null;
   setSelectedOfferId: (id: number | null) => void;
+  loading: boolean;
 }
 
 const FiltersContext = createContext<FiltersContextValue | null>(null);
@@ -47,10 +48,11 @@ const FiltersContext = createContext<FiltersContextValue | null>(null);
 
 interface Props {
   offers: Offer[];
+  loading: boolean;
   children: ReactNode;
 }
 
-export function FiltersProvider({ offers, children }: Props) {
+export function FiltersProvider({ offers, loading, children }: Props) {
   const [filters, dispatch] = useReducer(filtersReducer, DEFAULT_FILTERS);
   const [selectedOfferId, setSelectedOfferId] = useState<number | null>(null);
 
@@ -96,7 +98,7 @@ export function FiltersProvider({ offers, children }: Props) {
   }, [offers, filters, lastSeenMap]);
 
   return (
-    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, selectedOfferId, setSelectedOfferId }}>
+    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, selectedOfferId, setSelectedOfferId, loading }}>
       {children}
     </FiltersContext.Provider>
   );
