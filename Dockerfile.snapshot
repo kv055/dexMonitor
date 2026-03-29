@@ -1,41 +1,21 @@
-FROM ubuntu:24.04
+FROM python:3.12-alpine
 
-ENV DEBIAN_FRONTEND=noninteractive
-
-RUN apt-get update && apt-get install -y \
-    curl \
-    python3 \
-    python3-pip \
-    python3-venv \
-    sqlite3 \
-    && rm -rf /var/lib/apt/lists/*
-
-# Bisq CLI needed by snapshot.py to query the Bisq container's gRPC
-ENV BISQ_VERSION=1.9.22
-RUN apt-get update && apt-get install -y wget unzip openjdk-11-jre-headless \
-    && mkdir -p /opt/bisq \
-    && wget -q "https://github.com/bisq-network/bisq/releases/download/v${BISQ_VERSION}/bisq-cli-${BISQ_VERSION}.zip" -O /tmp/bisq-cli.zip \
-    && unzip -q /tmp/bisq-cli.zip -d /opt/bisq/ \
-    && chmod -R o+rX /opt/bisq/ \
-    && rm /tmp/bisq-cli.zip \
-    && apt-get purge -y wget unzip && apt-get autoremove -y \
-    && rm -rf /var/lib/apt/lists/*
+RUN apk add --no-cache curl sqlite su-exec
 
 WORKDIR /app
 
 COPY dexMonitor/snapshot.py dexMonitor/db/schema.sql ./
+COPY dexMonitor/bisq_grpc/ ./bisq_grpc/
 
-RUN python3 -m venv venv && \
-    venv/bin/pip install --upgrade pip && \
-    venv/bin/pip install requests[socks]
+RUN pip install --no-cache-dir requests[socks] grpcio protobuf
 
 RUN mkdir -p /app/data
 
-RUN useradd -m -s /bin/bash appuser && \
-    chown -R appuser:appuser /app
+RUN adduser -D appuser && chown -R appuser:appuser /app
 
-USER appuser
+USER root
 
 CMD ["sh", "-c", \
-    "if [ ! -f \"$DB_PATH\" ]; then sqlite3 \"$DB_PATH\" < /app/schema.sql; fi && \
-     while true; do /app/venv/bin/python /app/snapshot.py; sleep $((SNAPSHOT_INTERVAL_MIN * 60)); done"]
+    "chown -R appuser:appuser /app/data && \
+     if [ ! -f \"$DB_PATH\" ]; then sqlite3 \"$DB_PATH\" < /app/schema.sql; fi && \
+     exec su-exec appuser sh -c 'while true; do python /app/snapshot.py; sleep $((SNAPSHOT_INTERVAL_MIN * 60)); done'"]

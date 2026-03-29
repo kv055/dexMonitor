@@ -75,8 +75,7 @@ services:
         condition: service_healthy
     environment:
       - DB_PATH=/app/data/orderbook.db
-      - BISQ_VERSION=1.9.22
-      - BISQ_CLI_JAR=/opt/bisq/bisq-cli-1.9.22/cli.jar
+      - BISQ_GRPC_HOST=localhost:9998
       - PRICE_PROVIDER=bisq_tor
       - SNAPSHOT_INTERVAL_MIN=15
     volumes:
