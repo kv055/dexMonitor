@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
+import { formatBtc } from '../utils/formatters';
 
 function normalizeTs(ts: string): string {
   return ts.replace(' ', 'T') + (ts.endsWith('Z') ? '' : 'Z');
@@ -13,10 +14,6 @@ function fmtDuration(ms: number): string {
   return `${m}m`;
 }
 
-function fmtBtc(btc: number): string {
-  if (btc >= 1) return btc.toFixed(2) + ' BTC';
-  return (btc * 1000).toFixed(0) + 'k sat';
-}
 
 interface KpiCardProps {
   label: string;
@@ -128,7 +125,7 @@ export function GeneralStats() {
       />
       <KpiCard
         label="BTC Available"
-        value={stats.availableBtc > 0 ? fmtBtc(stats.availableBtc) : '—'}
+        value={stats.availableBtc > 0 ? formatBtc(stats.availableBtc) : '—'}
         sub="open ask max sizes"
         barFill={stats.availableBtc > 0 ? Math.min(stats.availableBtc / 2, 1) : undefined}
         barColor="bg-orange"
