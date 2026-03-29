@@ -9,6 +9,7 @@ import { OffersPreviewTable } from './components/OffersPreviewTable';
 import { OHLCChart } from './components/OHLCChart';
 import { DepthChart } from './components/DepthChart';
 import { GeneralStats } from './components/GeneralStats';
+import { SnapshotLog } from './components/SnapshotLog';
 
 // Inner component so it can consume FiltersContext
 function MonitorView({ ohlcData, lastUpdated, error, load }: {
@@ -69,6 +70,21 @@ function MonitorView({ ohlcData, lastUpdated, error, load }: {
   );
 }
 
+function MmControllerView() {
+  return (
+    <div className="flex-1 min-h-0 flex flex-col gap-3">
+      <div className="grid grid-cols-3 gap-3 shrink-0">
+        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
+          <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Snapshot Log</h3>
+          <div className="relative flex-1 min-h-52">
+            <SnapshotLog />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const { offers, stats, ohlcData, lastUpdated, error, loading, load } = useDashboard();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
@@ -85,6 +101,10 @@ export default function App() {
             error={error}
             load={load}
           />
+        )}
+
+        {activeTab === 'mmcontroller' && (
+          <MmControllerView />
         )}
 
         {activeTab === 'insights' && (
