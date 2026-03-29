@@ -2,9 +2,9 @@
 FROM node:20-alpine AS frontend
 
 WORKDIR /build
-COPY dexMonitor/react-frontend/package*.json ./
+COPY react-frontend/package*.json ./
 RUN npm ci
-COPY dexMonitor/react-frontend/ ./
+COPY react-frontend/ ./
 RUN npm run build
 
 # Stage 2: Python runtime
@@ -14,7 +14,7 @@ RUN apk add --no-cache curl procps
 
 WORKDIR /app
 
-COPY dexMonitor/server.py ./
+COPY server.py ./
 COPY --from=frontend /build/dist ./react-frontend/dist
 
 RUN pip install --no-cache-dir flask flask-cors flasgger requests[socks]

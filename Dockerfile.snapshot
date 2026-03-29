@@ -4,8 +4,8 @@ RUN apk add --no-cache curl sqlite su-exec
 
 WORKDIR /app
 
-COPY dexMonitor/snapshot.py dexMonitor/db/schema.sql ./
-COPY dexMonitor/bisq_grpc/ ./bisq_grpc/
+COPY snapshot.py db/schema.sql ./
+COPY bisq_grpc/ ./bisq_grpc/
 
 RUN pip install --no-cache-dir requests[socks] grpcio protobuf
 
