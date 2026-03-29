@@ -7,17 +7,24 @@ RUN npm ci
 COPY react-frontend/ ./
 RUN npm run build
 
-# Stage 2: Python runtime
-FROM python:3.12-alpine
+# Stage 2: Build Go binary
+FROM golang:1.25-alpine AS builder
 
-RUN apk add --no-cache curl procps
+WORKDIR /build
+COPY go.mod go.sum ./
+RUN go mod download
+COPY cmd/server/ ./cmd/server/
+RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o server ./cmd/server
+
+# Stage 3: Minimal runtime
+FROM alpine:3.21
+
+RUN apk add --no-cache curl
 
 WORKDIR /app
 
-COPY server.py ./
+COPY --from=builder /build/server ./
 COPY --from=frontend /build/dist ./react-frontend/dist
-
-RUN pip install --no-cache-dir flask flask-cors flasgger requests[socks]
 
 RUN adduser -D appuser && chown -R appuser:appuser /app
 
@@ -25,7 +32,7 @@ USER appuser
 
 EXPOSE 5000
 
-HEALTHCHECK --interval=30s --timeout=10s --start-period=30s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
     CMD curl -f http://localhost:5000/health || exit 1
 
-CMD ["python", "/app/server.py"]
+CMD ["./server"]

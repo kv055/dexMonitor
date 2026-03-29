@@ -27,6 +27,13 @@ env/
 .DS_Store
 Thumbs.db
 
+# Go
+/server
+/snapshot
+/cmd/server/server
+/cmd/snapshot/snapshot
+*.exe
+
 # Environment
 .env
 .env.local
