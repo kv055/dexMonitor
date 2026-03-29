@@ -22,7 +22,7 @@ services:
   bisq:
     build:
       context: ..
-      dockerfile: /Dockerfile.bisq
+      dockerfile: Dockerfile.bisq
     network_mode: host
     depends_on:
       tor:
@@ -41,7 +41,7 @@ services:
   app:
     build:
       context: ..
-      dockerfile: /Dockerfile
+      dockerfile: Dockerfile
     network_mode: host
     depends_on:
       tor:
@@ -68,7 +68,7 @@ services:
   snapshot:
     build:
       context: ..
-      dockerfile: /Dockerfile.snapshot
+      dockerfile: Dockerfile.snapshot
     network_mode: host
     depends_on:
       tor:
