@@ -23,7 +23,7 @@ RUN apt-get update && apt-get install -y wget unzip openjdk-11-jre-headless \
 
 WORKDIR /app
 
-COPY dexMonitor/snapshot.py dexMonitor/schema.sql ./
+COPY dexMonitor/snapshot.py dexMonitor/db/schema.sql ./
 
 RUN python3 -m venv venv && \
     venv/bin/pip install --upgrade pip && \

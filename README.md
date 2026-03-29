@@ -85,7 +85,7 @@ sudo apt install sqlite3
 
 2. **Initialize the database**:
    ```bash
-   sqlite3 orderbook.db < schema.sql
+   sqlite3 orderbook.db < db/schema.sql
    ```
 
 3. **Start the API server**:
@@ -165,7 +165,8 @@ curl "http://127.0.0.1:5000/api/offers?exchange=hodlhodl&hours=6"
 
 - `snapshot.py` - Cron script that captures orderbook data
 - `server.py` - Flask API server with OpenAPI/Swagger docs
-- `schema.sql` - SQLite database schema
+- `db/schema.sql` - SQLite database schema
+- `db/migrations/migrate_offers.sql` - Migration script for schema changes
 - `nokyc/` - Directory containing nokyc scripts
 - `Dockerfile` - Docker container definition
 - `docker-compose.yml` - Docker Compose setup
