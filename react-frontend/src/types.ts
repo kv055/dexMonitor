@@ -7,6 +7,7 @@ export interface Offer {
   btc_min: number | null;
   btc_max: number | null;
   payment_method: string | null;
+  offer_id: string | null;
   first_seen: string | null;
   last_seen: string | null;
   ref_price: number | null;

@@ -1,6 +1,6 @@
 import React, { useEffect, useRef } from 'react';
 import { ExchangeTag } from './ExchangeTag';
-import { formatNum, formatBtc, premiumClass } from '../utils/formatters';
+import { formatNum, formatBtc, premiumClass, formatTime } from '../utils/formatters';
 import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
 
@@ -65,15 +65,15 @@ export function OffersPreviewTable() {
                   <tr key={`${o.id}-detail`} className="bg-white/8">
                     <td colSpan={7} className="px-3 py-2 border-b border-border text-[0.65rem]">
                       <span className="text-muted">ID:</span>{' '}
-                      <span className="text-text">{o.id ?? 'noID'}</span>
+                      <span className="text-text">{o.offer_id ?? '—'}</span>
                       <span className="mx-2 text-border">|</span>
                       <span className="text-muted">First seen:</span>{' '}
-                      <span className="text-text">{o.first_seen ?? '—'}</span>
+                      <span className="text-text">{formatTime(o.first_seen)}</span>
                       <span className="mx-2 text-border">|</span>
                       <span className="text-muted">Last seen:</span>{' '}
                       {o.last_seen === lastSeenMap[o.exchange]
                         ? <span className="text-green font-medium">live</span>
-                        : <span className="text-text">{o.last_seen ?? '—'}</span>
+                        : <span className="text-text">{formatTime(o.last_seen)}</span>
                       }
                     </td>
                   </tr>

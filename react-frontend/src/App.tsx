@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useDashboard } from './hooks/useDashboard';
+import { useKrakenPrice } from './hooks/useKrakenPrice';
 import { FiltersProvider, useFilters } from './context/FiltersContext';
 import { Header } from './components/Header';
 import type { Tab } from './components/Header';
@@ -10,6 +11,21 @@ import { OHLCChart } from './components/OHLCChart';
 import { DepthChart } from './components/DepthChart';
 import { GeneralStats } from './components/GeneralStats';
 import { SnapshotLog } from './components/SnapshotLog';
+
+function OhlcPanelHeader() {
+  const price = useKrakenPrice();
+  return (
+    <div className="flex items-center justify-between mb-2 shrink-0">
+      <h3 className="text-[0.85rem] text-muted">DEX Premium Offer Overlay</h3>
+      <div className="flex items-center gap-1.5 text-[0.75rem]">
+        <span className="text-muted">BTC/EUR</span>
+        <span className={price != null ? 'text-text font-medium' : 'text-muted'}>
+          {price != null ? `€${price.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : '—'}
+        </span>
+      </div>
+    </div>
+  );
+}
 
 // Inner component so it can consume FiltersContext
 function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
@@ -35,30 +51,30 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
         </div>
       )}
 
-      {/* Top row: 3 panels — fixed height driven by content */}
-      <div className="grid grid-cols-[1fr_1.5fr_1.5fr] gap-3 shrink-0">
-        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
+      {/* Top row: compact, fixed share of height */}
+      <div className="flex-2 min-h-0 grid grid-cols-[1fr_1.5fr_1.5fr] gap-3">
+        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Control Panel</h3>
           <ControlPanel onRefresh={() => load(filters.hours)} lastUpdated={lastUpdated} stats={stats} />
         </div>
 
-        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
+        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Offers by Payment Method</h3>
           <PaymentChart />
         </div>
 
-        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
+        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Offers</h3>
-          <div className="relative flex-1 min-h-35">
+          <div className="relative flex-1 min-h-0">
             <OffersPreviewTable />
           </div>
         </div>
       </div>
 
-      {/* Bottom row: fills all remaining height */}
-      <div className="flex-1 min-h-0 grid grid-cols-3 gap-3">
+      {/* Bottom row: fills majority of height */}
+      <div className="flex-5 min-h-0 grid grid-cols-3 gap-3">
         <div className="col-span-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
-          <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">DEX Premium Offer Overlay</h3>
+          <OhlcPanelHeader />
           <div className="flex-1 min-h-0 relative">
             <OHLCChart data={ohlcData} />
           </div>

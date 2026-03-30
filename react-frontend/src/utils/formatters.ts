@@ -8,10 +8,16 @@ export function formatNum(n: number | null | undefined): string {
   return Number(n).toLocaleString('de-DE', { maximumFractionDigits: 0 });
 }
 
+const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
 export function formatTime(ts: string | null | undefined): string {
   if (!ts) return '—';
-  const d = new Date(ts.replace(' ', 'T') + 'Z');
-  return d.toLocaleString('de-DE', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  // normalise both "YYYY-MM-DD HH:MM:SS" and "YYYY-MM-DDTHH:MM:SSZ"
+  const normalized = ts.replace('T', ' ').replace('Z', '');
+  const [datePart, timePart] = normalized.split(' ');
+  const [, mm, dd] = datePart.split('-');
+  const [hh, min] = timePart.split(':');
+  return `${parseInt(dd)} ${MONTHS[parseInt(mm) - 1]}, ${hh}:${min}`;
 }
 
 export function durationMinutes(first: string | null, last: string | null): number {

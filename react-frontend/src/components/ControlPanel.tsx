@@ -464,16 +464,15 @@ export function ControlPanel({ onRefresh, lastUpdated, stats }: Props) {
   const { filters, setFilters, resetFilters } = useFilters();
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const inputCls = "bg-bg text-text border border-border rounded-md px-2 py-1 text-[0.8rem] cursor-pointer outline-none focus:border-accent transition-colors";
+  const inputCls = "bg-bg text-text border border-border rounded-md px-2 py-0.5 text-[0.8rem] cursor-pointer outline-none focus:border-accent transition-colors";
   const disabledInputCls = `${inputCls} opacity-45 cursor-not-allowed`;
 
   return (
-    <div ref={panelRef} className="relative flex flex-col gap-0">
-      {/* Market section */}
-      <div className="flex flex-wrap items-end gap-x-3 gap-y-1.5 py-2">
-        <span className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted opacity-60 w-full mb-0.5">Market</span>
+    <div ref={panelRef} className="relative flex flex-col gap-1">
+      {/* Row 1: market config + timeframe + actions */}
+      <div className="flex flex-wrap items-end gap-x-2 gap-y-1">
         <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Fiat Currency</span>
+          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Currency</span>
           <select className={disabledInputCls} disabled defaultValue="EUR">
             <option value="EUR">EUR — Euro</option>
             <option value="USD">USD — US Dollar</option>
@@ -483,16 +482,33 @@ export function ControlPanel({ onRefresh, lastUpdated, stats }: Props) {
           </select>
         </div>
         <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Reference Price</span>
+          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Ref Price</span>
           <select className={disabledInputCls} disabled defaultValue="kraken_eur">
             <option value="kraken_eur">BTC/EUR — Kraken</option>
           </select>
         </div>
+        <div className="w-px h-5 bg-border self-end mb-0.5 mx-1" />
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Timeframe</span>
+          <TimeframeDropdown
+            value={filters.hours}
+            onChange={v => setFilters({ hours: v })}
+            inputCls={inputCls}
+          />
+        </div>
+        <div className="flex items-end gap-1.5">
+          <span className="text-[0.75rem] text-muted pb-0.5">{lastUpdated}</span>
+          <button onClick={resetFilters} className="bg-red text-black border-none rounded-md px-2.5 py-0.5 text-[0.78rem] font-semibold cursor-pointer whitespace-nowrap hover:opacity-85 transition-opacity">
+            ↺ Reset
+          </button>
+          <button onClick={onRefresh} className="bg-accent text-black border-none rounded-md px-2.5 py-0.5 text-[0.78rem] font-semibold cursor-pointer whitespace-nowrap hover:opacity-85 transition-opacity">
+            ↻ Refresh
+          </button>
+        </div>
       </div>
 
-      {/* Filters section */}
-      <div className="border-t border-border grid grid-cols-3 items-end gap-x-3 gap-y-1.5 py-2 w-fit">
-        <span className="col-span-3 text-[0.6rem] font-semibold uppercase tracking-widest text-muted opacity-60 w-full mb-0.5">Filters</span>
+      {/* Row 2: filters */}
+      <div className="border-t border-border pt-1 grid grid-cols-3 items-end gap-x-2 gap-y-0.5 w-fit">
         <div className="flex flex-col gap-0.5">
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Side</span>
           <DirectionDropdown
@@ -530,45 +546,23 @@ export function ControlPanel({ onRefresh, lastUpdated, stats }: Props) {
         <div className="flex flex-col gap-0.5">
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Premium %</span>
           <div className="flex gap-1 items-center">
-            <input type="number" className={`${inputCls} w-[3.8rem]`} placeholder="Min" step="0.1"
+            <input type="number" className={`${inputCls} w-14`} placeholder="Min" step="0.1"
               value={filters.premiumMin} onChange={e => setFilters({ premiumMin: e.target.value })} />
             <span className="text-muted text-[0.8rem]">–</span>
-            <input type="number" className={`${inputCls} w-[3.8rem]`} placeholder="Max" step="0.1"
+            <input type="number" className={`${inputCls} w-14`} placeholder="Max" step="0.1"
               value={filters.premiumMax} onChange={e => setFilters({ premiumMax: e.target.value })} />
           </div>
         </div>
         <div className="flex flex-col gap-0.5 justify-end">
           <button
             onClick={() => setFilters({ premiumOnly: !filters.premiumOnly })}
-            className={`inline-flex items-center gap-1.5 border rounded-full px-3 py-1 text-[0.78rem] cursor-pointer whitespace-nowrap transition-all before:content-[''] before:w-1.75 before:h-1.75 before:rounded-full before:transition-colors
+            className={`inline-flex items-center gap-1.5 border rounded-full px-2.5 py-0.5 text-[0.75rem] cursor-pointer whitespace-nowrap transition-all before:content-[''] before:w-1.5 before:h-1.5 before:rounded-full before:transition-colors
               ${filters.premiumOnly
                 ? 'bg-[rgba(247,147,26,0.1)] text-accent border-accent before:bg-accent'
                 : 'bg-bg text-muted border-border before:bg-border'
               }`}
           >
             Premium Only
-          </button>
-        </div>
-      </div>
-
-      {/* View section */}
-      <div className="border-t border-border flex flex-wrap items-end gap-x-3 gap-y-1.5 py-2">
-        <span className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted opacity-60 w-full mb-0.5">View</span>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Timeframe</span>
-          <TimeframeDropdown
-            value={filters.hours}
-            onChange={v => setFilters({ hours: v })}
-            inputCls={inputCls}
-          />
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[0.8rem] text-muted">{lastUpdated}</span>
-          <button onClick={resetFilters} className="bg-red text-black border-none rounded-md px-3 py-1 text-[0.8rem] font-semibold cursor-pointer whitespace-nowrap hover:opacity-85 transition-opacity">
-            ↺ Reset
-          </button>
-          <button onClick={onRefresh} className="bg-accent text-black border-none rounded-md px-3 py-1 text-[0.8rem] font-semibold cursor-pointer whitespace-nowrap hover:opacity-85 transition-opacity">
-            ↻ Refresh
           </button>
         </div>
       </div>
