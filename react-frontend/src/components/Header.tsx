@@ -1,11 +1,10 @@
-import type { Stats, Offer } from '../types';
+import type { Stats } from '../types';
 import { KpiGrid } from './KpiGrid';
 
 export type Tab = 'monitor' | 'insights' | 'mmcontroller' | 'trading';
 
 interface Props {
   stats: Stats | null;
-  offers: Offer[];
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
 }
@@ -17,7 +16,7 @@ const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
   { id: 'trading', label: 'dex Trading', color: 'text-purple', disabled: true },
 ];
 
-export function Header({ stats, offers, activeTab, onTabChange }: Props) {
+export function Header({ stats, activeTab, onTabChange }: Props) {
   return (
     <header className="bg-surface border border-border rounded-lg px-3 py-1 flex items-center gap-4 shrink-0">
       {tabs.map(tab => (
@@ -36,19 +35,19 @@ export function Header({ stats, offers, activeTab, onTabChange }: Props) {
         </button>
       ))}
 
-      {stats && activeTab === 'monitor' && <KpiGrid stats={stats} offers={offers} />}
+      {stats && activeTab === 'monitor' && <KpiGrid stats={stats} />}
 
       <div className="ml-auto" />
 
       <button
-        className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 opacity-40 cursor-not-allowed flex-shrink-0"
+        className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 opacity-40 cursor-not-allowed shrink-0"
         disabled
         title="Theme — coming soon"
       >
         🌙
       </button>
       <button
-        className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 opacity-40 cursor-not-allowed flex-shrink-0"
+        className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 opacity-40 cursor-not-allowed shrink-0"
         disabled
         title="Settings — coming soon"
       >

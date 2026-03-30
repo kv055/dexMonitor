@@ -107,8 +107,13 @@ func serveFrontend(w http.ResponseWriter, r *http.Request) {
 
 func handleOffers(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 1000)
+	hours := queryInt(r, "hours", 24)
+	hoursArg := fmt.Sprintf("-%d hours", hours)
 
-	rows, err := db.Query("SELECT * FROM offers ORDER BY last_seen DESC LIMIT ?", limit)
+	rows, err := db.Query(
+		"SELECT * FROM offers WHERE last_seen >= datetime('now', ?) ORDER BY last_seen DESC LIMIT ?",
+		hoursArg, limit,
+	)
 	if err != nil {
 		writeError(w, err)
 		return

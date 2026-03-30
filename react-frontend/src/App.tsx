@@ -12,8 +12,9 @@ import { GeneralStats } from './components/GeneralStats';
 import { SnapshotLog } from './components/SnapshotLog';
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdated, error, load }: {
+function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
+  stats: ReturnType<typeof useDashboard>['stats'] | null;
   lastUpdated: string;
   error: string | null;
   load: (hours: string) => void;
@@ -35,10 +36,10 @@ function MonitorView({ ohlcData, lastUpdated, error, load }: {
       )}
 
       {/* Top row: 3 panels — fixed height driven by content */}
-      <div className="grid grid-cols-3 gap-3 shrink-0">
+      <div className="grid grid-cols-[1fr_1.5fr_1.5fr] gap-3 shrink-0">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Control Panel</h3>
-          <ControlPanel onRefresh={() => load(filters.hours)} lastUpdated={lastUpdated} />
+          <ControlPanel onRefresh={() => load(filters.hours)} lastUpdated={lastUpdated} stats={stats} />
         </div>
 
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
@@ -57,7 +58,7 @@ function MonitorView({ ohlcData, lastUpdated, error, load }: {
       {/* Bottom row: fills all remaining height */}
       <div className="flex-1 min-h-0 grid grid-cols-3 gap-3">
         <div className="col-span-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
-          <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Kraken BTC/EUR — DEX Premium Offer Overlay</h3>
+          <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">DEX Premium Offer Overlay</h3>
           <div className="flex-1 min-h-0 relative">
             <OHLCChart data={ohlcData} />
           </div>
@@ -92,11 +93,12 @@ export default function App() {
   return (
     <FiltersProvider offers={offers} loading={loading}>
       <div className="h-screen overflow-hidden flex flex-col bg-bg text-text p-3 gap-3">
-        <Header stats={stats} offers={offers} activeTab={activeTab} onTabChange={setActiveTab} />
+        <Header stats={stats} activeTab={activeTab} onTabChange={setActiveTab} />
 
         {activeTab === 'monitor' && (
           <MonitorView
             ohlcData={ohlcData}
+            stats={stats}
             lastUpdated={lastUpdated}
             error={error}
             load={load}

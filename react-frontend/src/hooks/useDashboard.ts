@@ -17,7 +17,7 @@ export function useDashboard() {
     try {
       const [s, o, ohlc, po] = await Promise.all([
         apiFetch<Stats>(`/api/stats?hours=${hours}`),
-        apiFetch<Offer[]>(`/api/offers?limit=1000`),
+        apiFetch<Offer[]>(`/api/offers?hours=${hours}&limit=1000`),
         apiFetch<OHLCData>(`/api/ohlc?hours=${hours}`),
         apiFetch<Offer[]>(`/api/premium_offers?hours=${hours}&limit=1000`),
       ]);
