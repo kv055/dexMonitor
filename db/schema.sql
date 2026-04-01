@@ -40,3 +40,11 @@ CREATE TABLE snapshot_log (
     exchanges TEXT NOT NULL,
     offers_count INTEGER NOT NULL
 );
+
+CREATE TABLE kraken_ohlc (
+    time  DATETIME PRIMARY KEY,
+    open  REAL NOT NULL,
+    high  REAL NOT NULL,
+    low   REAL NOT NULL,
+    close REAL NOT NULL
+);
