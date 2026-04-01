@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -9,9 +10,11 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"sync"
 	"time"
 
 	_ "modernc.org/sqlite"
+	"golang.org/x/net/websocket"
 )
 
 var (
@@ -20,6 +23,131 @@ var (
 	frontendDir         string
 	db                  *sql.DB
 )
+
+var (
+	krakPriceMu sync.RWMutex
+	krakPrice   float64
+)
+
+// seedHubFromDB loads is_live=1 offers from the DB into the hub once at startup
+// so live data is available before the first snapshot push arrives.
+func seedHubFromDB() {
+	rows, err := db.Query(`
+		SELECT id, exchange, direction, price, btc_min, btc_max,
+		       fiat_min, fiat_max, payment_method, offer_id, first_seen, last_seen
+		FROM offers WHERE is_live = 1
+	`)
+	if err != nil {
+		fmt.Printf("[Hub] seed error: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	var offers []LiveOffer
+	for rows.Next() {
+		var o LiveOffer
+		var btcMin, btcMax sql.NullFloat64
+		var fiatMin, fiatMax sql.NullInt64
+		var paymentMethod, offerID sql.NullString
+		if err := rows.Scan(
+			&o.ID, &o.Exchange, &o.Direction, &o.Price,
+			&btcMin, &btcMax, &fiatMin, &fiatMax,
+			&paymentMethod, &offerID, &o.FirstSeen, &o.LastSeen,
+		); err != nil {
+			continue
+		}
+		if btcMin.Valid        { o.BTCMin = &btcMin.Float64 }
+		if btcMax.Valid        { o.BTCMax = &btcMax.Float64 }
+		if fiatMin.Valid       { o.FiatMin = &fiatMin.Int64 }
+		if fiatMax.Valid       { o.FiatMax = &fiatMax.Int64 }
+		if paymentMethod.Valid { o.PaymentMethod = &paymentMethod.String }
+		if offerID.Valid       { o.OfferID = &offerID.String }
+		offers = append(offers, o)
+	}
+	hub.setOffers(offers)
+	fmt.Printf("[Hub] seeded %d live offers from DB\n", len(offers))
+}
+
+func getKrakenPrice() float64 {
+	krakPriceMu.RLock()
+	defer krakPriceMu.RUnlock()
+	return krakPrice
+}
+
+func setKrakenPrice(p float64) {
+	krakPriceMu.Lock()
+	krakPrice = p
+	krakPriceMu.Unlock()
+	hub.broadcastNow()
+}
+
+// --- Kraken WebSocket price feed ---
+
+func runKrakenPriceFeed(ctx context.Context) {
+	backoff := time.Second
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		default:
+		}
+
+		ws, err := websocket.Dial("wss://ws.kraken.com/v2", "", "https://ws.kraken.com")
+		if err != nil {
+			fmt.Printf("[KrakenWSS] connect error: %v, retrying in %s\n", err, backoff)
+			select {
+			case <-time.After(backoff):
+			case <-ctx.Done():
+				return
+			}
+			if backoff < 30*time.Second {
+				backoff *= 2
+			}
+			continue
+		}
+		backoff = time.Second
+		fmt.Println("[KrakenWSS] connected")
+
+		sub := `{"method":"subscribe","params":{"channel":"ticker","symbol":["BTC/EUR"]}}`
+		if err := websocket.Message.Send(ws, sub); err != nil {
+			fmt.Printf("[KrakenWSS] subscribe error: %v\n", err)
+			ws.Close()
+			continue
+		}
+
+		for {
+			var msg string
+			if err := websocket.Message.Receive(ws, &msg); err != nil {
+				fmt.Printf("[KrakenWSS] receive error: %v\n", err)
+				ws.Close()
+				break
+			}
+			var envelope struct {
+				Channel string `json:"channel"`
+				Data    []struct {
+					Last float64 `json:"last"`
+				} `json:"data"`
+			}
+			if err := json.Unmarshal([]byte(msg), &envelope); err != nil {
+				continue
+			}
+			if envelope.Channel == "ticker" && len(envelope.Data) > 0 && envelope.Data[0].Last > 0 {
+				setKrakenPrice(envelope.Data[0].Last)
+			}
+		}
+
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return
+		}
+		if backoff < 30*time.Second {
+			backoff *= 2
+		}
+	}
+}
+
+// --- Init & Main ---
 
 func init() {
 	dbPath = os.Getenv("DB_PATH")
@@ -57,6 +185,28 @@ func main() {
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(2)
 
+	// Enable WAL mode for concurrent snapshot writes
+	db.Exec("PRAGMA journal_mode=WAL")
+
+	// Migrations
+	db.Exec("ALTER TABLE offers ADD COLUMN is_live BOOLEAN NOT NULL DEFAULT 0")
+	db.Exec("ALTER TABLE offers ADD COLUMN duration INTEGER")
+	db.Exec(`CREATE TABLE IF NOT EXISTS kraken_ohlc (
+		time  DATETIME PRIMARY KEY,
+		open  REAL NOT NULL,
+		high  REAL NOT NULL,
+		low   REAL NOT NULL,
+		close REAL NOT NULL
+	)`)
+
+	// Seed hub from DB so live offers are available before the first snapshot push
+	seedHubFromDB()
+
+	// Start Kraken WebSocket price feed
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go runKrakenPriceFeed(ctx)
+
 	mux := http.NewServeMux()
 
 	// Static frontend
@@ -64,12 +214,19 @@ func main() {
 	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(filepath.Join(frontendDir, "assets")))))
 
 	// API
-	mux.HandleFunc("GET /api/offers", handleOffers)
-	mux.HandleFunc("GET /api/premium_offers", handlePremiumOffers)
+	mux.HandleFunc("GET /api/past_offers", handlePastOffers)
+	mux.HandleFunc("GET /api/live_offers", handleLiveOffersREST)
+	mux.Handle("GET /ws/live_offers", websocket.Server{
+		Handshake: func(_ *websocket.Config, _ *http.Request) error { return nil },
+		Handler:   handleLiveOffersWS,
+	})
 	mux.HandleFunc("GET /api/stats", handleStats)
 	mux.HandleFunc("GET /api/ohlc", handleOHLC)
 	mux.HandleFunc("GET /api/snapshot-log", handleSnapshotLog)
 	mux.HandleFunc("GET /health", handleHealth)
+
+	// Internal: snapshot tool pushes live offer data after each run
+	mux.HandleFunc("POST /internal/live_offers", handleInternalLiveOffers)
 
 	handler := corsMiddleware(mux)
 
@@ -85,7 +242,7 @@ func main() {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -128,31 +285,30 @@ func handleOffers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, offers)
 }
 
-func handlePremiumOffers(w http.ResponseWriter, r *http.Request) {
-	limit := queryInt(r, "limit", 1000)
-	hours := queryIntPtr(r, "hours")
-
-	var rows *sql.Rows
-	var err error
-
-	if hours != nil {
-		rows, err = db.Query(`
-			SELECT * FROM offers
-			WHERE ((direction = 'sell' AND price < ref_price)
-			   OR  (direction = 'buy'  AND price > ref_price))
-			  AND last_seen >= datetime('now', ?)
-			ORDER BY price_diff_percent DESC
-			LIMIT ?
-		`, fmt.Sprintf("-%d hours", *hours), limit)
-	} else {
-		rows, err = db.Query(`
-			SELECT * FROM offers
-			WHERE (direction = 'sell' AND price < ref_price)
-			   OR (direction = 'buy'  AND price > ref_price)
-			ORDER BY price_diff_percent DESC
-			LIMIT ?
-		`, limit)
+// handleLiveOffersREST is the REST fallback for /ws/live_offers.
+// Returns the current in-memory live offers with premiums computed against
+// the latest Kraken price. No filtering — client handles that.
+func handleLiveOffersREST(w http.ResponseWriter, r *http.Request) {
+	payload := hub.computePayload(getKrakenPrice())
+	if payload == nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.Write([]byte("[]"))
+		return
 	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(payload)
+}
+
+// handlePastOffers serves closed offers (is_live=0) from the DB.
+func handlePastOffers(w http.ResponseWriter, r *http.Request) {
+	limit := queryInt(r, "limit", 1000)
+	hours := queryInt(r, "hours", 24)
+	hoursArg := fmt.Sprintf("-%d hours", hours)
+
+	rows, err := db.Query(
+		"SELECT * FROM offers WHERE is_live = 0 AND last_seen >= datetime('now', ?) ORDER BY last_seen DESC LIMIT ?",
+		hoursArg, limit,
+	)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -167,11 +323,23 @@ func handlePremiumOffers(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, offers)
 }
 
+// handleInternalLiveOffers receives the live offer list from the snapshot tool
+// and updates the hub. No DB read needed — data comes directly from the source.
+func handleInternalLiveOffers(w http.ResponseWriter, r *http.Request) {
+	var offers []LiveOffer
+	if err := json.NewDecoder(r.Body).Decode(&offers); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	hub.setOffers(offers)
+	fmt.Printf("[LiveHub] updated with %d live offers from snapshot\n", len(offers))
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func handleStats(w http.ResponseWriter, r *http.Request) {
 	hours := queryInt(r, "hours", 24)
 	hoursArg := fmt.Sprintf("-%d hours", hours)
 
-	// Price stats
 	priceRows, err := db.Query(`
 		SELECT exchange, COUNT(*) as snapshot_count,
 		       MIN(btc_price) as min_price, MAX(btc_price) as max_price, AVG(btc_price) as avg_price
@@ -203,7 +371,6 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Offer counts
 	countRows, err := db.Query(`
 		SELECT exchange, COUNT(*) as offer_count
 		FROM offers
@@ -240,10 +407,8 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 func handleOHLC(w http.ResponseWriter, r *http.Request) {
 	hours := queryInt(r, "hours", 24)
 
-	// Fetch Kraken OHLC
 	candles := fetchKrakenOHLC(hours)
 
-	// Fetch offers from DB
 	rows, err := db.Query(`
 		SELECT price, price_diff_percent, payment_method, exchange, direction, first_seen
 		FROM offers
@@ -323,7 +488,7 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// --- Kraken OHLC ---
+// --- Kraken OHLC (REST, for chart) ---
 
 func fetchKrakenOHLC(hours int) []map[string]any {
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -384,12 +549,21 @@ func fetchKrakenOHLC(hours int) []map[string]any {
 				"close": parseFloat(close),
 			})
 		}
-		break // only process the first non-"last" key
+		break
 	}
 	return candles
 }
 
 // --- Helpers ---
+
+func parseDBTime(s string) time.Time {
+	for _, layout := range []string{"2006-01-02T15:04:05Z", "2006-01-02T15:04:05", "2006-01-02 15:04:05"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t
+		}
+	}
+	return time.Time{}
+}
 
 func scanOffers(rows *sql.Rows) ([]map[string]any, error) {
 	cols, err := rows.Columns()
