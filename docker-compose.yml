@@ -10,8 +10,8 @@ services:
       test: ["CMD", "curl", "-sf", "--socks5", "127.0.0.1:9050", "http://example.com"]
       interval: 10s
       timeout: 5s
-      retries: 5
-      start_period: 30s
+      retries: 10
+      start_period: 120s
     deploy:
       resources:
         limits:
@@ -78,6 +78,7 @@ services:
       - BISQ_GRPC_HOST=localhost:9998
       - PRICE_PROVIDER=bisq_tor
       - SNAPSHOT_INTERVAL_MIN=15
+      - SERVER_INTERNAL_URL=http://localhost:5000
     volumes:
       - orderbook-data:/app/data
     deploy:

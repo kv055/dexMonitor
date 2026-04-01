@@ -23,6 +23,20 @@ function exchangeColor(name: string) {
   return EXCHANGE_COLOR[name] ?? '#888';
 }
 
+function parseTimestamp(ts: string | null | undefined): Date | null {
+  if (!ts) return null;
+  // Already a valid ISO string (has T and/or Z/offset)
+  let d = new Date(ts);
+  if (!isNaN(d.getTime())) return d;
+  // SQLite CURRENT_TIMESTAMP: "YYYY-MM-DD HH:MM:SS" (UTC, no Z)
+  d = new Date(ts.replace(' ', 'T') + 'Z');
+  if (!isNaN(d.getTime())) return d;
+  // Unix timestamp stored as string
+  const n = Number(ts);
+  if (!isNaN(n) && n > 0) return new Date(n * 1000);
+  return null;
+}
+
 export function SnapshotLog() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [expanded, setExpanded] = useState<number | null>(null);
@@ -47,9 +61,9 @@ export function SnapshotLog() {
         <span className="text-muted text-[0.75rem]">No snapshot runs yet.</span>
       )}
       {entries.map(e => {
-        const date = new Date(e.timestamp + 'Z');
-        const timeStr = date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        const dateStr = date.toLocaleDateString([], { month: 'short', day: 'numeric' });
+        const date = parseTimestamp(e.timestamp);
+        const timeStr = date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '??:??';
+        const dateStr = date ? date.toLocaleDateString([], { month: 'short', day: 'numeric' }) : '???';
         const isOpen = expanded === e.id;
         const exchangeNames = Object.keys(e.exchanges);
 
