@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { useDashboard } from './hooks/useDashboard';
+import { useLiveOffers } from './hooks/useLiveOffers';
 import { useKrakenPrice } from './hooks/useKrakenPrice';
 import { FiltersProvider, useFilters } from './context/FiltersContext';
 import { Header } from './components/Header';
@@ -103,11 +104,17 @@ function MmControllerView() {
 }
 
 export default function App() {
-  const { offers, stats, ohlcData, lastUpdated, error, loading, load } = useDashboard();
+  const { pastOffers, stats, ohlcData, lastUpdated, error, loading, load } = useDashboard();
+  const { liveOffers } = useLiveOffers();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
 
+  const allOffers = useMemo(
+    () => [...liveOffers, ...pastOffers],
+    [liveOffers, pastOffers]
+  );
+
   return (
-    <FiltersProvider offers={offers} loading={loading}>
+    <FiltersProvider offers={allOffers} loading={loading}>
       <div className="h-screen overflow-hidden flex flex-col bg-bg text-text p-3 gap-3">
         <Header stats={stats} activeTab={activeTab} onTabChange={setActiveTab} />
 

@@ -3,10 +3,9 @@ import { apiFetch } from '../utils/api';
 import type { Offer, Stats, OHLCData } from '../types';
 
 export function useDashboard() {
-  const [offers, setOffers] = useState<Offer[]>([]);
+  const [pastOffers, setPastOffers] = useState<Offer[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [ohlcData, setOhlcData] = useState<OHLCData | null>(null);
-  const [premiumOffers, setPremiumOffers] = useState<Offer[]>([]);
   const [lastUpdated, setLastUpdated] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -15,16 +14,14 @@ export function useDashboard() {
     setLoading(true);
     setError(null);
     try {
-      const [s, o, ohlc, po] = await Promise.all([
+      const [s, o, ohlc] = await Promise.all([
         apiFetch<Stats>(`/api/stats?hours=${hours}`),
-        apiFetch<Offer[]>(`/api/offers?hours=${hours}&limit=1000`),
+        apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000`),
         apiFetch<OHLCData>(`/api/ohlc?hours=${hours}`),
-        apiFetch<Offer[]>(`/api/premium_offers?hours=${hours}&limit=1000`),
       ]);
       setStats(s);
-      setOffers(o);
+      setPastOffers(o);
       setOhlcData(ohlc);
-      setPremiumOffers(po);
       setLastUpdated(`Updated ${new Date().toLocaleTimeString()}`);
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
@@ -34,5 +31,5 @@ export function useDashboard() {
     }
   }, []);
 
-  return { offers, stats, ohlcData, premiumOffers, lastUpdated, error, loading, load };
+  return { pastOffers, stats, ohlcData, lastUpdated, error, loading, load };
 }
