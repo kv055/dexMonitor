@@ -21,7 +21,9 @@ CREATE TABLE offers (
     offer_id TEXT,
     ref_price REAL,
     first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
-    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP
+    last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+    is_live BOOLEAN NOT NULL DEFAULT 0,
+    duration INTEGER
 );
 
 CREATE INDEX idx_snapshots_time ON snapshots(timestamp);
