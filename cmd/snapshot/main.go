@@ -23,9 +23,10 @@ import (
 )
 
 var (
-	snapshotDBPath string
-	bisqGRPCHost   string
-	priceProvider  string
+	snapshotDBPath  string
+	bisqGRPCHost    string
+	bisqAPIPassword string
+	priceProvider   string
 	torProxy       = "socks5h://127.0.0.1:9050"
 	robosatsOnions = []string{
 		"http://ngdk7ocdzmz5kzsysa3om6du7ycj2evxp2f2olfkyq37htx3gllwp2yd.onion",
@@ -44,11 +45,20 @@ func init() {
 	if bisqGRPCHost == "" {
 		bisqGRPCHost = "localhost:9998"
 	}
+	bisqAPIPassword = os.Getenv("BISQ_API_PASSWORD")
 	priceProvider = os.Getenv("PRICE_PROVIDER")
 	if priceProvider == "" {
 		priceProvider = "bisq_tor"
 	}
 }
+
+// bisqCreds injects the Bisq API password header on every gRPC call.
+type bisqCreds struct{ password string }
+
+func (c bisqCreds) GetRequestMetadata(_ context.Context, _ ...string) (map[string]string, error) {
+	return map[string]string{"password": c.password}, nil
+}
+func (c bisqCreds) RequireTransportSecurity() bool { return false }
 
 // --- Offer type ---
 
@@ -189,7 +199,10 @@ func fetchBisq(direction string, btcPrice int) *fetchResult {
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 
-	conn, err := grpc.NewClient(bisqGRPCHost, grpc.WithTransportCredentials(insecure.NewCredentials()))
+	conn, err := grpc.NewClient(bisqGRPCHost,
+		grpc.WithTransportCredentials(insecure.NewCredentials()),
+		grpc.WithPerRPCCredentials(bisqCreds{password: bisqAPIPassword}),
+	)
 	if err != nil {
 		fmt.Printf("[Bisq] Connection error: %v\n", err)
 		return nil
@@ -209,11 +222,6 @@ func fetchBisq(direction string, btcPrice int) *fetchResult {
 	var offers []offer
 	for _, o := range reply.Offers {
 		price, _ := strconv.ParseFloat(o.Price, 64)
-		var diff *float64
-		if btcPrice > 0 {
-			d := round2((price/float64(btcPrice) - 1) * 100)
-			diff = &d
-		}
 		btcMin := float64(o.MinAmount) / 1e8
 		btcMax := float64(o.Amount) / 1e8
 		fiatMin := int(parseFloatStr(o.MinVolume))
@@ -221,7 +229,6 @@ func fetchBisq(direction string, btcPrice int) *fetchResult {
 		offers = append(offers, offer{
 			OfferID:       o.Id,
 			Price:         price,
-			PriceDiffPct:  diff,
 			BTCMin:        &btcMin,
 			BTCMax:        &btcMax,
 			FiatMin:       &fiatMin,
@@ -283,17 +290,11 @@ func fetchHodlHodl(direction string, btcPrice int) *fetchResult {
 			method = "NATIONAL_BANK"
 		}
 
-		var diff *float64
-		if btcPrice > 0 {
-			d := round2((price/float64(btcPrice) - 1) * 100)
-			diff = &d
-		}
 		btcMin := round8(float64(fiatMin) / price)
 		btcMax := round8(float64(fiatMax) / price)
 		offers = append(offers, offer{
 			OfferID:       o.ID,
 			Price:         price,
-			PriceDiffPct:  diff,
 			BTCMin:        &btcMin,
 			BTCMax:        &btcMax,
 			FiatMin:       &fiatMin,
@@ -350,8 +351,17 @@ func fetchRobosats(direction string, btcPrice int) *fetchResult {
 			}
 
 			price, err := line.Price.Float64()
-			if err != nil || price == 0 {
+			if err != nil {
 				continue
+			}
+			// RoboSats sometimes returns price=0 with only a premium percentage.
+			// Derive absolute price from the reference BTC price in that case.
+			if price == 0 {
+				premium, _ := line.Premium.Float64()
+				if premium == 0 || btcPrice == 0 {
+					continue
+				}
+				price = float64(btcPrice) * (1 + premium/100)
 			}
 
 			var fiatMin, fiatMax int
@@ -366,15 +376,12 @@ func fetchRobosats(direction string, btcPrice int) *fetchResult {
 				fiatMax = int(maxV)
 			}
 
-			premium, _ := line.Premium.Float64()
-			diff := round2(premium)
 			btcMin := round8(float64(fiatMin) / price)
 			btcMax := round8(float64(fiatMax) / price)
 
 			offers = append(offers, offer{
 				OfferID:       line.ID.String(),
 				Price:         price,
-				PriceDiffPct:  &diff,
 				BTCMin:        &btcMin,
 				BTCMax:        &btcMax,
 				FiatMin:       &fiatMin,
@@ -427,16 +434,16 @@ func saveSnapshot(sdb *sql.DB, exchange, fiat, direction string, btcPrice float6
 		}
 
 		if found {
-			tx.Exec("UPDATE offers SET last_seen = CURRENT_TIMESTAMP, price_diff_percent = ?, ref_price = ? WHERE id = ?",
-				o.PriceDiffPct, btcPrice, existingID)
+			tx.Exec("UPDATE offers SET last_seen = CURRENT_TIMESTAMP, price = ? WHERE id = ?",
+				o.Price, existingID)
 			updated++
 		} else {
 			tx.Exec(`INSERT INTO offers
-				(exchange, direction, price, price_diff_percent, btc_min, btc_max,
-				 fiat_min, fiat_max, payment_method, offer_id, ref_price)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-				exchange, direction, o.Price, o.PriceDiffPct, o.BTCMin, o.BTCMax,
-				o.FiatMin, o.FiatMax, o.PaymentMethod, nilIfEmpty(o.OfferID), btcPrice)
+				(exchange, direction, price, btc_min, btc_max,
+				 fiat_min, fiat_max, payment_method, offer_id)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				exchange, direction, o.Price, o.BTCMin, o.BTCMax,
+				o.FiatMin, o.FiatMax, o.PaymentMethod, nilIfEmpty(o.OfferID))
 			inserted++
 		}
 	}
@@ -482,6 +489,23 @@ func main() {
 	}
 	defer sdb.Close()
 
+	// Migrate: add columns to existing databases
+	sdb.Exec("ALTER TABLE offers ADD COLUMN is_live BOOLEAN NOT NULL DEFAULT 0")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN duration INTEGER")
+	sdb.Exec(`CREATE TABLE IF NOT EXISTS kraken_ohlc (
+		time  DATETIME PRIMARY KEY,
+		open  REAL NOT NULL,
+		high  REAL NOT NULL,
+		low   REAL NOT NULL,
+		close REAL NOT NULL
+	)`)
+
+	// Fetch and store Kraken OHLC candles before settlement
+	fetchAndStoreKrakenOHLC(sdb)
+
+	// Record start time; used after the run to mark which offers were seen
+	snapshotStart := time.Now().UTC().Format("2006-01-02 15:04:05")
+
 	type exchFetcher struct {
 		name string
 		fn   func(string, int) *fetchResult
@@ -516,6 +540,37 @@ func main() {
 		}
 	}
 
+	// Update is_live and duration in one pass:
+	// - live offers: is_live=1, duration=NULL
+	// - closed offers: is_live=0, duration=seconds between first_seen and last_seen
+	sdb.Exec(`UPDATE offers SET
+		is_live = (last_seen >= ?),
+		duration = CASE WHEN last_seen < ? THEN (strftime('%s', last_seen) - strftime('%s', first_seen)) ELSE NULL END`,
+		snapshotStart, snapshotStart)
+
+	// Explicitly close offers from any exchange that failed entirely this run
+	for _, f := range fetchers {
+		if _, ok := exchangeData[f.name]; !ok {
+			res, _ := sdb.Exec(`UPDATE offers SET
+				is_live = 0,
+				duration = (strftime('%s', last_seen) - strftime('%s', first_seen))
+				WHERE exchange = ?`, f.name)
+			if n, _ := res.RowsAffected(); n > 0 {
+				fmt.Printf("[%s] Exchange offline — marked %d offers as closed\n", f.name, n)
+			}
+		}
+	}
+
+	// Settle closed offers: compute ref_price and price_diff_percent from historical OHLC
+	settleClosedOffers(sdb)
+
+	// Push live offers directly to the server's in-memory hub.
+	serverURL := os.Getenv("SERVER_INTERNAL_URL")
+	if serverURL == "" {
+		serverURL = "http://localhost:5000"
+	}
+	pushLiveOffersToServer(sdb, serverURL)
+
 	writeSnapshotLog(sdb, exchangeData)
 	total := 0
 	names := make([]string, 0, len(exchangeData))
@@ -524,6 +579,282 @@ func main() {
 		names = append(names, name)
 	}
 	fmt.Printf("\n=== Snapshot complete — %d offers from %v ===\n", total, names)
+}
+
+// fetchAndStoreKrakenOHLC fetches 15-min Kraken OHLC candles and upserts them into kraken_ohlc.
+func fetchAndStoreKrakenOHLC(sdb *sql.DB) {
+	resp, err := clearnetClient().Get("https://api.kraken.com/0/public/OHLC?pair=XBTEUR&interval=15")
+	if err != nil {
+		fmt.Printf("[OHLC] fetch error: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	var data struct {
+		Result map[string]json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		fmt.Printf("[OHLC] parse error: %v\n", err)
+		return
+	}
+
+	tx, err := sdb.Begin()
+	if err != nil {
+		fmt.Printf("[OHLC] db error: %v\n", err)
+		return
+	}
+	defer tx.Rollback()
+
+	n := 0
+	for key, raw := range data.Result {
+		if key == "last" {
+			continue
+		}
+		var rows [][]json.RawMessage
+		if err := json.Unmarshal(raw, &rows); err != nil {
+			continue
+		}
+		for _, c := range rows {
+			if len(c) < 5 {
+				continue
+			}
+			var ts float64
+			json.Unmarshal(c[0], &ts)
+			var open, high, low, cls string
+			json.Unmarshal(c[1], &open)
+			json.Unmarshal(c[2], &high)
+			json.Unmarshal(c[3], &low)
+			json.Unmarshal(c[4], &cls)
+			t := time.Unix(int64(ts), 0).UTC().Format("2006-01-02 15:04:05")
+			tx.Exec(`INSERT INTO kraken_ohlc (time, open, high, low, close) VALUES (?, ?, ?, ?, ?)
+				ON CONFLICT(time) DO UPDATE SET open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close`,
+				t,
+				parseFloatStr(open), parseFloatStr(high), parseFloatStr(low), parseFloatStr(cls),
+			)
+			n++
+		}
+		break // only one non-"last" key
+	}
+	tx.Commit()
+	fmt.Printf("[OHLC] upserted %d candles\n", n)
+}
+
+// settleClosedOffers computes ref_price and price_diff_percent for offers that
+// just closed (is_live=0, ref_price IS NULL) using the average Kraken close price
+// over the offer's lifetime.
+func settleClosedOffers(sdb *sql.DB) {
+	rows, err := sdb.Query(`
+		SELECT id, price, first_seen, last_seen
+		FROM offers
+		WHERE is_live = 0 AND ref_price IS NULL
+	`)
+	if err != nil {
+		fmt.Printf("[Settle] query error: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	type toSettle struct {
+		id        int64
+		price     float64
+		firstSeen string
+		lastSeen  string
+	}
+	var batch []toSettle
+	for rows.Next() {
+		var o toSettle
+		if err := rows.Scan(&o.id, &o.price, &o.firstSeen, &o.lastSeen); err != nil {
+			continue
+		}
+		batch = append(batch, o)
+	}
+	rows.Close()
+
+	settled := 0
+	for _, o := range batch {
+		var avgClose float64
+		sdb.QueryRow(`
+			SELECT AVG(close) FROM kraken_ohlc
+			WHERE time >= ? AND time <= ?
+		`, o.firstSeen, o.lastSeen).Scan(&avgClose)
+
+		// No candles in range — offer's lifetime may predate our cached OHLC window.
+		// Fetch historical data from Kraken using the offer's first_seen as the
+		// since parameter, upsert into kraken_ohlc, then retry.
+		if avgClose == 0 {
+			if firstSeenUnix := parseDBTimeUnix(o.firstSeen); firstSeenUnix > 0 {
+				fetchAndStoreKrakenOHLCSince(sdb, firstSeenUnix)
+				sdb.QueryRow(`
+					SELECT AVG(close) FROM kraken_ohlc
+					WHERE time >= ? AND time <= ?
+				`, o.firstSeen, o.lastSeen).Scan(&avgClose)
+			}
+		}
+
+		// Last resort: nearest single candle to last_seen
+		if avgClose == 0 {
+			sdb.QueryRow(`
+				SELECT close FROM kraken_ohlc
+				ORDER BY ABS(strftime('%s', time) - strftime('%s', ?))
+				LIMIT 1
+			`, o.lastSeen).Scan(&avgClose)
+		}
+
+		if avgClose == 0 {
+			continue
+		}
+
+		pct := math.Round((o.price/avgClose-1)*10000) / 100
+		sdb.Exec(`UPDATE offers SET ref_price = ?, price_diff_percent = ? WHERE id = ?`,
+			avgClose, pct, o.id)
+		settled++
+	}
+	if settled > 0 {
+		fmt.Printf("[Settle] settled %d closed offers with historical avg ref price\n", settled)
+	}
+}
+
+// pushLiveOffersToServer queries all is_live=1 offers from the DB and POSTs
+// them to the server's /internal/live_offers endpoint so the hub can serve
+// them directly from memory without any DB reads.
+func pushLiveOffersToServer(sdb *sql.DB, serverURL string) {
+	type livePayload struct {
+		ID            int64    `json:"id"`
+		Exchange      string   `json:"exchange"`
+		Direction     string   `json:"direction"`
+		Price         float64  `json:"price"`
+		BTCMin        *float64 `json:"btc_min"`
+		BTCMax        *float64 `json:"btc_max"`
+		FiatMin       *int64   `json:"fiat_min"`
+		FiatMax       *int64   `json:"fiat_max"`
+		PaymentMethod *string  `json:"payment_method"`
+		OfferID       *string  `json:"offer_id"`
+		FirstSeen     string   `json:"first_seen"`
+		LastSeen      string   `json:"last_seen"`
+	}
+
+	rows, err := sdb.Query(`
+		SELECT id, exchange, direction, price, btc_min, btc_max,
+		       fiat_min, fiat_max, payment_method, offer_id, first_seen, last_seen
+		FROM offers WHERE is_live = 1
+	`)
+	if err != nil {
+		fmt.Printf("[LivePush] query error: %v\n", err)
+		return
+	}
+	defer rows.Close()
+
+	var offers []livePayload
+	for rows.Next() {
+		var o livePayload
+		var btcMin, btcMax sql.NullFloat64
+		var fiatMin, fiatMax sql.NullInt64
+		var paymentMethod, offerID sql.NullString
+		if err := rows.Scan(
+			&o.ID, &o.Exchange, &o.Direction, &o.Price,
+			&btcMin, &btcMax, &fiatMin, &fiatMax,
+			&paymentMethod, &offerID, &o.FirstSeen, &o.LastSeen,
+		); err != nil {
+			fmt.Printf("[LivePush] scan error: %v\n", err)
+			continue
+		}
+		if btcMin.Valid        { o.BTCMin = &btcMin.Float64 }
+		if btcMax.Valid        { o.BTCMax = &btcMax.Float64 }
+		if fiatMin.Valid       { o.FiatMin = &fiatMin.Int64 }
+		if fiatMax.Valid       { o.FiatMax = &fiatMax.Int64 }
+		if paymentMethod.Valid { o.PaymentMethod = &paymentMethod.String }
+		if offerID.Valid       { o.OfferID = &offerID.String }
+		offers = append(offers, o)
+	}
+	rows.Close()
+
+	body, err := json.Marshal(offers)
+	if err != nil {
+		fmt.Printf("[LivePush] marshal error: %v\n", err)
+		return
+	}
+
+	resp, err := http.Post(serverURL+"/internal/live_offers", "application/json", strings.NewReader(string(body)))
+	if err != nil {
+		fmt.Printf("[LivePush] POST failed (non-fatal): %v\n", err)
+		return
+	}
+	resp.Body.Close()
+	fmt.Printf("[LivePush] pushed %d live offers to server\n", len(offers))
+}
+
+// fetchAndStoreKrakenOHLCSince fetches 15-min candles starting from sinceUnix
+// and upserts them into kraken_ohlc. Used to backfill history for offers whose
+// lifetime predates the standard OHLC cache window (~7.5 days).
+func fetchAndStoreKrakenOHLCSince(sdb *sql.DB, sinceUnix int64) {
+	url := fmt.Sprintf("https://api.kraken.com/0/public/OHLC?pair=XBTEUR&interval=15&since=%d", sinceUnix)
+	resp, err := clearnetClient().Get(url)
+	if err != nil {
+		fmt.Printf("[OHLCSince] fetch error: %v\n", err)
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	var data struct {
+		Result map[string]json.RawMessage `json:"result"`
+	}
+	if err := json.Unmarshal(body, &data); err != nil {
+		fmt.Printf("[OHLCSince] parse error: %v\n", err)
+		return
+	}
+
+	tx, err := sdb.Begin()
+	if err != nil {
+		fmt.Printf("[OHLCSince] db error: %v\n", err)
+		return
+	}
+	defer tx.Rollback()
+
+	n := 0
+	for key, raw := range data.Result {
+		if key == "last" {
+			continue
+		}
+		var rows [][]json.RawMessage
+		if err := json.Unmarshal(raw, &rows); err != nil {
+			continue
+		}
+		for _, c := range rows {
+			if len(c) < 5 {
+				continue
+			}
+			var ts float64
+			json.Unmarshal(c[0], &ts)
+			var open, high, low, cls string
+			json.Unmarshal(c[1], &open)
+			json.Unmarshal(c[2], &high)
+			json.Unmarshal(c[3], &low)
+			json.Unmarshal(c[4], &cls)
+			t := time.Unix(int64(ts), 0).UTC().Format("2006-01-02 15:04:05")
+			tx.Exec(`INSERT INTO kraken_ohlc (time, open, high, low, close) VALUES (?, ?, ?, ?, ?)
+				ON CONFLICT(time) DO UPDATE SET open=excluded.open, high=excluded.high, low=excluded.low, close=excluded.close`,
+				t,
+				parseFloatStr(open), parseFloatStr(high), parseFloatStr(low), parseFloatStr(cls),
+			)
+			n++
+		}
+		break
+	}
+	tx.Commit()
+	fmt.Printf("[OHLCSince] upserted %d historical candles\n", n)
+}
+
+// parseDBTimeUnix parses a SQLite timestamp string and returns its Unix timestamp.
+// Returns 0 if parsing fails.
+func parseDBTimeUnix(s string) int64 {
+	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02T15:04:05", "2006-01-02T15:04:05Z"} {
+		if t, err := time.Parse(layout, s); err == nil {
+			return t.Unix()
+		}
+	}
+	return 0
 }
 
 // --- Helpers ---
