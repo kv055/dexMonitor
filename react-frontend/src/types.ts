@@ -10,6 +10,7 @@ export interface Offer {
   offer_id: string | null;
   first_seen: string | null;
   last_seen: string | null;
+  is_live: boolean;
   ref_price: number | null;
   premium?: number | null;
   time?: string;

@@ -43,11 +43,7 @@ export function DepthChart() {
     ctx.scale(dpr, dpr);
 
     // --- Data ---
-    const lastSeen: Record<string, string> = {};
-    offers.forEach(o => {
-      if (!lastSeen[o.exchange] || o.last_seen! > lastSeen[o.exchange]) lastSeen[o.exchange] = o.last_seen!;
-    });
-    const open = offers.filter(o => o.last_seen === lastSeen[o.exchange]);
+    const open = offers.filter(o => o.is_live);
     if (!open.length) return;
 
     const midPrice = open.reduce((s, o) => s + (o.ref_price || 0), 0) / open.length;

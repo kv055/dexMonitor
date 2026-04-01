@@ -64,38 +64,34 @@ export function FiltersProvider({ offers, loading, children }: Props) {
     [offers]
   );
 
-  const lastSeenMap = useMemo(() => {
-    const map: Record<string, string> = {};
-    offers.forEach(o => {
-      if (!map[o.exchange] || o.last_seen! > map[o.exchange]) map[o.exchange] = o.last_seen!;
-    });
-    return map;
-  }, [offers]);
-
   const filteredOffers = useMemo(() => {
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
     if (filters.payment)   f = f.filter(o => o.payment_method === filters.payment);
-    if (filters.status === 'open')   f = f.filter(o => o.last_seen === lastSeenMap[o.exchange]);
-    if (filters.status === 'closed') f = f.filter(o => o.last_seen !== lastSeenMap[o.exchange]);
+    if (filters.status === 'open')   f = f.filter(o => o.is_live);
+    if (filters.status === 'closed') f = f.filter(o => !o.is_live);
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => o.price > (o.ref_price || 0));
+    if (filters.premiumOnly) f = f.filter(o =>
+      o.direction === 'buy'
+        ? o.price > (o.ref_price || 0)
+        : o.price < (o.ref_price || Infinity)
+    );
     return f.sort((a, b) => (a.price_diff_percent || 0) - (b.price_diff_percent || 0));
-  }, [offers, filters, lastSeenMap]);
+  }, [offers, filters]);
 
   // Depth chart: all filters except direction — orderbook always shows both sides
   const depthOffers = useMemo(() => {
     let f = offers;
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
     if (filters.payment)   f = f.filter(o => o.payment_method === filters.payment);
-    if (filters.status === 'open')   f = f.filter(o => o.last_seen === lastSeenMap[o.exchange]);
-    if (filters.status === 'closed') f = f.filter(o => o.last_seen !== lastSeenMap[o.exchange]);
+    if (filters.status === 'open')   f = f.filter(o => o.is_live);
+    if (filters.status === 'closed') f = f.filter(o => !o.is_live);
     return f;
-  }, [offers, filters, lastSeenMap]);
+  }, [offers, filters]);
 
   return (
     <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, selectedOfferId, setSelectedOfferId, loading }}>

@@ -45,22 +45,20 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
   };
 
   const sorted = useMemo(() => {
-    const lastSeenMap: Record<string, string> = {};
-    offers.forEach(o => {
-      if (!lastSeenMap[o.exchange] || o.last_seen! > lastSeenMap[o.exchange])
-        lastSeenMap[o.exchange] = o.last_seen!;
-    });
-
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
-    if (filters.status === 'open')   f = f.filter(o => o.last_seen === lastSeenMap[o.exchange]);
-    if (filters.status === 'closed') f = f.filter(o => o.last_seen !== lastSeenMap[o.exchange]);
+    if (filters.status === 'open')   f = f.filter(o => o.is_live);
+    if (filters.status === 'closed') f = f.filter(o => !o.is_live);
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => o.price > (o.ref_price || 0));
+    if (filters.premiumOnly) f = f.filter(o =>
+      o.direction === 'buy'
+        ? o.price > (o.ref_price || 0)
+        : o.price < (o.ref_price || Infinity)
+    );
 
     const counts: Record<string, number> = {};
     f.forEach(o => {
@@ -149,22 +147,20 @@ function DirectionDropdown({ value, onChange, inputCls }: DirectionDropdownProps
   }, []);
 
   const counts = useMemo(() => {
-    const lastSeenMap: Record<string, string> = {};
-    offers.forEach(o => {
-      if (!lastSeenMap[o.exchange] || o.last_seen! > lastSeenMap[o.exchange])
-        lastSeenMap[o.exchange] = o.last_seen!;
-    });
-
     let f = offers;
     if (filters.exchange) f = f.filter(o => o.exchange === filters.exchange);
     if (filters.payment)  f = f.filter(o => o.payment_method === filters.payment);
-    if (filters.status === 'open')   f = f.filter(o => o.last_seen === lastSeenMap[o.exchange]);
-    if (filters.status === 'closed') f = f.filter(o => o.last_seen !== lastSeenMap[o.exchange]);
+    if (filters.status === 'open')   f = f.filter(o => o.is_live);
+    if (filters.status === 'closed') f = f.filter(o => !o.is_live);
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => o.price > (o.ref_price || 0));
+    if (filters.premiumOnly) f = f.filter(o =>
+      o.direction === 'buy'
+        ? o.price > (o.ref_price || 0)
+        : o.price < (o.ref_price || Infinity)
+    );
 
     return {
       all:  f.length,
@@ -229,12 +225,6 @@ function StatusDropdown({ value, onChange, inputCls }: StatusDropdownProps) {
   }, []);
 
   const counts = useMemo(() => {
-    const lastSeenMap: Record<string, string> = {};
-    offers.forEach(o => {
-      if (!lastSeenMap[o.exchange] || o.last_seen! > lastSeenMap[o.exchange])
-        lastSeenMap[o.exchange] = o.last_seen!;
-    });
-
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
@@ -243,11 +233,17 @@ function StatusDropdown({ value, onChange, inputCls }: StatusDropdownProps) {
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => o.price > (o.ref_price || 0));
+    if (filters.premiumOnly) f = f.filter(o =>
+      o.direction === 'buy'
+        ? o.price > (o.ref_price || 0)
+        : o.price < (o.ref_price || Infinity)
+    );
 
-    const open = f.filter(o => o.last_seen === lastSeenMap[o.exchange]).length;
-    const closed = f.filter(o => o.last_seen !== lastSeenMap[o.exchange]).length;
-    return { all: f.length, open, closed };
+    return {
+      all:    f.length,
+      open:   f.filter(o => o.is_live).length,
+      closed: f.filter(o => !o.is_live).length,
+    };
   }, [offers, filters]);
 
   const OPTIONS = [
@@ -307,22 +303,20 @@ function ExchangeDropdown({ value, onChange, stats, inputCls }: ExchangeDropdown
   }, []);
 
   const countMap = useMemo(() => {
-    const lastSeenMap: Record<string, string> = {};
-    offers.forEach(o => {
-      if (!lastSeenMap[o.exchange] || o.last_seen! > lastSeenMap[o.exchange])
-        lastSeenMap[o.exchange] = o.last_seen!;
-    });
-
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.payment)   f = f.filter(o => o.payment_method === filters.payment);
-    if (filters.status === 'open')   f = f.filter(o => o.last_seen === lastSeenMap[o.exchange]);
-    if (filters.status === 'closed') f = f.filter(o => o.last_seen !== lastSeenMap[o.exchange]);
+    if (filters.status === 'open')   f = f.filter(o => o.is_live);
+    if (filters.status === 'closed') f = f.filter(o => !o.is_live);
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => o.price > (o.ref_price || 0));
+    if (filters.premiumOnly) f = f.filter(o =>
+      o.direction === 'buy'
+        ? o.price > (o.ref_price || 0)
+        : o.price < (o.ref_price || Infinity)
+    );
 
     const map: Record<string, number> = {};
     f.forEach(o => { map[o.exchange] = (map[o.exchange] || 0) + 1; });
@@ -402,28 +396,29 @@ function TimeframeDropdown({ value, onChange, inputCls }: TimeframeDropdownProps
   }, []);
 
   const counts = useMemo(() => {
-    const lastSeenMap: Record<string, string> = {};
-    offers.forEach(o => {
-      if (!lastSeenMap[o.exchange] || o.last_seen! > lastSeenMap[o.exchange])
-        lastSeenMap[o.exchange] = o.last_seen!;
-    });
-
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
     if (filters.payment)   f = f.filter(o => o.payment_method === filters.payment);
-    if (filters.status === 'open')   f = f.filter(o => o.last_seen === lastSeenMap[o.exchange]);
-    if (filters.status === 'closed') f = f.filter(o => o.last_seen !== lastSeenMap[o.exchange]);
+    if (filters.status === 'open')   f = f.filter(o => o.is_live);
+    if (filters.status === 'closed') f = f.filter(o => !o.is_live);
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => o.price > (o.ref_price || 0));
+    if (filters.premiumOnly) f = f.filter(o =>
+      o.direction === 'buy'
+        ? o.price > (o.ref_price || 0)
+        : o.price < (o.ref_price || Infinity)
+    );
 
     const now = Date.now();
     const result: Record<string, number> = {};
     for (const opt of TIMEFRAME_OPTIONS) {
-      const cutoff = new Date(now - parseInt(opt.value) * 3600 * 1000).toISOString();
+      // Normalize to DB timestamp format ("2024-01-15 13:00:00") so string
+      // comparison works correctly — DB uses space, not T.
+      const cutoff = new Date(now - parseInt(opt.value) * 3600 * 1000)
+        .toISOString().replace('T', ' ').slice(0, 19);
       result[opt.value] = f.filter(o => o.last_seen != null && o.last_seen >= cutoff).length;
     }
     return result;

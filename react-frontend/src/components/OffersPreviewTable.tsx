@@ -7,15 +7,8 @@ import { LoadingSpinner } from './LoadingSpinner';
 const thCls = "sticky top-0 bg-surface px-1.5 py-1 border-b border-border text-muted text-[0.65rem] uppercase text-left whitespace-nowrap";
 
 export function OffersPreviewTable() {
-  const { offers: allOffers, filteredOffers: offers, selectedOfferId, setSelectedOfferId, loading } = useFilters();
+  const { filteredOffers: offers, selectedOfferId, setSelectedOfferId, loading } = useFilters();
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
-
-  // Determine the latest last_seen per exchange to identify live (open) offers
-  const lastSeenMap: Record<string, string> = {};
-  allOffers.forEach(o => {
-    if (o.last_seen && (!lastSeenMap[o.exchange] || o.last_seen > lastSeenMap[o.exchange]))
-      lastSeenMap[o.exchange] = o.last_seen;
-  });
 
   // Scroll selected row into view when selection comes from OHLC chart
   useEffect(() => {
@@ -71,7 +64,7 @@ export function OffersPreviewTable() {
                       <span className="text-text">{formatTime(o.first_seen)}</span>
                       <span className="mx-2 text-border">|</span>
                       <span className="text-muted">Last seen:</span>{' '}
-                      {o.last_seen === lastSeenMap[o.exchange]
+                      {o.is_live
                         ? <span className="text-green font-medium">live</span>
                         : <span className="text-text">{formatTime(o.last_seen)}</span>
                       }

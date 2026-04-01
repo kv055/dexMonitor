@@ -97,18 +97,11 @@ export function OHLCChart({ data }: Props) {
     const fromSec = (nowSec - Number(hours) * 3600) as UTCTimestamp;
 
     // --- Offer lines ---
-    // Determine most recent last_seen per exchange to identify open offers
-    const lastSeenMap: Record<string, string> = {};
-    premiumOffers.forEach(o => {
-      if (o.last_seen && (!lastSeenMap[o.exchange] || o.last_seen > lastSeenMap[o.exchange]))
-        lastSeenMap[o.exchange] = o.last_seen;
-    });
-
     // Map series → { offerId, price } for click detection
     const seriesInfo = new Map<ISeriesApi<'Line'>, { offerId: number; price: number }>();
 
     premiumOffers.forEach(o => {
-      const isOpen = !o.last_seen || o.last_seen === lastSeenMap[o.exchange];
+      const isOpen = o.is_live;
       const startSec = toUtcSec(o.first_seen || o.time || '');
       const endSec = isOpen ? nowSec : toUtcSec(o.last_seen ?? '');
 
