@@ -1,9 +1,26 @@
+export interface CostBreakdown {
+  btc_amount: number;
+  cex_taker_fee_pct: number;
+  cex_taker_fee_btc: number;
+  withdrawal_fee_pct: number;
+  withdrawal_fee_btc: number;
+  network_fee_pct: number;
+  network_fee_btc: number;
+  dex_fee_pct: number;
+  dex_fee_btc: number;
+  total_cost_pct: number;
+  total_cost_btc: number;
+}
+
 export interface Offer {
   id: number;
   exchange: string;
   direction: string;
   price: number;
   price_diff_percent: number | null;
+  trade_cost_percent: number | null;
+  net_premium_percent: number | null;
+  cost_breakdown: CostBreakdown | null;
   btc_min: number | null;
   btc_max: number | null;
   payment_method: string | null;

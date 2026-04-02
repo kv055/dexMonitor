@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -649,4 +650,74 @@ func fetchHalfHourNetworkFee() (float64, error) {
 		return 0, fmt.Errorf("decode: %w", err)
 	}
 	return float64(fees.HalfHourFee*typicalTxVBytes) / 1e8, nil
+}
+
+// ---------------------------------------------------------------------------
+// CostBreakdown — per-component cost details
+// ---------------------------------------------------------------------------
+
+// CostBreakdown holds each component of the arbitrage cost, all expressed both
+// as absolute BTC amounts and as percentages of the trade value.
+type CostBreakdown struct {
+	BTCAmount         float64 `json:"btc_amount"`           // trade size used for calculation
+	CexTakerFeePct    float64 `json:"cex_taker_fee_pct"`    // CEX taker fee as % of trade
+	CexTakerFeeBTC    float64 `json:"cex_taker_fee_btc"`    // CEX taker fee in BTC
+	WithdrawalFeePct  float64 `json:"withdrawal_fee_pct"`   // CEX BTC withdrawal fee as % of trade
+	WithdrawalFeeBTC  float64 `json:"withdrawal_fee_btc"`   // CEX BTC withdrawal fee in BTC
+	NetworkFeePct     float64 `json:"network_fee_pct"`      // on-chain miner fee as % of trade
+	NetworkFeeBTC     float64 `json:"network_fee_btc"`      // on-chain miner fee in BTC
+	DexFeePct         float64 `json:"dex_fee_pct"`          // DEX platform fee as % of trade
+	DexFeeBTC         float64 `json:"dex_fee_btc"`          // DEX platform fee in BTC
+	TotalCostPct      float64 `json:"total_cost_pct"`       // sum of all components as % of trade
+	TotalCostBTC      float64 `json:"total_cost_btc"`       // sum of all components in BTC
+}
+
+func round8(v float64) float64 {
+	return math.Round(v*1e8) / 1e8
+}
+
+func round4(v float64) float64 {
+	return math.Round(v*1e4) / 1e4
+}
+
+// Breakdown returns a full per-component cost breakdown for a given trade size and DEX.
+func (e *TradeCostEstimator) Breakdown(btcAmount float64, dexExchange string) CostBreakdown {
+	if btcAmount <= 0 {
+		return CostBreakdown{}
+	}
+	takerFrac := e.taker.get()
+	withdrawalFee := e.withdrawal.get()
+	networkFee := e.getNetworkFee()
+
+	var dexFeeFrac float64
+	if dexExchange == "robosats" {
+		dexFeeFrac = e.robosatsFee.get(
+			dexTakerFees["robosats"],
+			fetchRobosatsTakerFee,
+			"robosats DEX taker fee",
+		)
+	} else {
+		dexFeeFrac = dexTakerFees[dexExchange]
+	}
+
+	takerBTC := btcAmount * takerFrac
+	dexBTC := btcAmount * dexFeeFrac
+	totalBTC := takerBTC + withdrawalFee + networkFee + dexBTC
+	totalPct := totalBTC / btcAmount * 100
+
+	pct := func(btc float64) float64 { return round4(btc / btcAmount * 100) }
+
+	return CostBreakdown{
+		BTCAmount:        round8(btcAmount),
+		CexTakerFeePct:   pct(takerBTC),
+		CexTakerFeeBTC:   round8(takerBTC),
+		WithdrawalFeePct: pct(withdrawalFee),
+		WithdrawalFeeBTC: round8(withdrawalFee),
+		NetworkFeePct:    pct(networkFee),
+		NetworkFeeBTC:    round8(networkFee),
+		DexFeePct:        pct(dexBTC),
+		DexFeeBTC:        round8(dexBTC),
+		TotalCostPct:     round4(totalPct),
+		TotalCostBTC:     round8(totalBTC),
+	}
 }

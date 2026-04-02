@@ -27,23 +27,24 @@ type LiveOffer struct {
 
 // liveOutOffer is the shape sent to clients — includes computed premium fields.
 type liveOutOffer struct {
-	ID            int64    `json:"id"`
-	Exchange      string   `json:"exchange"`
-	Direction     string   `json:"direction"`
-	Price         float64  `json:"price"`
-	PriceDiffPct  float64  `json:"price_diff_percent"`
-	RefPrice      float64  `json:"ref_price"`
-	TradeCostPct  float64  `json:"trade_cost_percent"`  // estimated CEX→DEX arbitrage cost as % of trade value
-	NetPremiumPct float64  `json:"net_premium_percent"` // PriceDiffPct minus TradeCostPct
-	BTCMin        *float64 `json:"btc_min"`
-	BTCMax        *float64 `json:"btc_max"`
-	FiatMin       *int64   `json:"fiat_min"`
-	FiatMax       *int64   `json:"fiat_max"`
-	PaymentMethod *string  `json:"payment_method"`
-	OfferID       *string  `json:"offer_id"`
-	FirstSeen     string   `json:"first_seen"`
-	LastSeen      string   `json:"last_seen"`
-	IsLive        bool     `json:"is_live"`
+	ID            int64         `json:"id"`
+	Exchange      string        `json:"exchange"`
+	Direction     string        `json:"direction"`
+	Price         float64       `json:"price"`
+	PriceDiffPct  float64       `json:"price_diff_percent"`
+	RefPrice      float64       `json:"ref_price"`
+	TradeCostPct  float64       `json:"trade_cost_percent"`  // estimated CEX→DEX arbitrage cost as % of trade value
+	NetPremiumPct float64       `json:"net_premium_percent"` // PriceDiffPct minus TradeCostPct
+	CostBreakdown CostBreakdown `json:"cost_breakdown"`      // per-component cost detail
+	BTCMin        *float64      `json:"btc_min"`
+	BTCMax        *float64      `json:"btc_max"`
+	FiatMin       *int64        `json:"fiat_min"`
+	FiatMax       *int64        `json:"fiat_max"`
+	PaymentMethod *string       `json:"payment_method"`
+	OfferID       *string       `json:"offer_id"`
+	FirstSeen     string        `json:"first_seen"`
+	LastSeen      string        `json:"last_seen"`
+	IsLive        bool          `json:"is_live"`
 }
 
 // LiveHub holds live offers in memory and broadcasts to WebSocket subscribers
@@ -131,8 +132,8 @@ func (h *LiveHub) computePayload(price float64) []byte {
 		} else if o.BTCMin != nil && *o.BTCMin > 0 {
 			btcSize = *o.BTCMin
 		}
-		costPct := tradeCostEstimator.CostPct(btcSize, o.Exchange)
-		netPremium := math.Round((pct-costPct)*100) / 100
+		bd := tradeCostEstimator.Breakdown(btcSize, o.Exchange)
+		netPremium := math.Round((pct-bd.TotalCostPct)*100) / 100
 
 		result = append(result, liveOutOffer{
 			ID:            o.ID,
@@ -141,8 +142,9 @@ func (h *LiveHub) computePayload(price float64) []byte {
 			Price:         o.Price,
 			PriceDiffPct:  pct,
 			RefPrice:      price,
-			TradeCostPct:  math.Round(costPct*100) / 100,
+			TradeCostPct:  bd.TotalCostPct,
 			NetPremiumPct: netPremium,
+			CostBreakdown: bd,
 			BTCMin:        o.BTCMin,
 			BTCMax:        o.BTCMax,
 			FiatMin:       o.FiatMin,
