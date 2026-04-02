@@ -9,6 +9,7 @@ interface Props {
   onTabChange: (tab: Tab) => void;
   theme: 'dark' | 'light';
   onToggleTheme: () => void;
+  onOpenSettings: () => void;
 }
 
 const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
@@ -18,11 +19,12 @@ const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
   { id: 'trading', label: 'dex Trading', color: 'text-purple', disabled: true },
 ];
 
-export function Header({ stats, activeTab, onTabChange, theme, onToggleTheme }: Props) {
+export function Header({ stats, activeTab, onTabChange, theme, onToggleTheme, onOpenSettings }: Props) {
   return (
     <header className="bg-surface border border-border rounded-lg px-3 py-1 flex items-center gap-4 shrink-0">
       {tabs.map(tab => (
         <button
+          type="button"
           key={tab.id}
           onClick={() => !tab.disabled && onTabChange(tab.id)}
           disabled={tab.disabled}
@@ -42,6 +44,7 @@ export function Header({ stats, activeTab, onTabChange, theme, onToggleTheme }: 
       <div className="ml-auto" />
 
       <button
+        type="button"
         className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 cursor-pointer hover:bg-bg shrink-0"
         onClick={onToggleTheme}
         title={theme === 'dark' ? 'Switch to day mode' : 'Switch to night mode'}
@@ -49,9 +52,10 @@ export function Header({ stats, activeTab, onTabChange, theme, onToggleTheme }: 
         {theme === 'dark' ? '🌞' : '🌙'}
       </button>
       <button
-        className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 opacity-40 cursor-not-allowed shrink-0"
-        disabled
-        title="Settings — coming soon"
+        type="button"
+        className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 cursor-pointer hover:bg-bg shrink-0"
+        onClick={onOpenSettings}
+        title="Settings"
       >
         ⚙️
       </button>

@@ -5,6 +5,7 @@ import { useKrakenPrice } from './hooks/useKrakenPrice';
 import { FiltersProvider, useFilters } from './context/FiltersContext';
 import { Header } from './components/Header';
 import type { Tab } from './components/Header';
+import { SettingsOverlay } from './components/SettingsOverlay';
 import { ControlPanel } from './components/ControlPanel';
 import { PaymentChart } from './components/PaymentChart';
 import { OffersPreviewTable } from './components/OffersPreviewTable';
@@ -14,6 +15,9 @@ import { GeneralStats } from './components/GeneralStats';
 import { SnapshotLog } from './components/SnapshotLog';
 
 type ThemeMode = 'dark' | 'light';
+type PaymentMethodMode = 'neutral' | 'include' | 'exclude';
+
+const PAYMENT_METHODS = ['SEPA', 'Revolut', 'Wise', 'Zelle', 'PayPal', 'Cash App'] as const;
 
 function getInitialTheme(): ThemeMode {
   const stored = localStorage.getItem('dex-theme');
@@ -116,6 +120,11 @@ export default function App() {
   const { liveOffers } = useLiveOffers();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [preferredTimezone, setPreferredTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  const [paymentMethodModes, setPaymentMethodModes] = useState<Record<string, PaymentMethodMode>>(
+    () => Object.fromEntries(PAYMENT_METHODS.map(method => [method, 'neutral']))
+  );
 
   const allOffers = useMemo(
     () => [...liveOffers, ...pastOffers],
@@ -140,6 +149,18 @@ export default function App() {
           onTabChange={setActiveTab}
           theme={theme}
           onToggleTheme={toggleTheme}
+          onOpenSettings={() => setSettingsOpen(true)}
+        />
+
+        <SettingsOverlay
+          open={settingsOpen}
+          onClose={() => setSettingsOpen(false)}
+          preferredTimezone={preferredTimezone}
+          onTimezoneChange={setPreferredTimezone}
+          paymentMethodModes={paymentMethodModes}
+          onPaymentMethodModeChange={(method, mode) => {
+            setPaymentMethodModes(prev => ({ ...prev, [method]: mode }));
+          }}
         />
 
         {activeTab === 'monitor' && (
