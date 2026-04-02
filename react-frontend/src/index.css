@@ -93,3 +93,17 @@ body {
   animation: dex-spin 0.72s linear infinite;
   box-shadow: 0 0 10px rgba(247, 147, 26, 0.16);
 }
+
+/* Offers table selected/hover row highlighting driven by [data-theme] */
+[data-theme='light'] .offer-row-selected {
+  background: rgba(0, 0, 0, 0.10);
+}
+[data-theme='dark'] .offer-row-selected {
+  background: rgba(255, 255, 255, 0.34);
+}
+[data-theme='light'] .offer-row-hover:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+[data-theme='dark'] .offer-row-hover:hover {
+  background: rgba(255, 255, 255, 0.08);
+}
