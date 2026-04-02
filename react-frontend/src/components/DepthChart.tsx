@@ -3,6 +3,10 @@ import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
 import { toUtcSec } from '../utils/formatters';
 
+interface Props {
+  theme: 'dark' | 'light';
+}
+
 function niceStep(range: number, targetSteps: number): number {
   const rough = range / targetSteps;
   const pow = Math.pow(10, Math.floor(Math.log10(rough)));
@@ -11,7 +15,12 @@ function niceStep(range: number, targetSteps: number): number {
   return nice * pow;
 }
 
-export function DepthChart() {
+function cssVar(name: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+export function DepthChart({ theme }: Props) {
   const { depthOffers, offers: allOffers, filters, loading, hoveredOhlcTime } = useFilters();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -117,9 +126,12 @@ export function DepthChart() {
 
     const xOf = (v: number) => ML + (v / maxVol) * PW;
     const yOf = (p: number) => MT + (1 - (p - priceMin) / (priceMax - priceMin)) * PH;
+    const bg = cssVar('--app-bg', '#0d1117');
+    const grid = cssVar('--app-grid', '#21262d');
+    const muted = cssVar('--app-muted', '#8b949e');
 
     // --- Background ---
-    ctx.fillStyle = '#0d1117';
+    ctx.fillStyle = bg;
     ctx.fillRect(0, 0, W, H);
 
     // --- Grid & labels ---
@@ -132,9 +144,9 @@ export function DepthChart() {
     ctx.textBaseline = 'middle';
     for (let p = Math.ceil(priceMin / priceStep) * priceStep; p <= priceMax; p += priceStep) {
       const y = yOf(p);
-      ctx.strokeStyle = '#21262d';
+      ctx.strokeStyle = grid;
       ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + PW, y); ctx.stroke();
-      ctx.fillStyle = '#8b949e';
+      ctx.fillStyle = muted;
       ctx.fillText(`€${Math.round(p).toLocaleString('de-DE')}`, ML - 5, y);
     }
 
@@ -144,9 +156,9 @@ export function DepthChart() {
     ctx.textBaseline = 'top';
     for (let v = 0; v <= maxVol; v += volStep) {
       const x = xOf(v);
-      ctx.strokeStyle = '#21262d';
+      ctx.strokeStyle = grid;
       ctx.beginPath(); ctx.moveTo(x, MT); ctx.lineTo(x, MT + PH); ctx.stroke();
-      ctx.fillStyle = '#8b949e';
+      ctx.fillStyle = muted;
       ctx.fillText(v.toFixed(2), x, MT + PH + 5);
     }
 
@@ -204,7 +216,7 @@ export function DepthChart() {
     // Mid price dashed line
     const midY = yOf(midPrice);
     ctx.setLineDash([4, 4]);
-    ctx.strokeStyle = '#8b949e';
+    ctx.strokeStyle = muted;
     ctx.lineWidth = 1;
     ctx.beginPath();
     ctx.moveTo(ML, midY); ctx.lineTo(ML + PW, midY);
@@ -214,7 +226,7 @@ export function DepthChart() {
     ctx.restore();
 
     // X axis title
-    ctx.fillStyle = '#8b949e';
+    ctx.fillStyle = muted;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'bottom';
     ctx.fillText('Cumulative BTC', ML + PW / 2, H - 2);
@@ -226,7 +238,7 @@ export function DepthChart() {
       ? ` · Spread €${(lowestAsk - highestBid).toLocaleString('de-DE')}`
       : '';
     setMidInfo(`Mid €${Math.round(midPrice).toLocaleString('de-DE')}${spreadText}`);
-  }, [displayOffers, resizeTick, yZoom, hoveredOhlcTime]);
+  }, [displayOffers, resizeTick, yZoom, hoveredOhlcTime, theme]);
 
   return (
     <div className="flex flex-col h-full min-h-0">

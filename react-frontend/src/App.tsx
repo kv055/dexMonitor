@@ -13,6 +13,13 @@ import { DepthChart } from './components/DepthChart';
 import { GeneralStats } from './components/GeneralStats';
 import { SnapshotLog } from './components/SnapshotLog';
 
+type ThemeMode = 'dark' | 'light';
+
+function getInitialTheme(): ThemeMode {
+  const stored = localStorage.getItem('dex-theme');
+  return stored === 'light' ? 'light' : 'dark';
+}
+
 function OhlcPanelHeader() {
   const price = useKrakenPrice();
   return (
@@ -29,12 +36,13 @@ function OhlcPanelHeader() {
 }
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
+function MonitorView({ ohlcData, lastUpdated, error, load, stats, theme }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   stats: ReturnType<typeof useDashboard>['stats'] | null;
   lastUpdated: string;
   error: string | null;
   load: (hours: string) => void;
+  theme: ThemeMode;
 }) {
   const { filters } = useFilters();
 
@@ -47,7 +55,7 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-3">
       {error && (
-        <div className="bg-[#2d1b1b] border border-red rounded-lg px-3 py-2 text-red text-sm shrink-0">
+        <div className="bg-error border border-red rounded-lg px-3 py-2 text-red text-sm shrink-0">
           {error}
         </div>
       )}
@@ -61,7 +69,7 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
 
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Offers by Payment Method</h3>
-          <PaymentChart />
+          <PaymentChart theme={theme} />
         </div>
 
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
@@ -77,11 +85,11 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
         <div className="col-span-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
           <OhlcPanelHeader />
           <div className="flex-1 min-h-0 relative">
-            <OHLCChart data={ohlcData} />
+            <OHLCChart data={ohlcData} theme={theme} />
           </div>
         </div>
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
-          <DepthChart />
+          <DepthChart theme={theme} />
         </div>
       </div>
     </div>
@@ -107,16 +115,32 @@ export default function App() {
   const { pastOffers, stats, ohlcData, lastUpdated, error, loading, load } = useDashboard();
   const { liveOffers } = useLiveOffers();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
+  const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
 
   const allOffers = useMemo(
     () => [...liveOffers, ...pastOffers],
     [liveOffers, pastOffers]
   );
 
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('dex-theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => {
+    setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
+  };
+
   return (
     <FiltersProvider offers={allOffers} loading={loading}>
       <div className="h-screen overflow-hidden flex flex-col bg-bg text-text p-3 gap-3">
-        <Header stats={stats} activeTab={activeTab} onTabChange={setActiveTab} />
+        <Header
+          stats={stats}
+          activeTab={activeTab}
+          onTabChange={setActiveTab}
+          theme={theme}
+          onToggleTheme={toggleTheme}
+        />
 
         {activeTab === 'monitor' && (
           <MonitorView
@@ -125,6 +149,7 @@ export default function App() {
             lastUpdated={lastUpdated}
             error={error}
             load={load}
+            theme={theme}
           />
         )}
 

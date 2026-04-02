@@ -14,11 +14,17 @@ import { LoadingSpinner } from './LoadingSpinner';
 
 interface Props {
   data: OHLCData | null;
+  theme: 'dark' | 'light';
 }
 
 const EXCHANGE_COLORS: Record<string, string> = { bisq: '#f7931a', hodlhodl: '#3fb950', robosats: '#bc8cff' };
 
-export function OHLCChart({ data }: Props) {
+function cssVar(name: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+export function OHLCChart({ data, theme }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const hoverDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -43,25 +49,29 @@ export function OHLCChart({ data }: Props) {
     if (!divRef.current) return;
 
     chartRef.current?.remove();
+    const bg = cssVar('--app-bg', '#0d1117');
+    const text = cssVar('--app-muted', '#8b949e');
+    const grid = cssVar('--app-grid', '#21262d');
+    const selectedLine = cssVar('--app-text', '#e6edf3');
 
     const chart = createChart(divRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: '#0d1117' },
-        textColor: '#8b949e',
+        background: { type: ColorType.Solid, color: bg },
+        textColor: text,
         fontSize: 11,
       },
       grid: {
-        vertLines: { color: '#21262d' },
-        horzLines: { color: '#21262d' },
+        vertLines: { color: grid },
+        horzLines: { color: grid },
       },
       crosshair: { mode: CrosshairMode.Normal },
       timeScale: {
-        borderColor: '#21262d',
+        borderColor: grid,
         timeVisible: true,
         secondsVisible: false,
       },
       rightPriceScale: {
-        borderColor: '#21262d',
+        borderColor: grid,
         scaleMargins: { top: 0.1, bottom: 0.1 },
       },
       width: divRef.current.clientWidth,
@@ -105,7 +115,7 @@ export function OHLCChart({ data }: Props) {
       if (startSec >= endSec) return;
 
       const isSelected = o.id === selectedOfferId;
-      const color = isSelected ? '#ffffff' : (EXCHANGE_COLORS[o.exchange] || '#888');
+      const color = isSelected ? selectedLine : (EXCHANGE_COLORS[o.exchange] || '#888');
 
       const series = chart.addLineSeries({
         color,
@@ -174,7 +184,7 @@ export function OHLCChart({ data }: Props) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, premiumOffers, hours, selectedOfferId]);
+  }, [data, premiumOffers, hours, selectedOfferId, theme]);
 
   return (
     <div className="relative h-full">

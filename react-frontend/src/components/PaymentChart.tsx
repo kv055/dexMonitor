@@ -10,7 +10,16 @@ const PALETTE = [
   '#d29922', '#39d353', '#db61a2', '#79c0ff', '#e3b341', '#4a4f58',
 ];
 
-export function PaymentChart() {
+interface Props {
+  theme: 'dark' | 'light';
+}
+
+function cssVar(name: string, fallback: string): string {
+  const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return value || fallback;
+}
+
+export function PaymentChart({ theme }: Props) {
   const { filteredOffers: offers, loading } = useFilters();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<Chart | null>(null);
@@ -31,6 +40,9 @@ export function PaymentChart() {
 
     const labels = top.map(e => e[0]);
     const data = top.map(e => e[1]);
+    const textStrong = cssVar('--app-text', '#e6edf3');
+    const muted = cssVar('--app-muted', '#8b949e');
+    const subtle = cssVar('--app-subtle', '#606670');
 
     const insideLabels = {
       id: 'insideLabels',
@@ -56,20 +68,20 @@ export function PaymentChart() {
           const totalNeeded = pad + nameW + 6 + countW + pad;
           if (barW >= totalNeeded) {
             c.font = font;
-            c.fillStyle = 'rgba(255,255,255,0.92)';
+            c.fillStyle = textStrong;
             c.textAlign = 'left';
             c.fillText(name, baseX + pad, barCenterY);
             c.font = fontLight;
-            c.fillStyle = 'rgba(255,255,255,0.55)';
+            c.fillStyle = muted;
             c.textAlign = 'right';
             c.fillText(count, barRight - pad, barCenterY);
           } else {
             c.font = font;
-            c.fillStyle = '#8b949e';
+            c.fillStyle = muted;
             c.textAlign = 'left';
             c.fillText(name, barRight + pad, barCenterY);
             c.font = fontLight;
-            c.fillStyle = '#606670';
+            c.fillStyle = subtle;
             c.fillText(count, barRight + pad + nameW + 6, barCenterY);
           }
         });
@@ -110,7 +122,7 @@ export function PaymentChart() {
     });
 
     return () => { chartRef.current?.destroy(); chartRef.current = null; };
-  }, [offers]);
+  }, [offers, theme]);
 
   return (
     <div className="relative flex-1 min-h-40">
