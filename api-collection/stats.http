@@ -1,0 +1,24 @@
+# dexMonitor — Statistics & OHLC
+
+### Stats — last 24h
+# Returns: { price_stats: [{exchange, snapshot_count, min_price, max_price, avg_price}],
+#            offer_counts: [{exchange, offer_count}], hours: int }
+GET {{base_url}}/api/stats
+
+###
+
+### Stats — custom window
+GET {{base_url}}/api/stats?hours=48
+
+###
+
+### OHLC Candlestick Data — last 24h
+# Returns: { candles: [{time, open, high, low, close}],
+#            offers: [{time, price, premium, exchange, direction, payment_method}],
+#            interval_min: int }
+GET {{base_url}}/api/ohlc
+
+###
+
+### OHLC — custom window
+GET {{base_url}}/api/ohlc?hours=72

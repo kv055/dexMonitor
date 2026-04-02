@@ -1,0 +1,26 @@
+# dexMonitor — Internal Endpoints
+# NOTE: These are called by the snapshot tool, not the frontend.
+#       Only call from localhost or a trusted context.
+
+### Push Live Offers Update
+# Used by the scraper/snapshot tool to update the in-memory hub.
+# Returns: HTTP 204 No Content on success.
+POST {{base_url}}/internal/live_offers
+Content-Type: application/json
+
+[
+  {
+    "id": 1,
+    "exchange": "bisq",
+    "direction": "buy",
+    "price": 92500.00,
+    "btc_min": 0.01,
+    "btc_max": 0.5,
+    "fiat_min": 925,
+    "fiat_max": 46250,
+    "payment_method": "SEPA",
+    "offer_id": "abc123-example",
+    "first_seen": "2026-04-02T10:00:00Z",
+    "last_seen": "2026-04-02T10:15:00Z"
+  }
+]

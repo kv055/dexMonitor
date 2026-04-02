@@ -1,0 +1,20 @@
+# dexMonitor — WebSocket
+# REST Client does not support WebSocket connections.
+# Use one of the options below instead.
+
+# --- Option 1: websocat (CLI) ---
+# Install: cargo install websocat  OR  sudo apt install websocat
+#
+#   websocat ws://127.0.0.1:5000/ws/live_offers
+#
+# The server sends the full offer array immediately on connect,
+# then pushes updates on every Kraken price tick.
+
+# --- Option 2: Hoppscotch (browser, open source) ---
+# Open https://hoppscotch.io → Realtime → WebSocket
+# URL: ws://127.0.0.1:5000/ws/live_offers
+
+# --- Option 3: wscat (Node.js CLI) ---
+# Install: npm install -g wscat
+#
+#   wscat -c ws://127.0.0.1:5000/ws/live_offers

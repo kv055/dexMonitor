@@ -1,0 +1,7 @@
+# dexMonitor — Health Check
+# Extension: REST Client (humao.rest-client)
+# Usage: click "Send Request" above a request block, select "local" environment
+
+### Health Check
+# Returns: { "status": "ok", "timestamp": "<ISO 8601>" }
+GET {{base_url}}/health
