@@ -1,11 +1,7 @@
-import { useEffect, useRef, useState, useMemo } from 'react';
+import { memo, useEffect, useRef, useMemo, useLayoutEffect, useState } from 'react';
 import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
 import { toUtcSec } from '../utils/formatters';
-
-interface Props {
-  theme: 'dark' | 'light';
-}
 
 function niceStep(range: number, targetSteps: number): number {
   const rough = range / targetSteps;
@@ -20,12 +16,11 @@ function cssVar(name: string, fallback: string): string {
   return value || fallback;
 }
 
-export function DepthChart({ theme }: Props) {
+function DepthChartInner() {
   const { depthOffers, offers: allOffers, filters, loading, hoveredOhlcTime } = useFilters();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
-  const [midInfo, setMidInfo] = useState('');
-  const [volumeInfo, setVolumeInfo] = useState('');
+  const canvasMetricsRef = useRef<{ w: number; h: number; dpr: number } | null>(null);
   const [resizeTick, setResizeTick] = useState(0);
   const [yZoom, setYZoom] = useState(1.0);
 
@@ -62,27 +57,13 @@ export function DepthChart({ theme }: Props) {
     });
   }, [hoveredOhlcTime, depthOffers, allOffers, filters.exchange, filters.payment]);
 
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    const container = containerRef.current;
-    if (!canvas || !container || !displayOffers.length) return;
+  // Expensive aggregation should not rerun just because the theme changes.
+  const chartData = useMemo(() => {
+    if (!displayOffers.length) return null;
 
-    const dpr = window.devicePixelRatio || 1;
-    const W = container.clientWidth;
-    const H = container.clientHeight;
-    if (W === 0 || H === 0) return;
-
-    canvas.width = W * dpr;
-    canvas.height = H * dpr;
-    canvas.style.width = `${W}px`;
-    canvas.style.height = `${H}px`;
-    const ctx = canvas.getContext('2d')!;
-    ctx.scale(dpr, dpr);
-
-    // --- Data ---
     // In historical mode use all matched offers; in live mode filter to is_live only
     const open = hoveredOhlcTime !== null ? displayOffers : displayOffers.filter(o => o.is_live);
-    if (!open.length) return;
+    if (!open.length) return null;
 
     const midPrice = open.reduce((s, o) => s + (o.ref_price || 0), 0) / open.length;
 
@@ -117,29 +98,74 @@ export function DepthChart({ theme }: Props) {
     const visibleAskBtc = rawAsks
       .filter(a => a.price >= priceMin && a.price <= priceMax)
       .reduce((s, a) => s + a.btc, 0);
-    setVolumeInfo(`Bids ${visibleBidBtc.toFixed(3)} · Asks ${visibleAskBtc.toFixed(3)} BTC`);
+
+    const highestBid = rawBids[0]?.price ?? null;
+    const lowestAsk = rawAsks[0]?.price ?? null;
+    const spreadText = highestBid && lowestAsk
+      ? ` · Spread €${(lowestAsk - highestBid).toLocaleString('de-DE')}`
+      : '';
+
+    return {
+      rawBids,
+      rawAsks,
+      bids,
+      asks,
+      midPrice,
+      maxVol,
+      priceMin,
+      priceMax,
+      volumeInfo: `Bids ${visibleBidBtc.toFixed(3)} · Asks ${visibleAskBtc.toFixed(3)} BTC`,
+      midInfo: `Mid €${Math.round(midPrice).toLocaleString('de-DE')}${spreadText}`,
+    };
+  }, [displayOffers, hoveredOhlcTime, yZoom]);
+
+  useLayoutEffect(() => {
+    const canvas = canvasRef.current;
+    const container = containerRef.current;
+    if (!canvas || !container) return;
+
+    const dpr = window.devicePixelRatio || 1;
+    const W = container.clientWidth;
+    const H = container.clientHeight;
+    if (W === 0 || H === 0) return;
+
+    const canvasW = Math.round(W * dpr);
+    const canvasH = Math.round(H * dpr);
+    const prev = canvasMetricsRef.current;
+    const sizeChanged = !prev || prev.w !== canvasW || prev.h !== canvasH || prev.dpr !== dpr;
+    if (sizeChanged) {
+      canvas.width = canvasW;
+      canvas.height = canvasH;
+      canvas.style.width = `${W}px`;
+      canvas.style.height = `${H}px`;
+      canvasMetricsRef.current = { w: canvasW, h: canvasH, dpr };
+    }
+
+    const ctx = canvas.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     // --- Layout ---
     const ML = 70, MR = 15, MT = 10, MB = 28;
+    const grid = cssVar('--app-grid', '#21262d');
+    const muted = cssVar('--app-muted', '#8b949e');
+
+    // Keep canvas transparent so theme background swaps instantly via CSS.
+    ctx.clearRect(0, 0, W, H);
+    if (!chartData) return;
+
+    const { bids, asks, midPrice, maxVol, priceMin, priceMax } = chartData;
     const PW = W - ML - MR;
     const PH = H - MT - MB;
 
     const xOf = (v: number) => ML + (v / maxVol) * PW;
     const yOf = (p: number) => MT + (1 - (p - priceMin) / (priceMax - priceMin)) * PH;
-    const bg = cssVar('--app-bg', '#0d1117');
-    const grid = cssVar('--app-grid', '#21262d');
-    const muted = cssVar('--app-muted', '#8b949e');
-
-    // --- Background ---
-    ctx.fillStyle = bg;
-    ctx.fillRect(0, 0, W, H);
 
     // --- Grid & labels ---
     ctx.font = `10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
     ctx.lineWidth = 1;
 
     // Y (price) gridlines + labels
-    const priceStep = niceStep(priceRange * 2, 6);
+    const priceStep = niceStep(priceMax - priceMin, 6);
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     for (let p = Math.ceil(priceMin / priceStep) * priceStep; p <= priceMax; p += priceStep) {
@@ -231,14 +257,7 @@ export function DepthChart({ theme }: Props) {
     ctx.textBaseline = 'bottom';
     ctx.fillText('Cumulative BTC', ML + PW / 2, H - 2);
 
-    // Update header info
-    const highestBid = rawBids[0]?.price ?? null;
-    const lowestAsk = rawAsks[0]?.price ?? null;
-    const spreadText = highestBid && lowestAsk
-      ? ` · Spread €${(lowestAsk - highestBid).toLocaleString('de-DE')}`
-      : '';
-    setMidInfo(`Mid €${Math.round(midPrice).toLocaleString('de-DE')}${spreadText}`);
-  }, [displayOffers, resizeTick, yZoom, hoveredOhlcTime, theme]);
+  }, [chartData, resizeTick]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -250,14 +269,25 @@ export function DepthChart({ theme }: Props) {
           )}
         </h3>
         <div className="flex flex-col items-end gap-0.5">
-          {volumeInfo && <span className="text-[0.75rem] text-muted">{volumeInfo}</span>}
-          <span className="text-[0.85rem] text-muted">{midInfo}</span>
+          {chartData?.volumeInfo && <span className="text-[0.75rem] text-muted">{chartData.volumeInfo}</span>}
+          <span className="text-[0.85rem] text-muted">{chartData?.midInfo ?? ''}</span>
         </div>
       </div>
       <div ref={containerRef} className="flex-1 min-h-0 relative">
         {loading && <LoadingSpinner label="Loading orderbook" />}
-        <canvas ref={canvasRef} style={{ position: 'absolute', inset: 0, opacity: loading ? 0 : 1, transition: 'opacity 0.35s ease' }} />
+        <canvas
+          ref={canvasRef}
+          style={{
+            position: 'absolute',
+            inset: 0,
+            background: 'var(--app-bg)',
+            opacity: loading ? 0 : 1,
+            transition: 'opacity 0.35s ease',
+          }}
+        />
       </div>
     </div>
   );
 }
+
+export const DepthChart = memo(DepthChartInner);

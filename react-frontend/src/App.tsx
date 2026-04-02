@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useLayoutEffect } from 'react';
 import { useDashboard } from './hooks/useDashboard';
 import { useLiveOffers } from './hooks/useLiveOffers';
 import { useKrakenPrice } from './hooks/useKrakenPrice';
@@ -85,11 +85,11 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats, theme }: {
         <div className="col-span-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
           <OhlcPanelHeader />
           <div className="flex-1 min-h-0 relative">
-            <OHLCChart data={ohlcData} theme={theme} />
+            <OHLCChart data={ohlcData} />
           </div>
         </div>
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
-          <DepthChart theme={theme} />
+          <DepthChart />
         </div>
       </div>
     </div>
@@ -122,7 +122,7 @@ export default function App() {
     [liveOffers, pastOffers]
   );
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('dex-theme', theme);
   }, [theme]);

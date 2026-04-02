@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { memo, useEffect, useRef } from 'react';
 import { toUtcSec } from '../utils/formatters';
 import {
   createChart,
@@ -14,7 +14,6 @@ import { LoadingSpinner } from './LoadingSpinner';
 
 interface Props {
   data: OHLCData | null;
-  theme: 'dark' | 'light';
 }
 
 const EXCHANGE_COLORS: Record<string, string> = { bisq: '#f7931a', hodlhodl: '#3fb950', robosats: '#bc8cff' };
@@ -24,7 +23,7 @@ function cssVar(name: string, fallback: string): string {
   return value || fallback;
 }
 
-export function OHLCChart({ data, theme }: Props) {
+function OHLCChartInner({ data }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const hoverDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -49,14 +48,13 @@ export function OHLCChart({ data, theme }: Props) {
     if (!divRef.current) return;
 
     chartRef.current?.remove();
-    const bg = cssVar('--app-bg', '#0d1117');
     const text = cssVar('--app-muted', '#8b949e');
     const grid = cssVar('--app-grid', '#21262d');
     const selectedLine = cssVar('--app-text', '#e6edf3');
 
     const chart = createChart(divRef.current, {
       layout: {
-        background: { type: ColorType.Solid, color: bg },
+        background: { type: ColorType.Solid, color: 'rgba(0, 0, 0, 0)' },
         textColor: text,
         fontSize: 11,
       },
@@ -184,12 +182,14 @@ export function OHLCChart({ data, theme }: Props) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, premiumOffers, hours, selectedOfferId, theme]);
+  }, [data, premiumOffers, hours, selectedOfferId]);
 
   return (
-    <div className="relative h-full">
+    <div className="relative h-full bg-bg">
       {loading && <LoadingSpinner size={36} label="Loading chart data" />}
       <div ref={divRef} style={{ position: 'absolute', inset: 0, opacity: loading ? 0 : 1, transition: 'opacity 0.35s ease' }} />
     </div>
   );
 }
+
+export const OHLCChart = memo(OHLCChartInner);
