@@ -37,3 +37,7 @@ Thumbs.db
 # Environment
 .env
 .env.local
+
+# Codex
+.codex
+.codex/
