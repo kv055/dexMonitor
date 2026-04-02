@@ -16,6 +16,18 @@ function cssVar(name: string, fallback: string): string {
   return value || fallback;
 }
 
+function formatDepthTimestamp(sec: number): string {
+  const d = new Date(sec * 1000);
+  return d.toLocaleString('en-GB', {
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
 function DepthChartInner() {
   const { depthOffers, offers: allOffers, filters, loading, hoveredOhlcTime } = useFilters();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -23,6 +35,7 @@ function DepthChartInner() {
   const canvasMetricsRef = useRef<{ w: number; h: number; dpr: number } | null>(null);
   const [resizeTick, setResizeTick] = useState(0);
   const [yZoom, setYZoom] = useState(1.0);
+  const headerTimestamp = formatDepthTimestamp(hoveredOhlcTime ?? Math.floor(Date.now() / 1000));
 
   // Resize observer
   useEffect(() => {
@@ -264,9 +277,7 @@ function DepthChartInner() {
       <div className="flex justify-between items-center mb-2 shrink-0">
         <h3 className="text-[0.85rem] text-muted">
           Orderbook Depth
-          {hoveredOhlcTime !== null && (
-            <span className="ml-2 text-[0.75rem] text-accent">@ historical</span>
-          )}
+          <span className="ml-2 text-[0.75rem] text-accent">{headerTimestamp}</span>
         </h3>
         <div className="flex flex-col items-end gap-0.5">
           {chartData?.volumeInfo && <span className="text-[0.75rem] text-muted">{chartData.volumeInfo}</span>}

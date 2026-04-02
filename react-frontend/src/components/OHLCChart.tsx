@@ -26,7 +26,6 @@ function cssVar(name: string, fallback: string): string {
 function OHLCChartInner({ data }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const hoverDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferId, setSelectedOfferId, setHoveredOhlcTime, loading } = useFilters();
 
   // Keep chart sized to container
@@ -142,12 +141,9 @@ function OHLCChartInner({ data }: Props) {
       }
     }
 
-    // Crosshair move — emit hovered time to shared state (debounced)
+    // Crosshair move — emit hovered time to shared state immediately
     chart.subscribeCrosshairMove((param) => {
-      if (hoverDebounceRef.current) clearTimeout(hoverDebounceRef.current);
-      hoverDebounceRef.current = setTimeout(() => {
-        setHoveredOhlcTime(param.time !== undefined ? (param.time as number) : null);
-      }, 150);
+      setHoveredOhlcTime(param.time !== undefined ? (param.time as number) : null);
     });
 
     // Click handler — find closest offer line within 12px
@@ -177,7 +173,6 @@ function OHLCChartInner({ data }: Props) {
     });
 
     return () => {
-      if (hoverDebounceRef.current) clearTimeout(hoverDebounceRef.current);
       setHoveredOhlcTime(null);
       chart.remove();
       chartRef.current = null;
