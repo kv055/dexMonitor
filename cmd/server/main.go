@@ -29,6 +29,8 @@ var (
 	krakPrice   float64
 )
 
+var tradeCostEstimator *TradeCostEstimator
+
 // seedHubFromDB loads is_live=1 offers from the DB into the hub once at startup
 // so live data is available before the first snapshot push arrives.
 func seedHubFromDB() {
@@ -43,7 +45,7 @@ func seedHubFromDB() {
 	}
 	defer rows.Close()
 
-	var offers []LiveOffer
+	offers := make([]LiveOffer, 0)
 	for rows.Next() {
 		var o LiveOffer
 		var btcMin, btcMax sql.NullFloat64
@@ -187,6 +189,14 @@ func main() {
 
 	// Enable WAL mode for concurrent snapshot writes
 	db.Exec("PRAGMA journal_mode=WAL")
+
+	cex := os.Getenv("CEX_EXCHANGE")
+	if cex == "" {
+		cex = "kraken"
+	}
+	tradeCostEstimator = NewTradeCostEstimator(cex)
+	fmt.Printf("[TradeCost] configured for %s (taker fallback %.2f%%, withdrawal fallback %.8f BTC — live fetch on first use)\n",
+		cex, takerFeeFallbacks[cex]*100, withdrawalFallbacks[cex])
 
 	// Migrations
 	db.Exec("ALTER TABLE offers ADD COLUMN is_live BOOLEAN NOT NULL DEFAULT 0")
@@ -353,7 +363,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 	defer priceRows.Close()
 
-	var priceStats []map[string]any
+	priceStats := make([]map[string]any, 0)
 	for priceRows.Next() {
 		var exchange string
 		var count int
@@ -383,7 +393,7 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	}
 	defer countRows.Close()
 
-	var offerCounts []map[string]any
+	offerCounts := make([]map[string]any, 0)
 	for countRows.Next() {
 		var exchange string
 		var count int
@@ -422,7 +432,7 @@ func handleOHLC(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var offers []map[string]any
+	offers := make([]map[string]any, 0)
 	for rows.Next() {
 		var price, premium float64
 		var paymentMethod, exchange, direction, firstSeen string
@@ -460,7 +470,7 @@ func handleSnapshotLog(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	var result []map[string]any
+	result := make([]map[string]any, 0)
 	for rows.Next() {
 		var id, offersCount int
 		var ts, exchangesJSON string
@@ -516,7 +526,7 @@ func fetchKrakenOHLC(hours int) []map[string]any {
 	}
 
 	cutoff := float64(time.Now().UTC().Unix() - int64(hours*3600))
-	var candles []map[string]any
+	candles := make([]map[string]any, 0)
 
 	for key, raw := range data.Result {
 		if key == "last" {
@@ -571,7 +581,7 @@ func scanOffers(rows *sql.Rows) ([]map[string]any, error) {
 		return nil, err
 	}
 
-	var result []map[string]any
+	result := make([]map[string]any, 0)
 	for rows.Next() {
 		values := make([]any, len(cols))
 		ptrs := make([]any, len(cols))

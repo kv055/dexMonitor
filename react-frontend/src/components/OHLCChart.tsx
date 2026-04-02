@@ -1,4 +1,5 @@
 import { useEffect, useRef } from 'react';
+import { toUtcSec } from '../utils/formatters';
 import {
   createChart,
   ColorType,
@@ -17,15 +18,11 @@ interface Props {
 
 const EXCHANGE_COLORS: Record<string, string> = { bisq: '#f7931a', hodlhodl: '#3fb950', robosats: '#bc8cff' };
 
-function toUtcSec(ts: string): UTCTimestamp {
-  const normalized = ts.replace(' ', 'T') + (ts.endsWith('Z') ? '' : 'Z');
-  return Math.floor(new Date(normalized).getTime() / 1000) as UTCTimestamp;
-}
-
 export function OHLCChart({ data }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferId, setSelectedOfferId, loading } = useFilters();
+  const hoverDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferId, setSelectedOfferId, setHoveredOhlcTime, loading } = useFilters();
 
   // Keep chart sized to container
   useEffect(() => {
@@ -84,7 +81,7 @@ export function OHLCChart({ data }: Props) {
       });
       candleSeries.setData(
         data.candles.map(c => ({
-          time: toUtcSec(c.time),
+          time: toUtcSec(c.time) as UTCTimestamp,
           open: c.open,
           high: c.high,
           low: c.low,
@@ -102,8 +99,8 @@ export function OHLCChart({ data }: Props) {
 
     premiumOffers.forEach(o => {
       const isOpen = o.is_live;
-      const startSec = toUtcSec(o.first_seen || o.time || '');
-      const endSec = isOpen ? nowSec : toUtcSec(o.last_seen ?? '');
+      const startSec = toUtcSec(o.first_seen || o.time || '') as UTCTimestamp;
+      const endSec = (isOpen ? nowSec : toUtcSec(o.last_seen ?? '') as UTCTimestamp);
 
       if (startSec >= endSec) return;
 
@@ -137,6 +134,14 @@ export function OHLCChart({ data }: Props) {
       }
     }
 
+    // Crosshair move — emit hovered time to shared state (debounced)
+    chart.subscribeCrosshairMove((param) => {
+      if (hoverDebounceRef.current) clearTimeout(hoverDebounceRef.current);
+      hoverDebounceRef.current = setTimeout(() => {
+        setHoveredOhlcTime(param.time !== undefined ? (param.time as number) : null);
+      }, 150);
+    });
+
     // Click handler — find closest offer line within 12px
     chart.subscribeClick((param) => {
       if (!param.point) {
@@ -164,6 +169,8 @@ export function OHLCChart({ data }: Props) {
     });
 
     return () => {
+      if (hoverDebounceRef.current) clearTimeout(hoverDebounceRef.current);
+      setHoveredOhlcTime(null);
       chart.remove();
       chartRef.current = null;
     };

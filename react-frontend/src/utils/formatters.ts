@@ -44,3 +44,8 @@ export function premiumClass(pct: number | null | undefined): string {
   if (pct <= 4) return 'text-accent';
   return 'text-red';
 }
+
+export function toUtcSec(ts: string): number {
+  const normalized = ts.replace(' ', 'T') + (ts.endsWith('Z') ? '' : 'Z');
+  return Math.floor(new Date(normalized).getTime() / 1000);
+}

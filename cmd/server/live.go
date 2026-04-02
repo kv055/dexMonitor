@@ -33,6 +33,8 @@ type liveOutOffer struct {
 	Price         float64  `json:"price"`
 	PriceDiffPct  float64  `json:"price_diff_percent"`
 	RefPrice      float64  `json:"ref_price"`
+	TradeCostPct  float64  `json:"trade_cost_percent"`  // estimated CEX→DEX arbitrage cost as % of trade value
+	NetPremiumPct float64  `json:"net_premium_percent"` // PriceDiffPct minus TradeCostPct
 	BTCMin        *float64 `json:"btc_min"`
 	BTCMax        *float64 `json:"btc_max"`
 	FiatMin       *int64   `json:"fiat_min"`
@@ -120,6 +122,18 @@ func (h *LiveHub) computePayload(price float64) []byte {
 		if price > 0 {
 			pct = math.Round((o.Price/price-1)*10000) / 100
 		}
+
+		// Determine BTC size for cost estimation: prefer BTCMax, fall back to BTCMin,
+		// then the module-level default.
+		btcSize := defaultBTCTradeSize
+		if o.BTCMax != nil && *o.BTCMax > 0 {
+			btcSize = *o.BTCMax
+		} else if o.BTCMin != nil && *o.BTCMin > 0 {
+			btcSize = *o.BTCMin
+		}
+		costPct := tradeCostEstimator.CostPct(btcSize, o.Exchange)
+		netPremium := math.Round((pct-costPct)*100) / 100
+
 		result = append(result, liveOutOffer{
 			ID:            o.ID,
 			Exchange:      o.Exchange,
@@ -127,6 +141,8 @@ func (h *LiveHub) computePayload(price float64) []byte {
 			Price:         o.Price,
 			PriceDiffPct:  pct,
 			RefPrice:      price,
+			TradeCostPct:  math.Round(costPct*100) / 100,
+			NetPremiumPct: netPremium,
 			BTCMin:        o.BTCMin,
 			BTCMax:        o.BTCMax,
 			FiatMin:       o.FiatMin,

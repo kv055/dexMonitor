@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
+import { toUtcSec } from '../utils/formatters';
 
 function niceStep(range: number, targetSteps: number): number {
   const rough = range / targetSteps;
@@ -11,12 +12,15 @@ function niceStep(range: number, targetSteps: number): number {
 }
 
 export function DepthChart() {
-  const { depthOffers: offers, loading } = useFilters();
+  const { depthOffers, offers: allOffers, filters, loading, hoveredOhlcTime } = useFilters();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const [midInfo, setMidInfo] = useState('');
+  const [volumeInfo, setVolumeInfo] = useState('');
   const [resizeTick, setResizeTick] = useState(0);
+  const [yZoom, setYZoom] = useState(1.0);
 
+  // Resize observer
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -25,10 +29,34 @@ export function DepthChart() {
     return () => ro.disconnect();
   }, []);
 
+  // Wheel zoom on the y (price) axis
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const onWheel = (e: WheelEvent) => {
+      e.preventDefault();
+      setYZoom(z => Math.min(20, Math.max(0.1, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))));
+    };
+    canvas.addEventListener('wheel', onWheel, { passive: false });
+    return () => canvas.removeEventListener('wheel', onWheel);
+  }, []);
+
+  // Compute offers to display: live or historical snapshot
+  const displayOffers = useMemo(() => {
+    if (hoveredOhlcTime === null) return depthOffers;
+    return allOffers.filter(o => {
+      if (filters.exchange && o.exchange !== filters.exchange) return false;
+      if (filters.payment && o.payment_method !== filters.payment) return false;
+      const fs = toUtcSec(o.first_seen || '');
+      const ls = toUtcSec(o.last_seen || '');
+      return fs <= hoveredOhlcTime && ls >= hoveredOhlcTime;
+    });
+  }, [hoveredOhlcTime, depthOffers, allOffers, filters.exchange, filters.payment]);
+
   useEffect(() => {
     const canvas = canvasRef.current;
     const container = containerRef.current;
-    if (!canvas || !container || !offers.length) return;
+    if (!canvas || !container || !displayOffers.length) return;
 
     const dpr = window.devicePixelRatio || 1;
     const W = container.clientWidth;
@@ -43,7 +71,8 @@ export function DepthChart() {
     ctx.scale(dpr, dpr);
 
     // --- Data ---
-    const open = offers.filter(o => o.is_live);
+    // In historical mode use all matched offers; in live mode filter to is_live only
+    const open = hoveredOhlcTime !== null ? displayOffers : displayOffers.filter(o => o.is_live);
     if (!open.length) return;
 
     const midPrice = open.reduce((s, o) => s + (o.ref_price || 0), 0) / open.length;
@@ -64,12 +93,22 @@ export function DepthChart() {
     const asks = rawAsks.map(o => { cum += o.btc; return { price: o.price, cum }; });
 
     const maxVol = Math.max(bids.at(-1)?.cum ?? 0, asks.at(-1)?.cum ?? 0) * 1.05 || 1;
-    const priceRange = Math.max(
+    const dataRange = Math.max(
       midPrice - (rawBids.at(-1)?.price ?? midPrice),
       (rawAsks.at(-1)?.price ?? midPrice) - midPrice
     ) * 1.1 || midPrice * 0.05;
+    const priceRange = dataRange / yZoom;
     const priceMin = midPrice - priceRange;
     const priceMax = midPrice + priceRange;
+
+    // Volume totals within visible price range
+    const visibleBidBtc = rawBids
+      .filter(b => b.price >= priceMin && b.price <= priceMax)
+      .reduce((s, b) => s + b.btc, 0);
+    const visibleAskBtc = rawAsks
+      .filter(a => a.price >= priceMin && a.price <= priceMax)
+      .reduce((s, a) => s + a.btc, 0);
+    setVolumeInfo(`Bids ${visibleBidBtc.toFixed(3)} · Asks ${visibleAskBtc.toFixed(3)} BTC`);
 
     // --- Layout ---
     const ML = 70, MR = 15, MT = 10, MB = 28;
@@ -187,13 +226,21 @@ export function DepthChart() {
       ? ` · Spread €${(lowestAsk - highestBid).toLocaleString('de-DE')}`
       : '';
     setMidInfo(`Mid €${Math.round(midPrice).toLocaleString('de-DE')}${spreadText}`);
-  }, [offers, resizeTick]);
+  }, [displayOffers, resizeTick, yZoom, hoveredOhlcTime]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
       <div className="flex justify-between items-center mb-2 shrink-0">
-        <h3 className="text-[0.85rem] text-muted">Orderbook Depth</h3>
-        <span className="text-[0.85rem] text-muted">{midInfo}</span>
+        <h3 className="text-[0.85rem] text-muted">
+          Orderbook Depth
+          {hoveredOhlcTime !== null && (
+            <span className="ml-2 text-[0.75rem] text-accent">@ historical</span>
+          )}
+        </h3>
+        <div className="flex flex-col items-end gap-0.5">
+          {volumeInfo && <span className="text-[0.75rem] text-muted">{volumeInfo}</span>}
+          <span className="text-[0.85rem] text-muted">{midInfo}</span>
+        </div>
       </div>
       <div ref={containerRef} className="flex-1 min-h-0 relative">
         {loading && <LoadingSpinner label="Loading orderbook" />}

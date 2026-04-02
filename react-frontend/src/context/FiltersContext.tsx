@@ -39,6 +39,8 @@ interface FiltersContextValue {
   paymentMethods: string[];
   selectedOfferId: number | null;
   setSelectedOfferId: (id: number | null) => void;
+  hoveredOhlcTime: number | null;
+  setHoveredOhlcTime: (t: number | null) => void;
   loading: boolean;
 }
 
@@ -55,6 +57,7 @@ interface Props {
 export function FiltersProvider({ offers, loading, children }: Props) {
   const [filters, dispatch] = useReducer(filtersReducer, DEFAULT_FILTERS);
   const [selectedOfferId, setSelectedOfferId] = useState<number | null>(null);
+  const [hoveredOhlcTime, setHoveredOhlcTime] = useState<number | null>(null);
 
   const setFilters = (partial: Partial<Filters>) => dispatch({ type: 'SET', payload: partial });
   const resetFilters = () => dispatch({ type: 'RESET' });
@@ -94,7 +97,7 @@ export function FiltersProvider({ offers, loading, children }: Props) {
   }, [offers, filters]);
 
   return (
-    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, selectedOfferId, setSelectedOfferId, loading }}>
+    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, selectedOfferId, setSelectedOfferId, hoveredOhlcTime, setHoveredOhlcTime, loading }}>
       {children}
     </FiltersContext.Provider>
   );
