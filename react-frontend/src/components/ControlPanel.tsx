@@ -56,8 +56,8 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
     if (filters.premiumOnly) f = f.filter(o =>
       o.direction === 'buy'
-        ? o.price > (o.ref_price || 0)
-        : o.price < (o.ref_price || Infinity)
+        ? (o.price_diff_percent ?? 0) > 0
+        : (o.price_diff_percent ?? 0) < 0
     );
 
     const counts: Record<string, number> = {};
@@ -158,8 +158,8 @@ function DirectionDropdown({ value, onChange, inputCls }: DirectionDropdownProps
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
     if (filters.premiumOnly) f = f.filter(o =>
       o.direction === 'buy'
-        ? o.price > (o.ref_price || 0)
-        : o.price < (o.ref_price || Infinity)
+        ? (o.price_diff_percent ?? 0) > 0
+        : (o.price_diff_percent ?? 0) < 0
     );
 
     return {
@@ -235,8 +235,8 @@ function StatusDropdown({ value, onChange, inputCls }: StatusDropdownProps) {
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
     if (filters.premiumOnly) f = f.filter(o =>
       o.direction === 'buy'
-        ? o.price > (o.ref_price || 0)
-        : o.price < (o.ref_price || Infinity)
+        ? (o.price_diff_percent ?? 0) > 0
+        : (o.price_diff_percent ?? 0) < 0
     );
 
     return {
@@ -314,8 +314,8 @@ function ExchangeDropdown({ value, onChange, stats, inputCls }: ExchangeDropdown
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
     if (filters.premiumOnly) f = f.filter(o =>
       o.direction === 'buy'
-        ? o.price > (o.ref_price || 0)
-        : o.price < (o.ref_price || Infinity)
+        ? (o.price_diff_percent ?? 0) > 0
+        : (o.price_diff_percent ?? 0) < 0
     );
 
     const map: Record<string, number> = {};
@@ -408,8 +408,8 @@ function TimeframeDropdown({ value, onChange, inputCls }: TimeframeDropdownProps
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
     if (filters.premiumOnly) f = f.filter(o =>
       o.direction === 'buy'
-        ? o.price > (o.ref_price || 0)
-        : o.price < (o.ref_price || Infinity)
+        ? (o.price_diff_percent ?? 0) > 0
+        : (o.price_diff_percent ?? 0) < 0
     );
 
     const now = Date.now();

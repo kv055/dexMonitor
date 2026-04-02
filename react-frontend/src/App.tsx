@@ -7,7 +7,6 @@ import { Header } from './components/Header';
 import type { Tab } from './components/Header';
 import { SettingsOverlay } from './components/SettingsOverlay';
 import { ControlPanel } from './components/ControlPanel';
-import { PaymentChart } from './components/PaymentChart';
 import { OffersPreviewTable } from './components/OffersPreviewTable';
 import { OHLCChart } from './components/OHLCChart';
 import { DepthChart } from './components/DepthChart';
@@ -71,12 +70,7 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats, theme }: {
           <ControlPanel onRefresh={() => load(filters.hours)} lastUpdated={lastUpdated} stats={stats} />
         </div>
 
-        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
-          <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Offers by Payment Method</h3>
-          <PaymentChart theme={theme} />
-        </div>
-
-        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
+        <div className="col-span-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Offers</h3>
           <div className="relative flex-1 min-h-0">
             <OffersPreviewTable />
@@ -181,10 +175,10 @@ export default function App() {
         {activeTab === 'insights' && (
           <div className="flex-1 min-h-0 flex flex-col gap-3">
             {/* Top — smaller */}
-            <div className="flex-1 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
-              <span className="text-[0.65rem] uppercase text-muted font-semibold tracking-wide mb-2">General Statistics</span>
-              <div className="flex-1 min-h-0 overflow-y-auto">
-                <GeneralStats />
+            <div className="flex-1 bg-surface border border-border rounded-lg px-2 py-2 flex flex-col min-h-0">
+              <span className="text-[0.6rem] uppercase text-muted font-semibold tracking-wide mb-1.5">General Statistics</span>
+              <div className="flex-1 min-h-0">
+                <GeneralStats theme={theme} />
               </div>
             </div>
             {/* Middle — bigger */}

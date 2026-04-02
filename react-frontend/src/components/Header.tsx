@@ -29,9 +29,11 @@ export function Header({ stats, activeTab, onTabChange, theme, onToggleTheme, on
           onClick={() => !tab.disabled && onTabChange(tab.id)}
           disabled={tab.disabled}
           title={tab.disabled ? 'Coming soon' : undefined}
-          className={`text-[0.9rem] font-semibold whitespace-nowrap pl-2.5 bg-transparent border-none
-            ${tab.disabled ? `opacity-40 cursor-not-allowed ${tab.color}` : `cursor-pointer ${tab.color}`}
-            ${tab.id === activeTab && !tab.disabled ? 'opacity-100' : !tab.disabled ? 'opacity-60 hover:opacity-85' : ''}
+          className={`text-[0.9rem] font-semibold whitespace-nowrap px-2.5 py-0.5 border-none rounded transition-colors
+            ${tab.disabled ? `opacity-40 cursor-not-allowed ${tab.color} bg-transparent` : `cursor-pointer ${tab.color}`}
+            ${tab.id === activeTab && !tab.disabled
+              ? `opacity-100 ${theme === 'dark' ? 'bg-white/20' : 'bg-black/15'}`
+              : !tab.disabled ? 'opacity-60 hover:opacity-85 bg-transparent' : ''}
           `}
           style={{ borderLeft: '1px solid var(--color-border)' }}
         >

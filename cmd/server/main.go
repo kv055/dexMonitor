@@ -478,7 +478,7 @@ func handleSnapshotLog(w http.ResponseWriter, r *http.Request) {
 			writeError(w, err)
 			return
 		}
-		var exchanges any
+		exchanges := map[string]any{}
 		json.Unmarshal([]byte(exchangesJSON), &exchanges)
 		result = append(result, map[string]any{
 			"id":           id,

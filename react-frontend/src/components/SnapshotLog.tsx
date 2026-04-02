@@ -65,7 +65,7 @@ export function SnapshotLog() {
         const timeStr = date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '??:??';
         const dateStr = date ? date.toLocaleDateString([], { month: 'short', day: 'numeric' }) : '???';
         const isOpen = expanded === e.id;
-        const exchangeNames = Object.keys(e.exchanges);
+        const exchangeNames = e.exchanges ? Object.keys(e.exchanges) : [];
 
         return (
           <div key={e.id} className="border-b border-border last:border-0">

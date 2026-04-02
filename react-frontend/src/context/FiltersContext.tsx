@@ -80,8 +80,8 @@ export function FiltersProvider({ offers, loading, children }: Props) {
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
     if (filters.premiumOnly) f = f.filter(o =>
       o.direction === 'buy'
-        ? o.price > (o.ref_price || 0)
-        : o.price < (o.ref_price || Infinity)
+        ? (o.price_diff_percent ?? 0) > 0   // bid above ref = sell at premium
+        : (o.price_diff_percent ?? 0) < 0   // ask below ref = buy at discount
     );
     return f.sort((a, b) => (a.price_diff_percent || 0) - (b.price_diff_percent || 0));
   }, [offers, filters]);
