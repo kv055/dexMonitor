@@ -2,7 +2,6 @@ import { useEffect, useRef, useMemo } from 'react';
 import { Chart, PieController, ArcElement, Tooltip } from 'chart.js';
 import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
-import { formatBtc } from '../utils/formatters';
 
 Chart.register(PieController, ArcElement, Tooltip);
 

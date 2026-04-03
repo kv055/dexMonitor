@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import { useEffect, useRef } from 'react';
 import { ExchangeTag } from './ExchangeTag';
 import { formatNum, formatBtc, premiumClass } from '../utils/formatters';
 import { useFilters } from '../context/FiltersContext';

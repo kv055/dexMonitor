@@ -39,13 +39,12 @@ function OhlcPanelHeader() {
 }
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdated, error, load, stats, theme }: {
+function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   stats: ReturnType<typeof useDashboard>['stats'] | null;
   lastUpdated: string;
   error: string | null;
   load: (hours: string) => void;
-  theme: ThemeMode;
 }) {
   const { filters } = useFilters();
 
@@ -164,7 +163,6 @@ export default function App() {
             lastUpdated={lastUpdated}
             error={error}
             load={load}
-            theme={theme}
           />
         )}
 
