@@ -65,6 +65,7 @@ docker compose down
 |----------|---------|-------------|
 | `BISQ_GRPC_HOST` | `localhost:9998` | Bisq gRPC endpoint |
 | `PRICE_PROVIDER` | `bisq_tor` | BTC reference price source (`bisq_tor`, `kraken`, `coingecko`) |
+| `SERVER_INTERNAL_URL` | `http://localhost:5000` | App server URL for pushing live offers |
 
 **app only:**
 
@@ -96,28 +97,30 @@ docker compose down
 | Method | Endpoint | Description |
 |--------|----------|-------------|
 | GET | `/` | React dashboard |
-| GET | `/api/offers` | All offers, ordered by `last_seen` |
-| GET | `/api/premium_offers` | Offers priced better than reference (buy above / sell below market) |
+| GET | `/api/live_offers` | Currently live offers with cost breakdown |
+| GET | `/api/past_offers` | Historical offers, ordered by `last_seen` |
+| WS | `/ws/live_offers` | WebSocket — pushes full offer array on connect, then on every price tick |
 | GET | `/api/stats` | Price stats and offer counts per exchange |
 | GET | `/api/ohlc` | Kraken OHLC candles + offer overlay data |
 | GET | `/api/snapshot-log` | Recent snapshot run history |
 | GET | `/health` | Health check |
+| POST | `/internal/live_offers` | Internal — snapshot tool pushes live offers to the server hub |
 
 ### Query Parameters
 
 | Parameter | Endpoints | Description |
 |-----------|-----------|-------------|
-| `limit` | offers, premium_offers, snapshot-log | Max results (default: 1000 / 1000 / 50) |
-| `hours` | premium_offers, stats, ohlc | Lookback window in hours (default: all / 24 / 24) |
+| `limit` | past_offers, snapshot-log | Max results (default: 1000 / 50) |
+| `hours` | past_offers, stats, ohlc | Lookback window in hours (default: 24 / 24 / 24) |
 
 ### Example Requests
 
 ```bash
-# All current offers
-curl http://localhost:5000/api/offers
+# Currently live offers
+curl http://localhost:5000/api/live_offers
 
-# Offers priced better than market in the last 6 hours
-curl "http://localhost:5000/api/offers?hours=6"
+# Past offers from the last 6 hours
+curl "http://localhost:5000/api/past_offers?hours=6"
 
 # Price stats for last 24 hours
 curl http://localhost:5000/api/stats
@@ -127,6 +130,9 @@ curl "http://localhost:5000/api/ohlc?hours=48"
 
 # Last 10 snapshot runs
 curl "http://localhost:5000/api/snapshot-log?limit=10"
+
+# WebSocket (requires wscat or similar)
+wscat -c ws://127.0.0.1:5000/ws/live_offers
 ```
 
 ## Database Schema
@@ -158,6 +164,8 @@ curl "http://localhost:5000/api/snapshot-log?limit=10"
 | ref_price | REAL | Reference BTC price at time of snapshot |
 | first_seen | DATETIME | When offer was first observed |
 | last_seen | DATETIME | When offer was last seen (updated on each snapshot) |
+| is_live | BOOLEAN | Whether the offer is currently live |
+| duration | INTEGER | How long the offer has been active (seconds) |
 
 ### snapshot_log
 
@@ -168,18 +176,52 @@ curl "http://localhost:5000/api/snapshot-log?limit=10"
 | exchanges | TEXT | JSON object with per-exchange offer counts |
 | offers_count | INTEGER | Total offers upserted |
 
+### kraken_ohlc
+
+| Column | Type | Description |
+|--------|------|-------------|
+| time | DATETIME | Candle timestamp (primary key) |
+| open | REAL | Open price |
+| high | REAL | High price |
+| low | REAL | Low price |
+| close | REAL | Close price |
+
+## E2E Tests
+
+The frontend has a Playwright E2E test suite that runs against mocked API data (no backend needed).
+
+```bash
+cd react-frontend
+
+# Install Playwright browsers (first time only)
+npx playwright install --with-deps chromium
+
+# Run all tests
+npm run test:e2e
+
+# Interactive UI mode
+npm run test:e2e:ui
+
+# Update visual regression baselines after intentional UI changes
+npm run test:e2e:update
+```
+
+Tests cover all 4 dashboard panels (ControlPanel, OffersTable, OHLCChart, DepthChart) plus cross-component filter integration. Visual regression screenshots for canvas-based charts are committed under `e2e/tests/*.spec.ts-snapshots/`.
+
 ## Project Structure
 
 ```
 .
 ├── cmd/
-│   ├── server/main.go       # REST API server
+│   ├── server/main.go       # REST API + WebSocket server
 │   └── snapshot/main.go     # Snapshot fetcher
 ├── bisq_grpc/
 │   ├── go/                  # Generated gRPC stubs
 │   └── grpc.proto           # Bisq gRPC source definitions
+├── api-collection/          # REST Client API collection (.http files)
 ├── db/schema.sql            # SQLite schema
 ├── react-frontend/          # React + Vite dashboard
+│   └── e2e/                 # Playwright E2E tests
 ├── Dockerfile               # app container (Node + Go multi-stage)
 ├── Dockerfile.snapshot      # snapshot container (Go multi-stage)
 ├── Dockerfile.bisq          # Bisq node container

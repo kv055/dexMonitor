@@ -5,8 +5,8 @@ import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
 import type { CostBreakdown } from '../types';
 
-const thCls = "sticky top-0 bg-surface px-1.5 py-1 border-b border-border text-muted text-[0.65rem] uppercase text-left whitespace-nowrap";
-const thClsCompact = "sticky top-0 bg-surface px-1 py-1 border-b border-border text-muted text-[0.65rem] uppercase text-left whitespace-nowrap";
+const TH_BASE = "sticky top-0 z-10 bg-surface px-2 py-1 border-b border-border text-muted text-[0.65rem] uppercase text-left whitespace-nowrap";
+const TD = "px-2 py-1 whitespace-nowrap";
 
 function fmt8(n: number): string {
   return n.toFixed(8).replace(/\.?0+$/, '') || '0';
@@ -100,15 +100,15 @@ export function OffersPreviewTable() {
         <table className={`w-full border-collapse ${hasSelection ? 'text-[0.68rem]' : 'text-[0.72rem]'}`}>
           <thead>
             <tr>
-              <th className={hasSelection ? thClsCompact : thCls}>Exch</th>
-              <th className={hasSelection ? thClsCompact : thCls}>Side</th>
-              <th className={`${hasSelection ? thClsCompact : thCls} text-right`}>Prem.</th>
-              <th className={`${hasSelection ? thClsCompact : thCls} text-right`}>Price</th>
-              <th className={`${hasSelection ? thClsCompact : thCls} text-right`}>Min BTC</th>
-              <th className={`${hasSelection ? thClsCompact : thCls} text-right`}>Max BTC</th>
-              {!hasSelection && <th className={`${thCls} text-right`}>Fiat Min</th>}
-              {!hasSelection && <th className={`${thCls} text-right`}>Fiat Max</th>}
-              <th className={hasSelection ? thClsCompact : thCls}>Payment</th>
+              <th className={`${TH_BASE} ${hasSelection ? 'w-[1%]' : ''}`}>Exch</th>
+              <th className={`${TH_BASE} ${hasSelection ? 'w-[1%]' : ''}`}>Side</th>
+              <th className={`${TH_BASE} text-right ${hasSelection ? 'w-[1%]' : ''}`}>Prem.</th>
+              <th className={`${TH_BASE} text-right ${hasSelection ? 'w-[1%]' : ''}`}>Price</th>
+              <th className={`${TH_BASE} text-right ${hasSelection ? 'w-[1%]' : ''}`}>Min BTC</th>
+              <th className={`${TH_BASE} text-right ${hasSelection ? 'w-[1%]' : ''}`}>Max BTC</th>
+              {!hasSelection && <th className={`${TH_BASE} text-right`}>Fiat Min</th>}
+              {!hasSelection && <th className={`${TH_BASE} text-right`}>Fiat Max</th>}
+              <th className={TH_BASE}>Payment</th>
             </tr>
           </thead>
           <tbody>
@@ -125,35 +125,33 @@ export function OffersPreviewTable() {
                     isSelected ? 'offer-row-selected' : 'offer-row-hover'
                   }`}
                 >
-                  <>
-                    <td className={`${hasSelection ? 'px-1' : 'px-1.5'} py-1 whitespace-nowrap overflow-hidden`}>
-                      <ExchangeTag exchange={o.exchange} />
+                  <td className={`${TD} overflow-hidden`}>
+                    <ExchangeTag exchange={o.exchange} />
+                  </td>
+                  <td className={`${TD} ${o.direction === 'buy' ? 'text-green' : 'text-red'}`}>
+                    {o.direction === 'buy' ? 'Bid' : 'Ask'}
+                  </td>
+                  <td className={`${TD} text-right ${premiumClass(o.price_diff_percent)}`}>
+                    {o.price_diff_percent != null ? o.price_diff_percent.toFixed(1) + '%' : '—'}
+                  </td>
+                  <td className={`${TD} text-right`}>€{formatNum(o.price)}</td>
+                  <td className={`${TD} text-right`}>{formatBtc(o.btc_min)}</td>
+                  <td className={`${TD} text-right`}>{formatBtc(o.btc_max)}</td>
+                  {!hasSelection && (
+                    <td className={`${TD} text-right`}>
+                      {o.btc_min != null ? `€${formatNum(o.btc_min * o.price)}` : '—'}
                     </td>
-                    <td className={`${hasSelection ? 'px-1' : 'px-1.5'} py-1 ${o.direction === 'buy' ? 'text-green' : 'text-red'}`}>
-                      {o.direction === 'buy' ? 'Bid' : 'Ask'}
+                  )}
+                  {!hasSelection && (
+                    <td className={`${TD} text-right`}>
+                      {o.btc_max != null ? `€${formatNum(o.btc_max * o.price)}` : '—'}
                     </td>
-                    <td className={`${hasSelection ? 'px-1' : 'px-1.5'} py-1 text-right whitespace-nowrap ${premiumClass(o.price_diff_percent)}`}>
-                      {o.price_diff_percent != null ? o.price_diff_percent.toFixed(1) + '%' : '—'}
-                    </td>
-                    <td className={`${hasSelection ? 'px-1' : 'px-1.5'} py-1 text-right whitespace-nowrap`}>€{formatNum(o.price)}</td>
-                    <td className={`${hasSelection ? 'px-1' : 'px-1.5'} py-1 text-right whitespace-nowrap`}>{formatBtc(o.btc_min)}</td>
-                    <td className={`${hasSelection ? 'px-1' : 'px-1.5'} py-1 text-right whitespace-nowrap`}>{formatBtc(o.btc_max)}</td>
-                    {!hasSelection && (
-                      <td className="px-1.5 py-1 text-right whitespace-nowrap">
-                        {o.btc_min != null ? `€${formatNum(o.btc_min * o.price)}` : '—'}
-                      </td>
-                    )}
-                    {!hasSelection && (
-                      <td className="px-1.5 py-1 text-right whitespace-nowrap">
-                        {o.btc_max != null ? `€${formatNum(o.btc_max * o.price)}` : '—'}
-                      </td>
-                    )}
-                    <td className={`${hasSelection ? 'px-1' : 'px-1.5'} py-1 whitespace-nowrap overflow-hidden`}>
-                      <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
-                        {o.payment_method || '—'}
-                      </span>
-                    </td>
-                  </>
+                  )}
+                  <td className={`${TD} overflow-hidden`}>
+                    <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
+                      {o.payment_method || '—'}
+                    </span>
+                  </td>
                 </tr>
               );
             })}
@@ -180,19 +178,6 @@ export function OffersPreviewTable() {
             >
               ×
             </button>
-
-            {/* Offer header */}
-            <div className="flex items-center gap-2 mb-4 pr-8">
-              <ExchangeTag exchange={selectedOffer.exchange} />
-              <span className={selectedOffer.direction === 'buy' ? 'text-green text-[0.8rem] font-medium' : 'text-red text-[0.8rem] font-medium'}>
-                {selectedOffer.direction === 'buy' ? 'Bid' : 'Ask'}
-              </span>
-              <span className="text-text text-[0.8rem]">€{formatNum(selectedOffer.price)}</span>
-              <span className={`text-[0.8rem] font-medium ${premiumClass(selectedOffer.price_diff_percent)}`}>
-                {selectedOffer.price_diff_percent != null ? selectedOffer.price_diff_percent.toFixed(2) + '%' : '—'}
-              </span>
-              <span className="text-muted text-[0.72rem] ml-auto">{selectedOffer.payment_method || '—'}</span>
-            </div>
 
             {selectedOffer.cost_breakdown ? (
               <CostBreakdownPanel
