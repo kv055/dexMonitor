@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ExchangeTag } from './ExchangeTag';
 import { formatNum, formatBtc, premiumClass } from '../utils/formatters';
 import { useFilters } from '../context/FiltersContext';
@@ -80,6 +80,15 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct }: {
 export function OffersPreviewTable() {
   const { filteredOffers: offers, selectedOfferId, setSelectedOfferId, loading } = useFilters();
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
+  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
+
+  useEffect(() => {
+    const mq = window.matchMedia('(max-width: 1023px)');
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener('change', handler);
+    return () => mq.removeEventListener('change', handler);
+  }, []);
 
   const selectedOffer = offers.find(o => o.id === selectedOfferId) ?? null;
   const hasSelection = selectedOffer !== null;
@@ -88,10 +97,99 @@ export function OffersPreviewTable() {
     selectedRowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [selectedOfferId]);
 
+  // ── Mobile layout: vertical stack ─────────────────────────────────────────
+  if (isMobile) {
+    return (
+      <div className="absolute inset-0 flex flex-col overflow-hidden">
+
+        {/* Table — fills remaining height, scrolls vertically */}
+        <div className="flex-1 min-h-0 overflow-y-auto">
+          {loading && offers.length === 0 && <LoadingSpinner label="Loading offers" />}
+          <table className="w-full border-collapse text-[0.72rem]">
+            <thead>
+              <tr>
+                <th className={TH_BASE}>Exch</th>
+                <th className={TH_BASE}>Side</th>
+                <th className={`${TH_BASE} text-right`}>Prem.</th>
+                <th className={`${TH_BASE} text-right`}>Price</th>
+                <th className={TH_BASE}>Payment</th>
+              </tr>
+            </thead>
+            <tbody>
+              {offers.length === 0 ? (
+                !loading && <tr><td colSpan={5} className="p-4 text-center text-muted">No offers</td></tr>
+              ) : offers.map((o) => {
+                const isSelected = o.id === selectedOfferId;
+                return (
+                  <tr
+                    key={o.id}
+                    ref={isSelected ? selectedRowRef : null}
+                    onClick={() => setSelectedOfferId(isSelected ? null : o.id)}
+                    className={`cursor-pointer transition-colors ${
+                      isSelected ? 'offer-row-selected' : 'offer-row-hover'
+                    }`}
+                  >
+                    <td className={`${TD} overflow-hidden`}>
+                      <ExchangeTag exchange={o.exchange} />
+                    </td>
+                    <td className={`${TD} ${o.direction === 'buy' ? 'text-green' : 'text-red'}`}>
+                      {o.direction === 'buy' ? 'Bid' : 'Ask'}
+                    </td>
+                    <td className={`${TD} text-right ${premiumClass(o.price_diff_percent)}`}>
+                      {o.price_diff_percent != null ? o.price_diff_percent.toFixed(1) + '%' : '—'}
+                    </td>
+                    <td className={`${TD} text-right`}>€{formatNum(o.price)}</td>
+                    <td className={`${TD} overflow-hidden max-w-32`}>
+                      <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
+                        {o.payment_method || '—'}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+
+        {/* Breakdown panel — slides up from bottom when offer is selected */}
+        <div
+          className="shrink-0 border-t border-border overflow-y-auto transition-all duration-300 ease-in-out"
+          style={{
+            maxHeight: hasSelection ? '55%' : '0%',
+            opacity: hasSelection ? 1 : 0,
+          }}
+        >
+          {selectedOffer && (
+            <div className="relative p-4">
+              <button
+                onClick={() => setSelectedOfferId(null)}
+                className="absolute top-2.5 right-3 w-6 h-6 flex items-center justify-center text-muted hover:text-text bg-transparent border-none cursor-pointer text-lg leading-none rounded hover:bg-white/10 transition-colors"
+                title="Close"
+              >
+                ×
+              </button>
+              {selectedOffer.cost_breakdown ? (
+                <CostBreakdownPanel
+                  bd={selectedOffer.cost_breakdown}
+                  priceDiffPct={selectedOffer.price_diff_percent}
+                  netPremiumPct={selectedOffer.net_premium_percent}
+                />
+              ) : (
+                <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
+              )}
+            </div>
+          )}
+        </div>
+
+      </div>
+    );
+  }
+
+  // ── Desktop layout: horizontal split ──────────────────────────────────────
   return (
     <div className="absolute inset-0 flex overflow-hidden">
 
-      {/* ── Left: offers table ── */}
+      {/* Left: offers table */}
       <div
         className="overflow-y-auto shrink-0 transition-all duration-300 ease-in-out"
         style={{ width: hasSelection ? '54%' : '100%' }}
@@ -159,7 +257,7 @@ export function OffersPreviewTable() {
         </table>
       </div>
 
-      {/* ── Right: cost breakdown panel ── */}
+      {/* Right: cost breakdown panel */}
       <div
         className="border-l border-border overflow-hidden transition-all duration-300 ease-in-out"
         style={{
@@ -170,7 +268,6 @@ export function OffersPreviewTable() {
       >
         {selectedOffer && (
           <div className="relative p-4 h-full overflow-y-auto">
-            {/* X button */}
             <button
               onClick={() => setSelectedOfferId(null)}
               className="absolute top-2.5 right-3 w-6 h-6 flex items-center justify-center text-muted hover:text-text bg-transparent border-none cursor-pointer text-lg leading-none rounded hover:bg-white/10 transition-colors"
