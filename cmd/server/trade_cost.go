@@ -20,6 +20,8 @@ import (
 
 	"github.com/google/uuid"
 	"golang.org/x/net/proxy"
+
+	"dexmonitor/internal/bitcoin"
 )
 
 // withdrawalFallbacks are the static BTC withdrawal fees used when the live exchange
@@ -42,19 +44,9 @@ var takerFeeFallbacks = map[string]float64{
 }
 
 const (
-	// typicalTxVBytes is the virtual size of a standard CEX withdrawal tx
-	// (1 input + 2 outputs, native SegWit P2WPKH), matching the Python estimator.
-	typicalTxVBytes = 140
-
-	// networkFeeTTL controls how often the mempool.space fee is re-fetched.
-	networkFeeTTL = 5 * time.Minute
-
-	// withdrawalFeeTTL controls how often the live exchange withdrawal fee is re-fetched.
-	withdrawalFeeTTL = 30 * time.Minute
-
-	// takerFeeTTL controls how often the live taker fee is re-fetched.
-	// Taker fees only change when crossing a 30-day volume tier.
-	takerFeeTTL = 60 * time.Minute
+	// feeTTL is the single refresh interval for all fee components:
+	// CEX taker fee, CEX withdrawal fee, and BTC network fee.
+	feeTTL = 30 * time.Minute
 
 	// defaultBTCTradeSize is the fallback BTC amount used when an offer has no size set.
 	defaultBTCTradeSize = 0.01
@@ -129,7 +121,7 @@ func newWithdrawalFeeFetcher(exchange string) *withdrawalFeeFetcher {
 		exchange:  exchange,
 		apiKey:    key,
 		apiSecret: secret,
-		cache:     newCachedFee(withdrawalFeeTTL),
+		cache:     newCachedFee(feeTTL),
 	}
 }
 
@@ -315,7 +307,7 @@ func newTakerFeeFetcher(exchange string) *takerFeeFetcher {
 		exchange:  exchange,
 		apiKey:    key,
 		apiSecret: secret,
-		cache:     newCachedFee(takerFeeTTL),
+		cache:     newCachedFee(feeTTL),
 	}
 }
 
@@ -560,27 +552,35 @@ func fetchRobosatsTakerFee() (float64, error) {
 // TradeCostEstimator estimates the total cost of one CEX→DEX arbitrage cycle:
 //  1. CEX taker fee — fetched live from exchange API where available, static fallback
 //  2. CEX BTC withdrawal fee — fetched live from exchange API, static fallback
-//  3. Bitcoin on-chain network fee — mempool.space halfHourFee × 140 vbytes, cached 5 min
+//  3. Bitcoin on-chain network fee — congestion-adaptive, dynamic vsize, cached 5 min
 //  4. DEX platform fee — static per-exchange taker rate
 //
 // All components are expressed as a percentage of the trade value so the result
 // can be directly compared to / subtracted from the DEX offer premium.
 type TradeCostEstimator struct {
-	taker           *takerFeeFetcher
-	withdrawal      *withdrawalFeeFetcher
-	robosatsFee     *cachedFee
-
-	mu               sync.RWMutex
-	networkFeeBTC    float64
-	networkFetchedAt time.Time
+	taker        *takerFeeFetcher
+	withdrawal   *withdrawalFeeFetcher
+	robosatsFee  *cachedFee
+	btcPredictor *bitcoin.BitcoinFeePredictor
+	cexProfile   CexWithdrawalProfile
 }
 
 func NewTradeCostEstimator(exchange string) *TradeCostEstimator {
 	return &TradeCostEstimator{
-		taker:       newTakerFeeFetcher(exchange),
-		withdrawal:  newWithdrawalFeeFetcher(exchange),
-		robosatsFee: newCachedFee(takerFeeTTL),
+		taker:        newTakerFeeFetcher(exchange),
+		withdrawal:   newWithdrawalFeeFetcher(exchange),
+		robosatsFee:  newCachedFee(feeTTL),
+		btcPredictor: bitcoin.NewBitcoinFeePredictor(),
+		cexProfile:   cexProfileFor(exchange),
 	}
+}
+
+// networkFeeDetails bundles the fee amount with metadata about how it was calculated.
+type networkFeeDetails struct {
+	feeBTC     float64
+	method     WithdrawalMethod
+	tier       string  // "economic", "standard", "fast", "express", "lightning"
+	confidence float64 // 0–1.0
 }
 
 // CostPct returns the estimated total arbitrage cost as a percentage of btcAmount.
@@ -592,7 +592,7 @@ func (e *TradeCostEstimator) CostPct(btcAmount float64, dexExchange string) floa
 	}
 	takerFrac := e.taker.get()
 	withdrawalFee := e.withdrawal.get()
-	networkFee := e.getNetworkFee()
+	netFee := e.getNetworkFee(dexExchange, btcAmount)
 
 	var dexFeeFrac float64
 	if dexExchange == "robosats" {
@@ -607,49 +607,53 @@ func (e *TradeCostEstimator) CostPct(btcAmount float64, dexExchange string) floa
 
 	tradingFee := btcAmount * takerFrac
 	dexFee := btcAmount * dexFeeFrac
-	return (tradingFee + withdrawalFee + networkFee + dexFee) / btcAmount * 100
+	return (tradingFee + withdrawalFee + netFee.feeBTC + dexFee) / btcAmount * 100
 }
 
-func (e *TradeCostEstimator) getNetworkFee() float64 {
-	e.mu.RLock()
-	if !e.networkFetchedAt.IsZero() && time.Since(e.networkFetchedAt) < networkFeeTTL {
-		fee := e.networkFeeBTC
-		e.mu.RUnlock()
-		return fee
-	}
-	e.mu.RUnlock()
+// getNetworkFee returns the network fee for a CEX→DEX transfer, taking into account
+// the settlement method supported by the selected CEX and DEX combination.
+//
+//   - Lightning: both CEX and DEX support LN → returns a small constant routing estimate.
+//   - Onchain: uses the CEX's address format and typical tx structure for an accurate
+//     congestion-adaptive prediction via the bitcoin fee predictor.
+func (e *TradeCostEstimator) getNetworkFee(dexExchange string, btcAmount float64) networkFeeDetails {
+	method := resolveWithdrawalMethod(e.cexProfile, dexExchange)
 
-	fee, err := fetchHalfHourNetworkFee()
-	e.mu.Lock()
-	if err == nil {
-		e.networkFeeBTC = fee
-		e.networkFetchedAt = time.Now()
-	} else {
-		fmt.Printf("[TradeCost] network fee fetch failed: %v — using cached %.8f BTC\n", err, e.networkFeeBTC)
+	if method == MethodLightning {
+		if e.btcPredictor.IsDataStale(feeTTL) {
+			if err := e.btcPredictor.FetchLatestData(); err != nil {
+				fmt.Printf("[TradeCost] lightning fee fetch failed: %v\n", err)
+			}
+		}
+		return networkFeeDetails{
+			feeBTC:     e.btcPredictor.EstimateLightningRoutingFee(btcAmount),
+			method:     MethodLightning,
+			tier:       "lightning",
+			confidence: 0.5,
+		}
 	}
-	cached := e.networkFeeBTC
-	e.mu.Unlock()
-	return cached
-}
 
-// fetchHalfHourNetworkFee fetches halfHourFee from mempool.space and converts to BTC
-// for a 140-vbyte transaction. Matches estimate_network_fee_btc() in the Python code.
-func fetchHalfHourNetworkFee() (float64, error) {
-	resp, err := httpClient.Get("https://mempool.space/api/v1/fees/recommended")
-	if err != nil {
-		return 0, fmt.Errorf("request failed: %w", err)
+	// Onchain: refresh predictor cache if stale.
+	if e.btcPredictor.IsDataStale(feeTTL) {
+		if err := e.btcPredictor.FetchLatestData(); err != nil {
+			fmt.Printf("[TradeCost] bitcoin fee fetch failed: %v\n", err)
+		}
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0, fmt.Errorf("mempool.space returned HTTP %d", resp.StatusCode)
+
+	rec, confidence, err := e.btcPredictor.GetRecommendedFeeWithConfidence(
+		e.cexProfile.TypicalInputs,
+		e.cexProfile.TypicalOutputs,
+		e.cexProfile.OnchainTxType,
+	)
+	if err != nil || rec == nil {
+		return networkFeeDetails{method: MethodOnchain}
 	}
-	var fees struct {
-		HalfHourFee int64 `json:"halfHourFee"`
+	return networkFeeDetails{
+		feeBTC:     rec.TotalFeeBTC,
+		method:     MethodOnchain,
+		tier:       rec.Tier,
+		confidence: confidence,
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&fees); err != nil {
-		return 0, fmt.Errorf("decode: %w", err)
-	}
-	return float64(fees.HalfHourFee*typicalTxVBytes) / 1e8, nil
 }
 
 // ---------------------------------------------------------------------------
@@ -659,17 +663,20 @@ func fetchHalfHourNetworkFee() (float64, error) {
 // CostBreakdown holds each component of the arbitrage cost, all expressed both
 // as absolute BTC amounts and as percentages of the trade value.
 type CostBreakdown struct {
-	BTCAmount         float64 `json:"btc_amount"`           // trade size used for calculation
-	CexTakerFeePct    float64 `json:"cex_taker_fee_pct"`    // CEX taker fee as % of trade
-	CexTakerFeeBTC    float64 `json:"cex_taker_fee_btc"`    // CEX taker fee in BTC
-	WithdrawalFeePct  float64 `json:"withdrawal_fee_pct"`   // CEX BTC withdrawal fee as % of trade
-	WithdrawalFeeBTC  float64 `json:"withdrawal_fee_btc"`   // CEX BTC withdrawal fee in BTC
-	NetworkFeePct     float64 `json:"network_fee_pct"`      // on-chain miner fee as % of trade
-	NetworkFeeBTC     float64 `json:"network_fee_btc"`      // on-chain miner fee in BTC
-	DexFeePct         float64 `json:"dex_fee_pct"`          // DEX platform fee as % of trade
-	DexFeeBTC         float64 `json:"dex_fee_btc"`          // DEX platform fee in BTC
-	TotalCostPct      float64 `json:"total_cost_pct"`       // sum of all components as % of trade
-	TotalCostBTC      float64 `json:"total_cost_btc"`       // sum of all components in BTC
+	BTCAmount              float64 `json:"btc_amount"`               // trade size used for calculation
+	CexTakerFeePct         float64 `json:"cex_taker_fee_pct"`        // CEX taker fee as % of trade
+	CexTakerFeeBTC         float64 `json:"cex_taker_fee_btc"`        // CEX taker fee in BTC
+	WithdrawalFeePct       float64 `json:"withdrawal_fee_pct"`       // CEX BTC withdrawal fee as % of trade
+	WithdrawalFeeBTC       float64 `json:"withdrawal_fee_btc"`       // CEX BTC withdrawal fee in BTC
+	NetworkFeePct          float64 `json:"network_fee_pct"`          // settlement network fee as % of trade
+	NetworkFeeBTC          float64 `json:"network_fee_btc"`          // settlement network fee in BTC
+	NetworkFeeMethod       string  `json:"network_fee_method"`       // "onchain" or "lightning"
+	NetworkFeeTier         string  `json:"network_fee_tier"`         // "economic", "standard", "fast", "express", "lightning"
+	NetworkFeeConfidence   float64 `json:"network_fee_confidence"`   // 0–1.0 estimate reliability
+	DexFeePct              float64 `json:"dex_fee_pct"`              // DEX platform fee as % of trade
+	DexFeeBTC              float64 `json:"dex_fee_btc"`              // DEX platform fee in BTC
+	TotalCostPct           float64 `json:"total_cost_pct"`           // sum of all components as % of trade
+	TotalCostBTC           float64 `json:"total_cost_btc"`           // sum of all components in BTC
 }
 
 func round8(v float64) float64 {
@@ -687,7 +694,7 @@ func (e *TradeCostEstimator) Breakdown(btcAmount float64, dexExchange string) Co
 	}
 	takerFrac := e.taker.get()
 	withdrawalFee := e.withdrawal.get()
-	networkFee := e.getNetworkFee()
+	netFee := e.getNetworkFee(dexExchange, btcAmount)
 
 	var dexFeeFrac float64
 	if dexExchange == "robosats" {
@@ -702,22 +709,25 @@ func (e *TradeCostEstimator) Breakdown(btcAmount float64, dexExchange string) Co
 
 	takerBTC := btcAmount * takerFrac
 	dexBTC := btcAmount * dexFeeFrac
-	totalBTC := takerBTC + withdrawalFee + networkFee + dexBTC
+	totalBTC := takerBTC + withdrawalFee + netFee.feeBTC + dexBTC
 	totalPct := totalBTC / btcAmount * 100
 
 	pct := func(btc float64) float64 { return round4(btc / btcAmount * 100) }
 
 	return CostBreakdown{
-		BTCAmount:        round8(btcAmount),
-		CexTakerFeePct:   pct(takerBTC),
-		CexTakerFeeBTC:   round8(takerBTC),
-		WithdrawalFeePct: pct(withdrawalFee),
-		WithdrawalFeeBTC: round8(withdrawalFee),
-		NetworkFeePct:    pct(networkFee),
-		NetworkFeeBTC:    round8(networkFee),
-		DexFeePct:        pct(dexBTC),
-		DexFeeBTC:        round8(dexBTC),
-		TotalCostPct:     round4(totalPct),
-		TotalCostBTC:     round8(totalBTC),
+		BTCAmount:            round8(btcAmount),
+		CexTakerFeePct:       pct(takerBTC),
+		CexTakerFeeBTC:       round8(takerBTC),
+		WithdrawalFeePct:     pct(withdrawalFee),
+		WithdrawalFeeBTC:     round8(withdrawalFee),
+		NetworkFeePct:        pct(netFee.feeBTC),
+		NetworkFeeBTC:        round8(netFee.feeBTC),
+		NetworkFeeMethod:     string(netFee.method),
+		NetworkFeeTier:       netFee.tier,
+		NetworkFeeConfidence: round4(netFee.confidence),
+		DexFeePct:            pct(dexBTC),
+		DexFeeBTC:            round8(dexBTC),
+		TotalCostPct:         round4(totalPct),
+		TotalCostBTC:         round8(totalBTC),
 	}
 }

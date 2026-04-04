@@ -13,8 +13,8 @@ import (
 	"sync"
 	"time"
 
+	gorillaws "github.com/gorilla/websocket"
 	_ "modernc.org/sqlite"
-	"golang.org/x/net/websocket"
 )
 
 var (
@@ -27,6 +27,14 @@ var (
 var (
 	krakPriceMu sync.RWMutex
 	krakPrice   float64
+)
+
+// defaultCEX and defaultCEXPair define the exchange and trading pair used for
+// reference price and cost estimation when no CEX_EXCHANGE env var is set.
+// To switch to a different CEX/pair, change these two constants.
+const (
+	defaultCEX     = "kraken"
+	defaultCEXPair = "BTC/EUR" // Kraken symbol format; e.g. "BTC/USD" for a USD pair
 )
 
 var tradeCostEstimator *TradeCostEstimator
@@ -94,7 +102,7 @@ func runKrakenPriceFeed(ctx context.Context) {
 		default:
 		}
 
-		ws, err := websocket.Dial("wss://ws.kraken.com/v2", "", "https://ws.kraken.com")
+		ws, _, err := gorillaws.DefaultDialer.DialContext(ctx, "wss://ws.kraken.com/v2", nil)
 		if err != nil {
 			fmt.Printf("[KrakenWSS] connect error: %v, retrying in %s\n", err, backoff)
 			select {
@@ -110,16 +118,16 @@ func runKrakenPriceFeed(ctx context.Context) {
 		backoff = time.Second
 		fmt.Println("[KrakenWSS] connected")
 
-		sub := `{"method":"subscribe","params":{"channel":"ticker","symbol":["BTC/EUR"]}}`
-		if err := websocket.Message.Send(ws, sub); err != nil {
+		sub := fmt.Sprintf(`{"method":"subscribe","params":{"channel":"ticker","symbol":["%s"]}}`, defaultCEXPair)
+		if err := ws.WriteMessage(gorillaws.TextMessage, []byte(sub)); err != nil {
 			fmt.Printf("[KrakenWSS] subscribe error: %v\n", err)
 			ws.Close()
 			continue
 		}
 
 		for {
-			var msg string
-			if err := websocket.Message.Receive(ws, &msg); err != nil {
+			_, msgBytes, err := ws.ReadMessage()
+			if err != nil {
 				fmt.Printf("[KrakenWSS] receive error: %v\n", err)
 				ws.Close()
 				break
@@ -130,7 +138,7 @@ func runKrakenPriceFeed(ctx context.Context) {
 					Last float64 `json:"last"`
 				} `json:"data"`
 			}
-			if err := json.Unmarshal([]byte(msg), &envelope); err != nil {
+			if err := json.Unmarshal(msgBytes, &envelope); err != nil {
 				continue
 			}
 			if envelope.Channel == "ticker" && len(envelope.Data) > 0 && envelope.Data[0].Last > 0 {
@@ -192,22 +200,69 @@ func main() {
 
 	cex := os.Getenv("CEX_EXCHANGE")
 	if cex == "" {
-		cex = "kraken"
+		cex = defaultCEX
 	}
 	tradeCostEstimator = NewTradeCostEstimator(cex)
-	fmt.Printf("[TradeCost] configured for %s (taker fallback %.2f%%, withdrawal fallback %.8f BTC — live fetch on first use)\n",
-		cex, takerFeeFallbacks[cex]*100, withdrawalFallbacks[cex])
+	fmt.Printf("[TradeCost] configured for %s %s (taker fallback %.2f%%, withdrawal fallback %.8f BTC — live fetch on first use)\n",
+		cex, defaultCEXPair, takerFeeFallbacks[cex]*100, withdrawalFallbacks[cex])
 
-	// Migrations
+	// Schema initialization (idempotent — safe to run on every startup)
+	for _, stmt := range []string{
+		`CREATE TABLE IF NOT EXISTS snapshots (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			exchange TEXT NOT NULL,
+			fiat_currency TEXT NOT NULL,
+			direction TEXT NOT NULL,
+			btc_price REAL NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS offers (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			exchange TEXT NOT NULL,
+			direction TEXT NOT NULL,
+			price REAL NOT NULL,
+			price_diff_percent REAL,
+			btc_min REAL,
+			btc_max REAL,
+			fiat_min INTEGER,
+			fiat_max INTEGER,
+			payment_method TEXT,
+			offer_id TEXT,
+			ref_price REAL,
+			first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+			last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
+			is_live BOOLEAN NOT NULL DEFAULT 0,
+			duration INTEGER
+		)`,
+		`CREATE TABLE IF NOT EXISTS snapshot_log (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+			exchanges TEXT NOT NULL,
+			offers_count INTEGER NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS kraken_ohlc (
+			time  DATETIME PRIMARY KEY,
+			open  REAL NOT NULL,
+			high  REAL NOT NULL,
+			low   REAL NOT NULL,
+			close REAL NOT NULL
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_snapshots_time ON snapshots(timestamp)`,
+		`CREATE INDEX IF NOT EXISTS idx_snapshots_exchange ON snapshots(exchange)`,
+		`CREATE INDEX IF NOT EXISTS idx_offers_exchange ON offers(exchange)`,
+		`CREATE INDEX IF NOT EXISTS idx_offers_direction ON offers(direction)`,
+		`CREATE INDEX IF NOT EXISTS idx_offers_last_seen ON offers(last_seen)`,
+		`CREATE INDEX IF NOT EXISTS idx_offers_fingerprint ON offers(exchange, direction, price, btc_min, btc_max, payment_method)`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_offers_offer_id ON offers(offer_id) WHERE offer_id IS NOT NULL`,
+	} {
+		if _, err := db.Exec(stmt); err != nil {
+			fmt.Fprintf(os.Stderr, "schema init error: %v\n", err)
+		}
+	}
+
+	// Migrations (for databases created before schema versioning)
 	db.Exec("ALTER TABLE offers ADD COLUMN is_live BOOLEAN NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE offers ADD COLUMN duration INTEGER")
-	db.Exec(`CREATE TABLE IF NOT EXISTS kraken_ohlc (
-		time  DATETIME PRIMARY KEY,
-		open  REAL NOT NULL,
-		high  REAL NOT NULL,
-		low   REAL NOT NULL,
-		close REAL NOT NULL
-	)`)
 
 	// Seed hub from DB so live offers are available before the first snapshot push
 	seedHubFromDB()
@@ -226,10 +281,7 @@ func main() {
 	// API
 	mux.HandleFunc("GET /api/past_offers", handlePastOffers)
 	mux.HandleFunc("GET /api/live_offers", handleLiveOffersREST)
-	mux.Handle("GET /ws/live_offers", websocket.Server{
-		Handshake: func(_ *websocket.Config, _ *http.Request) error { return nil },
-		Handler:   handleLiveOffersWS,
-	})
+	mux.HandleFunc("GET /ws/live_offers", handleLiveOffersWS)
 	mux.HandleFunc("GET /api/stats", handleStats)
 	mux.HandleFunc("GET /api/ohlc", handleOHLC)
 	mux.HandleFunc("GET /api/snapshot-log", handleSnapshotLog)
