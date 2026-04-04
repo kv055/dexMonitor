@@ -264,8 +264,9 @@ func main() {
 	db.Exec("ALTER TABLE offers ADD COLUMN is_live BOOLEAN NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE offers ADD COLUMN duration INTEGER")
 
-	// Seed hub from DB so live offers are available before the first snapshot push
-	seedHubFromDB()
+	// Seed hub from DB in the background — computing trade costs makes outbound
+	// HTTP requests (mempool.space, exchange APIs) that must not block startup.
+	go seedHubFromDB()
 
 	// Start Kraken WebSocket price feed
 	ctx, cancel := context.WithCancel(context.Background())

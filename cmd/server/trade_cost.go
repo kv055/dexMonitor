@@ -98,6 +98,8 @@ func (c *cachedFee) get(fallback float64, refresh func() (float64, error), label
 		} else {
 			fmt.Printf("[TradeCost] %s refresh failed (%v), keeping cached %.8f\n", label, err, c.value)
 		}
+		// Stamp fetchedAt even on failure so we don't retry every call for the TTL duration.
+		c.fetchedAt = time.Now()
 	}
 	result := c.value
 	c.mu.Unlock()
@@ -566,13 +568,36 @@ type TradeCostEstimator struct {
 }
 
 func NewTradeCostEstimator(exchange string) *TradeCostEstimator {
+	torClient, err := newTorHTTPClient()
+	if err != nil {
+		fmt.Printf("[TradeCost] Tor client unavailable, bitcoin fee fetcher will use direct HTTP: %v\n", err)
+		torClient = nil
+	}
 	return &TradeCostEstimator{
 		taker:        newTakerFeeFetcher(exchange),
 		withdrawal:   newWithdrawalFeeFetcher(exchange),
 		robosatsFee:  newCachedFee(feeTTL),
-		btcPredictor: bitcoin.NewBitcoinFeePredictor(),
+		btcPredictor: bitcoin.NewBitcoinFeePredictorWithClient(torClient),
 		cexProfile:   cexProfileFor(exchange),
 	}
+}
+
+// BTCNetworkFeeDetail carries the full onchain fee calculation context for display.
+// Only populated for onchain transfers; nil for Lightning.
+type BTCNetworkFeeDetail struct {
+	TxVBytes           int64   `json:"tx_vbytes"`            // calculated virtual size
+	TxType             string  `json:"tx_type"`              // "P2WPKH", "P2TR", etc.
+	TxInputs           int     `json:"tx_inputs"`
+	TxOutputs          int     `json:"tx_outputs"`
+	SelectedSatVB      int64   `json:"selected_sat_vb"`      // fee rate for the chosen tier
+	EconomicSatVB      int64   `json:"economic_sat_vb"`      // all-tier rates for comparison
+	StandardSatVB      int64   `json:"standard_sat_vb"`
+	FastSatVB          int64   `json:"fast_sat_vb"`
+	ExpressSatVB       int64   `json:"express_sat_vb"`
+	CongestionLevel    string  `json:"congestion_level"`
+	MempoolSizeMB      float64 `json:"mempool_size_mb"`
+	UnconfirmedTxCount int64   `json:"unconfirmed_tx_count"`
+	DataAgeMinutes     int     `json:"data_age_minutes"`
 }
 
 // networkFeeDetails bundles the fee amount with metadata about how it was calculated.
@@ -581,6 +606,7 @@ type networkFeeDetails struct {
 	method     WithdrawalMethod
 	tier       string  // "economic", "standard", "fast", "express", "lightning"
 	confidence float64 // 0–1.0
+	detail     *BTCNetworkFeeDetail
 }
 
 // CostPct returns the estimated total arbitrage cost as a percentage of btcAmount.
@@ -640,19 +666,48 @@ func (e *TradeCostEstimator) getNetworkFee(dexExchange string, btcAmount float64
 		}
 	}
 
-	rec, confidence, err := e.btcPredictor.GetRecommendedFeeWithConfidence(
+	ctx, err := e.btcPredictor.GetDetailedRecommendation(
 		e.cexProfile.TypicalInputs,
 		e.cexProfile.TypicalOutputs,
 		e.cexProfile.OnchainTxType,
 	)
-	if err != nil || rec == nil {
+	if err != nil || ctx.Recommendation == nil {
 		return networkFeeDetails{method: MethodOnchain}
 	}
+
+	var detail *BTCNetworkFeeDetail
+	if ctx.Estimate != nil {
+		detail = &BTCNetworkFeeDetail{
+			TxVBytes:        ctx.Estimate.TransactionSize,
+			TxType:          ctx.TxType,
+			TxInputs:        ctx.TxInputs,
+			TxOutputs:       ctx.TxOutputs,
+			SelectedSatVB:   ctx.Recommendation.FeeRateSatVB,
+			CongestionLevel: ctx.Estimate.NetworkCongestion,
+			DataAgeMinutes:  ctx.DataAgeMinutes,
+		}
+		if ctx.FeeRates != nil {
+			detail.EconomicSatVB = ctx.FeeRates.EconomicFee
+			detail.StandardSatVB = ctx.FeeRates.StandardFee
+			detail.FastSatVB     = ctx.FeeRates.FastFee
+			detail.ExpressSatVB  = ctx.FeeRates.ExpressFee
+		}
+		if ctx.NetworkStats != nil {
+			detail.MempoolSizeMB      = math.Round(float64(ctx.NetworkStats.MempoolSize)/(1024*1024)*100) / 100
+			detail.UnconfirmedTxCount = ctx.NetworkStats.TransactionCount
+		}
+	}
+
+	confidence := 0.0
+	if ctx.Estimate != nil {
+		confidence = ctx.Estimate.EstimatedConfidence
+	}
 	return networkFeeDetails{
-		feeBTC:     rec.TotalFeeBTC,
+		feeBTC:     ctx.Recommendation.TotalFeeBTC,
 		method:     MethodOnchain,
-		tier:       rec.Tier,
+		tier:       ctx.Recommendation.Tier,
 		confidence: confidence,
+		detail:     detail,
 	}
 }
 
@@ -670,10 +725,11 @@ type CostBreakdown struct {
 	WithdrawalFeeBTC       float64 `json:"withdrawal_fee_btc"`       // CEX BTC withdrawal fee in BTC
 	NetworkFeePct          float64 `json:"network_fee_pct"`          // settlement network fee as % of trade
 	NetworkFeeBTC          float64 `json:"network_fee_btc"`          // settlement network fee in BTC
-	NetworkFeeMethod       string  `json:"network_fee_method"`       // "onchain" or "lightning"
-	NetworkFeeTier         string  `json:"network_fee_tier"`         // "economic", "standard", "fast", "express", "lightning"
-	NetworkFeeConfidence   float64 `json:"network_fee_confidence"`   // 0–1.0 estimate reliability
-	DexFeePct              float64 `json:"dex_fee_pct"`              // DEX platform fee as % of trade
+	NetworkFeeMethod       string               `json:"network_fee_method"`       // "onchain" or "lightning"
+	NetworkFeeTier         string               `json:"network_fee_tier"`         // "economic", "standard", "fast", "express", "lightning"
+	NetworkFeeConfidence   float64              `json:"network_fee_confidence"`   // 0–1.0 estimate reliability
+	NetworkFeeDetail       *BTCNetworkFeeDetail `json:"network_fee_detail"`       // full onchain calc context; nil for Lightning
+	DexFeePct              float64              `json:"dex_fee_pct"`              // DEX platform fee as % of trade
 	DexFeeBTC              float64 `json:"dex_fee_btc"`              // DEX platform fee in BTC
 	TotalCostPct           float64 `json:"total_cost_pct"`           // sum of all components as % of trade
 	TotalCostBTC           float64 `json:"total_cost_btc"`           // sum of all components in BTC
@@ -725,6 +781,7 @@ func (e *TradeCostEstimator) Breakdown(btcAmount float64, dexExchange string) Co
 		NetworkFeeMethod:     string(netFee.method),
 		NetworkFeeTier:       netFee.tier,
 		NetworkFeeConfidence: round4(netFee.confidence),
+		NetworkFeeDetail:     netFee.detail,
 		DexFeePct:            pct(dexBTC),
 		DexFeeBTC:            round8(dexBTC),
 		TotalCostPct:         round4(totalPct),

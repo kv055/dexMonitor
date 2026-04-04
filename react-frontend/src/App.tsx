@@ -63,7 +63,7 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
       )}
 
       {/* Top row: control panel + offers */}
-      <div className="lg:flex-2 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-2 sm:gap-3">
+      <div className="lg:flex-2 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_3fr] gap-2 sm:gap-3">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Control Panel</h3>
           <ControlPanel onRefresh={() => load(filters.hours)} lastUpdated={lastUpdated} stats={stats} />

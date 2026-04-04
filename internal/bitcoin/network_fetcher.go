@@ -17,10 +17,16 @@ type NetworkDataFetcher struct {
 	lastUpdate time.Time
 }
 
-// NewNetworkDataFetcher creates a new fetcher with mempool.space as the default source.
+// NewNetworkDataFetcher creates a new fetcher with a plain HTTP client.
 func NewNetworkDataFetcher() *NetworkDataFetcher {
+	return NewNetworkDataFetcherWithClient(&http.Client{Timeout: 10 * time.Second})
+}
+
+// NewNetworkDataFetcherWithClient creates a fetcher using the provided HTTP client.
+// Pass a Tor-proxied client when running inside a container that routes through Tor.
+func NewNetworkDataFetcherWithClient(client *http.Client) *NetworkDataFetcher {
 	return &NetworkDataFetcher{
-		client:    &http.Client{Timeout: 10 * time.Second},
+		client:    client,
 		baseURL:   "https://mempool.space/api/v1",
 		userAgent: "dexMonitor/1.0 (Bitcoin Fee Predictor)",
 	}
@@ -55,8 +61,9 @@ func (ndf *NetworkDataFetcher) FetchRecommendedFees() (*FeeEstimate, error) {
 }
 
 // FetchMempoolData fetches current mempool statistics.
+// Note: the mempool endpoint lives under /api, not /api/v1.
 func (ndf *NetworkDataFetcher) FetchMempoolData() (*MempoolData, error) {
-	resp, err := ndf.makeRequest(ndf.baseURL + "/mempool")
+	resp, err := ndf.makeRequest("https://mempool.space/api/mempool")
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch mempool data: %w", err)
 	}

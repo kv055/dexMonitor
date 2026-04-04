@@ -208,6 +208,31 @@ npm run test:e2e:update
 
 Tests cover all 4 dashboard panels (ControlPanel, OffersTable, OHLCChart, DepthChart) plus cross-component filter integration. Visual regression screenshots for canvas-based charts are committed under `e2e/tests/*.spec.ts-snapshots/`.
 
+## Local Git Hooks (Lefthook)
+
+The repository is configured for local-only CI checks via `lefthook`.
+
+### Hook behavior
+
+- `pre-commit` runs fast checks: backend compile + frontend build
+- `pre-push` runs the full suite: fast checks + frontend E2E tests
+
+### Setup
+
+```bash
+# Install lefthook (one time; choose your preferred package manager)
+# https://github.com/evilmartians/lefthook
+
+lefthook install
+```
+
+### Manual runs
+
+```bash
+./scripts/ci/quick.sh
+./scripts/ci/full.sh
+```
+
 ## Project Structure
 
 ```

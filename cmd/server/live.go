@@ -4,10 +4,16 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"net/http"
 	"sync"
+	"time"
 
-	"golang.org/x/net/websocket"
+	"github.com/gorilla/websocket"
 )
+
+var upgrader = websocket.Upgrader{
+	CheckOrigin: func(r *http.Request) bool { return true },
+}
 
 // LiveOffer holds a single live offer pushed by the snapshot tool.
 type LiveOffer struct {
@@ -166,21 +172,59 @@ func (h *LiveHub) computePayload(price float64) []byte {
 
 // handleLiveOffersWS is the WebSocket handler. It sends the current state
 // immediately on connect, then streams every subsequent broadcast.
-func handleLiveOffersWS(ws *websocket.Conn) {
+func handleLiveOffersWS(w http.ResponseWriter, r *http.Request) {
+	ws, err := upgrader.Upgrade(w, r, nil)
+	if err != nil {
+		fmt.Printf("[LiveWS] upgrade error: %v\n", err)
+		return
+	}
+	defer ws.Close()
+
 	ch := hub.subscribe()
 	defer hub.unsubscribe(ch)
 
-	// Send current state to this client immediately without waiting for the
-	// next Kraken tick.
+	// Respond to pings so the browser doesn't drop the connection.
+	ws.SetPongHandler(func(string) error {
+		ws.SetReadDeadline(time.Now().Add(60 * time.Second))
+		return nil
+	})
+
+	// Read loop — needed to process control frames (ping/close) from the client.
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			if _, _, err := ws.ReadMessage(); err != nil {
+				return
+			}
+		}
+	}()
+
+	// Send current state immediately on connect.
 	if payload := hub.computePayload(getKrakenPrice()); payload != nil {
-		if err := websocket.Message.Send(ws, string(payload)); err != nil {
+		if err := ws.WriteMessage(websocket.TextMessage, payload); err != nil {
 			return
 		}
 	}
 
-	for msg := range ch {
-		if err := websocket.Message.Send(ws, string(msg)); err != nil {
+	ping := time.NewTicker(30 * time.Second)
+	defer ping.Stop()
+
+	for {
+		select {
+		case <-done:
 			return
+		case msg, ok := <-ch:
+			if !ok {
+				return
+			}
+			if err := ws.WriteMessage(websocket.TextMessage, msg); err != nil {
+				return
+			}
+		case <-ping.C:
+			if err := ws.WriteMessage(websocket.PingMessage, nil); err != nil {
+				return
+			}
 		}
 	}
 }

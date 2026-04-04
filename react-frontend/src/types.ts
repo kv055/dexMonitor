@@ -1,3 +1,19 @@
+export interface BTCNetworkFeeDetail {
+  tx_vbytes: number;
+  tx_type: string;
+  tx_inputs: number;
+  tx_outputs: number;
+  selected_sat_vb: number;
+  economic_sat_vb: number;
+  standard_sat_vb: number;
+  fast_sat_vb: number;
+  express_sat_vb: number;
+  congestion_level: string;
+  mempool_size_mb: number;
+  unconfirmed_tx_count: number;
+  data_age_minutes: number;
+}
+
 export interface CostBreakdown {
   btc_amount: number;
   cex_taker_fee_pct: number;
@@ -6,6 +22,10 @@ export interface CostBreakdown {
   withdrawal_fee_btc: number;
   network_fee_pct: number;
   network_fee_btc: number;
+  network_fee_method: string;
+  network_fee_tier: string;
+  network_fee_confidence: number;
+  network_fee_detail: BTCNetworkFeeDetail | null;
   dex_fee_pct: number;
   dex_fee_btc: number;
   total_cost_pct: number;

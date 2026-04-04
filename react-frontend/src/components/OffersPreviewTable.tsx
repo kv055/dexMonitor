@@ -1,9 +1,9 @@
-import { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { ExchangeTag } from './ExchangeTag';
 import { formatNum, formatBtc, premiumClass } from '../utils/formatters';
 import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
-import type { CostBreakdown } from '../types';
+import type { CostBreakdown, BTCNetworkFeeDetail as BTCDetail } from '../types';
 
 const TH_BASE = "sticky top-0 z-10 bg-surface px-2 py-1 border-b border-border text-muted text-[0.65rem] uppercase text-left whitespace-nowrap";
 const TD = "px-2 py-1 whitespace-nowrap";
@@ -16,15 +16,121 @@ function fmtPct(n: number): string {
   return n.toFixed(4).replace(/\.?0+$/, '') + '%';
 }
 
+const TIER_COLOR: Record<string, string> = {
+  economic:  'text-green',
+  standard:  'text-accent',
+  fast:      'text-red',
+  express:   'text-red',
+  lightning: 'text-[#bc8cff]',
+};
+
+const CONGESTION_COLOR: Record<string, string> = {
+  low:        'text-green',
+  low_medium: 'text-green',
+  medium:     'text-accent',
+  high:       'text-red',
+};
+
+function Badge({ label, colorCls }: { label: string; colorCls?: string }) {
+  return (
+    <span className={`text-[0.6rem] px-1.5 py-px rounded-full border border-border bg-bg capitalize ${colorCls ?? 'text-muted'}`}>
+      {label}
+    </span>
+  );
+}
+
+function OnchainFeeDetail({ d, conf }: { d: BTCDetail; conf: number }) {
+  const tierCls = TIER_COLOR[d.congestion_level] ?? 'text-muted';
+  const congCls = CONGESTION_COLOR[d.congestion_level] ?? 'text-muted';
+  const confPct = conf > 0 ? Math.round(conf * 100) + '%' : null;
+
+  return (
+    <tr>
+      <td colSpan={3} className="pt-0 pb-2">
+        {/* Badge row */}
+        <div className="flex items-center gap-1.5 mb-1.5 pl-0.5">
+          <Badge label="onchain" />
+          <Badge label={d.congestion_level.replace('_', ' ') + ' congestion'} colorCls={congCls} />
+          {confPct && <span className="text-[0.6rem] text-muted">{confPct} conf.</span>}
+        </div>
+        {/* Detail grid */}
+        <div className="bg-bg rounded-md border border-border px-2.5 py-2 flex flex-col gap-1.5 text-[0.68rem]">
+          {/* Tx structure */}
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Tx structure</span>
+            <span className="text-text font-mono">
+              {d.tx_inputs}in · {d.tx_outputs}out · {d.tx_type} · {d.tx_vbytes} vB
+            </span>
+          </div>
+          {/* Selected rate */}
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Selected rate</span>
+            <span className={`font-medium ${tierCls}`}>{d.selected_sat_vb} sat/vB</span>
+          </div>
+          {/* All tiers */}
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted shrink-0">All tiers</span>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <span><span className="text-green">eco</span> <span className="text-text">{d.economic_sat_vb}</span></span>
+              <span className="text-border">·</span>
+              <span><span className="text-accent">std</span> <span className="text-text">{d.standard_sat_vb}</span></span>
+              <span className="text-border">·</span>
+              <span><span className="text-red">fast</span> <span className="text-text">{d.fast_sat_vb}</span></span>
+              <span className="text-border">·</span>
+              <span><span className="text-red">exp</span> <span className="text-text">{d.express_sat_vb}</span></span>
+              <span className="text-muted">sat/vB</span>
+            </div>
+          </div>
+          {/* Mempool */}
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Mempool</span>
+            <span className="text-text">{d.mempool_size_mb} MB · {d.unconfirmed_tx_count.toLocaleString()} txs</span>
+          </div>
+          {/* Data age */}
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Data age</span>
+            <span className="text-muted">{d.data_age_minutes}m ago</span>
+          </div>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function LightningFeeDetail({ conf }: { conf: number }) {
+  const confPct = conf > 0 ? Math.round(conf * 100) + '%' : null;
+  return (
+    <tr>
+      <td colSpan={3} className="pb-1 pt-0">
+        <div className="flex items-center gap-1.5 pl-0.5">
+          <Badge label="lightning" colorCls="text-[#bc8cff]" />
+          {confPct && <span className="text-[0.6rem] text-muted">{confPct} conf.</span>}
+          <span className="text-[0.6rem] text-muted">amount-proportional estimate</span>
+        </div>
+      </td>
+    </tr>
+  );
+}
+
+function NetworkFeeDetail({ bd }: { bd: CostBreakdown }) {
+  if (bd.network_fee_method === 'onchain' && bd.network_fee_detail) {
+    return <OnchainFeeDetail d={bd.network_fee_detail} conf={bd.network_fee_confidence} />;
+  }
+  if (bd.network_fee_method === 'lightning') {
+    return <LightningFeeDetail conf={bd.network_fee_confidence} />;
+  }
+  return null;
+}
+
 function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct }: {
   bd: CostBreakdown;
   priceDiffPct: number | null;
   netPremiumPct: number | null;
 }) {
-  const rows: { label: string; btc: number; pct: number }[] = [
+  const rows: { label: string; btc: number; pct: number; detail?: React.ReactNode }[] = [
     { label: 'CEX taker fee',    btc: bd.cex_taker_fee_btc,  pct: bd.cex_taker_fee_pct  },
     { label: 'CEX withdrawal',   btc: bd.withdrawal_fee_btc,  pct: bd.withdrawal_fee_pct  },
-    { label: 'BTC network fee',  btc: bd.network_fee_btc,     pct: bd.network_fee_pct     },
+    { label: 'BTC network fee',  btc: bd.network_fee_btc,     pct: bd.network_fee_pct,    detail: <NetworkFeeDetail bd={bd} /> },
     { label: 'DEX platform fee', btc: bd.dex_fee_btc,         pct: bd.dex_fee_pct         },
   ];
   const netCls = netPremiumPct != null
@@ -46,11 +152,14 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct }: {
         </thead>
         <tbody>
           {rows.map(r => (
-            <tr key={r.label}>
-              <td className="pr-3 py-0.5 text-muted">{r.label}</td>
-              <td className="pr-3 py-0.5 text-right text-text">{fmt8(r.btc)}</td>
-              <td className="py-0.5 text-right text-text">{fmtPct(r.pct)}</td>
-            </tr>
+            <React.Fragment key={r.label}>
+              <tr>
+                <td className="pr-3 py-0.5 text-muted">{r.label}</td>
+                <td className="pr-3 py-0.5 text-right text-text">{fmt8(r.btc)}</td>
+                <td className="py-0.5 text-right text-text">{fmtPct(r.pct)}</td>
+              </tr>
+              {r.detail}
+            </React.Fragment>
           ))}
           <tr className="border-t border-border">
             <td className="pr-3 pt-2 font-medium text-text">Total cost</td>

@@ -17,6 +17,10 @@ env/
 # Logs
 *.log
 
+# Node
+node_modules/
+npm-debug.log*
+
 # IDE
 .idea/
 .vscode/

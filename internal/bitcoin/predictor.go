@@ -2,11 +2,16 @@ package bitcoin
 
 import (
 	"fmt"
+	"net/http"
 	"time"
 )
 
 // lightningTypicalHops is the assumed number of routing hops for a Lightning payment.
 const lightningTypicalHops = 3
+
+// failedFetchCooldown is how long to wait before retrying after a failed fetch.
+// Much shorter than the normal TTL so transient errors recover quickly.
+const failedFetchCooldown = 2 * time.Minute
 
 // BitcoinFeePredictor orchestrates fee fetching, analysis, and recommendations.
 type BitcoinFeePredictor struct {
@@ -16,14 +21,28 @@ type BitcoinFeePredictor struct {
 	lastFeeData      *FeeEstimate
 	lastNetStats     *NetworkStats
 	lastLightning    *LightningFeeStats
-	lastUpdateTime   time.Time
+	lastUpdateTime   time.Time // last successful fetch
+	lastAttemptTime  time.Time // last fetch attempt (success or failure)
 }
 
-// NewBitcoinFeePredictor creates and initialises a new fee predictor.
+// NewBitcoinFeePredictor creates a fee predictor with a plain HTTP client.
 func NewBitcoinFeePredictor() *BitcoinFeePredictor {
+	return NewBitcoinFeePredictorWithClient(nil)
+}
+
+// NewBitcoinFeePredictorWithClient creates a fee predictor using the given HTTP client.
+// Pass a Tor-proxied client when running in an environment that routes clearnet through Tor.
+// A nil client falls back to the default plain HTTP client.
+func NewBitcoinFeePredictorWithClient(client *http.Client) *BitcoinFeePredictor {
+	var fetcher *NetworkDataFetcher
+	if client != nil {
+		fetcher = NewNetworkDataFetcherWithClient(client)
+	} else {
+		fetcher = NewNetworkDataFetcher()
+	}
 	analyzer := NewFeeAnalyzer()
 	return &BitcoinFeePredictor{
-		fetcher:     NewNetworkDataFetcher(),
+		fetcher:     fetcher,
 		analyzer:    analyzer,
 		recommender: NewFeeRecommender(analyzer),
 	}
@@ -32,6 +51,11 @@ func NewBitcoinFeePredictor() *BitcoinFeePredictor {
 // FetchLatestData fetches fresh fee rates and network stats from mempool.space.
 // Call this before any prediction methods, or rely on IsDataStale to gate refreshes.
 func (bp *BitcoinFeePredictor) FetchLatestData() error {
+	// Always stamp the attempt time so we don't hammer the API on repeated failures.
+	// On failure, IsDataStale will allow a retry after failedFetchCooldown (2 min).
+	// On success, lastUpdateTime is set and the normal maxAge TTL applies.
+	bp.lastAttemptTime = time.Now()
+
 	feeData, err := bp.fetcher.FetchRecommendedFees()
 	if err != nil {
 		return fmt.Errorf("failed to fetch fee data: %w", err)
@@ -168,6 +192,44 @@ func (bp *BitcoinFeePredictor) GetNetworkConditionsSummary() (string, error) {
 	), nil
 }
 
+// DetailedFeeContext bundles everything needed to build a rich fee breakdown for display.
+type DetailedFeeContext struct {
+	Recommendation *FeeRecommendation
+	Estimate       *TransactionCostEstimate
+	FeeRates       *FeeEstimate
+	NetworkStats   *NetworkStats
+	DataAgeMinutes int
+	TxInputs       int
+	TxOutputs      int
+	TxType         string
+}
+
+// GetDetailedRecommendation returns the congestion-adaptive recommendation together with
+// all intermediate data (vsize, all tier rates, mempool state) for display purposes.
+func (bp *BitcoinFeePredictor) GetDetailedRecommendation(inputCount, outputCount int, txType string) (*DetailedFeeContext, error) {
+	estimate, err := bp.PredictTransactionCost(inputCount, outputCount, txType)
+	if err != nil {
+		return nil, err
+	}
+	rec := bp.recommender.RecommendBestTier(estimate, bp.lastFeeData, bp.lastNetStats)
+
+	ageMinutes := 0
+	if !bp.lastUpdateTime.IsZero() {
+		ageMinutes = int(time.Since(bp.lastUpdateTime).Minutes())
+	}
+
+	return &DetailedFeeContext{
+		Recommendation: rec,
+		Estimate:       estimate,
+		FeeRates:       bp.lastFeeData,
+		NetworkStats:   bp.lastNetStats,
+		DataAgeMinutes: ageMinutes,
+		TxInputs:       inputCount,
+		TxOutputs:      outputCount,
+		TxType:         txType,
+	}, nil
+}
+
 // EstimateLightningRoutingFee returns an approximate Lightning routing fee in BTC
 // for a payment of amountBTC, based on current network median fee rates.
 // Formula: (amount_sat × med_fee_rate_ppm / 1e6 + avg_base_fee_sat) × hops
@@ -186,11 +248,19 @@ func (bp *BitcoinFeePredictor) EstimateLightningRoutingFee(amountBTC float64) fl
 }
 
 // IsDataStale reports whether the cached data is older than maxAge.
+// After a failed fetch (lastUpdateTime not set or older than lastAttemptTime),
+// it returns true only after failedFetchCooldown has elapsed since the last attempt,
+// preventing the caller from hammering the API on repeated failures.
 func (bp *BitcoinFeePredictor) IsDataStale(maxAge time.Duration) bool {
-	if bp.lastUpdateTime.IsZero() {
-		return true
+	// Have good data and it's fresh enough → not stale.
+	if !bp.lastUpdateTime.IsZero() && time.Since(bp.lastUpdateTime) <= maxAge {
+		return false
 	}
-	return time.Since(bp.lastUpdateTime) > maxAge
+	// Data is stale or missing. If we recently attempted a fetch, respect the cooldown.
+	if !bp.lastAttemptTime.IsZero() && time.Since(bp.lastAttemptTime) < failedFetchCooldown {
+		return false
+	}
+	return true
 }
 
 // GetLastUpdateTime returns when data was last successfully fetched.
