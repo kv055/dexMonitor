@@ -32,7 +32,7 @@ interface KpiCardProps {
 
 function KpiCard({ label, value, sub, valueColor = 'text-text', barFill, barColor = 'bg-green' }: KpiCardProps) {
   return (
-    <div className="relative flex-1 bg-bg border border-border rounded-lg px-3 py-2 flex flex-col gap-0.5 overflow-hidden min-w-0">
+    <div className="relative flex-1 bg-bg border border-border rounded-lg px-3 py-2 flex flex-col gap-0.5 overflow-hidden min-w-0 min-h-16">
       <div className={`absolute left-0 top-2 bottom-2 w-0.5 rounded-full ${barFill != null ? barColor : 'bg-border'}`} />
       <span className="text-[0.58rem] uppercase tracking-widest text-muted font-semibold leading-none">{label}</span>
       <span className={`text-[1.35rem] font-bold leading-none tabular-nums ${valueColor}`}>{value}</span>
@@ -147,7 +147,7 @@ export function GeneralStats({ theme }: { theme: 'dark' | 'light' }) {
   }
 
   return (
-    <div className="flex gap-1.5 items-stretch h-full">
+    <div className="grid grid-cols-2 sm:grid-cols-3 lg:flex gap-1.5 lg:items-stretch h-full">
       <KpiCard
         label="Active Offers"
         value={String(stats.activeOffers)}

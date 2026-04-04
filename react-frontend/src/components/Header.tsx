@@ -21,46 +21,54 @@ const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
 
 export function Header({ stats, activeTab, onTabChange, theme, onToggleTheme, onOpenSettings }: Props) {
   return (
-    <header className="bg-surface border border-border rounded-lg px-3 py-1 flex items-center gap-4 shrink-0">
-      {tabs.map(tab => (
+    <header className="bg-surface border border-border rounded-lg px-3 py-1 flex items-center gap-1.5 shrink-0 min-w-0 overflow-hidden">
+      {/* Scrollable tab area */}
+      <div className="flex items-center overflow-x-auto flex-1 min-w-0 gap-1">
+        {tabs.map(tab => (
+          <button
+            type="button"
+            key={tab.id}
+            onClick={() => !tab.disabled && onTabChange(tab.id)}
+            disabled={tab.disabled}
+            title={tab.disabled ? 'Coming soon' : undefined}
+            className={`text-[0.9rem] font-semibold whitespace-nowrap px-2.5 py-0.5 border-none rounded transition-colors shrink-0
+              ${tab.disabled ? `opacity-40 cursor-not-allowed ${tab.color} bg-transparent` : `cursor-pointer ${tab.color}`}
+              ${tab.id === activeTab && !tab.disabled
+                ? `opacity-100 ${theme === 'dark' ? 'bg-white/20' : 'bg-black/15'}`
+                : !tab.disabled ? 'opacity-60 hover:opacity-85 bg-transparent' : ''}
+            `}
+            style={{ borderLeft: '1px solid var(--color-border)' }}
+          >
+            {tab.label}
+          </button>
+        ))}
+
+        {stats && activeTab === 'monitor' && (
+          <div className="hidden lg:flex items-center">
+            <KpiGrid stats={stats} />
+          </div>
+        )}
+      </div>
+
+      {/* Always-visible action buttons */}
+      <div className="flex items-center gap-1 shrink-0">
         <button
           type="button"
-          key={tab.id}
-          onClick={() => !tab.disabled && onTabChange(tab.id)}
-          disabled={tab.disabled}
-          title={tab.disabled ? 'Coming soon' : undefined}
-          className={`text-[0.9rem] font-semibold whitespace-nowrap px-2.5 py-0.5 border-none rounded transition-colors
-            ${tab.disabled ? `opacity-40 cursor-not-allowed ${tab.color} bg-transparent` : `cursor-pointer ${tab.color}`}
-            ${tab.id === activeTab && !tab.disabled
-              ? `opacity-100 ${theme === 'dark' ? 'bg-white/20' : 'bg-black/15'}`
-              : !tab.disabled ? 'opacity-60 hover:opacity-85 bg-transparent' : ''}
-          `}
-          style={{ borderLeft: '1px solid var(--color-border)' }}
+          className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 cursor-pointer hover:bg-bg"
+          onClick={onToggleTheme}
+          title={theme === 'dark' ? 'Switch to day mode' : 'Switch to night mode'}
         >
-          {tab.label}
+          {theme === 'dark' ? '🌞' : '🌙'}
         </button>
-      ))}
-
-      {stats && activeTab === 'monitor' && <KpiGrid stats={stats} />}
-
-      <div className="ml-auto" />
-
-      <button
-        type="button"
-        className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 cursor-pointer hover:bg-bg shrink-0"
-        onClick={onToggleTheme}
-        title={theme === 'dark' ? 'Switch to day mode' : 'Switch to night mode'}
-      >
-        {theme === 'dark' ? '🌞' : '🌙'}
-      </button>
-      <button
-        type="button"
-        className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 cursor-pointer hover:bg-bg shrink-0"
-        onClick={onOpenSettings}
-        title="Settings"
-      >
-        ⚙️
-      </button>
+        <button
+          type="button"
+          className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 cursor-pointer hover:bg-bg"
+          onClick={onOpenSettings}
+          title="Settings"
+        >
+          ⚙️
+        </button>
+      </div>
     </header>
   );
 }

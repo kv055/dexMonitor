@@ -75,29 +75,23 @@ export function OffersTable({ offers, filters }: Props) {
       <table className="w-full border-collapse text-[0.85rem]">
         <thead>
           <tr>
-            {([
-              ['exchange', 'Exchange'],
-              ['direction', 'Side'],
-              ['price', 'Price (EUR)'],
-              ['price_diff_percent', 'Premium'],
-              ['btc_min', 'BTC Min'],
-              ['btc_max', 'BTC Max'],
-              ['payment_method', 'Payment'],
-              ['first_seen', 'First Seen'],
-              ['last_seen', 'Last Seen'],
-              ['duration', 'Duration'],
-            ] as [SortCol, string][]).map(([col, label]) => (
-              <th key={col} className={thCls} onClick={() => handleSort(col)}>
-                {label}<SortArrow col={col} />
-              </th>
-            ))}
+            <th className={thCls} onClick={() => handleSort('exchange')}>Exchange<SortArrow col="exchange" /></th>
+            <th className={thCls} onClick={() => handleSort('direction')}>Side<SortArrow col="direction" /></th>
+            <th className={thCls} onClick={() => handleSort('price')}>Price (EUR)<SortArrow col="price" /></th>
+            <th className={thCls} onClick={() => handleSort('price_diff_percent')}>Premium<SortArrow col="price_diff_percent" /></th>
+            <th className={`${thCls} hidden md:table-cell`} onClick={() => handleSort('btc_min')}>BTC Min<SortArrow col="btc_min" /></th>
+            <th className={`${thCls} hidden md:table-cell`} onClick={() => handleSort('btc_max')}>BTC Max<SortArrow col="btc_max" /></th>
+            <th className={thCls} onClick={() => handleSort('payment_method')}>Payment<SortArrow col="payment_method" /></th>
+            <th className={`${thCls} hidden md:table-cell`} onClick={() => handleSort('first_seen')}>First Seen<SortArrow col="first_seen" /></th>
+            <th className={`${thCls} hidden sm:table-cell`} onClick={() => handleSort('last_seen')}>Last Seen<SortArrow col="last_seen" /></th>
+            <th className={`${thCls} hidden md:table-cell`} onClick={() => handleSort('duration')}>Duration<SortArrow col="duration" /></th>
           </tr>
         </thead>
         <tbody>
           {filtered.length === 0 ? (
             <tr><td colSpan={10} className="py-12 text-center text-muted">No offers found</td></tr>
           ) : filtered.map((o, i) => (
-            <tr key={i} className="hover:bg-white/[0.03]">
+            <tr key={i} className="hover:bg-white/3">
               <td className="px-2.5 py-1.5 border-b border-border whitespace-nowrap"><ExchangeTag exchange={o.exchange} /></td>
               <td className={`px-2.5 py-1.5 border-b border-border ${o.direction === 'buy' ? 'text-green' : 'text-red'}`}>
                 {o.direction === 'buy' ? 'Bid' : 'Ask'}
@@ -106,12 +100,12 @@ export function OffersTable({ offers, filters }: Props) {
               <td className={`px-2.5 py-1.5 border-b border-border ${premiumClass(o.price_diff_percent)}`}>
                 {o.price_diff_percent != null ? o.price_diff_percent.toFixed(1) + '%' : '—'}
               </td>
-              <td className="px-2.5 py-1.5 border-b border-border">{formatBtc(o.btc_min)}</td>
-              <td className="px-2.5 py-1.5 border-b border-border">{formatBtc(o.btc_max)}</td>
+              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border">{formatBtc(o.btc_min)}</td>
+              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border">{formatBtc(o.btc_max)}</td>
               <td className="px-2.5 py-1.5 border-b border-border">{o.payment_method || '—'}</td>
-              <td className="px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.first_seen)}</td>
-              <td className="px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.last_seen)}</td>
-              <td className="px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatDuration(o.first_seen, o.last_seen)}</td>
+              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.first_seen)}</td>
+              <td className="hidden sm:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.last_seen)}</td>
+              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatDuration(o.first_seen, o.last_seen)}</td>
             </tr>
           ))}
         </tbody>

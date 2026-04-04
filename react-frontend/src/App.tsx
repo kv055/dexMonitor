@@ -55,21 +55,21 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
   }, [filters.hours]);
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col gap-3">
+    <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
       {error && (
         <div className="bg-error border border-red rounded-lg px-3 py-2 text-red text-sm shrink-0">
           {error}
         </div>
       )}
 
-      {/* Top row: compact, fixed share of height */}
-      <div className="flex-2 min-h-0 grid grid-cols-[1fr_1.5fr_1.5fr] gap-3">
+      {/* Top row: control panel + offers */}
+      <div className="lg:flex-2 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_2fr] gap-2 sm:gap-3">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Control Panel</h3>
           <ControlPanel onRefresh={() => load(filters.hours)} lastUpdated={lastUpdated} stats={stats} />
         </div>
 
-        <div className="col-span-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
+        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Offers</h3>
           <div className="relative flex-1 min-h-0">
             <OffersPreviewTable />
@@ -77,15 +77,15 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
         </div>
       </div>
 
-      {/* Bottom row: fills majority of height */}
-      <div className="flex-5 min-h-0 grid grid-cols-3 gap-3">
-        <div className="col-span-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
+      {/* Bottom row: OHLC chart + depth chart */}
+      <div className="lg:flex-5 lg:min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-2 sm:gap-3">
+        <div className="lg:col-span-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-72 sm:min-h-80 lg:min-h-0">
           <OhlcPanelHeader />
           <div className="flex-1 min-h-0 relative">
             <OHLCChart data={ohlcData} />
           </div>
         </div>
-        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
+        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-56 sm:min-h-64 lg:min-h-0">
           <DepthChart />
         </div>
       </div>
@@ -95,8 +95,8 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
 
 function MmControllerView() {
   return (
-    <div className="flex-1 min-h-0 flex flex-col gap-3">
-      <div className="grid grid-cols-3 gap-3 shrink-0">
+    <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
+      <div className="grid grid-cols-1 gap-2 sm:gap-3 shrink-0">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Snapshot Log</h3>
           <div className="relative flex-1 min-h-52">
@@ -135,7 +135,7 @@ export default function App() {
 
   return (
     <FiltersProvider offers={allOffers} loading={loading}>
-      <div className="h-screen overflow-hidden flex flex-col bg-bg text-text p-3 gap-3">
+      <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-bg text-text p-2 sm:p-3 gap-2 sm:gap-3">
         <Header
           stats={stats}
           activeTab={activeTab}
@@ -171,20 +171,20 @@ export default function App() {
         )}
 
         {activeTab === 'insights' && (
-          <div className="flex-1 min-h-0 flex flex-col gap-3">
-            {/* Top — smaller */}
-            <div className="flex-1 bg-surface border border-border rounded-lg px-2 py-2 flex flex-col min-h-0">
+          <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
+            {/* Top — statistics */}
+            <div className="lg:flex-1 bg-surface border border-border rounded-lg px-2 py-2 flex flex-col min-h-40 lg:min-h-0">
               <span className="text-[0.6rem] uppercase text-muted font-semibold tracking-wide mb-1.5">General Statistics</span>
               <div className="flex-1 min-h-0">
                 <GeneralStats theme={theme} />
               </div>
             </div>
             {/* Middle — bigger */}
-            <div className="flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
+            <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
               <span className="text-[0.65rem] uppercase text-muted font-semibold tracking-wide mb-2">Taker Opportunities</span>
             </div>
             {/* Bottom — bigger */}
-            <div className="flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
+            <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
               <span className="text-[0.65rem] uppercase text-muted font-semibold tracking-wide mb-2">Maker Opportunities</span>
             </div>
           </div>

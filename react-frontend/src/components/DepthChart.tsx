@@ -157,8 +157,8 @@ function DepthChartInner() {
     const ctx = canvas.getContext('2d')!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // --- Layout ---
-    const ML = 70, MR = 15, MT = 10, MB = 28;
+    // --- Layout --- (narrower left margin on small containers)
+    const ML = W < 340 ? 48 : 70, MR = 15, MT = 10, MB = 28;
     const grid = cssVar('--app-grid', '#21262d');
     const muted = cssVar('--app-muted', '#8b949e');
 

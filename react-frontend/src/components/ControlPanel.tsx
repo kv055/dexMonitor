@@ -503,7 +503,7 @@ export function ControlPanel({ onRefresh, lastUpdated, stats }: Props) {
       </div>
 
       {/* Row 2: filters */}
-      <div className="border-t border-border pt-1 grid grid-cols-3 items-end gap-x-2 gap-y-0.5 w-fit">
+      <div className="border-t border-border pt-1 grid grid-cols-2 sm:grid-cols-3 items-end gap-x-2 gap-y-0.5 w-full sm:w-fit">
         <div className="flex flex-col gap-0.5">
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Side</span>
           <DirectionDropdown

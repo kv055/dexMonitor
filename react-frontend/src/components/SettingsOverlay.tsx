@@ -192,14 +192,14 @@ export function SettingsOverlay({
   if (!open) return null;
 
   return createPortal(
-    <div className="fixed inset-0 z-40 flex items-start justify-end p-4">
+    <div className="fixed inset-0 z-40 flex items-end sm:items-start justify-center sm:justify-end sm:p-4">
       <div
         className="absolute inset-0 bg-black/50 backdrop-blur-[2px] cursor-default"
         onClick={onClose}
         aria-label="Close settings"
       />
 
-      <aside className="relative z-10 w-full max-w-md rounded-xl border border-border bg-surface/95 shadow-2xl shadow-black/30 overflow-hidden animate-[settings-slide_220ms_ease-out]">
+      <aside className="relative z-10 w-full sm:max-w-md rounded-t-xl sm:rounded-xl border border-border bg-surface/95 shadow-2xl shadow-black/30 overflow-y-auto max-h-[90dvh] sm:max-h-none sm:overflow-hidden animate-[settings-slide_220ms_ease-out]">
         <div className="px-4 py-3 border-b border-border flex items-center justify-between">
           <div>
             <p className="text-[0.7rem] uppercase tracking-wide text-muted">Interface Preferences</p>
