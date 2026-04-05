@@ -1,7 +1,6 @@
 import { useState, useEffect, useMemo, useLayoutEffect } from 'react';
 import { useDashboard } from './hooks/useDashboard';
 import { useLiveOffers } from './hooks/useLiveOffers';
-import { useKrakenPrice } from './hooks/useKrakenPrice';
 import { FiltersProvider, useFilters } from './context/FiltersContext';
 import { Header } from './components/Header';
 import type { Tab } from './components/Header';
@@ -12,6 +11,7 @@ import { OHLCChart } from './components/OHLCChart';
 import { DepthChart } from './components/DepthChart';
 import { GeneralStats } from './components/GeneralStats';
 import { SnapshotLog } from './components/SnapshotLog';
+import { MmTransactionsLog } from './components/MmTransactionsLog';
 
 type ThemeMode = 'dark' | 'light';
 type PaymentMethodMode = 'neutral' | 'include' | 'exclude';
@@ -24,14 +24,15 @@ function getInitialTheme(): ThemeMode {
 }
 
 function OhlcPanelHeader() {
-  const price = useKrakenPrice();
+  const { refPrice, filters } = useFilters();
+  const cexLabel = filters.cex.charAt(0).toUpperCase() + filters.cex.slice(1);
   return (
     <div className="flex items-center justify-between mb-2 shrink-0">
       <h3 className="text-[0.85rem] text-muted">DEX Premium Offer Overlay</h3>
       <div className="flex items-center gap-1.5 text-[0.75rem]">
-        <span className="text-muted">BTC/EUR</span>
-        <span className={price != null ? 'text-text font-medium' : 'text-muted'}>
-          {price != null ? `€${price.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : '—'}
+        <span className="text-muted">BTC/EUR — {cexLabel}</span>
+        <span className={refPrice != null ? 'text-text font-medium' : 'text-muted'}>
+          {refPrice != null ? `€${refPrice.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : '—'}
         </span>
       </div>
     </div>
@@ -39,20 +40,22 @@ function OhlcPanelHeader() {
 }
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
+function MonitorView({ ohlcData, lastUpdated, error, load, stats, refreshForCex }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   stats: ReturnType<typeof useDashboard>['stats'] | null;
   lastUpdated: string;
   error: string | null;
-  load: (hours: string) => void;
+  load: (hours: string, cex?: string) => void;
+  refreshForCex: (cex: string) => void;
 }) {
   const { filters } = useFilters();
 
   useEffect(() => {
-    load(filters.hours);
-    const interval = setInterval(() => load(filters.hours), 5 * 60 * 1000);
+    refreshForCex(filters.cex);
+    load(filters.hours, filters.cex);
+    const interval = setInterval(() => load(filters.hours, filters.cex), 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [filters.hours]);
+  }, [filters.hours, filters.cex]);
 
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -66,7 +69,7 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
       <div className="lg:flex-2 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_3fr] gap-2 sm:gap-3">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Control Panel</h3>
-          <ControlPanel onRefresh={() => load(filters.hours)} lastUpdated={lastUpdated} stats={stats} />
+          <ControlPanel onRefresh={() => load(filters.hours, filters.cex)} lastUpdated={lastUpdated} stats={stats} />
         </div>
 
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
@@ -96,11 +99,17 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats }: {
 function MmControllerView() {
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
-      <div className="grid grid-cols-1 gap-2 sm:gap-3 shrink-0">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 sm:gap-3 lg:min-h-0">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Snapshot Log</h3>
-          <div className="relative flex-1 min-h-52">
+          <div className="relative flex-1 min-h-52 lg:min-h-0">
             <SnapshotLog />
+          </div>
+        </div>
+        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
+          <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">MM Controller Transactions</h3>
+          <div className="relative flex-1 min-h-52 lg:min-h-0">
+            <MmTransactionsLog />
           </div>
         </div>
       </div>
@@ -110,7 +119,7 @@ function MmControllerView() {
 
 export default function App() {
   const { pastOffers, stats, ohlcData, lastUpdated, error, loading, load } = useDashboard();
-  const { liveOffers } = useLiveOffers();
+  const { liveOffers, refreshForCex } = useLiveOffers();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -163,6 +172,7 @@ export default function App() {
             lastUpdated={lastUpdated}
             error={error}
             load={load}
+            refreshForCex={refreshForCex}
           />
         )}
 

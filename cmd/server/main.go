@@ -7,9 +7,11 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,23 +23,25 @@ var (
 	dbPath              string
 	snapshotIntervalMin int
 	frontendDir         string
+	mmControllerAPIURL  string
 	db                  *sql.DB
 )
 
 var (
-	krakPriceMu sync.RWMutex
-	krakPrice   float64
+	cexPricesMu sync.RWMutex
+	cexPrices   = map[string]float64{}
 )
 
-// defaultCEX and defaultCEXPair define the exchange and trading pair used for
-// reference price and cost estimation when no CEX_EXCHANGE env var is set.
-// To switch to a different CEX/pair, change these two constants.
+// defaultCEX and defaultCEXPair define the default exchange and trading pair.
 const (
 	defaultCEX     = "kraken"
-	defaultCEXPair = "BTC/EUR" // Kraken symbol format; e.g. "BTC/USD" for a USD pair
+	defaultCEXPair = "BTC/EUR"
 )
 
-var tradeCostEstimator *TradeCostEstimator
+// supportedCEXes lists all exchanges available for selection in the UI.
+var supportedCEXes = []string{"kraken", "binance", "bitstamp", "coinbase"}
+
+var tradeCostEstimators map[string]*TradeCostEstimator
 
 // seedHubFromDB loads is_live=1 offers from the DB into the hub once at startup
 // so live data is available before the first snapshot push arrives.
@@ -66,34 +70,47 @@ func seedHubFromDB() {
 		); err != nil {
 			continue
 		}
-		if btcMin.Valid        { o.BTCMin = &btcMin.Float64 }
-		if btcMax.Valid        { o.BTCMax = &btcMax.Float64 }
-		if fiatMin.Valid       { o.FiatMin = &fiatMin.Int64 }
-		if fiatMax.Valid       { o.FiatMax = &fiatMax.Int64 }
-		if paymentMethod.Valid { o.PaymentMethod = &paymentMethod.String }
-		if offerID.Valid       { o.OfferID = &offerID.String }
+		if btcMin.Valid {
+			o.BTCMin = &btcMin.Float64
+		}
+		if btcMax.Valid {
+			o.BTCMax = &btcMax.Float64
+		}
+		if fiatMin.Valid {
+			o.FiatMin = &fiatMin.Int64
+		}
+		if fiatMax.Valid {
+			o.FiatMax = &fiatMax.Int64
+		}
+		if paymentMethod.Valid {
+			o.PaymentMethod = &paymentMethod.String
+		}
+		if offerID.Valid {
+			o.OfferID = &offerID.String
+		}
 		offers = append(offers, o)
 	}
 	hub.setOffers(offers)
 	fmt.Printf("[Hub] seeded %d live offers from DB\n", len(offers))
 }
 
-func getKrakenPrice() float64 {
-	krakPriceMu.RLock()
-	defer krakPriceMu.RUnlock()
-	return krakPrice
+func getCexPrice(cex string) float64 {
+	cexPricesMu.RLock()
+	defer cexPricesMu.RUnlock()
+	return cexPrices[cex]
 }
 
-func setKrakenPrice(p float64) {
-	krakPriceMu.Lock()
-	krakPrice = p
-	krakPriceMu.Unlock()
-	hub.broadcastNow()
+func setCexPrice(cex string, p float64) {
+	cexPricesMu.Lock()
+	cexPrices[cex] = p
+	cexPricesMu.Unlock()
+	hub.broadcastForCex(cex)
 }
 
-// --- Kraken WebSocket price feed ---
+// --- CEX WebSocket price feeds ---
 
-func runKrakenPriceFeed(ctx context.Context) {
+// runCexPriceFeed starts a reconnecting price feed for the given exchange.
+func runCexPriceFeed(ctx context.Context, cex string) {
 	backoff := time.Second
 	for {
 		select {
@@ -102,50 +119,23 @@ func runKrakenPriceFeed(ctx context.Context) {
 		default:
 		}
 
-		ws, _, err := gorillaws.DefaultDialer.DialContext(ctx, "wss://ws.kraken.com/v2", nil)
+		var err error
+		switch cex {
+		case "kraken":
+			err = runKrakenFeed(ctx, cex)
+		case "binance":
+			err = runBinanceFeed(ctx, cex)
+		case "bitstamp":
+			err = runBitstampFeed(ctx, cex)
+		case "coinbase":
+			err = runCoinbaseFeed(ctx, cex)
+		default:
+			return
+		}
+
 		if err != nil {
-			fmt.Printf("[KrakenWSS] connect error: %v, retrying in %s\n", err, backoff)
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return
-			}
-			if backoff < 30*time.Second {
-				backoff *= 2
-			}
-			continue
+			fmt.Printf("[%sFeed] error: %v, retrying in %s\n", cex, err, backoff)
 		}
-		backoff = time.Second
-		fmt.Println("[KrakenWSS] connected")
-
-		sub := fmt.Sprintf(`{"method":"subscribe","params":{"channel":"ticker","symbol":["%s"]}}`, defaultCEXPair)
-		if err := ws.WriteMessage(gorillaws.TextMessage, []byte(sub)); err != nil {
-			fmt.Printf("[KrakenWSS] subscribe error: %v\n", err)
-			ws.Close()
-			continue
-		}
-
-		for {
-			_, msgBytes, err := ws.ReadMessage()
-			if err != nil {
-				fmt.Printf("[KrakenWSS] receive error: %v\n", err)
-				ws.Close()
-				break
-			}
-			var envelope struct {
-				Channel string `json:"channel"`
-				Data    []struct {
-					Last float64 `json:"last"`
-				} `json:"data"`
-			}
-			if err := json.Unmarshal(msgBytes, &envelope); err != nil {
-				continue
-			}
-			if envelope.Channel == "ticker" && len(envelope.Data) > 0 && envelope.Data[0].Last > 0 {
-				setKrakenPrice(envelope.Data[0].Last)
-			}
-		}
-
 		select {
 		case <-time.After(backoff):
 		case <-ctx.Done():
@@ -153,6 +143,152 @@ func runKrakenPriceFeed(ctx context.Context) {
 		}
 		if backoff < 30*time.Second {
 			backoff *= 2
+		} else {
+			backoff = time.Second
+		}
+	}
+}
+
+func runKrakenFeed(ctx context.Context, cex string) error {
+	ws, _, err := gorillaws.DefaultDialer.DialContext(ctx, "wss://ws.kraken.com/v2", nil)
+	if err != nil {
+		return err
+	}
+	defer ws.Close()
+	fmt.Printf("[%sFeed] connected\n", cex)
+
+	sub := fmt.Sprintf(`{"method":"subscribe","params":{"channel":"ticker","symbol":["%s"]}}`, defaultCEXPair)
+	if err := ws.WriteMessage(gorillaws.TextMessage, []byte(sub)); err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+		_, msgBytes, err := ws.ReadMessage()
+		if err != nil {
+			return err
+		}
+		var envelope struct {
+			Channel string `json:"channel"`
+			Data    []struct {
+				Last float64 `json:"last"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(msgBytes, &envelope) == nil &&
+			envelope.Channel == "ticker" && len(envelope.Data) > 0 && envelope.Data[0].Last > 0 {
+			setCexPrice(cex, envelope.Data[0].Last)
+		}
+	}
+}
+
+func runBinanceFeed(ctx context.Context, cex string) error {
+	// BTC/EUR miniTicker stream — symbol must be lowercase for stream URL
+	ws, _, err := gorillaws.DefaultDialer.DialContext(ctx, "wss://stream.binance.com:9443/ws/btceur@miniTicker", nil)
+	if err != nil {
+		return err
+	}
+	defer ws.Close()
+	fmt.Printf("[%sFeed] connected\n", cex)
+
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+		_, msgBytes, err := ws.ReadMessage()
+		if err != nil {
+			return err
+		}
+		var msg struct {
+			EventType string `json:"e"`
+			Close     string `json:"c"` // last price
+		}
+		if json.Unmarshal(msgBytes, &msg) == nil && msg.EventType == "24hrMiniTicker" {
+			if p, err := strconv.ParseFloat(msg.Close, 64); err == nil && p > 0 {
+				setCexPrice(cex, p)
+			}
+		}
+	}
+}
+
+func runBitstampFeed(ctx context.Context, cex string) error {
+	ws, _, err := gorillaws.DefaultDialer.DialContext(ctx, "wss://ws.bitstamp.net", nil)
+	if err != nil {
+		return err
+	}
+	defer ws.Close()
+	fmt.Printf("[%sFeed] connected\n", cex)
+
+	sub := `{"event":"bts:subscribe","data":{"channel":"live_trades_btceur"}}`
+	if err := ws.WriteMessage(gorillaws.TextMessage, []byte(sub)); err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+		_, msgBytes, err := ws.ReadMessage()
+		if err != nil {
+			return err
+		}
+		var msg struct {
+			Event   string `json:"event"`
+			Channel string `json:"channel"`
+			Data    struct {
+				Price float64 `json:"price"`
+			} `json:"data"`
+		}
+		if json.Unmarshal(msgBytes, &msg) == nil &&
+			msg.Event == "trade" && msg.Data.Price > 0 {
+			setCexPrice(cex, msg.Data.Price)
+		}
+	}
+}
+
+func runCoinbaseFeed(ctx context.Context, cex string) error {
+	ws, _, err := gorillaws.DefaultDialer.DialContext(ctx, "wss://advanced-trade-ws.coinbase.com", nil)
+	if err != nil {
+		return err
+	}
+	defer ws.Close()
+	fmt.Printf("[%sFeed] connected\n", cex)
+
+	sub := `{"type":"subscribe","product_ids":["BTC-EUR"],"channel":"ticker"}`
+	if err := ws.WriteMessage(gorillaws.TextMessage, []byte(sub)); err != nil {
+		return err
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		default:
+		}
+		_, msgBytes, err := ws.ReadMessage()
+		if err != nil {
+			return err
+		}
+		var msg struct {
+			Channel string `json:"channel"`
+			Events  []struct {
+				Tickers []struct {
+					Price string `json:"price"`
+				} `json:"tickers"`
+			} `json:"events"`
+		}
+		if json.Unmarshal(msgBytes, &msg) == nil && msg.Channel == "ticker" {
+			for _, ev := range msg.Events {
+				for _, t := range ev.Tickers {
+					if p, err := strconv.ParseFloat(t.Price, 64); err == nil && p > 0 {
+						setCexPrice(cex, p)
+					}
+				}
+			}
 		}
 	}
 }
@@ -181,6 +317,11 @@ func init() {
 	if dir := os.Getenv("FRONTEND_DIR"); dir != "" {
 		frontendDir = dir
 	}
+
+	mmControllerAPIURL = os.Getenv("MM_CONTROLLER_API_URL")
+	if mmControllerAPIURL == "" {
+		mmControllerAPIURL = "http://localhost:5001"
+	}
 }
 
 func main() {
@@ -198,13 +339,12 @@ func main() {
 	// Enable WAL mode for concurrent snapshot writes
 	db.Exec("PRAGMA journal_mode=WAL")
 
-	cex := os.Getenv("CEX_EXCHANGE")
-	if cex == "" {
-		cex = defaultCEX
+	tradeCostEstimators = make(map[string]*TradeCostEstimator, len(supportedCEXes))
+	for _, c := range supportedCEXes {
+		tradeCostEstimators[c] = NewTradeCostEstimator(c)
+		fmt.Printf("[TradeCost] initialized %s (taker fallback %.2f%%, withdrawal fallback %.8f BTC)\n",
+			c, takerFeeFallbacks[c]*100, withdrawalFallbacks[c])
 	}
-	tradeCostEstimator = NewTradeCostEstimator(cex)
-	fmt.Printf("[TradeCost] configured for %s %s (taker fallback %.2f%%, withdrawal fallback %.8f BTC — live fetch on first use)\n",
-		cex, defaultCEXPair, takerFeeFallbacks[cex]*100, withdrawalFallbacks[cex])
 
 	// Schema initialization (idempotent — safe to run on every startup)
 	for _, stmt := range []string{
@@ -268,10 +408,12 @@ func main() {
 	// HTTP requests (mempool.space, exchange APIs) that must not block startup.
 	go seedHubFromDB()
 
-	// Start Kraken WebSocket price feed
+	// Start WebSocket price feeds for all supported CEX exchanges
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go runKrakenPriceFeed(ctx)
+	for _, c := range supportedCEXes {
+		go runCexPriceFeed(ctx, c)
+	}
 
 	mux := http.NewServeMux()
 
@@ -286,6 +428,8 @@ func main() {
 	mux.HandleFunc("GET /api/stats", handleStats)
 	mux.HandleFunc("GET /api/ohlc", handleOHLC)
 	mux.HandleFunc("GET /api/snapshot-log", handleSnapshotLog)
+	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
+	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
 	mux.HandleFunc("GET /health", handleHealth)
 
 	// Internal: snapshot tool pushes live offer data after each run
@@ -349,10 +493,10 @@ func handleOffers(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleLiveOffersREST is the REST fallback for /ws/live_offers.
-// Returns the current in-memory live offers with premiums computed against
-// the latest Kraken price. No filtering — client handles that.
+// Accepts optional ?cex= query param (default: "kraken").
 func handleLiveOffersREST(w http.ResponseWriter, r *http.Request) {
-	payload := hub.computePayload(getKrakenPrice())
+	cex := queryCex(r)
+	payload := hub.computePayload(getCexPrice(cex), cex)
 	if payload == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("[]"))
@@ -363,9 +507,11 @@ func handleLiveOffersREST(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePastOffers serves closed offers (is_live=0) from the DB.
+// Accepts optional ?cex= to compute cost breakdown with the selected exchange's fees.
 func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 1000)
 	hours := queryInt(r, "hours", 24)
+	cex := queryCex(r)
 	hoursArg := fmt.Sprintf("-%d hours", hours)
 
 	rows, err := db.Query(
@@ -383,6 +529,31 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
+
+	est := tradeCostEstimators[cex]
+	if est == nil {
+		est = tradeCostEstimators[defaultCEX]
+	}
+
+	for _, o := range offers {
+		dexExchange, _ := o["exchange"].(string)
+		priceDiff, _ := o["price_diff_percent"].(float64)
+		var btcMaxPtr, btcMinPtr *float64
+		if v, ok := o["btc_max"].(float64); ok && v > 0 {
+			btcMaxPtr = &v
+		}
+		if v, ok := o["btc_min"].(float64); ok && v > 0 {
+			btcMinPtr = &v
+		}
+
+		btcSize := selectBTCTradeSize(btcMaxPtr, btcMinPtr)
+		tradeCostPct, netPremium, bd := computeNetPremiumFields(est, priceDiff, btcSize, dexExchange)
+
+		o["trade_cost_percent"] = tradeCostPct
+		o["net_premium_percent"] = netPremium
+		o["cost_breakdown"] = bd
+	}
+
 	writeJSON(w, offers)
 }
 
@@ -469,8 +640,19 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 
 func handleOHLC(w http.ResponseWriter, r *http.Request) {
 	hours := queryInt(r, "hours", 24)
+	cex := queryCex(r)
 
-	candles := fetchKrakenOHLC(hours)
+	var candles []map[string]any
+	switch cex {
+	case "binance":
+		candles = fetchBinanceOHLC(hours)
+	case "bitstamp":
+		candles = fetchBitstampOHLC(hours)
+	case "coinbase":
+		candles = fetchCoinbaseOHLC(hours)
+	default:
+		candles = fetchKrakenOHLC(hours)
+	}
 
 	rows, err := db.Query(`
 		SELECT price, price_diff_percent, payment_method, exchange, direction, first_seen
@@ -542,6 +724,19 @@ func handleSnapshotLog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, result)
+}
+
+func handleMmControllerTransactions(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/transactions")
+}
+
+func handleMmControllerTransactionByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		http.Error(w, "missing transaction id", http.StatusBadRequest)
+		return
+	}
+	forwardMMControllerJSON(w, r, "/api/transactions/"+url.PathEscape(id))
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -617,6 +812,168 @@ func fetchKrakenOHLC(hours int) []map[string]any {
 	return candles
 }
 
+func fetchBinanceOHLC(hours int) []map[string]any {
+	// Binance interval must match snapshotIntervalMin; round to nearest supported value.
+	interval := "15m"
+	switch snapshotIntervalMin {
+	case 1:
+		interval = "1m"
+	case 3:
+		interval = "3m"
+	case 5:
+		interval = "5m"
+	case 30:
+		interval = "30m"
+	case 60:
+		interval = "1h"
+	}
+	startMs := (time.Now().UTC().Unix() - int64(hours*3600)) * 1000
+	apiURL := fmt.Sprintf("https://api.binance.com/api/v3/klines?symbol=BTCEUR&interval=%s&limit=1000&startTime=%d", interval, startMs)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(apiURL)
+	if err != nil {
+		fmt.Printf("[OHLC] Binance error: %v\n", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	// Each entry: [open_time_ms, "open", "high", "low", "close", ...]
+	var raw [][]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		fmt.Printf("[OHLC] Binance parse error: %v\n", err)
+		return nil
+	}
+
+	candles := make([]map[string]any, 0, len(raw))
+	for _, c := range raw {
+		if len(c) < 5 {
+			continue
+		}
+		var tsMs int64
+		json.Unmarshal(c[0], &tsMs)
+		var open, high, low, cls string
+		json.Unmarshal(c[1], &open)
+		json.Unmarshal(c[2], &high)
+		json.Unmarshal(c[3], &low)
+		json.Unmarshal(c[4], &cls)
+		candles = append(candles, map[string]any{
+			"time":  time.UnixMilli(tsMs).UTC().Format("2006-01-02T15:04:05"),
+			"open":  parseFloat(open),
+			"high":  parseFloat(high),
+			"low":   parseFloat(low),
+			"close": parseFloat(cls),
+		})
+	}
+	return candles
+}
+
+func fetchBitstampOHLC(hours int) []map[string]any {
+	step := snapshotIntervalMin * 60 // seconds
+	start := time.Now().UTC().Unix() - int64(hours*3600)
+	apiURL := fmt.Sprintf("https://www.bitstamp.net/api/v2/ohlc/btceur/?step=%d&limit=1000&start=%d", step, start)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(apiURL)
+	if err != nil {
+		fmt.Printf("[OHLC] Bitstamp error: %v\n", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	var result struct {
+		Data struct {
+			OHLC []struct {
+				Timestamp string `json:"timestamp"`
+				Open      string `json:"open"`
+				High      string `json:"high"`
+				Low       string `json:"low"`
+				Close     string `json:"close"`
+			} `json:"ohlc"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(body, &result); err != nil {
+		fmt.Printf("[OHLC] Bitstamp parse error: %v\n", err)
+		return nil
+	}
+
+	candles := make([]map[string]any, 0, len(result.Data.OHLC))
+	for _, c := range result.Data.OHLC {
+		ts, _ := strconv.ParseInt(c.Timestamp, 10, 64)
+		candles = append(candles, map[string]any{
+			"time":  time.Unix(ts, 0).UTC().Format("2006-01-02T15:04:05"),
+			"open":  parseFloat(c.Open),
+			"high":  parseFloat(c.High),
+			"low":   parseFloat(c.Low),
+			"close": parseFloat(c.Close),
+		})
+	}
+	return candles
+}
+
+func fetchCoinbaseOHLC(hours int) []map[string]any {
+	// Coinbase granularity in seconds; max 300 candles per request.
+	gran := snapshotIntervalMin * 60
+	end := time.Now().UTC()
+	start := end.Add(-time.Duration(hours) * time.Hour)
+	apiURL := fmt.Sprintf(
+		"https://api.exchange.coinbase.com/products/BTC-EUR/candles?granularity=%d&start=%s&end=%s",
+		gran,
+		url.QueryEscape(start.Format(time.RFC3339)),
+		url.QueryEscape(end.Format(time.RFC3339)),
+	)
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(apiURL)
+	if err != nil {
+		fmt.Printf("[OHLC] Coinbase error: %v\n", err)
+		return nil
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil
+	}
+	// Each entry: [time, low, high, open, close, volume]  (newest first)
+	var raw [][]json.RawMessage
+	if err := json.Unmarshal(body, &raw); err != nil {
+		fmt.Printf("[OHLC] Coinbase parse error: %v\n", err)
+		return nil
+	}
+
+	candles := make([]map[string]any, 0, len(raw))
+	for i := len(raw) - 1; i >= 0; i-- { // reverse to chronological order
+		c := raw[i]
+		if len(c) < 5 {
+			continue
+		}
+		var ts int64
+		json.Unmarshal(c[0], &ts)
+		var low, high, open, cls float64
+		json.Unmarshal(c[1], &low)
+		json.Unmarshal(c[2], &high)
+		json.Unmarshal(c[3], &open)
+		json.Unmarshal(c[4], &cls)
+		candles = append(candles, map[string]any{
+			"time":  time.Unix(ts, 0).UTC().Format("2006-01-02T15:04:05"),
+			"open":  open,
+			"high":  high,
+			"low":   low,
+			"close": cls,
+		})
+	}
+	return candles
+}
+
 // --- Helpers ---
 
 func parseDBTime(s string) time.Time {
@@ -653,6 +1010,16 @@ func scanOffers(rows *sql.Rows) ([]map[string]any, error) {
 	return result, nil
 }
 
+// queryCex reads the ?cex= query param and validates it against supportedCEXes.
+// Falls back to defaultCEX if missing or unrecognised.
+func queryCex(r *http.Request) string {
+	cex := r.URL.Query().Get("cex")
+	if tradeCostEstimators[cex] != nil {
+		return cex
+	}
+	return defaultCEX
+}
+
 func queryInt(r *http.Request, key string, defaultVal int) int {
 	s := r.URL.Query().Get(key)
 	if s == "" {
@@ -663,6 +1030,41 @@ func queryInt(r *http.Request, key string, defaultVal int) int {
 		return defaultVal
 	}
 	return v
+}
+
+func forwardMMControllerJSON(w http.ResponseWriter, r *http.Request, path string) {
+	baseURL, err := url.Parse(mmControllerAPIURL)
+	if err != nil {
+		http.Error(w, "mm controller api url is invalid", http.StatusInternalServerError)
+		return
+	}
+
+	targetURL, err := baseURL.Parse(path)
+	if err != nil {
+		http.Error(w, "failed to build mm controller request", http.StatusInternalServerError)
+		return
+	}
+	targetURL.RawQuery = r.URL.RawQuery
+
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL.String(), nil)
+	if err != nil {
+		http.Error(w, "failed to create mm controller request", http.StatusInternalServerError)
+		return
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("mm controller request failed: %v", err), http.StatusBadGateway)
+		return
+	}
+	defer resp.Body.Close()
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(resp.StatusCode)
+	if _, err := io.Copy(w, resp.Body); err != nil {
+		fmt.Printf("[MMControllerProxy] copy error: %v\n", err)
+	}
 }
 
 func queryIntPtr(r *http.Request, key string) *int {
