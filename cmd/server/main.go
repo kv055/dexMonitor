@@ -303,11 +303,11 @@ func init() {
 	}
 	interval := os.Getenv("SNAPSHOT_INTERVAL_MIN")
 	if interval == "" {
-		snapshotIntervalMin = 15
+		snapshotIntervalMin = 1
 	} else {
 		v, err := strconv.Atoi(interval)
 		if err != nil {
-			snapshotIntervalMin = 15
+			snapshotIntervalMin = 1
 		} else {
 			snapshotIntervalMin = v
 		}
@@ -374,7 +374,18 @@ func main() {
 			first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
 			last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
 			is_live BOOLEAN NOT NULL DEFAULT 0,
-			duration INTEGER
+			duration INTEGER,
+			historical_analysis_status TEXT,
+			avg_ref_price_10m REAL,
+			avg_premium_10m_pct REAL,
+			avg_trade_cost_pct_10m REAL,
+			avg_trade_cost_btc_10m REAL,
+			avg_net_premium_10m_pct REAL,
+			avg_estimated_profit_btc_10m REAL,
+			avg_estimated_profit_fiat_10m REAL,
+			avg_btc_amount_10m REAL,
+			best_route_cex_10m TEXT,
+			best_route_method_10m TEXT
 		)`,
 		`CREATE TABLE IF NOT EXISTS snapshot_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -405,6 +416,17 @@ func main() {
 	// Migrations (for databases created before schema versioning)
 	db.Exec("ALTER TABLE offers ADD COLUMN is_live BOOLEAN NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE offers ADD COLUMN duration INTEGER")
+	db.Exec("ALTER TABLE offers ADD COLUMN historical_analysis_status TEXT")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_ref_price_10m REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_premium_10m_pct REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_pct_10m REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_btc_10m REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_net_premium_10m_pct REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_btc_10m REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_fiat_10m REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_btc_amount_10m REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN best_route_cex_10m TEXT")
+	db.Exec("ALTER TABLE offers ADD COLUMN best_route_method_10m TEXT")
 
 	// Seed hub from DB in the background — computing trade costs makes outbound
 	// HTTP requests (mempool.space, exchange APIs) that must not block startup.

@@ -492,6 +492,17 @@ func main() {
 	// Migrate: add columns to existing databases
 	sdb.Exec("ALTER TABLE offers ADD COLUMN is_live BOOLEAN NOT NULL DEFAULT 0")
 	sdb.Exec("ALTER TABLE offers ADD COLUMN duration INTEGER")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN historical_analysis_status TEXT")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN avg_ref_price_10m REAL")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN avg_premium_10m_pct REAL")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_pct_10m REAL")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_btc_10m REAL")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN avg_net_premium_10m_pct REAL")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_btc_10m REAL")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_fiat_10m REAL")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN avg_btc_amount_10m REAL")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN best_route_cex_10m TEXT")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN best_route_method_10m TEXT")
 	sdb.Exec(`CREATE TABLE IF NOT EXISTS kraken_ohlc (
 		time  DATETIME PRIMARY KEY,
 		open  REAL NOT NULL,
@@ -563,6 +574,7 @@ func main() {
 
 	// Settle closed offers: compute ref_price and price_diff_percent from historical OHLC
 	settleClosedOffers(sdb)
+	analyzeClosedOffers(sdb)
 
 	// Push live offers directly to the server's in-memory hub.
 	serverURL := os.Getenv("SERVER_INTERNAL_URL")
@@ -581,9 +593,9 @@ func main() {
 	fmt.Printf("\n=== Snapshot complete — %d offers from %v ===\n", total, names)
 }
 
-// fetchAndStoreKrakenOHLC fetches 15-min Kraken OHLC candles and upserts them into kraken_ohlc.
+// fetchAndStoreKrakenOHLC fetches 1-min Kraken OHLC candles and upserts them into kraken_ohlc.
 func fetchAndStoreKrakenOHLC(sdb *sql.DB) {
-	resp, err := clearnetClient().Get("https://api.kraken.com/0/public/OHLC?pair=XBTEUR&interval=15")
+	resp, err := clearnetClient().Get("https://api.kraken.com/0/public/OHLC?pair=XBTEUR&interval=1")
 	if err != nil {
 		fmt.Printf("[OHLC] fetch error: %v\n", err)
 		return
@@ -788,11 +800,11 @@ func pushLiveOffersToServer(sdb *sql.DB, serverURL string) {
 	fmt.Printf("[LivePush] pushed %d live offers to server\n", len(offers))
 }
 
-// fetchAndStoreKrakenOHLCSince fetches 15-min candles starting from sinceUnix
+// fetchAndStoreKrakenOHLCSince fetches 1-min candles starting from sinceUnix
 // and upserts them into kraken_ohlc. Used to backfill history for offers whose
 // lifetime predates the standard OHLC cache window (~7.5 days).
 func fetchAndStoreKrakenOHLCSince(sdb *sql.DB, sinceUnix int64) {
-	url := fmt.Sprintf("https://api.kraken.com/0/public/OHLC?pair=XBTEUR&interval=15&since=%d", sinceUnix)
+	url := fmt.Sprintf("https://api.kraken.com/0/public/OHLC?pair=XBTEUR&interval=1&since=%d", sinceUnix)
 	resp, err := clearnetClient().Get(url)
 	if err != nil {
 		fmt.Printf("[OHLCSince] fetch error: %v\n", err)

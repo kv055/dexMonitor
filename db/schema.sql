@@ -23,7 +23,18 @@ CREATE TABLE offers (
     first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
     is_live BOOLEAN NOT NULL DEFAULT 0,
-    duration INTEGER
+    duration INTEGER,
+    historical_analysis_status TEXT,
+    avg_ref_price_10m REAL,
+    avg_premium_10m_pct REAL,
+    avg_trade_cost_pct_10m REAL,
+    avg_trade_cost_btc_10m REAL,
+    avg_net_premium_10m_pct REAL,
+    avg_estimated_profit_btc_10m REAL,
+    avg_estimated_profit_fiat_10m REAL,
+    avg_btc_amount_10m REAL,
+    best_route_cex_10m TEXT,
+    best_route_method_10m TEXT
 );
 
 CREATE INDEX idx_snapshots_time ON snapshots(timestamp);
