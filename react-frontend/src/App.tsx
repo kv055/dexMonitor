@@ -99,16 +99,16 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats, refreshForCex 
 function MmControllerView() {
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 sm:gap-3 lg:min-h-0">
-        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
+      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-2 gap-2 sm:gap-3">
+        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-52 xl:min-h-0 overflow-hidden">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Snapshot Log</h3>
-          <div className="relative flex-1 min-h-52 lg:min-h-0">
+          <div className="relative flex-1 min-h-0">
             <SnapshotLog />
           </div>
         </div>
-        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col">
+        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-52 xl:min-h-0 overflow-hidden">
           <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">MM Controller Transactions</h3>
-          <div className="relative flex-1 min-h-52 lg:min-h-0">
+          <div className="relative flex-1 min-h-0">
             <MmTransactionsLog />
           </div>
         </div>

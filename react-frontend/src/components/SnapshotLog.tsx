@@ -40,6 +40,8 @@ function parseTimestamp(ts: string | null | undefined): Date | null {
 export function SnapshotLog() {
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [expanded, setExpanded] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   // key: `${entryId}:${exchange}`
   const [expandedExchange, setExpandedExchange] = useState<string | null>(null);
 
@@ -48,19 +50,43 @@ export function SnapshotLog() {
   }
 
   useEffect(() => {
-    apiFetch<LogEntry[]>('/api/snapshot-log?limit=20').then(setEntries).catch(() => {});
-    const id = setInterval(() => {
-      apiFetch<LogEntry[]>('/api/snapshot-log?limit=20').then(setEntries).catch(() => {});
-    }, 60_000);
-    return () => clearInterval(id);
+    let active = true;
+
+    const load = async () => {
+      try {
+        const data = await apiFetch<LogEntry[]>('/api/snapshot-log?limit=20');
+        if (!active) return;
+        setEntries(data);
+        setError(null);
+      } catch (err) {
+        if (!active) return;
+        const message = err instanceof Error ? err.message : 'Failed to load snapshot log';
+        setError(message);
+      } finally {
+        if (active) setLoading(false);
+      }
+    };
+
+    load();
+    const id = setInterval(load, 60_000);
+    return () => {
+      active = false;
+      clearInterval(id);
+    };
   }, []);
 
   return (
     <div className="absolute inset-0 overflow-y-auto flex flex-col gap-0.5">
-      {entries.length === 0 && (
+      {loading && (
+        <span className="text-muted text-[0.75rem] px-1">Loading snapshot log…</span>
+      )}
+      {!loading && error && (
+        <span className="text-red text-[0.75rem] px-1">{error}</span>
+      )}
+      {!loading && !error && entries.length === 0 && (
         <span className="text-muted text-[0.75rem]">No snapshot runs yet.</span>
       )}
-      {entries.map(e => {
+      {!error && entries.map(e => {
         const date = parseTimestamp(e.timestamp);
         const timeStr = date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '??:??';
         const dateStr = date ? date.toLocaleDateString([], { month: 'short', day: 'numeric' }) : '???';
