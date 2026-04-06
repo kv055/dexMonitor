@@ -10,14 +10,14 @@ export function useDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async (hours: string) => {
+  const load = useCallback(async (hours: string, cex: string = 'kraken') => {
     setLoading(true);
     setError(null);
     try {
       const [s, o, ohlc] = await Promise.all([
         apiFetch<Stats>(`/api/stats?hours=${hours}`),
-        apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000`),
-        apiFetch<OHLCData>(`/api/ohlc?hours=${hours}`),
+        apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&cex=${cex}`),
+        apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`),
       ]);
       setStats(s);
       setPastOffers(o);

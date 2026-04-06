@@ -16,6 +16,21 @@ function fmtPct(n: number): string {
   return n.toFixed(4).replace(/\.?0+$/, '') + '%';
 }
 
+function fmtSignedBtc(n: number): string {
+  const abs = fmt8(Math.abs(n));
+  if (n > 0) return '+' + abs;
+  if (n < 0) return '-' + abs;
+  return abs;
+}
+
+function fmtFiatAmount(n: number | null | undefined): string {
+  if (n == null) return '—';
+  const abs = Number(Math.abs(n)).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+  if (n > 0) return '+€' + abs;
+  if (n < 0) return '-€' + abs;
+  return '€' + abs;
+}
+
 const TIER_COLOR: Record<string, string> = {
   economic:  'text-green',
   standard:  'text-accent',
@@ -122,10 +137,11 @@ function NetworkFeeDetail({ bd }: { bd: CostBreakdown }) {
   return null;
 }
 
-function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct }: {
+function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
   bd: CostBreakdown;
   priceDiffPct: number | null;
   netPremiumPct: number | null;
+  refPrice: number | null;
 }) {
   const rows: { label: string; btc: number; pct: number; detail?: React.ReactNode }[] = [
     { label: 'CEX taker fee',    btc: bd.cex_taker_fee_btc,  pct: bd.cex_taker_fee_pct  },
@@ -133,20 +149,36 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct }: {
     { label: 'BTC network fee',  btc: bd.network_fee_btc,     pct: bd.network_fee_pct,    detail: <NetworkFeeDetail bd={bd} /> },
     { label: 'DEX platform fee', btc: bd.dex_fee_btc,         pct: bd.dex_fee_pct         },
   ];
+  const routeCex = bd.route_cex || '—';
+  const routeDex = bd.route_dex || '—';
+  const routeMethod = bd.route_method || bd.network_fee_method || '—';
+  const profitPct = bd.estimated_profit_pct ?? netPremiumPct;
+  const profitBtc = bd.estimated_profit_btc ?? (profitPct != null ? bd.btc_amount * (profitPct / 100) : null);
+  const profitCls = profitPct < 0 ? 'text-red' : profitPct > 0 ? 'text-green' : 'text-muted';
   const netCls = netPremiumPct != null
     ? netPremiumPct <= 0 ? 'text-red' : netPremiumPct <= 2 ? 'text-green' : 'text-accent'
     : 'text-muted';
+  const fiatValue = (btc: number | null | undefined) => (btc != null && refPrice != null ? btc * refPrice : null);
 
   return (
     <div className="flex flex-col gap-3 text-[0.72rem]">
-      <div className="text-muted uppercase text-[0.6rem] tracking-wide">
-        Trade cost breakdown — {fmt8(bd.btc_amount)} BTC
+      <div className="flex items-baseline gap-2 flex-wrap">
+        <span className="text-muted uppercase text-[0.62rem] tracking-wide">Trade cost breakdown</span>
+        <span className="text-text text-[0.95rem] font-semibold">{fmt8(bd.btc_amount)} BTC</span>
+        <span className="text-muted text-[0.82rem]">{fmtFiatAmount(fiatValue(bd.btc_amount))}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-bg px-2.5 py-2">
+        <span className="text-muted">Best route</span>
+        <span className="text-right text-text font-medium">
+          {routeCex} {'->'} {routeDex} via {routeMethod}
+        </span>
       </div>
       <table className="w-full">
         <thead>
           <tr>
             <th className="text-left text-muted font-normal pb-1 pr-3">Component</th>
             <th className="text-right text-muted font-normal pb-1 pr-3">BTC</th>
+            <th className="text-right text-muted font-normal pb-1 pr-3">Fiat</th>
             <th className="text-right text-muted font-normal pb-1">% of trade</th>
           </tr>
         </thead>
@@ -156,6 +188,7 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct }: {
               <tr>
                 <td className="pr-3 py-0.5 text-muted">{r.label}</td>
                 <td className="pr-3 py-0.5 text-right text-text">{fmt8(r.btc)}</td>
+                <td className="pr-3 py-0.5 text-right text-text">{fmtFiatAmount(fiatValue(r.btc))}</td>
                 <td className="py-0.5 text-right text-text">{fmtPct(r.pct)}</td>
               </tr>
               {r.detail}
@@ -164,10 +197,12 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct }: {
           <tr className="border-t border-border">
             <td className="pr-3 pt-2 font-medium text-text">Total cost</td>
             <td className="pr-3 pt-2 text-right font-medium text-text">{fmt8(bd.total_cost_btc)}</td>
+            <td className="pr-3 pt-2 text-right font-medium text-text">{fmtFiatAmount(fiatValue(bd.total_cost_btc))}</td>
             <td className="pt-2 text-right font-medium text-red">{fmtPct(bd.total_cost_pct)}</td>
           </tr>
           <tr>
             <td className="pr-3 py-0.5 text-muted">DEX premium</td>
+            <td className="pr-3 py-0.5 text-right text-muted">—</td>
             <td className="pr-3 py-0.5 text-right text-muted">—</td>
             <td className={`py-0.5 text-right font-medium ${premiumClass(priceDiffPct)}`}>
               {priceDiffPct != null ? fmtPct(priceDiffPct) : '—'}
@@ -176,8 +211,17 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct }: {
           <tr className="border-t border-border">
             <td className="pr-3 pt-2 font-semibold text-text">Net premium</td>
             <td className="pr-3 pt-2 text-right text-muted">—</td>
+            <td className="pr-3 pt-2 text-right text-muted">—</td>
             <td className={`pt-2 text-right font-bold text-[0.85rem] ${netCls}`}>
               {netPremiumPct != null ? fmtPct(netPremiumPct) : '—'}
+            </td>
+          </tr>
+          <tr>
+            <td className="pr-3 py-0.5 font-semibold text-text">Estimated profit</td>
+            <td className={`pr-3 py-0.5 text-right font-medium ${profitCls}`}>{profitBtc != null ? fmtSignedBtc(profitBtc) : '—'}</td>
+            <td className={`pr-3 py-0.5 text-right font-medium ${profitCls}`}>{fmtFiatAmount(fiatValue(profitBtc))}</td>
+            <td className={`py-0.5 text-right font-medium ${profitCls}`}>
+              {profitPct != null ? fmtPct(profitPct) : '—'}
             </td>
           </tr>
         </tbody>
@@ -282,6 +326,7 @@ export function OffersPreviewTable() {
                   bd={selectedOffer.cost_breakdown}
                   priceDiffPct={selectedOffer.price_diff_percent}
                   netPremiumPct={selectedOffer.net_premium_percent}
+                  refPrice={selectedOffer.ref_price}
                 />
               ) : (
                 <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
@@ -390,6 +435,7 @@ export function OffersPreviewTable() {
                 bd={selectedOffer.cost_breakdown}
                 priceDiffPct={selectedOffer.price_diff_percent}
                 netPremiumPct={selectedOffer.net_premium_percent}
+                refPrice={selectedOffer.ref_price}
               />
             ) : (
               <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>

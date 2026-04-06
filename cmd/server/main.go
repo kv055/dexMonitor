@@ -42,6 +42,7 @@ const (
 var supportedCEXes = []string{"kraken", "binance", "bitstamp", "coinbase"}
 
 var tradeCostEstimators map[string]*TradeCostEstimator
+var tradeRouteOptimizer *TradeRouteOptimizer
 
 // seedHubFromDB loads is_live=1 offers from the DB into the hub once at startup
 // so live data is available before the first snapshot push arrives.
@@ -342,9 +343,10 @@ func main() {
 	tradeCostEstimators = make(map[string]*TradeCostEstimator, len(supportedCEXes))
 	for _, c := range supportedCEXes {
 		tradeCostEstimators[c] = NewTradeCostEstimator(c)
-		fmt.Printf("[TradeCost] initialized %s (taker fallback %.2f%%, withdrawal fallback %.8f BTC)\n",
-			c, takerFeeFallbacks[c]*100, withdrawalFallbacks[c])
+		fmt.Printf("[TradeCost] initialized %s (taker fallback %.2f%%, onchain withdrawal fallback %.8f BTC)\n",
+			c, takerFeeFallbacks[c]*100, withdrawalFallbacks[c][MethodOnchain])
 	}
+	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
 
 	// Schema initialization (idempotent — safe to run on every startup)
 	for _, stmt := range []string{
@@ -507,11 +509,10 @@ func handleLiveOffersREST(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePastOffers serves closed offers (is_live=0) from the DB.
-// Accepts optional ?cex= to compute cost breakdown with the selected exchange's fees.
+// Costing uses the cheapest available CEX→DEX route for each premium offer.
 func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 1000)
 	hours := queryInt(r, "hours", 24)
-	cex := queryCex(r)
 	hoursArg := fmt.Sprintf("-%d hours", hours)
 
 	rows, err := db.Query(
@@ -530,14 +531,15 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	est := tradeCostEstimators[cex]
-	if est == nil {
-		est = tradeCostEstimators[defaultCEX]
-	}
-
 	for _, o := range offers {
 		dexExchange, _ := o["exchange"].(string)
-		priceDiff, _ := o["price_diff_percent"].(float64)
+		direction, _ := o["direction"].(string)
+		price, _ := o["price"].(float64)
+		refPrice, _ := o["ref_price"].(float64)
+		priceDiff := computeDirectionalPremiumPct(direction, price, refPrice)
+		if refPrice > 0 {
+			o["price_diff_percent"] = priceDiff
+		}
 		var btcMaxPtr, btcMinPtr *float64
 		if v, ok := o["btc_max"].(float64); ok && v > 0 {
 			btcMaxPtr = &v
@@ -547,7 +549,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 		}
 
 		btcSize := selectBTCTradeSize(btcMaxPtr, btcMinPtr)
-		tradeCostPct, netPremium, bd := computeNetPremiumFields(est, priceDiff, btcSize, dexExchange)
+		tradeCostPct, netPremium, bd := computeNetPremiumFields(priceDiff, btcSize, dexExchange)
 
 		o["trade_cost_percent"] = tradeCostPct
 		o["net_premium_percent"] = netPremium
@@ -655,7 +657,7 @@ func handleOHLC(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := db.Query(`
-		SELECT price, price_diff_percent, payment_method, exchange, direction, first_seen
+		SELECT price, ref_price, payment_method, exchange, direction, first_seen
 		FROM offers
 		WHERE last_seen >= datetime('now', ?)
 		  AND ((direction = 'sell' AND price <= ref_price)
@@ -669,12 +671,13 @@ func handleOHLC(w http.ResponseWriter, r *http.Request) {
 
 	offers := make([]map[string]any, 0)
 	for rows.Next() {
-		var price, premium float64
+		var price, refPrice float64
 		var paymentMethod, exchange, direction, firstSeen string
-		if err := rows.Scan(&price, &premium, &paymentMethod, &exchange, &direction, &firstSeen); err != nil {
+		if err := rows.Scan(&price, &refPrice, &paymentMethod, &exchange, &direction, &firstSeen); err != nil {
 			writeError(w, err)
 			return
 		}
+		premium := computeDirectionalPremiumPct(direction, price, refPrice)
 		offers = append(offers, map[string]any{
 			"time":           firstSeen,
 			"price":          price,

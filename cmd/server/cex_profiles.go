@@ -37,7 +37,7 @@ var cexProfiles = map[string]CexWithdrawalProfile{
 	},
 	// Binance: native SegWit (bech32), Lightning enabled.
 	"binance": {
-		Methods:        []WithdrawalMethod{MethodOnchain, MethodLightning},
+		Methods:        []WithdrawalMethod{MethodOnchain},
 		OnchainTxType:  "P2WPKH",
 		TypicalInputs:  1,
 		TypicalOutputs: 2,
@@ -94,4 +94,33 @@ func resolveWithdrawalMethod(profile CexWithdrawalProfile, dexExchange string) W
 		}
 	}
 	return MethodOnchain
+}
+
+// supportedWithdrawalMethods returns all settlement methods supported for the
+// given CEX→DEX pair so callers can compare full route costs.
+func supportedWithdrawalMethods(profile CexWithdrawalProfile, dexExchange string) []WithdrawalMethod {
+	methods := make([]WithdrawalMethod, 0, len(profile.Methods))
+	seen := make(map[WithdrawalMethod]struct{}, len(profile.Methods))
+
+	for _, method := range profile.Methods {
+		switch method {
+		case MethodOnchain:
+			if _, ok := seen[MethodOnchain]; !ok {
+				methods = append(methods, MethodOnchain)
+				seen[MethodOnchain] = struct{}{}
+			}
+		case MethodLightning:
+			if dexAcceptsLightning[dexExchange] {
+				if _, ok := seen[MethodLightning]; !ok {
+					methods = append(methods, MethodLightning)
+					seen[MethodLightning] = struct{}{}
+				}
+			}
+		}
+	}
+
+	if len(methods) == 0 {
+		return []WithdrawalMethod{MethodOnchain}
+	}
+	return methods
 }

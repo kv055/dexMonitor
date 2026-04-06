@@ -645,7 +645,7 @@ func fetchAndStoreKrakenOHLC(sdb *sql.DB) {
 // over the offer's lifetime.
 func settleClosedOffers(sdb *sql.DB) {
 	rows, err := sdb.Query(`
-		SELECT id, price, first_seen, last_seen
+		SELECT id, direction, price, first_seen, last_seen
 		FROM offers
 		WHERE is_live = 0 AND ref_price IS NULL
 	`)
@@ -657,6 +657,7 @@ func settleClosedOffers(sdb *sql.DB) {
 
 	type toSettle struct {
 		id        int64
+		direction string
 		price     float64
 		firstSeen string
 		lastSeen  string
@@ -664,7 +665,7 @@ func settleClosedOffers(sdb *sql.DB) {
 	var batch []toSettle
 	for rows.Next() {
 		var o toSettle
-		if err := rows.Scan(&o.id, &o.price, &o.firstSeen, &o.lastSeen); err != nil {
+		if err := rows.Scan(&o.id, &o.direction, &o.price, &o.firstSeen, &o.lastSeen); err != nil {
 			continue
 		}
 		batch = append(batch, o)
@@ -706,6 +707,9 @@ func settleClosedOffers(sdb *sql.DB) {
 		}
 
 		pct := math.Round((o.price/avgClose-1)*10000) / 100
+		if o.direction == "sell" {
+			pct = -pct
+		}
 		sdb.Exec(`UPDATE offers SET ref_price = ?, price_diff_percent = ? WHERE id = ?`,
 			avgClose, pct, o.id)
 		settled++

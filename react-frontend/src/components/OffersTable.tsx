@@ -33,10 +33,7 @@ export function OffersTable({ offers, filters }: Props) {
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o =>
-      (o.direction === 'sell' && o.price < (o.ref_price || Infinity)) ||
-      (o.direction === 'buy' && o.price > (o.ref_price || 0))
-    );
+    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
     return [...f].sort((a, b) => {
       let va: string | number | null | undefined;
       let vb: string | number | null | undefined;

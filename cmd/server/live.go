@@ -53,26 +53,66 @@ type liveOutOffer struct {
 	IsLive        bool          `json:"is_live"`
 }
 
+func computePriceDiffPct(offerPrice, refPrice float64) float64 {
+	if refPrice <= 0 {
+		return 0
+	}
+	return math.Round((offerPrice/refPrice-1)*10000) / 100
+}
+
+func computeDirectionalPremiumPct(direction string, offerPrice, refPrice float64) float64 {
+	raw := computePriceDiffPct(offerPrice, refPrice)
+	if direction == "sell" {
+		return -raw
+	}
+	return raw
+}
+
+func selectBTCTradeSize(btcMax, btcMin *float64) float64 {
+	if btcMax != nil && *btcMax > 0 {
+		return *btcMax
+	}
+	if btcMin != nil && *btcMin > 0 {
+		return *btcMin
+	}
+	return defaultBTCTradeSize
+}
+
+func computeNetPremiumFields(premiumPct float64, btcSize float64, dexExchange string) (float64, float64, CostBreakdown) {
+	if tradeRouteOptimizer == nil || premiumPct <= 0 {
+		return 0, 0, CostBreakdown{}
+	}
+
+	bd := tradeRouteOptimizer.BestBreakdown(btcSize, dexExchange)
+	if bd.RouteCEX == "" {
+		return 0, 0, CostBreakdown{}
+	}
+	netPremium := math.Round((premiumPct-bd.TotalCostPct)*100) / 100
+	bd.EstimatedProfitPct = netPremium
+	bd.EstimatedProfitBTC = math.Round((bd.BTCAmount*(netPremium/100))*1e8) / 1e8
+	return bd.TotalCostPct, netPremium, bd
+}
+
 // LiveHub holds live offers in memory and broadcasts to WebSocket subscribers
-// on every Kraken price tick.
+// on every CEX price tick.
 type LiveHub struct {
 	offersMu sync.RWMutex
 	offers   []LiveOffer
 
 	subsMu      sync.Mutex
-	subscribers map[chan []byte]struct{}
+	subscribers map[chan []byte]string // value = CEX preference (e.g. "kraken")
 }
 
 var hub = &LiveHub{
-	subscribers: make(map[chan []byte]struct{}),
+	subscribers: make(map[chan []byte]string),
 }
 
-// setOffers replaces the in-memory offer list and immediately broadcasts.
+// setOffers replaces the in-memory offer list and broadcasts to all subscribers.
 func (h *LiveHub) setOffers(offers []LiveOffer) {
 	h.offersMu.Lock()
 	h.offers = offers
 	h.offersMu.Unlock()
-	h.broadcastNow()
+	h.broadcastAll()
 }
 
 func (h *LiveHub) getOffers() []LiveOffer {
@@ -83,11 +123,11 @@ func (h *LiveHub) getOffers() []LiveOffer {
 	return cp
 }
 
-// subscribe registers a new WebSocket client and returns its receive channel.
-func (h *LiveHub) subscribe() chan []byte {
+// subscribe registers a new WebSocket client with a CEX preference.
+func (h *LiveHub) subscribe(cex string) chan []byte {
 	ch := make(chan []byte, 8)
 	h.subsMu.Lock()
-	h.subscribers[ch] = struct{}{}
+	h.subscribers[ch] = cex
 	h.subsMu.Unlock()
 	return ch
 }
@@ -100,46 +140,61 @@ func (h *LiveHub) unsubscribe(ch chan []byte) {
 	close(ch)
 }
 
-// broadcastNow computes premiums against the current Kraken price and pushes
-// the result to every connected subscriber. Called on every Kraken tick and
-// after each snapshot reload.
-func (h *LiveHub) broadcastNow() {
-	price := getKrakenPrice()
-	data := h.computePayload(price)
+// broadcastForCex computes premiums for the given CEX and pushes to subscribers
+// that selected that CEX. Called on every price tick for that exchange.
+func (h *LiveHub) broadcastForCex(cex string) {
+	price := getCexPrice(cex)
+	data := h.computePayload(price, cex)
 	if data == nil {
 		return
 	}
 	h.subsMu.Lock()
-	for ch := range h.subscribers {
-		select {
-		case ch <- data:
-		default: // drop if subscriber is too slow
+	for ch, c := range h.subscribers {
+		if c == cex {
+			select {
+			case ch <- data:
+			default: // drop if subscriber is too slow
+			}
 		}
 	}
 	h.subsMu.Unlock()
 }
 
-// computePayload builds the JSON payload for a given Kraken price.
+// broadcastAll broadcasts to every subscriber grouped by their CEX preference.
+// Called after offer data changes (new snapshot).
+func (h *LiveHub) broadcastAll() {
+	// Collect unique CEXes among active subscribers
+	h.subsMu.Lock()
+	cexSet := make(map[string]struct{}, 4)
+	for _, c := range h.subscribers {
+		cexSet[c] = struct{}{}
+	}
+	h.subsMu.Unlock()
+
+	// Always include the default so seedHubFromDB works even before any subscriber
+	if len(cexSet) == 0 {
+		cexSet[defaultCEX] = struct{}{}
+	}
+
+	for cex := range cexSet {
+		h.broadcastForCex(cex)
+	}
+}
+
+// computePayload builds the JSON payload for a given price and CEX.
+// If the selected CEX has no price yet, falls back to the default CEX price so
+// that price_diff_percent is always meaningful and offers remain visible.
 // Returns nil on marshal error.
-func (h *LiveHub) computePayload(price float64) []byte {
+func (h *LiveHub) computePayload(price float64, cex string) []byte {
+	if price <= 0 {
+		price = getCexPrice(defaultCEX)
+	}
 	offers := h.getOffers()
 	result := make([]liveOutOffer, 0, len(offers))
 	for _, o := range offers {
-		var pct float64
-		if price > 0 {
-			pct = math.Round((o.Price/price-1)*10000) / 100
-		}
-
-		// Determine BTC size for cost estimation: prefer BTCMax, fall back to BTCMin,
-		// then the module-level default.
-		btcSize := defaultBTCTradeSize
-		if o.BTCMax != nil && *o.BTCMax > 0 {
-			btcSize = *o.BTCMax
-		} else if o.BTCMin != nil && *o.BTCMin > 0 {
-			btcSize = *o.BTCMin
-		}
-		bd := tradeCostEstimator.Breakdown(btcSize, o.Exchange)
-		netPremium := math.Round((pct-bd.TotalCostPct)*100) / 100
+		pct := computeDirectionalPremiumPct(o.Direction, o.Price, price)
+		btcSize := selectBTCTradeSize(o.BTCMax, o.BTCMin)
+		tradeCostPct, netPremium, bd := computeNetPremiumFields(pct, btcSize, o.Exchange)
 
 		result = append(result, liveOutOffer{
 			ID:            o.ID,
@@ -148,7 +203,7 @@ func (h *LiveHub) computePayload(price float64) []byte {
 			Price:         o.Price,
 			PriceDiffPct:  pct,
 			RefPrice:      price,
-			TradeCostPct:  bd.TotalCostPct,
+			TradeCostPct:  tradeCostPct,
 			NetPremiumPct: netPremium,
 			CostBreakdown: bd,
 			BTCMin:        o.BTCMin,
@@ -172,7 +227,10 @@ func (h *LiveHub) computePayload(price float64) []byte {
 
 // handleLiveOffersWS is the WebSocket handler. It sends the current state
 // immediately on connect, then streams every subsequent broadcast.
+// Accepts optional ?cex= query param (default: "kraken").
 func handleLiveOffersWS(w http.ResponseWriter, r *http.Request) {
+	cex := queryCex(r)
+
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		fmt.Printf("[LiveWS] upgrade error: %v\n", err)
@@ -180,7 +238,7 @@ func handleLiveOffersWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
-	ch := hub.subscribe()
+	ch := hub.subscribe(cex)
 	defer hub.unsubscribe(ch)
 
 	// Respond to pings so the browser doesn't drop the connection.
@@ -201,7 +259,7 @@ func handleLiveOffersWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Send current state immediately on connect.
-	if payload := hub.computePayload(getKrakenPrice()); payload != nil {
+	if payload := hub.computePayload(getCexPrice(cex), cex); payload != nil {
 		if err := ws.WriteMessage(websocket.TextMessage, payload); err != nil {
 			return
 		}

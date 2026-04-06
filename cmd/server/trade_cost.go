@@ -25,13 +25,23 @@ import (
 )
 
 // withdrawalFallbacks are the static BTC withdrawal fees used when the live exchange
-// API is unavailable (no credentials, network error).
-// Matches FALLBACK_WITHDRAWAL_FEES in the Python estimator.
-var withdrawalFallbacks = map[string]float64{
-	"kraken":   0.00015,
-	"binance":  0.0000046,
-	"coinbase": 0.0,
-	"bitstamp": 0.0003,
+// API is unavailable (no credentials, network error). Values are method-aware so
+// route optimization can compare onchain and Lightning routes separately.
+var withdrawalFallbacks = map[string]map[WithdrawalMethod]float64{
+	"kraken": {
+		MethodOnchain:   0.00015,
+		MethodLightning: 0.0,
+	},
+	"binance": {
+		MethodOnchain:   0.0000046,
+		MethodLightning: 0.0,
+	},
+	"coinbase": {
+		MethodOnchain: 0.0,
+	},
+	"bitstamp": {
+		MethodOnchain: 0.0003,
+	},
 }
 
 // takerFeeFallbacks are the static taker fees (as fraction) used when the live
@@ -111,47 +121,61 @@ func (c *cachedFee) get(fallback float64, refresh func() (float64, error), label
 // ---------------------------------------------------------------------------
 
 type withdrawalFeeFetcher struct {
-	exchange string
-	apiKey   string
+	exchange  string
+	apiKey    string
 	apiSecret string
-	cache    *cachedFee
+	caches    map[WithdrawalMethod]*cachedFee
 }
 
 func newWithdrawalFeeFetcher(exchange string) *withdrawalFeeFetcher {
 	key, secret := loadCredentials(exchange)
 	return &withdrawalFeeFetcher{
-		exchange:  exchange,
-		apiKey:    key,
+		exchange: exchange,
+		apiKey:   key,
 		apiSecret: secret,
-		cache:     newCachedFee(feeTTL),
+		caches: map[WithdrawalMethod]*cachedFee{
+			MethodOnchain:   newCachedFee(feeTTL),
+			MethodLightning: newCachedFee(feeTTL),
+		},
 	}
 }
 
-func (f *withdrawalFeeFetcher) get() float64 {
-	label := f.exchange + " withdrawal fee BTC"
-	fallback := withdrawalFallbacks[f.exchange]
-	return f.cache.get(fallback, f.fetchLive, label)
+func (f *withdrawalFeeFetcher) get(method WithdrawalMethod) float64 {
+	fallbacks := withdrawalFallbacks[f.exchange]
+	fallback := fallbacks[method]
+	cache := f.caches[method]
+	if cache == nil {
+		return fallback
+	}
+
+	label := fmt.Sprintf("%s %s withdrawal fee BTC", f.exchange, method)
+	return cache.get(fallback, func() (float64, error) {
+		return f.fetchLive(method)
+	}, label)
 }
 
-func (f *withdrawalFeeFetcher) fetchLive() (float64, error) {
+func (f *withdrawalFeeFetcher) fetchLive(method WithdrawalMethod) (float64, error) {
 	if f.apiKey == "" || f.apiSecret == "" {
 		return 0, fmt.Errorf("no API credentials for %s", f.exchange)
 	}
 	switch f.exchange {
 	case "kraken":
-		return f.fetchKraken()
+		return f.fetchKraken(method)
 	case "binance":
-		return f.fetchBinance()
+		return f.fetchBinance(method)
 	case "coinbase":
-		return 0, nil
+		if method == MethodOnchain {
+			return 0, nil
+		}
+		return 0, fmt.Errorf("coinbase does not support %s withdrawals", method)
 	case "bitstamp":
-		return f.fetchBitstamp()
+		return f.fetchBitstamp(method)
 	default:
 		return 0, fmt.Errorf("unsupported exchange: %s", f.exchange)
 	}
 }
 
-func (f *withdrawalFeeFetcher) fetchKraken() (float64, error) {
+func (f *withdrawalFeeFetcher) fetchKraken(method WithdrawalMethod) (float64, error) {
 	const urlPath = "/0/private/WithdrawMethods"
 	nonce := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	form := url.Values{"nonce": {nonce}, "asset": {"XBT"}}
@@ -192,14 +216,25 @@ func (f *withdrawalFeeFetcher) fetchKraken() (float64, error) {
 		return 0, fmt.Errorf("kraken API: %v", result.Error)
 	}
 	for _, m := range result.Result {
-		if m.Asset == "XXBT" && m.Network == "Bitcoin" {
-			return strconv.ParseFloat(m.Fee, 64)
+		if m.Asset != "XXBT" {
+			continue
+		}
+		network := strings.ToLower(m.Network)
+		switch method {
+		case MethodLightning:
+			if strings.Contains(network, "lightning") {
+				return strconv.ParseFloat(m.Fee, 64)
+			}
+		case MethodOnchain:
+			if network == "bitcoin" || network == "btc" || strings.Contains(network, "segwit") {
+				return strconv.ParseFloat(m.Fee, 64)
+			}
 		}
 	}
-	return 0, fmt.Errorf("kraken: BTC/Bitcoin withdrawal method not found")
+	return 0, fmt.Errorf("kraken: %s withdrawal method not found", method)
 }
 
-func (f *withdrawalFeeFetcher) fetchBinance() (float64, error) {
+func (f *withdrawalFeeFetcher) fetchBinance(method WithdrawalMethod) (float64, error) {
 	timestamp := strconv.FormatInt(time.Now().UnixMilli(), 10)
 	qs := "timestamp=" + timestamp
 	mac := hmac.New(sha256.New, []byte(f.apiSecret))
@@ -238,18 +273,31 @@ func (f *withdrawalFeeFetcher) fetchBinance() (float64, error) {
 		return 0, fmt.Errorf("binance: decode coins: %w", err)
 	}
 	for _, coin := range coins {
-		if coin.Coin == "BTC" {
-			for _, net := range coin.NetworkList {
-				if net.Network == "BTC" && net.IsDefault {
+		if coin.Coin != "BTC" {
+			continue
+		}
+		for _, net := range coin.NetworkList {
+			network := strings.ToLower(net.Network)
+			switch method {
+			case MethodLightning:
+				if strings.Contains(network, "lightning") || network == "ln" {
+					return strconv.ParseFloat(net.WithdrawFee, 64)
+				}
+			case MethodOnchain:
+				if network == "btc" || network == "bitcoin" || net.IsDefault {
 					return strconv.ParseFloat(net.WithdrawFee, 64)
 				}
 			}
 		}
 	}
-	return 0, fmt.Errorf("binance: BTC default network withdrawal fee not found")
+	return 0, fmt.Errorf("binance: %s withdrawal fee not found", method)
 }
 
-func (f *withdrawalFeeFetcher) fetchBitstamp() (float64, error) {
+func (f *withdrawalFeeFetcher) fetchBitstamp(method WithdrawalMethod) (float64, error) {
+	if method != MethodOnchain {
+		return 0, fmt.Errorf("bitstamp does not support %s withdrawals", method)
+	}
+
 	const (
 		urlHost = "www.bitstamp.net"
 		urlPath = "/api/v2/fees/withdrawal/"
@@ -483,8 +531,8 @@ func (f *takerFeeFetcher) fetchBitstamp() (float64, error) {
 // DEX taker fees
 // ---------------------------------------------------------------------------
 
-// dexTakerFees are the static taker fees for each DEX platform (as fraction).
-// Used as fallback when live fetch is unavailable.
+// dexTakerFees are the configured taker fees for each DEX platform (as fraction).
+// They act as fallbacks for live sources and as the canonical values for static-fee DEXes.
 // Bisq:     1.15% paid in BTC (taker side). Source: bisq.wiki/Trading_fees
 // RoboSats: 0.175% — fetched live from /api/info/; this is the fallback.
 // HodlHodl: 0.5% — both sides pay; no API endpoint. Source: hodlhodl.com/pages/faq
@@ -560,9 +608,10 @@ func fetchRobosatsTakerFee() (float64, error) {
 // All components are expressed as a percentage of the trade value so the result
 // can be directly compared to / subtracted from the DEX offer premium.
 type TradeCostEstimator struct {
+	exchange     string
 	taker        *takerFeeFetcher
 	withdrawal   *withdrawalFeeFetcher
-	robosatsFee  *cachedFee
+	dexFees      map[string]*cachedFee
 	btcPredictor *bitcoin.BitcoinFeePredictor
 	cexProfile   CexWithdrawalProfile
 }
@@ -574,12 +623,44 @@ func NewTradeCostEstimator(exchange string) *TradeCostEstimator {
 		torClient = nil
 	}
 	return &TradeCostEstimator{
+		exchange:     exchange,
 		taker:        newTakerFeeFetcher(exchange),
 		withdrawal:   newWithdrawalFeeFetcher(exchange),
-		robosatsFee:  newCachedFee(feeTTL),
+		dexFees: map[string]*cachedFee{
+			"bisq":     newCachedFee(feeTTL),
+			"robosats": newCachedFee(feeTTL),
+			"hodlhodl": newCachedFee(feeTTL),
+		},
 		btcPredictor: bitcoin.NewBitcoinFeePredictorWithClient(torClient),
 		cexProfile:   cexProfileFor(exchange),
 	}
+}
+
+func (e *TradeCostEstimator) getDexFeeFrac(dexExchange string) float64 {
+	fallback := dexTakerFees[dexExchange]
+	cache := e.dexFees[dexExchange]
+	if cache == nil {
+		return fallback
+	}
+
+	refresh := func() (float64, error) {
+		return fallback, nil
+	}
+	label := dexExchange + " DEX taker fee"
+
+	if dexExchange == "robosats" {
+		refresh = fetchRobosatsTakerFee
+	}
+
+	return cache.get(fallback, refresh, label)
+}
+
+type TradeRouteOptimizer struct {
+	estimators map[string]*TradeCostEstimator
+}
+
+func NewTradeRouteOptimizer(estimators map[string]*TradeCostEstimator) *TradeRouteOptimizer {
+	return &TradeRouteOptimizer{estimators: estimators}
 }
 
 // BTCNetworkFeeDetail carries the full onchain fee calculation context for display.
@@ -616,20 +697,18 @@ func (e *TradeCostEstimator) CostPct(btcAmount float64, dexExchange string) floa
 	if btcAmount <= 0 {
 		return 0
 	}
-	takerFrac := e.taker.get()
-	withdrawalFee := e.withdrawal.get()
-	netFee := e.getNetworkFee(dexExchange, btcAmount)
+	method := resolveWithdrawalMethod(e.cexProfile, dexExchange)
+	return e.costPctForMethod(btcAmount, dexExchange, method)
+}
 
-	var dexFeeFrac float64
-	if dexExchange == "robosats" {
-		dexFeeFrac = e.robosatsFee.get(
-			dexTakerFees["robosats"],
-			fetchRobosatsTakerFee,
-			"robosats DEX taker fee",
-		)
-	} else {
-		dexFeeFrac = dexTakerFees[dexExchange] // static; zero for unknown exchanges
+func (e *TradeCostEstimator) costPctForMethod(btcAmount float64, dexExchange string, method WithdrawalMethod) float64 {
+	if btcAmount <= 0 {
+		return 0
 	}
+	takerFrac := e.taker.get()
+	withdrawalFee := e.withdrawal.get(method)
+	netFee := e.getNetworkFeeForMethod(method, btcAmount)
+	dexFeeFrac := e.getDexFeeFrac(dexExchange)
 
 	tradingFee := btcAmount * takerFrac
 	dexFee := btcAmount * dexFeeFrac
@@ -644,7 +723,10 @@ func (e *TradeCostEstimator) CostPct(btcAmount float64, dexExchange string) floa
 //     congestion-adaptive prediction via the bitcoin fee predictor.
 func (e *TradeCostEstimator) getNetworkFee(dexExchange string, btcAmount float64) networkFeeDetails {
 	method := resolveWithdrawalMethod(e.cexProfile, dexExchange)
+	return e.getNetworkFeeForMethod(method, btcAmount)
+}
 
+func (e *TradeCostEstimator) getNetworkFeeForMethod(method WithdrawalMethod, btcAmount float64) networkFeeDetails {
 	if method == MethodLightning {
 		if e.btcPredictor.IsDataStale(feeTTL) {
 			if err := e.btcPredictor.FetchLatestData(); err != nil {
@@ -719,6 +801,11 @@ func (e *TradeCostEstimator) getNetworkFee(dexExchange string, btcAmount float64
 // as absolute BTC amounts and as percentages of the trade value.
 type CostBreakdown struct {
 	BTCAmount              float64 `json:"btc_amount"`               // trade size used for calculation
+	RouteCEX               string  `json:"route_cex"`               // chosen CEX for the cheapest route
+	RouteDEX               string  `json:"route_dex"`               // DEX of the evaluated offer
+	RouteMethod            string  `json:"route_method"`            // chosen settlement method for the cheapest route
+	EstimatedProfitPct     float64 `json:"estimated_profit_pct"`    // net premium after costs as % of trade
+	EstimatedProfitBTC     float64 `json:"estimated_profit_btc"`    // estimated profit in BTC for the chosen trade size
 	CexTakerFeePct         float64 `json:"cex_taker_fee_pct"`        // CEX taker fee as % of trade
 	CexTakerFeeBTC         float64 `json:"cex_taker_fee_btc"`        // CEX taker fee in BTC
 	WithdrawalFeePct       float64 `json:"withdrawal_fee_pct"`       // CEX BTC withdrawal fee as % of trade
@@ -748,20 +835,18 @@ func (e *TradeCostEstimator) Breakdown(btcAmount float64, dexExchange string) Co
 	if btcAmount <= 0 {
 		return CostBreakdown{}
 	}
-	takerFrac := e.taker.get()
-	withdrawalFee := e.withdrawal.get()
-	netFee := e.getNetworkFee(dexExchange, btcAmount)
+	method := resolveWithdrawalMethod(e.cexProfile, dexExchange)
+	return e.breakdownForMethod(btcAmount, dexExchange, method)
+}
 
-	var dexFeeFrac float64
-	if dexExchange == "robosats" {
-		dexFeeFrac = e.robosatsFee.get(
-			dexTakerFees["robosats"],
-			fetchRobosatsTakerFee,
-			"robosats DEX taker fee",
-		)
-	} else {
-		dexFeeFrac = dexTakerFees[dexExchange]
+func (e *TradeCostEstimator) breakdownForMethod(btcAmount float64, dexExchange string, method WithdrawalMethod) CostBreakdown {
+	if btcAmount <= 0 {
+		return CostBreakdown{}
 	}
+	takerFrac := e.taker.get()
+	withdrawalFee := e.withdrawal.get(method)
+	netFee := e.getNetworkFeeForMethod(method, btcAmount)
+	dexFeeFrac := e.getDexFeeFrac(dexExchange)
 
 	takerBTC := btcAmount * takerFrac
 	dexBTC := btcAmount * dexFeeFrac
@@ -772,6 +857,9 @@ func (e *TradeCostEstimator) Breakdown(btcAmount float64, dexExchange string) Co
 
 	return CostBreakdown{
 		BTCAmount:            round8(btcAmount),
+		RouteCEX:             e.exchange,
+		RouteDEX:             dexExchange,
+		RouteMethod:          string(method),
 		CexTakerFeePct:       pct(takerBTC),
 		CexTakerFeeBTC:       round8(takerBTC),
 		WithdrawalFeePct:     pct(withdrawalFee),
@@ -787,4 +875,31 @@ func (e *TradeCostEstimator) Breakdown(btcAmount float64, dexExchange string) Co
 		TotalCostPct:         round4(totalPct),
 		TotalCostBTC:         round8(totalBTC),
 	}
+}
+
+func (o *TradeRouteOptimizer) BestBreakdown(btcAmount float64, dexExchange string) CostBreakdown {
+	if o == nil || btcAmount <= 0 {
+		return CostBreakdown{}
+	}
+
+	best := CostBreakdown{}
+	found := false
+	for _, cex := range supportedCEXes {
+		est := o.estimators[cex]
+		if est == nil {
+			continue
+		}
+		for _, method := range supportedWithdrawalMethods(est.cexProfile, dexExchange) {
+			bd := est.breakdownForMethod(btcAmount, dexExchange, method)
+			if !found || bd.TotalCostPct < best.TotalCostPct {
+				best = bd
+				found = true
+			}
+		}
+	}
+
+	if !found {
+		return CostBreakdown{}
+	}
+	return best
 }

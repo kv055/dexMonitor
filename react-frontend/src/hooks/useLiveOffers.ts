@@ -12,8 +12,9 @@ export function useLiveOffers() {
   const wsRef       = useRef<WebSocket | null>(null);
   const pollRef     = useRef<ReturnType<typeof setInterval> | null>(null);
   const mountedRef  = useRef(true);
-  // tracks whether the current WS socket ever reached onopen
   const everOpenRef = useRef(false);
+  const sessionRef  = useRef(0);
+  const cexRef      = useRef('kraken');
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -22,37 +23,39 @@ export function useLiveOffers() {
     }
   }, []);
 
-  const startPolling = useCallback(() => {
-    if (pollRef.current) return; // already polling
+  const startPolling = useCallback((session: number) => {
+    if (pollRef.current) return;
     setWssConnected(false);
     const poll = async () => {
+      if (sessionRef.current !== session || !mountedRef.current) return;
       try {
-        const offers = await apiFetch<Offer[]>('/api/live_offers');
-        if (mountedRef.current) setLiveOffers(offers);
+        const offers = await apiFetch<Offer[]>(`/api/live_offers?cex=${cexRef.current}`);
+        if (sessionRef.current === session && mountedRef.current) setLiveOffers(offers);
       } catch (e) {
         console.error('[LiveOffers] poll error', e);
       }
     };
-    poll(); // immediate first fetch
+    poll();
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
   }, [stopPolling]);
 
-  // connect is stable — defined once, called on mount and on reconnect
-  const connect = useCallback(() => {
-    if (!mountedRef.current) return;
+  const connect = useCallback((session: number) => {
+    if (!mountedRef.current || sessionRef.current !== session) return;
 
     everOpenRef.current = false;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live_offers`);
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live_offers?cex=${cexRef.current}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
+      if (sessionRef.current !== session) { ws.close(); return; }
       everOpenRef.current = true;
       stopPolling();
       if (mountedRef.current) setWssConnected(true);
     };
 
     ws.onmessage = (e) => {
+      if (sessionRef.current !== session) return;
       try {
         const offers = JSON.parse(e.data) as Offer[];
         if (mountedRef.current) setLiveOffers(offers);
@@ -62,34 +65,50 @@ export function useLiveOffers() {
     };
 
     ws.onerror = () => {
-      // Only fall back to polling if we never successfully opened
-      if (!everOpenRef.current && mountedRef.current) {
-        startPolling();
-      }
+      if (sessionRef.current !== session || everOpenRef.current) return;
+      if (mountedRef.current) startPolling(session);
     };
 
     ws.onclose = () => {
-      if (!mountedRef.current) return;
+      if (sessionRef.current !== session || !mountedRef.current) return;
       setWssConnected(false);
       if (everOpenRef.current) {
-        // Was connected — try to reconnect via WSS
-        setTimeout(connect, RECONNECT_DELAY_MS);
+        setTimeout(() => connect(session), RECONNECT_DELAY_MS);
       } else {
-        // Never connected — stay on polling
-        startPolling();
+        startPolling(session);
       }
     };
   }, [startPolling, stopPolling]);
 
   useEffect(() => {
     mountedRef.current = true;
-    connect();
+    const session = ++sessionRef.current;
+    connect(session);
     return () => {
       mountedRef.current = false;
+      sessionRef.current++;
       wsRef.current?.close();
       stopPolling();
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  return { liveOffers, wssConnected };
+  // Called directly by MonitorView when filters.cex changes.
+  // Immediately fetches fresh offers with the new CEX's fees, then reconnects WS.
+  const refreshForCex = useCallback((cex: string) => {
+    cexRef.current = cex;
+    const session = ++sessionRef.current;
+    stopPolling();
+    wsRef.current?.close();
+
+    apiFetch<Offer[]>(`/api/live_offers?cex=${cex}`)
+      .then(offers => {
+        if (sessionRef.current === session && mountedRef.current) setLiveOffers(offers);
+      })
+      .catch(e => console.error('[LiveOffers] cex-change fetch error', e));
+
+    setWssConnected(false);
+    connect(session);
+  }, [connect, stopPolling]);
+
+  return { liveOffers, wssConnected, refreshForCex };
 }

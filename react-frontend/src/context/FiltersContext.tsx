@@ -12,6 +12,7 @@ export const DEFAULT_FILTERS: Filters = {
   premiumMax: '',
   premiumOnly: true,
   hours: '24',
+  cex: 'kraken',
 };
 
 // ── Reducer ────────────────────────────────────────────────────────────────
@@ -42,6 +43,7 @@ interface FiltersContextValue {
   hoveredOhlcTime: number | null;
   setHoveredOhlcTime: (t: number | null) => void;
   loading: boolean;
+  refPrice: number | null;        // latest CEX ref price derived from live offers
 }
 
 const FiltersContext = createContext<FiltersContextValue | null>(null);
@@ -67,6 +69,11 @@ export function FiltersProvider({ offers, loading, children }: Props) {
     [offers]
   );
 
+  const refPrice = useMemo(
+    () => offers.find(o => o.is_live && o.ref_price != null)?.ref_price ?? null,
+    [offers]
+  );
+
   const filteredOffers = useMemo(() => {
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
@@ -78,11 +85,7 @@ export function FiltersProvider({ offers, loading, children }: Props) {
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o =>
-      o.direction === 'buy'
-        ? (o.price_diff_percent ?? 0) > 0   // bid above ref = sell at premium
-        : (o.price_diff_percent ?? 0) < 0   // ask below ref = buy at discount
-    );
+    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
     return f.sort((a, b) => (a.price_diff_percent || 0) - (b.price_diff_percent || 0));
   }, [offers, filters]);
 
@@ -97,7 +100,7 @@ export function FiltersProvider({ offers, loading, children }: Props) {
   }, [offers, filters]);
 
   return (
-    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, selectedOfferId, setSelectedOfferId, hoveredOhlcTime, setHoveredOhlcTime, loading }}>
+    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, selectedOfferId, setSelectedOfferId, hoveredOhlcTime, setHoveredOhlcTime, loading, refPrice }}>
       {children}
     </FiltersContext.Provider>
   );

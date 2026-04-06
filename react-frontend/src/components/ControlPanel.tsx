@@ -54,11 +54,7 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o =>
-      o.direction === 'buy'
-        ? (o.price_diff_percent ?? 0) > 0
-        : (o.price_diff_percent ?? 0) < 0
-    );
+    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
 
     const counts: Record<string, number> = {};
     f.forEach(o => {
@@ -156,11 +152,7 @@ function DirectionDropdown({ value, onChange, inputCls }: DirectionDropdownProps
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o =>
-      o.direction === 'buy'
-        ? (o.price_diff_percent ?? 0) > 0
-        : (o.price_diff_percent ?? 0) < 0
-    );
+    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
 
     return {
       all:  f.length,
@@ -233,11 +225,7 @@ function StatusDropdown({ value, onChange, inputCls }: StatusDropdownProps) {
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o =>
-      o.direction === 'buy'
-        ? (o.price_diff_percent ?? 0) > 0
-        : (o.price_diff_percent ?? 0) < 0
-    );
+    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
 
     return {
       all:    f.length,
@@ -312,11 +300,7 @@ function ExchangeDropdown({ value, onChange, stats, inputCls }: ExchangeDropdown
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o =>
-      o.direction === 'buy'
-        ? (o.price_diff_percent ?? 0) > 0
-        : (o.price_diff_percent ?? 0) < 0
-    );
+    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
 
     const map: Record<string, number> = {};
     f.forEach(o => { map[o.exchange] = (map[o.exchange] || 0) + 1; });
@@ -406,11 +390,7 @@ function TimeframeDropdown({ value, onChange, inputCls }: TimeframeDropdownProps
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o =>
-      o.direction === 'buy'
-        ? (o.price_diff_percent ?? 0) > 0
-        : (o.price_diff_percent ?? 0) < 0
-    );
+    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
 
     const now = Date.now();
     const result: Record<string, number> = {};
@@ -478,8 +458,15 @@ export function ControlPanel({ onRefresh, lastUpdated, stats }: Props) {
         </div>
         <div className="flex flex-col gap-0.5">
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Ref Price</span>
-          <select className={disabledInputCls} disabled defaultValue="kraken_eur">
-            <option value="kraken_eur">BTC/EUR — Kraken</option>
+          <select
+            className={inputCls}
+            value={filters.cex}
+            onChange={e => setFilters({ cex: e.target.value })}
+          >
+            <option value="kraken">BTC/EUR — Kraken</option>
+            <option value="binance">BTC/EUR — Binance</option>
+            <option value="bitstamp">BTC/EUR — Bitstamp</option>
+            <option value="coinbase">BTC/EUR — Coinbase</option>
           </select>
         </div>
         <div className="w-px h-5 bg-border self-end mb-0.5 mx-1" />

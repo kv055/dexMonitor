@@ -16,6 +16,11 @@ export interface BTCNetworkFeeDetail {
 
 export interface CostBreakdown {
   btc_amount: number;
+  route_cex: string;
+  route_dex: string;
+  route_method: string;
+  estimated_profit_pct: number;
+  estimated_profit_btc: number;
   cex_taker_fee_pct: number;
   cex_taker_fee_btc: number;
   withdrawal_fee_pct: number;
@@ -91,4 +96,5 @@ export interface Filters {
   premiumMax: string;
   premiumOnly: boolean;
   hours: string;
+  cex: string;
 }
