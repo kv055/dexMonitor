@@ -85,6 +85,24 @@ export interface OHLCCandle {
 
 export interface OHLCData {
   candles: OHLCCandle[];
+  interval_min?: number;
+}
+
+export interface PastOrderTimeframeStats {
+  timeframe: string;
+  hours: number;
+  premium_order_count: number;
+  total_net_profit_btc: number;
+  total_net_profit_fiat: number;
+  average_order_size_btc: number;
+  smallest_order_size_btc: number;
+  biggest_order_size_btc: number;
+}
+
+export interface PastOrderStats {
+  fiat_currency: string;
+  excluded_payment_methods: string[];
+  timeframes: PastOrderTimeframeStats[];
 }
 
 export interface Filters {

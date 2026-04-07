@@ -41,12 +41,13 @@ function OhlcPanelHeader() {
 }
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdated, error, load, stats, refreshForCex, excludedPaymentMethods }: {
+function MonitorView({ ohlcData, lastUpdated, error, load, extendOhlc, stats, refreshForCex, excludedPaymentMethods }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   stats: ReturnType<typeof useDashboard>['stats'] | null;
   lastUpdated: string;
   error: string | null;
   load: (hours: string, cex?: string, excludedPaymentMethods?: string[]) => void;
+  extendOhlc: (hours: number, cex?: string) => void;
   refreshForCex: (cex: string) => void;
   excludedPaymentMethods: string[];
 }) {
@@ -87,7 +88,11 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats, refreshForCex,
         <div className="lg:col-span-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-72 sm:min-h-80 lg:min-h-0">
           <OhlcPanelHeader />
           <div className="flex-1 min-h-0 relative">
-            <OHLCChart data={ohlcData} />
+              <OHLCChart
+              data={ohlcData}
+              loadedHours={Number(filters.hours)}
+              onNeedMoreData={(hours) => extendOhlc(hours, filters.cex)}
+            />
           </div>
         </div>
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-56 sm:min-h-64 lg:min-h-0">
@@ -155,7 +160,7 @@ function InsightsView({ theme, pastOrderStats, loading, load, excludedPaymentMet
 }
 
 export default function App() {
-  const { pastOffers, stats, pastOrderStats, ohlcData, lastUpdated, error, loading, load } = useDashboard();
+  const { pastOffers, stats, pastOrderStats, ohlcData, lastUpdated, error, loading, load, extendOhlc } = useDashboard();
   const { liveOffers, refreshForCex } = useLiveOffers();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
@@ -215,6 +220,7 @@ export default function App() {
             lastUpdated={lastUpdated}
             error={error}
             load={load}
+            extendOhlc={extendOhlc}
             refreshForCex={refreshForCex}
             excludedPaymentMethods={excludedPaymentMethods}
           />

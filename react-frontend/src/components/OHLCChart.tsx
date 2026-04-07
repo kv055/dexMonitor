@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef } from 'react';
+import { memo, useEffect, useRef, useState, useMemo } from 'react';
 import { toUtcSec } from '../utils/formatters';
 import {
   createChart,
@@ -8,25 +8,79 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import type { OHLCData } from '../types';
+import type { OHLCCandle, OHLCData } from '../types';
 import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
 
 interface Props {
   data: OHLCData | null;
+  loadedHours: number;
+  onNeedMoreData: (newHours: number) => void;
 }
 
 const EXCHANGE_COLORS: Record<string, string> = { bisq: '#f7931a', hodlhodl: '#3fb950', robosats: '#bc8cff' };
+
+// Candle size options in minutes — only multiples >= source interval are shown
+const CANDLE_OPTIONS = [1, 5, 15, 30, 60, 240, 1440];
+const CANDLE_LABELS: Record<number, string> = {
+  1: '1m', 5: '5m', 15: '15m', 30: '30m', 60: '1h', 240: '4h', 1440: '1d',
+};
 
 function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;
 }
 
-function OHLCChartInner({ data }: Props) {
+// Re-aggregate raw candles into larger buckets client-side
+function aggregateOHLC(candles: OHLCCandle[], targetMin: number, sourceMin: number): OHLCCandle[] {
+  if (targetMin <= sourceMin || candles.length === 0) return candles;
+  const bucketSec = targetMin * 60;
+  const buckets = new Map<number, OHLCCandle>();
+  for (const c of candles) {
+    const tSec = toUtcSec(c.time);
+    const bStart = Math.floor(tSec / bucketSec) * bucketSec;
+    const existing = buckets.get(bStart);
+    if (!existing) {
+      // Use an ISO-like string so toUtcSec can parse it later
+      const isoTime = new Date(bStart * 1000).toISOString().replace('.000Z', 'Z');
+      buckets.set(bStart, { time: isoTime, open: c.open, high: c.high, low: c.low, close: c.close });
+    } else {
+      existing.high = Math.max(existing.high, c.high);
+      existing.low = Math.min(existing.low, c.low);
+      existing.close = c.close;
+    }
+  }
+  return Array.from(buckets.values()).sort((a, b) => toUtcSec(a.time) - toUtcSec(b.time));
+}
+
+function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
+  const savedRangeRef = useRef<{ from: UTCTimestamp; to: UTCTimestamp } | null>(null);
+  const fetchingMoreRef = useRef(false);
+
   const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferId, setSelectedOfferId, setHoveredOhlcTime, loading } = useFilters();
+
+  const sourceIntervalMin = data?.interval_min ?? 1;
+
+  // Candle size selector — default always tracks source interval
+  const [candleMin, setCandleMin] = useState<number>(sourceIntervalMin);
+
+  // Sync default whenever the source interval changes (e.g. after a full reload)
+  useEffect(() => {
+    setCandleMin(sourceIntervalMin);
+  }, [sourceIntervalMin]);
+
+  const visibleOptions = useMemo(
+    () => CANDLE_OPTIONS.filter(o => o >= sourceIntervalMin),
+    [sourceIntervalMin]
+  );
+
+  // Aggregated candles for the chosen size
+  const displayCandles = useMemo(() => {
+    if (!data?.candles?.length) return [];
+    return aggregateOHLC(data.candles, candleMin, sourceIntervalMin);
+  }, [data?.candles, candleMin, sourceIntervalMin]);
 
   // Keep chart sized to container
   useEffect(() => {
@@ -77,7 +131,7 @@ function OHLCChartInner({ data }: Props) {
     chartRef.current = chart;
 
     // --- Candlestick series ---
-    if (data?.candles?.length) {
+    if (displayCandles.length > 0) {
       const candleSeries = chart.addCandlestickSeries({
         upColor: '#3fb950',
         downColor: '#f85149',
@@ -87,7 +141,7 @@ function OHLCChartInner({ data }: Props) {
         wickDownColor: '#f85149',
       });
       candleSeries.setData(
-        data.candles.map(c => ({
+        displayCandles.map(c => ({
           time: toUtcSec(c.time) as UTCTimestamp,
           open: c.open,
           high: c.high,
@@ -101,7 +155,6 @@ function OHLCChartInner({ data }: Props) {
     const fromSec = (nowSec - Number(hours) * 3600) as UTCTimestamp;
 
     // --- Offer lines ---
-    // Map series → { offerId, price } for click detection
     const seriesInfo = new Map<ISeriesApi<'Line'>, { offerId: number; price: number }>();
 
     premiumOffers.forEach(o => {
@@ -131,22 +184,51 @@ function OHLCChartInner({ data }: Props) {
       seriesInfo.set(series, { offerId: o.id, price: o.price });
     });
 
-    // Apply visible range — requires at least one series with data
-    const hasData = (data?.candles?.length ?? 0) > 0 || premiumOffers.length > 0;
+    // Apply visible range — restore saved range if available (e.g. after load-more)
+    const hasData = displayCandles.length > 0 || premiumOffers.length > 0;
     if (hasData) {
-      try {
-        chart.timeScale().setVisibleRange({ from: fromSec, to: nowSec });
-      } catch {
-        chart.timeScale().fitContent();
+      if (savedRangeRef.current) {
+        try {
+          chart.timeScale().setVisibleRange(savedRangeRef.current);
+        } catch {
+          chart.timeScale().setVisibleRange({ from: fromSec, to: nowSec });
+        }
+        savedRangeRef.current = null;
+      } else {
+        try {
+          chart.timeScale().setVisibleRange({ from: fromSec, to: nowSec });
+        } catch {
+          chart.timeScale().fitContent();
+        }
       }
     }
 
-    // Crosshair move — emit hovered time to shared state immediately
+    // --- Auto-fetch when scrolling back to the start ---
+    const earliestCandleTime = displayCandles.length > 0
+      ? toUtcSec(displayCandles[0].time) as UTCTimestamp
+      : null;
+
+    chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
+      if (!range || !earliestCandleTime || fetchingMoreRef.current) return;
+      // Trigger when the left edge of the view is within 2 candle-widths of the earliest data
+      const triggerThreshold = earliestCandleTime + candleMin * 60 * 2;
+      if ((range.from as number) <= triggerThreshold) {
+        fetchingMoreRef.current = true;
+        // Save the current visible range so we can restore it after the chart re-renders
+        savedRangeRef.current = { from: range.from as UTCTimestamp, to: range.to as UTCTimestamp };
+        const newHours = loadedHours * 3;
+        onNeedMoreData(newHours);
+        // Reset the guard after a cooldown so rapid scrolling doesn't spam requests
+        setTimeout(() => { fetchingMoreRef.current = false; }, 10_000);
+      }
+    });
+
+    // Crosshair move
     chart.subscribeCrosshairMove((param) => {
       setHoveredOhlcTime(param.time !== undefined ? (param.time as number) : null);
     });
 
-    // Click handler — find closest offer line within 12px
+    // Click handler
     chart.subscribeClick((param) => {
       if (!param.point) {
         setSelectedOfferId(null);
@@ -177,12 +259,34 @@ function OHLCChartInner({ data }: Props) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [data, premiumOffers, hours, selectedOfferId]);
+  }, [displayCandles, premiumOffers, hours, selectedOfferId, candleMin, loadedHours, onNeedMoreData]);
 
   return (
-    <div className="relative h-full bg-bg">
+    <div className="relative h-full bg-bg flex flex-col">
+      {/* Candle size selector */}
+      <div className="flex items-center gap-1 px-1 pb-1 shrink-0">
+        <span className="text-[0.6rem] text-muted uppercase tracking-wider mr-1">Candle</span>
+        {visibleOptions.map(opt => (
+          <button
+            key={opt}
+            onClick={() => setCandleMin(opt)}
+            className={`text-[0.65rem] px-1.5 py-0.5 rounded transition-colors ${
+              candleMin === opt
+                ? 'bg-accent text-bg font-semibold'
+                : 'text-muted hover:text-text'
+            }`}
+          >
+            {CANDLE_LABELS[opt] ?? `${opt}m`}
+          </button>
+        ))}
+      </div>
+
       {loading && <LoadingSpinner size={36} label="Loading chart data" />}
-      <div ref={divRef} style={{ position: 'absolute', inset: 0, opacity: loading ? 0 : 1, transition: 'opacity 0.35s ease' }} />
+      <div
+        ref={divRef}
+        className="flex-1 min-h-0"
+        style={{ opacity: loading ? 0 : 1, transition: 'opacity 0.35s ease' }}
+      />
     </div>
   );
 }
