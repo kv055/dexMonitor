@@ -12,6 +12,7 @@ import { DepthChart } from './components/DepthChart';
 import { GeneralStats } from './components/GeneralStats';
 import { SnapshotLog } from './components/SnapshotLog';
 import { MmTransactionsLog } from './components/MmTransactionsLog';
+import { TakerOpportunities } from './components/TakerOpportunities';
 
 type ThemeMode = 'dark' | 'light';
 type PaymentMethodMode = 'neutral' | 'include' | 'exclude';
@@ -28,7 +29,7 @@ function OhlcPanelHeader() {
   const cexLabel = filters.cex.charAt(0).toUpperCase() + filters.cex.slice(1);
   return (
     <div className="flex items-center justify-between mb-2 shrink-0">
-      <h3 className="text-[0.85rem] text-muted">DEX Premium Offer Overlay</h3>
+      <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">DEX Premium Offer Overlay</h3>
       <div className="flex items-center gap-1.5 text-[0.75rem]">
         <span className="text-muted">BTC/EUR — {cexLabel}</span>
         <span className={refPrice != null ? 'text-text font-medium' : 'text-muted'}>
@@ -40,22 +41,23 @@ function OhlcPanelHeader() {
 }
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdated, error, load, stats, refreshForCex }: {
+function MonitorView({ ohlcData, lastUpdated, error, load, stats, refreshForCex, excludedPaymentMethods }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   stats: ReturnType<typeof useDashboard>['stats'] | null;
   lastUpdated: string;
   error: string | null;
-  load: (hours: string, cex?: string) => void;
+  load: (hours: string, cex?: string, excludedPaymentMethods?: string[]) => void;
   refreshForCex: (cex: string) => void;
+  excludedPaymentMethods: string[];
 }) {
   const { filters } = useFilters();
 
   useEffect(() => {
     refreshForCex(filters.cex);
-    load(filters.hours, filters.cex);
-    const interval = setInterval(() => load(filters.hours, filters.cex), 5 * 60 * 1000);
+    load(filters.hours, filters.cex, excludedPaymentMethods);
+    const interval = setInterval(() => load(filters.hours, filters.cex, excludedPaymentMethods), 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [filters.hours, filters.cex]);
+  }, [filters.hours, filters.cex, excludedPaymentMethods, load, refreshForCex]);
 
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -68,12 +70,12 @@ function MonitorView({ ohlcData, lastUpdated, error, load, stats, refreshForCex 
       {/* Top row: control panel + offers */}
       <div className="lg:flex-2 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_3fr] gap-2 sm:gap-3">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
-          <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Control Panel</h3>
-          <ControlPanel onRefresh={() => load(filters.hours, filters.cex)} lastUpdated={lastUpdated} stats={stats} />
+          <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Control Panel</h3>
+          <ControlPanel onRefresh={() => load(filters.hours, filters.cex, excludedPaymentMethods)} lastUpdated={lastUpdated} stats={stats} />
         </div>
 
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
-          <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Offers</h3>
+          <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Offers</h3>
           <div className="relative flex-1 min-h-64 sm:min-h-80 lg:min-h-0">
             <OffersPreviewTable />
           </div>
@@ -101,13 +103,13 @@ function MmControllerView() {
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
       <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-2 gap-2 sm:gap-3">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-52 xl:min-h-0 overflow-hidden">
-          <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">Snapshot Log</h3>
+          <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Snapshot Log</h3>
           <div className="relative flex-1 min-h-0">
             <SnapshotLog />
           </div>
         </div>
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-52 xl:min-h-0 overflow-hidden">
-          <h3 className="text-[0.85rem] text-muted mb-2 shrink-0">MM Controller Transactions</h3>
+          <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">MM Controller Transactions</h3>
           <div className="relative flex-1 min-h-0">
             <MmTransactionsLog />
           </div>
@@ -117,8 +119,43 @@ function MmControllerView() {
   );
 }
 
+function InsightsView({ theme, pastOrderStats, loading, load, excludedPaymentMethods }: {
+  theme: ThemeMode;
+  pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
+  loading: boolean;
+  load: (hours: string, cex?: string, excludedPaymentMethods?: string[]) => void;
+  excludedPaymentMethods: string[];
+}) {
+  const { filters } = useFilters();
+
+  useEffect(() => {
+    load(filters.hours, filters.cex, excludedPaymentMethods);
+  }, [filters.hours, filters.cex, excludedPaymentMethods, load]);
+
+  return (
+    <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
+      {/* Top — statistics */}
+      <div className="lg:flex-1 bg-surface border border-border rounded-lg px-2 py-2 flex flex-col min-h-40 lg:min-h-0">
+        <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-1.5">General Statistics</span>
+        <div className="flex-1 min-h-0">
+          <GeneralStats theme={theme} />
+        </div>
+      </div>
+      {/* Middle — bigger */}
+      <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
+        <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2">Taker Opportunities</span>
+        <TakerOpportunities stats={pastOrderStats} loading={loading} />
+      </div>
+      {/* Bottom — bigger */}
+      <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
+        <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2">Maker Opportunities</span>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
-  const { pastOffers, stats, ohlcData, lastUpdated, error, loading, load } = useDashboard();
+  const { pastOffers, stats, pastOrderStats, ohlcData, lastUpdated, error, loading, load } = useDashboard();
   const { liveOffers, refreshForCex } = useLiveOffers();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
@@ -131,6 +168,13 @@ export default function App() {
   const allOffers = useMemo(
     () => [...liveOffers, ...pastOffers],
     [liveOffers, pastOffers]
+  );
+
+  const excludedPaymentMethods = useMemo(
+    () => Object.entries(paymentMethodModes)
+      .filter(([, mode]) => mode === 'exclude')
+      .map(([method]) => method),
+    [paymentMethodModes]
   );
 
   useLayoutEffect(() => {
@@ -146,7 +190,6 @@ export default function App() {
     <FiltersProvider offers={allOffers} loading={loading}>
       <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-bg text-text p-2 sm:p-3 gap-2 sm:gap-3">
         <Header
-          stats={stats}
           activeTab={activeTab}
           onTabChange={setActiveTab}
           theme={theme}
@@ -173,6 +216,7 @@ export default function App() {
             error={error}
             load={load}
             refreshForCex={refreshForCex}
+            excludedPaymentMethods={excludedPaymentMethods}
           />
         )}
 
@@ -181,23 +225,13 @@ export default function App() {
         )}
 
         {activeTab === 'insights' && (
-          <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
-            {/* Top — statistics */}
-            <div className="lg:flex-1 bg-surface border border-border rounded-lg px-2 py-2 flex flex-col min-h-40 lg:min-h-0">
-              <span className="text-[0.6rem] uppercase text-muted font-semibold tracking-wide mb-1.5">General Statistics</span>
-              <div className="flex-1 min-h-0">
-                <GeneralStats theme={theme} />
-              </div>
-            </div>
-            {/* Middle — bigger */}
-            <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
-              <span className="text-[0.65rem] uppercase text-muted font-semibold tracking-wide mb-2">Taker Opportunities</span>
-            </div>
-            {/* Bottom — bigger */}
-            <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
-              <span className="text-[0.65rem] uppercase text-muted font-semibold tracking-wide mb-2">Maker Opportunities</span>
-            </div>
-          </div>
+          <InsightsView
+            theme={theme}
+            pastOrderStats={pastOrderStats}
+            loading={loading}
+            load={load}
+            excludedPaymentMethods={excludedPaymentMethods}
+          />
         )}
       </div>
     </FiltersProvider>

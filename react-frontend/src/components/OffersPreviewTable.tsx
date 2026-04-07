@@ -61,7 +61,7 @@ function OnchainFeeDetail({ d, conf }: { d: BTCDetail; conf: number }) {
 
   return (
     <tr>
-      <td colSpan={3} className="pt-0 pb-2">
+      <td colSpan={4} className="pt-0 pb-2">
         {/* Badge row */}
         <div className="flex items-center gap-1.5 mb-1.5 pl-0.5">
           <Badge label="onchain" />
@@ -116,7 +116,7 @@ function LightningFeeDetail({ conf }: { conf: number }) {
   const confPct = conf > 0 ? Math.round(conf * 100) + '%' : null;
   return (
     <tr>
-      <td colSpan={3} className="pb-1 pt-0">
+      <td colSpan={4} className="pb-1 pt-0">
         <div className="flex items-center gap-1.5 pl-0.5">
           <Badge label="lightning" colorCls="text-[#bc8cff]" />
           {confPct && <span className="text-[0.6rem] text-muted">{confPct} conf.</span>}
@@ -143,10 +143,15 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
   netPremiumPct: number | null;
   refPrice: number | null;
 }) {
-  const rows: { label: string; btc: number; pct: number; detail?: React.ReactNode }[] = [
+  const [networkFeeOpen, setNetworkFeeOpen] = useState(false);
+  const hasNetworkFeeDetail = bd.network_fee_method === 'onchain'
+    ? !!bd.network_fee_detail
+    : bd.network_fee_method === 'lightning';
+
+  const rows: { label: string; btc: number; pct: number; expandable?: boolean }[] = [
     { label: 'CEX taker fee',    btc: bd.cex_taker_fee_btc,  pct: bd.cex_taker_fee_pct  },
     { label: 'CEX withdrawal',   btc: bd.withdrawal_fee_btc,  pct: bd.withdrawal_fee_pct  },
-    { label: 'BTC network fee',  btc: bd.network_fee_btc,     pct: bd.network_fee_pct,    detail: <NetworkFeeDetail bd={bd} /> },
+    { label: 'BTC network fee',  btc: bd.network_fee_btc,     pct: bd.network_fee_pct,    expandable: hasNetworkFeeDetail },
     { label: 'DEX platform fee', btc: bd.dex_fee_btc,         pct: bd.dex_fee_pct         },
   ];
   const routeCex = bd.route_cex || '—';
@@ -160,72 +165,113 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
     : 'text-muted';
   const fiatValue = (btc: number | null | undefined) => (btc != null && refPrice != null ? btc * refPrice : null);
 
+  const profitCardBorder = profitPct == null || profitPct === 0
+    ? 'border-border'
+    : profitPct > 0 ? 'border-green/30' : 'border-red/30';
+  const profitCardBg = profitPct == null || profitPct === 0
+    ? 'bg-surface'
+    : profitPct > 0 ? 'bg-green/5' : 'bg-red/5';
+
   return (
     <div className="flex flex-col gap-3 text-[0.72rem]">
-      <div className="flex items-baseline gap-2 flex-wrap">
-        <span className="text-muted uppercase text-[0.62rem] tracking-wide">Trade cost breakdown</span>
-        <span className="text-text text-[0.95rem] font-semibold">{fmt8(bd.btc_amount)} BTC</span>
-        <span className="text-muted text-[0.82rem]">{fmtFiatAmount(fiatValue(bd.btc_amount))}</span>
+      {/* Section header */}
+      <div className="flex items-baseline justify-between gap-2 flex-wrap">
+        <span className="text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Trade cost breakdown</span>
+        <div className="flex items-baseline gap-1.5">
+          <span className="text-text text-[0.9rem] font-semibold mono-nums">{fmt8(bd.btc_amount)} BTC</span>
+          <span className="text-muted text-[0.75rem] mono-nums">{fmtFiatAmount(fiatValue(bd.btc_amount))}</span>
+        </div>
       </div>
+
+      {/* Best route row */}
       <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-bg px-2.5 py-2">
-        <span className="text-muted">Best route</span>
-        <span className="text-right text-text font-medium">
-          {routeCex} {'->'} {routeDex} via {routeMethod}
+        <span className="text-muted shrink-0">Best route</span>
+        <span className="text-right font-medium text-[0.72rem]">
+          <span className="text-text">{routeCex}</span>
+          <span className="text-muted mx-1.5">→</span>
+          <span className="text-text">{routeDex}</span>
+          <span className="text-muted mx-1.5">via</span>
+          <span className="text-accent">{routeMethod}</span>
         </span>
       </div>
+
+      {/* Cost table */}
       <table className="w-full">
         <thead>
-          <tr>
-            <th className="text-left text-muted font-normal pb-1 pr-3">Component</th>
-            <th className="text-right text-muted font-normal pb-1 pr-3">BTC</th>
-            <th className="text-right text-muted font-normal pb-1 pr-3">Fiat</th>
-            <th className="text-right text-muted font-normal pb-1">% of trade</th>
+          <tr className="border-b border-border">
+            <th className="text-left text-muted font-normal pb-1.5 pr-3 text-[0.63rem] uppercase tracking-wide">Component</th>
+            <th className="text-right text-muted font-normal pb-1.5 pr-3 text-[0.63rem] uppercase tracking-wide">BTC</th>
+            <th className="text-right text-muted font-normal pb-1.5 pr-3 text-[0.63rem] uppercase tracking-wide">Fiat</th>
+            <th className="text-right text-muted font-normal pb-1.5 text-[0.63rem] uppercase tracking-wide">% of trade</th>
           </tr>
         </thead>
         <tbody>
-          {rows.map(r => (
-            <React.Fragment key={r.label}>
-              <tr>
-                <td className="pr-3 py-0.5 text-muted">{r.label}</td>
-                <td className="pr-3 py-0.5 text-right text-text">{fmt8(r.btc)}</td>
-                <td className="pr-3 py-0.5 text-right text-text">{fmtFiatAmount(fiatValue(r.btc))}</td>
-                <td className="py-0.5 text-right text-text">{fmtPct(r.pct)}</td>
-              </tr>
-              {r.detail}
-            </React.Fragment>
-          ))}
+          {rows.map((r, i) => {
+            const isNetworkFee = r.expandable;
+            return (
+              <React.Fragment key={r.label}>
+                <tr
+                  className={`${i % 2 === 0 ? 'bg-grid/40' : ''} ${isNetworkFee ? 'cursor-pointer hover:brightness-110' : ''}`}
+                  onClick={isNetworkFee ? () => setNetworkFeeOpen(o => !o) : undefined}
+                >
+                  <td className="pr-3 py-1 text-muted rounded-l">
+                    {isNetworkFee ? (
+                      <span className="flex items-center gap-1.5">
+                        {r.label}
+                        <span className={`text-[0.6rem] text-muted transition-transform duration-150 inline-block ${networkFeeOpen ? 'rotate-180' : ''}`}>▾</span>
+                      </span>
+                    ) : r.label}
+                  </td>
+                  <td className="pr-3 py-1 text-right text-text mono-nums">{fmt8(r.btc)}</td>
+                  <td className="pr-3 py-1 text-right text-text mono-nums">{fmtFiatAmount(fiatValue(r.btc))}</td>
+                  <td className="py-1 text-right text-text mono-nums rounded-r">{fmtPct(r.pct)}</td>
+                </tr>
+                {isNetworkFee && networkFeeOpen && <NetworkFeeDetail bd={bd} />}
+              </React.Fragment>
+            );
+          })}
           <tr className="border-t border-border">
-            <td className="pr-3 pt-2 font-medium text-text">Total cost</td>
-            <td className="pr-3 pt-2 text-right font-medium text-text">{fmt8(bd.total_cost_btc)}</td>
-            <td className="pr-3 pt-2 text-right font-medium text-text">{fmtFiatAmount(fiatValue(bd.total_cost_btc))}</td>
-            <td className="pt-2 text-right font-medium text-red">{fmtPct(bd.total_cost_pct)}</td>
+            <td className="pr-3 pt-2.5 pb-1 font-semibold text-text">Total cost</td>
+            <td className="pr-3 pt-2.5 pb-1 text-right font-semibold text-text mono-nums">{fmt8(bd.total_cost_btc)}</td>
+            <td className="pr-3 pt-2.5 pb-1 text-right font-semibold text-text mono-nums">{fmtFiatAmount(fiatValue(bd.total_cost_btc))}</td>
+            <td className="pt-2.5 pb-1 text-right font-semibold text-red mono-nums">{fmtPct(bd.total_cost_pct)}</td>
           </tr>
           <tr>
-            <td className="pr-3 py-0.5 text-muted">DEX premium</td>
-            <td className="pr-3 py-0.5 text-right text-muted">—</td>
-            <td className="pr-3 py-0.5 text-right text-muted">—</td>
-            <td className={`py-0.5 text-right font-medium ${premiumClass(priceDiffPct)}`}>
+            <td className="pr-3 py-1 text-muted">DEX premium</td>
+            <td className="pr-3 py-1 text-right text-muted">—</td>
+            <td className="pr-3 py-1 text-right text-muted">—</td>
+            <td className={`py-1 text-right font-medium mono-nums ${premiumClass(priceDiffPct)}`}>
               {priceDiffPct != null ? fmtPct(priceDiffPct) : '—'}
             </td>
           </tr>
           <tr className="border-t border-border">
-            <td className="pr-3 pt-2 font-semibold text-text">Net premium</td>
-            <td className="pr-3 pt-2 text-right text-muted">—</td>
-            <td className="pr-3 pt-2 text-right text-muted">—</td>
-            <td className={`pt-2 text-right font-bold text-[0.85rem] ${netCls}`}>
+            <td className="pr-3 pt-2.5 font-bold text-text text-[0.75rem]">Net premium</td>
+            <td className="pr-3 pt-2.5 text-right text-muted">—</td>
+            <td className="pr-3 pt-2.5 text-right text-muted">—</td>
+            <td className={`pt-2.5 text-right font-bold text-[0.82rem] mono-nums ${netCls}`}>
               {netPremiumPct != null ? fmtPct(netPremiumPct) : '—'}
-            </td>
-          </tr>
-          <tr>
-            <td className="pr-3 py-0.5 font-semibold text-text">Estimated profit</td>
-            <td className={`pr-3 py-0.5 text-right font-medium ${profitCls}`}>{profitBtc != null ? fmtSignedBtc(profitBtc) : '—'}</td>
-            <td className={`pr-3 py-0.5 text-right font-medium ${profitCls}`}>{fmtFiatAmount(fiatValue(profitBtc))}</td>
-            <td className={`py-0.5 text-right font-medium ${profitCls}`}>
-              {profitPct != null ? fmtPct(profitPct) : '—'}
             </td>
           </tr>
         </tbody>
       </table>
+
+      {/* Estimated profit summary card */}
+      <div className={`rounded-lg border ${profitCardBorder} ${profitCardBg} px-3 py-2.5`}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Estimated profit</span>
+          <span className={`mono-nums font-bold text-[0.95rem] ${profitCls}`}>
+            {profitBtc != null ? fmtSignedBtc(profitBtc) + ' BTC' : '—'}
+          </span>
+        </div>
+        <div className="flex items-center justify-end gap-3 mt-0.5">
+          <span className={`mono-nums text-[0.75rem] font-medium ${profitCls}`}>
+            {fmtFiatAmount(fiatValue(profitBtc))}
+          </span>
+          <span className={`mono-nums text-[0.75rem] font-medium ${profitCls}`}>
+            {profitPct != null ? fmtPct(profitPct) : '—'}
+          </span>
+        </div>
+      </div>
     </div>
   );
 }
@@ -313,10 +359,10 @@ export function OffersPreviewTable() {
           }}
         >
           {selectedOffer && (
-            <div className="relative p-4">
+            <div className="relative pt-10 px-4 pb-4">
               <button
                 onClick={() => setSelectedOfferId(null)}
-                className="absolute top-2.5 right-3 w-6 h-6 flex items-center justify-center text-muted hover:text-text bg-transparent border-none cursor-pointer text-lg leading-none rounded hover:bg-white/10 transition-colors"
+                className="absolute top-3 right-3 z-20 w-7 h-7 flex items-center justify-center text-red hover:text-red/70 bg-transparent border-none cursor-pointer text-xl leading-none rounded transition-colors"
                 title="Close"
               >
                 ×
@@ -421,10 +467,10 @@ export function OffersPreviewTable() {
         }}
       >
         {selectedOffer && (
-          <div className="relative p-4 h-full overflow-y-auto">
+          <div className="relative pt-10 px-4 pb-4 h-full overflow-y-auto">
             <button
               onClick={() => setSelectedOfferId(null)}
-              className="absolute top-2.5 right-3 w-6 h-6 flex items-center justify-center text-muted hover:text-text bg-transparent border-none cursor-pointer text-lg leading-none rounded hover:bg-white/10 transition-colors"
+              className="absolute top-3 right-3 z-20 w-7 h-7 flex items-center justify-center text-red hover:text-red/70 bg-transparent border-none cursor-pointer text-xl leading-none rounded transition-colors"
               title="Close"
             >
               ×

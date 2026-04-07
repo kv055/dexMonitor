@@ -1,10 +1,7 @@
-import type { Stats } from '../types';
-import { KpiGrid } from './KpiGrid';
 
 export type Tab = 'monitor' | 'insights' | 'mmcontroller' | 'trading';
 
 interface Props {
-  stats: Stats | null;
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
   theme: 'dark' | 'light';
@@ -19,7 +16,7 @@ const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
   { id: 'trading', label: 'dex Trading', color: 'text-purple', disabled: true },
 ];
 
-export function Header({ stats, activeTab, onTabChange, theme, onToggleTheme, onOpenSettings }: Props) {
+export function Header({ activeTab, onTabChange, theme, onToggleTheme, onOpenSettings }: Props) {
   return (
     <header className="bg-surface border border-border rounded-lg px-3 py-1 flex items-center gap-1.5 shrink-0 min-w-0 overflow-hidden">
       {/* Scrollable tab area */}
@@ -43,11 +40,6 @@ export function Header({ stats, activeTab, onTabChange, theme, onToggleTheme, on
           </button>
         ))}
 
-        {stats && activeTab === 'monitor' && (
-          <div className="hidden lg:flex items-center">
-            <KpiGrid stats={stats} />
-          </div>
-        )}
       </div>
 
       {/* Always-visible action buttons */}
