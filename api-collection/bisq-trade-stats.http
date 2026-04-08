@@ -1,0 +1,16 @@
+# dexMonitor — Bisq Trade Stats
+# Dormant helper requests for the future Bisq settlement-stats endpoint.
+# The endpoint is not currently wired into the running bisq container.
+
+### Bisq trade stats — last 30 days
+GET http://localhost:9997/api/trade-stats
+
+###
+
+### Bisq trade stats — custom window in days
+GET http://localhost:9997/api/trade-stats?days=90
+
+###
+
+### Bisq trade stats — filter by payment method and currency
+GET http://localhost:9997/api/trade-stats?days=180&payment_method=SEPA&currency=EUR
