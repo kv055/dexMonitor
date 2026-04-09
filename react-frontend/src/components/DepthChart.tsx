@@ -1,7 +1,8 @@
 import { memo, useEffect, useRef, useMemo, useLayoutEffect, useState } from 'react';
 import { useFilters } from '../context/FiltersContext';
+import { useTimezone } from '../context/TimezoneContext';
 import { LoadingSpinner } from './LoadingSpinner';
-import { toUtcSec } from '../utils/formatters';
+import { formatDateTimeLabel, toUtcSec } from '../utils/formatters';
 
 function niceStep(range: number, targetSteps: number): number {
   const rough = range / targetSteps;
@@ -16,26 +17,15 @@ function cssVar(name: string, fallback: string): string {
   return value || fallback;
 }
 
-function formatDepthTimestamp(sec: number): string {
-  const d = new Date(sec * 1000);
-  return d.toLocaleString('en-GB', {
-    year: 'numeric',
-    month: 'short',
-    day: '2-digit',
-    hour: '2-digit',
-    minute: '2-digit',
-    hour12: false,
-  });
-}
-
 function DepthChartInner() {
   const { depthOffers, offers: allOffers, filters, loading, hoveredOhlcTime } = useFilters();
+  const { timezone } = useTimezone();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasMetricsRef = useRef<{ w: number; h: number; dpr: number } | null>(null);
   const [resizeTick, setResizeTick] = useState(0);
   const [yZoom, setYZoom] = useState(1.0);
-  const headerTimestamp = formatDepthTimestamp(hoveredOhlcTime ?? Math.floor(Date.now() / 1000));
+  const headerTimestamp = formatDateTimeLabel(hoveredOhlcTime ?? Math.floor(Date.now() / 1000), timezone);
 
   // Resize observer
   useEffect(() => {

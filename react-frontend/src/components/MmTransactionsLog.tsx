@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from '../utils/api';
+import { useTimezone } from '../context/TimezoneContext';
+import { formatDateTimeParts } from '../utils/formatters';
 import { LoadingSpinner } from './LoadingSpinner';
 
 interface MmTransaction {
@@ -35,26 +37,6 @@ const STATUS_LABELS: Record<string, string> = {
   DexPositionReleased: 'Released',
 };
 
-function parseTimestamp(ts: string | null | undefined): Date | null {
-  if (!ts) return null;
-  let d = new Date(ts);
-  if (!isNaN(d.getTime())) return d;
-  d = new Date(ts.replace(' ', 'T') + 'Z');
-  if (!isNaN(d.getTime())) return d;
-  const n = Number(ts);
-  if (!isNaN(n) && n > 0) return new Date(n * 1000);
-  return null;
-}
-
-function formatTime(ts: string) {
-  const date = parseTimestamp(ts);
-  if (!date) return { day: '???', time: '??:??' };
-  return {
-    day: date.toLocaleDateString([], { month: 'short', day: 'numeric' }),
-    time: date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
-  };
-}
-
 function statusTone(status: string) {
   if (status === 'DexPositionReleased') return 'text-green border-green/30 bg-green/8';
   if (status === 'DexPositionTaken' || status === 'DexFiatHasArrived') return 'text-blue border-blue/30 bg-blue/8';
@@ -79,6 +61,7 @@ function formatSignedCurrency(value: number, currency: string) {
 }
 
 export function MmTransactionsLog() {
+  const { timezone } = useTimezone();
   const [entries, setEntries] = useState<MmTransaction[]>([]);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -121,7 +104,8 @@ export function MmTransactionsLog() {
       )}
 
       {entries.map(entry => {
-        const created = formatTime(entry.created_at);
+        const created = formatDateTimeParts(entry.created_at, timezone);
+        const updated = formatDateTimeParts(entry.updated_at, timezone);
         const isOpen = expanded === entry.id;
         const statusLabel = STATUS_LABELS[entry.status] ?? entry.status;
         const premium = formatSignedPct(entry.premium_over_cex_price_to_break_even_prediction ?? 0);
@@ -159,7 +143,7 @@ export function MmTransactionsLog() {
                   {pnl}
                 </span>
                 <span className="text-muted">Updated</span>
-                <span className="text-text">{formatTime(entry.updated_at).day} {formatTime(entry.updated_at).time}</span>
+                <span className="text-text">{updated.day} {updated.time}</span>
               </div>
             )}
           </div>

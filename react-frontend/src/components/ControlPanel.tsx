@@ -1,7 +1,9 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useFilters } from '../context/FiltersContext';
+import { useTimezone } from '../context/TimezoneContext';
 import type { Stats } from '../types';
 import { ExchangeTag } from './ExchangeTag';
+import { formatTimeOnly } from '../utils/formatters';
 
 const PAYMENT_PALETTE = [
   '#f7931a', '#3fb950', '#bc8cff', '#58a6ff', '#f85149',
@@ -10,7 +12,7 @@ const PAYMENT_PALETTE = [
 
 interface Props {
   onRefresh: () => void;
-  lastUpdated: string;
+  lastUpdatedAt: string;
   stats: Stats | null;
 }
 
@@ -435,12 +437,14 @@ function TimeframeDropdown({ value, onChange, inputCls }: TimeframeDropdownProps
   );
 }
 
-export function ControlPanel({ onRefresh, lastUpdated, stats }: Props) {
+export function ControlPanel({ onRefresh, lastUpdatedAt, stats }: Props) {
   const { filters, setFilters, resetFilters } = useFilters();
+  const { timezone } = useTimezone();
   const panelRef = useRef<HTMLDivElement>(null);
 
   const inputCls = "bg-bg text-text border border-border rounded-md px-2 py-0.5 text-[0.8rem] cursor-pointer outline-none focus:border-accent transition-colors";
   const disabledInputCls = `${inputCls} opacity-45 cursor-not-allowed`;
+  const lastUpdated = lastUpdatedAt ? `Updated ${formatTimeOnly(lastUpdatedAt, timezone)}` : '';
 
   return (
     <div ref={panelRef} className="relative flex flex-col gap-1">

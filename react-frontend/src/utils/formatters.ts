@@ -10,20 +10,73 @@ export function formatNum(n: number | null | undefined): string {
 
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-export function formatTime(ts: string | null | undefined): string {
+export function parseUtcTimestamp(ts: string | null | undefined): Date | null {
+  if (!ts) return null;
+  const direct = new Date(ts);
+  if (!isNaN(direct.getTime())) return direct;
+  const utc = new Date(ts.replace(' ', 'T') + 'Z');
+  if (!isNaN(utc.getTime())) return utc;
+  const unix = Number(ts);
+  if (!isNaN(unix) && unix > 0) return new Date(unix * 1000);
+  return null;
+}
+
+export function formatTime(ts: string | null | undefined, timezone?: string): string {
   if (!ts) return '—';
-  // normalise both "YYYY-MM-DD HH:MM:SS" and "YYYY-MM-DDTHH:MM:SSZ"
-  const normalized = ts.replace('T', ' ').replace('Z', '');
-  const [datePart, timePart] = normalized.split(' ');
-  const [, mm, dd] = datePart.split('-');
-  const [hh, min] = timePart.split(':');
-  return `${parseInt(dd)} ${MONTHS[parseInt(mm) - 1]}, ${hh}:${min}`;
+  const date = parseUtcTimestamp(ts);
+  if (!date) return '—';
+  if (!timezone) {
+    return `${date.getUTCDate()} ${MONTHS[date.getUTCMonth()]}, ${String(date.getUTCHours()).padStart(2, '0')}:${String(date.getUTCMinutes()).padStart(2, '0')}`;
+  }
+  return new Intl.DateTimeFormat('en-GB', {
+    timeZone: timezone,
+    month: 'short',
+    day: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  }).format(date);
+}
+
+export function formatDateTimeParts(ts: string | null | undefined, timezone: string): { day: string; time: string } {
+  const date = parseUtcTimestamp(ts);
+  if (!date) return { day: '???', time: '??:??' };
+
+  return {
+    day: date.toLocaleDateString('en-GB', { timeZone: timezone, month: 'short', day: 'numeric' }),
+    time: date.toLocaleTimeString('en-GB', { timeZone: timezone, hour: '2-digit', minute: '2-digit', hour12: false }),
+  };
+}
+
+export function formatTimeOnly(ts: string | Date | number, timezone: string): string {
+  const date = ts instanceof Date ? ts : typeof ts === 'number' ? new Date(ts * 1000) : parseUtcTimestamp(ts);
+  if (!date) return '—';
+  return date.toLocaleTimeString('en-GB', {
+    timeZone: timezone,
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
+}
+
+export function formatDateTimeLabel(ts: string | Date | number, timezone: string): string {
+  const date = ts instanceof Date ? ts : typeof ts === 'number' ? new Date(ts * 1000) : parseUtcTimestamp(ts);
+  if (!date) return '—';
+  return date.toLocaleString('en-GB', {
+    timeZone: timezone,
+    year: 'numeric',
+    month: 'short',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    hour12: false,
+  });
 }
 
 export function durationMinutes(first: string | null, last: string | null): number {
-  if (!first || !last) return 0;
-  const a = new Date(first.replace(' ', 'T') + 'Z');
-  const b = new Date(last.replace(' ', 'T') + 'Z');
+  const a = parseUtcTimestamp(first);
+  const b = parseUtcTimestamp(last);
+  if (!a || !b) return 0;
   return Math.round((b.getTime() - a.getTime()) / 60000);
 }
 
@@ -46,6 +99,6 @@ export function premiumClass(pct: number | null | undefined): string {
 }
 
 export function toUtcSec(ts: string): number {
-  const normalized = ts.replace(' ', 'T') + (ts.endsWith('Z') ? '' : 'Z');
-  return Math.floor(new Date(normalized).getTime() / 1000);
+  const date = parseUtcTimestamp(ts);
+  return date ? Math.floor(date.getTime() / 1000) : 0;
 }

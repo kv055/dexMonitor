@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
+import { useTimezone } from '../context/TimezoneContext';
 import { apiFetch } from '../utils/api';
+import { formatDateTimeParts } from '../utils/formatters';
 
 interface ExchangeData {
   count: number;
@@ -23,21 +25,8 @@ function exchangeColor(name: string) {
   return EXCHANGE_COLOR[name] ?? '#888';
 }
 
-function parseTimestamp(ts: string | null | undefined): Date | null {
-  if (!ts) return null;
-  // Already a valid ISO string (has T and/or Z/offset)
-  let d = new Date(ts);
-  if (!isNaN(d.getTime())) return d;
-  // SQLite CURRENT_TIMESTAMP: "YYYY-MM-DD HH:MM:SS" (UTC, no Z)
-  d = new Date(ts.replace(' ', 'T') + 'Z');
-  if (!isNaN(d.getTime())) return d;
-  // Unix timestamp stored as string
-  const n = Number(ts);
-  if (!isNaN(n) && n > 0) return new Date(n * 1000);
-  return null;
-}
-
 export function SnapshotLog() {
+  const { timezone } = useTimezone();
   const [entries, setEntries] = useState<LogEntry[]>([]);
   const [expanded, setExpanded] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
@@ -87,9 +76,7 @@ export function SnapshotLog() {
         <span className="text-muted text-[0.75rem]">No snapshot runs yet.</span>
       )}
       {!error && entries.map(e => {
-        const date = parseTimestamp(e.timestamp);
-        const timeStr = date ? date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : '??:??';
-        const dateStr = date ? date.toLocaleDateString([], { month: 'short', day: 'numeric' }) : '???';
+        const { day: dateStr, time: timeStr } = formatDateTimeParts(e.timestamp, timezone);
         const isOpen = expanded === e.id;
         const exchangeNames = e.exchanges ? Object.keys(e.exchanges) : [];
 

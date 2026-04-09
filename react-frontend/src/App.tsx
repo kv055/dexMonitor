@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo, useLayoutEffect } from 'react';
 import { useDashboard } from './hooks/useDashboard';
 import { useLiveOffers } from './hooks/useLiveOffers';
 import { FiltersProvider, useFilters } from './context/FiltersContext';
+import { TimezoneProvider } from './context/TimezoneContext';
 import { Header } from './components/Header';
 import type { Tab } from './components/Header';
 import { SettingsOverlay } from './components/SettingsOverlay';
@@ -41,10 +42,10 @@ function OhlcPanelHeader() {
 }
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdated, error, load, extendOhlc, stats, refreshForCex, excludedPaymentMethods }: {
+function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, stats, refreshForCex, excludedPaymentMethods }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   stats: ReturnType<typeof useDashboard>['stats'] | null;
-  lastUpdated: string;
+  lastUpdatedAt: string;
   error: string | null;
   load: (hours: string, cex?: string, excludedPaymentMethods?: string[]) => void;
   extendOhlc: (hours: number, cex?: string) => void;
@@ -72,7 +73,7 @@ function MonitorView({ ohlcData, lastUpdated, error, load, extendOhlc, stats, re
       <div className="lg:flex-2 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_3fr] gap-2 sm:gap-3">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
           <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Control Panel</h3>
-          <ControlPanel onRefresh={() => load(filters.hours, filters.cex, excludedPaymentMethods)} lastUpdated={lastUpdated} stats={stats} />
+          <ControlPanel onRefresh={() => load(filters.hours, filters.cex, excludedPaymentMethods)} lastUpdatedAt={lastUpdatedAt} stats={stats} />
         </div>
 
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
@@ -124,9 +125,10 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ theme, pastOrderStats, loading, load, excludedPaymentMethods }: {
+function InsightsView({ theme, pastOrderStats, generalStats, loading, load, excludedPaymentMethods }: {
   theme: ThemeMode;
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
+  generalStats: ReturnType<typeof useDashboard>['generalStats'];
   loading: boolean;
   load: (hours: string, cex?: string, excludedPaymentMethods?: string[]) => void;
   excludedPaymentMethods: string[];
@@ -140,11 +142,9 @@ function InsightsView({ theme, pastOrderStats, loading, load, excludedPaymentMet
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
       {/* Top — statistics */}
-      <div className="lg:flex-1 bg-surface border border-border rounded-lg px-2 py-2 flex flex-col min-h-40 lg:min-h-0">
-        <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-1.5">General Statistics</span>
-        <div className="flex-1 min-h-0">
-          <GeneralStats theme={theme} />
-        </div>
+      <div className="lg:flex-none bg-surface border border-border rounded-lg px-2 py-1.5">
+        <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-1 block">General Statistics</span>
+        <GeneralStats theme={theme} stats={generalStats} loading={loading} />
       </div>
       {/* Middle — bigger */}
       <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
@@ -160,12 +160,12 @@ function InsightsView({ theme, pastOrderStats, loading, load, excludedPaymentMet
 }
 
 export default function App() {
-  const { pastOffers, stats, pastOrderStats, ohlcData, lastUpdated, error, loading, load, extendOhlc } = useDashboard();
+  const { pastOffers, stats, pastOrderStats, generalStats, ohlcData, lastUpdatedAt, error, loading, load, extendOhlc } = useDashboard();
   const { liveOffers, refreshForCex } = useLiveOffers();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [preferredTimezone, setPreferredTimezone] = useState(() => Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
+  const [preferredTimezone, setPreferredTimezone] = useState(() => localStorage.getItem('dex-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
   const [paymentMethodModes, setPaymentMethodModes] = useState<Record<string, PaymentMethodMode>>(
     () => Object.fromEntries(PAYMENT_METHODS.map(method => [method, 'neutral']))
   );
@@ -187,12 +187,17 @@ export default function App() {
     localStorage.setItem('dex-theme', theme);
   }, [theme]);
 
+  useEffect(() => {
+    localStorage.setItem('dex-timezone', preferredTimezone);
+  }, [preferredTimezone]);
+
   const toggleTheme = () => {
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
   };
 
   return (
-    <FiltersProvider offers={allOffers} loading={loading}>
+    <TimezoneProvider timezone={preferredTimezone}>
+      <FiltersProvider offers={allOffers} loading={loading}>
       <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-bg text-text p-2 sm:p-3 gap-2 sm:gap-3">
         <Header
           activeTab={activeTab}
@@ -217,7 +222,7 @@ export default function App() {
           <MonitorView
             ohlcData={ohlcData}
             stats={stats}
-            lastUpdated={lastUpdated}
+            lastUpdatedAt={lastUpdatedAt}
             error={error}
             load={load}
             extendOhlc={extendOhlc}
@@ -234,12 +239,14 @@ export default function App() {
           <InsightsView
             theme={theme}
             pastOrderStats={pastOrderStats}
+            generalStats={generalStats}
             loading={loading}
             load={load}
             excludedPaymentMethods={excludedPaymentMethods}
           />
         )}
       </div>
-    </FiltersProvider>
+      </FiltersProvider>
+    </TimezoneProvider>
   );
 }

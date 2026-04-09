@@ -1,5 +1,6 @@
 import { memo, useEffect, useRef, useState, useMemo } from 'react';
 import { toUtcSec } from '../utils/formatters';
+import { shiftOhlcCandlesForTimezone } from '../utils/ohlcTimezone';
 import {
   createChart,
   ColorType,
@@ -10,6 +11,7 @@ import {
 } from 'lightweight-charts';
 import type { OHLCCandle, OHLCData } from '../types';
 import { useFilters } from '../context/FiltersContext';
+import { useTimezone } from '../context/TimezoneContext';
 import { LoadingSpinner } from './LoadingSpinner';
 
 interface Props {
@@ -60,6 +62,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
   const fetchingMoreRef = useRef(false);
 
   const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferId, setSelectedOfferId, setHoveredOhlcTime, loading } = useFilters();
+  const { timezone } = useTimezone();
 
   const sourceIntervalMin = data?.interval_min ?? 1;
 
@@ -81,6 +84,11 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
     if (!data?.candles?.length) return [];
     return aggregateOHLC(data.candles, candleMin, sourceIntervalMin);
   }, [data?.candles, candleMin, sourceIntervalMin]);
+
+  const shiftedDisplay = useMemo(
+    () => shiftOhlcCandlesForTimezone(displayCandles, timezone),
+    [displayCandles, timezone]
+  );
 
   // Keep chart sized to container
   useEffect(() => {
@@ -131,7 +139,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
     chartRef.current = chart;
 
     // --- Candlestick series ---
-    if (displayCandles.length > 0) {
+    if (shiftedDisplay.candles.length > 0) {
       const candleSeries = chart.addCandlestickSeries({
         upColor: '#3fb950',
         downColor: '#f85149',
@@ -141,7 +149,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
         wickDownColor: '#f85149',
       });
       candleSeries.setData(
-        displayCandles.map(c => ({
+        shiftedDisplay.candles.map(c => ({
           time: toUtcSec(c.time) as UTCTimestamp,
           open: c.open,
           high: c.high,
@@ -185,7 +193,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
     });
 
     // Apply visible range — restore saved range if available (e.g. after load-more)
-    const hasData = displayCandles.length > 0 || premiumOffers.length > 0;
+    const hasData = shiftedDisplay.candles.length > 0 || premiumOffers.length > 0;
     if (hasData) {
       if (savedRangeRef.current) {
         try {
@@ -204,8 +212,8 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
     }
 
     // --- Auto-fetch when scrolling back to the start ---
-    const earliestCandleTime = displayCandles.length > 0
-      ? toUtcSec(displayCandles[0].time) as UTCTimestamp
+    const earliestCandleTime = shiftedDisplay.candles.length > 0
+      ? toUtcSec(shiftedDisplay.candles[0].time) as UTCTimestamp
       : null;
 
     chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
@@ -225,7 +233,12 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
 
     // Crosshair move
     chart.subscribeCrosshairMove((param) => {
-      setHoveredOhlcTime(param.time !== undefined ? (param.time as number) : null);
+      if (param.time === undefined) {
+        setHoveredOhlcTime(null);
+        return;
+      }
+      const shiftedSec = param.time as number;
+      setHoveredOhlcTime(shiftedDisplay.utcByShiftedSec.get(shiftedSec) ?? shiftedSec);
     });
 
     // Click handler
@@ -259,7 +272,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [displayCandles, premiumOffers, hours, selectedOfferId, candleMin, loadedHours, onNeedMoreData]);
+  }, [shiftedDisplay, premiumOffers, hours, selectedOfferId, candleMin, loadedHours, onNeedMoreData]);
 
   return (
     <div className="relative h-full bg-bg flex flex-col">

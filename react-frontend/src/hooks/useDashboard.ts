@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { apiFetch } from '../utils/api';
-import type { Offer, Stats, OHLCData, PastOrderStats } from '../types';
+import type { Offer, Stats, OHLCData, PastOrderStats, GeneralStatsData } from '../types';
 
 function excludedPaymentQuery(excludedPaymentMethods: string[]): string {
   if (excludedPaymentMethods.length === 0) return '';
@@ -11,8 +11,9 @@ export function useDashboard() {
   const [pastOffers, setPastOffers] = useState<Offer[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [pastOrderStats, setPastOrderStats] = useState<PastOrderStats | null>(null);
+  const [generalStats, setGeneralStats] = useState<GeneralStatsData | null>(null);
   const [ohlcData, setOhlcData] = useState<OHLCData | null>(null);
-  const [lastUpdated, setLastUpdated] = useState('');
+  const [lastUpdatedAt, setLastUpdatedAt] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -21,17 +22,19 @@ export function useDashboard() {
     setError(null);
     try {
       const excludedQuery = excludedPaymentQuery(excludedPaymentMethods);
-      const [s, o, ohlc, pos] = await Promise.all([
+      const [s, o, ohlc, pos, gs] = await Promise.all([
         apiFetch<Stats>(`/api/stats?hours=${hours}`),
         apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&cex=${cex}${excludedQuery}`),
         apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`),
         apiFetch<PastOrderStats>(`/api/past_order_stats?fiat=EUR${excludedQuery}`),
+        apiFetch<GeneralStatsData>(`/api/general_stats?hours=${hours}${excludedQuery}`),
       ]);
       setStats(s);
       setPastOffers(o);
       setOhlcData(ohlc);
       setPastOrderStats(pos);
-      setLastUpdated(`Updated ${new Date().toLocaleTimeString()}`);
+      setGeneralStats(gs);
+      setLastUpdatedAt(new Date().toISOString());
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
       setError(`Failed to load data: ${message}`);
@@ -50,5 +53,5 @@ export function useDashboard() {
     }
   }, []);
 
-  return { pastOffers, stats, pastOrderStats, ohlcData, lastUpdated, error, loading, load, extendOhlc };
+  return { pastOffers, stats, pastOrderStats, generalStats, ohlcData, lastUpdatedAt, error, loading, load, extendOhlc };
 }

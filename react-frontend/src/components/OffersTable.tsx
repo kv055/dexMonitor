@@ -1,6 +1,7 @@
 import { useState, useMemo } from 'react';
 import type { Offer, Filters } from '../types';
 import { ExchangeTag } from './ExchangeTag';
+import { useTimezone } from '../context/TimezoneContext';
 import { formatNum, formatBtc, formatTime, formatDuration, durationMinutes, premiumClass } from '../utils/formatters';
 
 interface Props {
@@ -13,6 +14,7 @@ type SortCol = 'exchange' | 'direction' | 'price' | 'price_diff_percent' | 'btc_
 export function OffersTable({ offers, filters }: Props) {
   const [sortCol, setSortCol] = useState<SortCol>('price_diff_percent');
   const [sortAsc, setSortAsc] = useState(true);
+  const { timezone } = useTimezone();
 
   const lastSeen = useMemo(() => {
     const map: Record<string, string> = {};
@@ -100,8 +102,8 @@ export function OffersTable({ offers, filters }: Props) {
               <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border">{formatBtc(o.btc_min)}</td>
               <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border">{formatBtc(o.btc_max)}</td>
               <td className="px-2.5 py-1.5 border-b border-border">{o.payment_method || '—'}</td>
-              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.first_seen)}</td>
-              <td className="hidden sm:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.last_seen)}</td>
+              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.first_seen, timezone)}</td>
+              <td className="hidden sm:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.last_seen, timezone)}</td>
               <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatDuration(o.first_seen, o.last_seen)}</td>
             </tr>
           ))}
