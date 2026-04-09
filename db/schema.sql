@@ -25,17 +25,31 @@ CREATE TABLE offers (
     is_live BOOLEAN NOT NULL DEFAULT 0,
     duration INTEGER,
     historical_analysis_status TEXT,
-    avg_ref_price_10m REAL,
-    avg_premium_10m_pct REAL,
-    avg_trade_cost_pct_10m REAL,
-    avg_trade_cost_btc_10m REAL,
-    avg_net_premium_10m_pct REAL,
-    avg_estimated_profit_btc_10m REAL,
-    avg_estimated_profit_fiat_10m REAL,
-    avg_btc_amount_10m REAL,
-    best_route_cex_10m TEXT,
-    best_route_method_10m TEXT,
-    price_type TEXT
+    avg_ref_price REAL,
+    avg_premium_pct REAL,
+    avg_trade_cost_pct REAL,
+    avg_trade_cost_btc REAL,
+    avg_net_premium_pct REAL,
+    avg_estimated_profit_btc REAL,
+    avg_estimated_profit_fiat REAL,
+    avg_btc_amount REAL,
+    price_type TEXT,
+    best_route_cex TEXT,
+    best_route_method TEXT
+);
+
+CREATE TABLE order_lifecycle (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    offer_db_id      INTEGER NOT NULL,
+    snapshot_time    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    price            REAL    NOT NULL,
+    ref_price        REAL    NOT NULL,
+    premium_pct      REAL    NOT NULL,
+    trade_cost_pct   REAL,
+    trade_cost_btc   REAL,
+    net_premium_pct  REAL,
+    net_premium_btc  REAL,
+    btc_amount       REAL
 );
 
 CREATE INDEX idx_snapshots_time ON snapshots(timestamp);
@@ -45,6 +59,9 @@ CREATE INDEX idx_offers_direction ON offers(direction);
 CREATE INDEX idx_offers_last_seen ON offers(last_seen);
 CREATE INDEX idx_offers_fingerprint ON offers(exchange, direction, price, btc_min, btc_max, payment_method);
 CREATE UNIQUE INDEX idx_offers_offer_id ON offers(offer_id) WHERE offer_id IS NOT NULL;
+
+CREATE INDEX idx_lifecycle_offer ON order_lifecycle(offer_db_id);
+CREATE INDEX idx_lifecycle_time  ON order_lifecycle(snapshot_time);
 
 CREATE TABLE snapshot_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

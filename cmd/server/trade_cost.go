@@ -130,8 +130,8 @@ type withdrawalFeeFetcher struct {
 func newWithdrawalFeeFetcher(exchange string) *withdrawalFeeFetcher {
 	key, secret := loadCredentials(exchange)
 	return &withdrawalFeeFetcher{
-		exchange: exchange,
-		apiKey:   key,
+		exchange:  exchange,
+		apiKey:    key,
 		apiSecret: secret,
 		caches: map[WithdrawalMethod]*cachedFee{
 			MethodOnchain:   newCachedFee(feeTTL),
@@ -608,12 +608,13 @@ func fetchRobosatsTakerFee() (float64, error) {
 // All components are expressed as a percentage of the trade value so the result
 // can be directly compared to / subtracted from the DEX offer premium.
 type TradeCostEstimator struct {
-	exchange     string
-	taker        *takerFeeFetcher
-	withdrawal   *withdrawalFeeFetcher
-	dexFees      map[string]*cachedFee
-	btcPredictor *bitcoin.BitcoinFeePredictor
-	cexProfile   CexWithdrawalProfile
+	exchange           string
+	taker              *takerFeeFetcher
+	withdrawal         *withdrawalFeeFetcher
+	dexFees            map[string]*cachedFee
+	btcPredictor       *bitcoin.BitcoinFeePredictor
+	cexProfile         CexWithdrawalProfile
+	networkFeeOverride func(WithdrawalMethod, float64) networkFeeDetails
 }
 
 func NewTradeCostEstimator(exchange string) *TradeCostEstimator {
@@ -623,9 +624,9 @@ func NewTradeCostEstimator(exchange string) *TradeCostEstimator {
 		torClient = nil
 	}
 	return &TradeCostEstimator{
-		exchange:     exchange,
-		taker:        newTakerFeeFetcher(exchange),
-		withdrawal:   newWithdrawalFeeFetcher(exchange),
+		exchange:   exchange,
+		taker:      newTakerFeeFetcher(exchange),
+		withdrawal: newWithdrawalFeeFetcher(exchange),
 		dexFees: map[string]*cachedFee{
 			"bisq":     newCachedFee(feeTTL),
 			"robosats": newCachedFee(feeTTL),
@@ -666,12 +667,12 @@ func NewTradeRouteOptimizer(estimators map[string]*TradeCostEstimator) *TradeRou
 // BTCNetworkFeeDetail carries the full onchain fee calculation context for display.
 // Only populated for onchain transfers; nil for Lightning.
 type BTCNetworkFeeDetail struct {
-	TxVBytes           int64   `json:"tx_vbytes"`            // calculated virtual size
-	TxType             string  `json:"tx_type"`              // "P2WPKH", "P2TR", etc.
+	TxVBytes           int64   `json:"tx_vbytes"` // calculated virtual size
+	TxType             string  `json:"tx_type"`   // "P2WPKH", "P2TR", etc.
 	TxInputs           int     `json:"tx_inputs"`
 	TxOutputs          int     `json:"tx_outputs"`
-	SelectedSatVB      int64   `json:"selected_sat_vb"`      // fee rate for the chosen tier
-	EconomicSatVB      int64   `json:"economic_sat_vb"`      // all-tier rates for comparison
+	SelectedSatVB      int64   `json:"selected_sat_vb"` // fee rate for the chosen tier
+	EconomicSatVB      int64   `json:"economic_sat_vb"` // all-tier rates for comparison
 	StandardSatVB      int64   `json:"standard_sat_vb"`
 	FastSatVB          int64   `json:"fast_sat_vb"`
 	ExpressSatVB       int64   `json:"express_sat_vb"`
@@ -727,6 +728,10 @@ func (e *TradeCostEstimator) getNetworkFee(dexExchange string, btcAmount float64
 }
 
 func (e *TradeCostEstimator) getNetworkFeeForMethod(method WithdrawalMethod, btcAmount float64) networkFeeDetails {
+	if e.networkFeeOverride != nil {
+		return e.networkFeeOverride(method, btcAmount)
+	}
+
 	if method == MethodLightning {
 		if e.btcPredictor.IsDataStale(feeTTL) {
 			if err := e.btcPredictor.FetchLatestData(); err != nil {
@@ -771,11 +776,11 @@ func (e *TradeCostEstimator) getNetworkFeeForMethod(method WithdrawalMethod, btc
 		if ctx.FeeRates != nil {
 			detail.EconomicSatVB = ctx.FeeRates.EconomicFee
 			detail.StandardSatVB = ctx.FeeRates.StandardFee
-			detail.FastSatVB     = ctx.FeeRates.FastFee
-			detail.ExpressSatVB  = ctx.FeeRates.ExpressFee
+			detail.FastSatVB = ctx.FeeRates.FastFee
+			detail.ExpressSatVB = ctx.FeeRates.ExpressFee
 		}
 		if ctx.NetworkStats != nil {
-			detail.MempoolSizeMB      = math.Round(float64(ctx.NetworkStats.MempoolSize)/(1024*1024)*100) / 100
+			detail.MempoolSizeMB = math.Round(float64(ctx.NetworkStats.MempoolSize)/(1024*1024)*100) / 100
 			detail.UnconfirmedTxCount = ctx.NetworkStats.TransactionCount
 		}
 	}
@@ -800,26 +805,26 @@ func (e *TradeCostEstimator) getNetworkFeeForMethod(method WithdrawalMethod, btc
 // CostBreakdown holds each component of the arbitrage cost, all expressed both
 // as absolute BTC amounts and as percentages of the trade value.
 type CostBreakdown struct {
-	BTCAmount              float64 `json:"btc_amount"`               // trade size used for calculation
-	RouteCEX               string  `json:"route_cex"`               // chosen CEX for the cheapest route
-	RouteDEX               string  `json:"route_dex"`               // DEX of the evaluated offer
-	RouteMethod            string  `json:"route_method"`            // chosen settlement method for the cheapest route
-	EstimatedProfitPct     float64 `json:"estimated_profit_pct"`    // net premium after costs as % of trade
-	EstimatedProfitBTC     float64 `json:"estimated_profit_btc"`    // estimated profit in BTC for the chosen trade size
-	CexTakerFeePct         float64 `json:"cex_taker_fee_pct"`        // CEX taker fee as % of trade
-	CexTakerFeeBTC         float64 `json:"cex_taker_fee_btc"`        // CEX taker fee in BTC
-	WithdrawalFeePct       float64 `json:"withdrawal_fee_pct"`       // CEX BTC withdrawal fee as % of trade
-	WithdrawalFeeBTC       float64 `json:"withdrawal_fee_btc"`       // CEX BTC withdrawal fee in BTC
-	NetworkFeePct          float64 `json:"network_fee_pct"`          // settlement network fee as % of trade
-	NetworkFeeBTC          float64 `json:"network_fee_btc"`          // settlement network fee in BTC
-	NetworkFeeMethod       string               `json:"network_fee_method"`       // "onchain" or "lightning"
-	NetworkFeeTier         string               `json:"network_fee_tier"`         // "economic", "standard", "fast", "express", "lightning"
-	NetworkFeeConfidence   float64              `json:"network_fee_confidence"`   // 0–1.0 estimate reliability
-	NetworkFeeDetail       *BTCNetworkFeeDetail `json:"network_fee_detail"`       // full onchain calc context; nil for Lightning
-	DexFeePct              float64              `json:"dex_fee_pct"`              // DEX platform fee as % of trade
-	DexFeeBTC              float64 `json:"dex_fee_btc"`              // DEX platform fee in BTC
-	TotalCostPct           float64 `json:"total_cost_pct"`           // sum of all components as % of trade
-	TotalCostBTC           float64 `json:"total_cost_btc"`           // sum of all components in BTC
+	BTCAmount            float64              `json:"btc_amount"`             // trade size used for calculation
+	RouteCEX             string               `json:"route_cex"`              // chosen CEX for the cheapest route
+	RouteDEX             string               `json:"route_dex"`              // DEX of the evaluated offer
+	RouteMethod          string               `json:"route_method"`           // chosen settlement method for the cheapest route
+	EstimatedProfitPct   float64              `json:"estimated_profit_pct"`   // net premium after costs as % of trade
+	EstimatedProfitBTC   float64              `json:"estimated_profit_btc"`   // estimated profit in BTC for the chosen trade size
+	CexTakerFeePct       float64              `json:"cex_taker_fee_pct"`      // CEX taker fee as % of trade
+	CexTakerFeeBTC       float64              `json:"cex_taker_fee_btc"`      // CEX taker fee in BTC
+	WithdrawalFeePct     float64              `json:"withdrawal_fee_pct"`     // CEX BTC withdrawal fee as % of trade
+	WithdrawalFeeBTC     float64              `json:"withdrawal_fee_btc"`     // CEX BTC withdrawal fee in BTC
+	NetworkFeePct        float64              `json:"network_fee_pct"`        // settlement network fee as % of trade
+	NetworkFeeBTC        float64              `json:"network_fee_btc"`        // settlement network fee in BTC
+	NetworkFeeMethod     string               `json:"network_fee_method"`     // "onchain" or "lightning"
+	NetworkFeeTier       string               `json:"network_fee_tier"`       // "economic", "standard", "fast", "express", "lightning"
+	NetworkFeeConfidence float64              `json:"network_fee_confidence"` // 0–1.0 estimate reliability
+	NetworkFeeDetail     *BTCNetworkFeeDetail `json:"network_fee_detail"`     // full onchain calc context; nil for Lightning
+	DexFeePct            float64              `json:"dex_fee_pct"`            // DEX platform fee as % of trade
+	DexFeeBTC            float64              `json:"dex_fee_btc"`            // DEX platform fee in BTC
+	TotalCostPct         float64              `json:"total_cost_pct"`         // sum of all components as % of trade
+	TotalCostBTC         float64              `json:"total_cost_btc"`         // sum of all components in BTC
 }
 
 func round8(v float64) float64 {

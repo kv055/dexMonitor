@@ -56,6 +56,7 @@ export interface Offer {
   ref_price: number | null;
   premium?: number | null;
   time?: string;
+  lifecycle?: { time: string; price: number }[];
 }
 
 export interface ExchangeStat {

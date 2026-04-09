@@ -167,13 +167,35 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
 
     premiumOffers.forEach(o => {
       const isOpen = o.is_live;
-      const startSec = toUtcSec(o.first_seen || o.time || '') as UTCTimestamp;
-      const endSec = (isOpen ? nowSec : toUtcSec(o.last_seen ?? '') as UTCTimestamp);
-
-      if (startSec >= endSec) return;
-
       const isSelected = o.id === selectedOfferId;
       const color = isSelected ? selectedLine : (EXCHANGE_COLORS[o.exchange] || '#888');
+
+      // Build line data: use lifecycle price history when available, otherwise flat line.
+      let points: { time: UTCTimestamp; value: number }[];
+      let representativePrice: number;
+
+      if (o.lifecycle && o.lifecycle.length >= 2) {
+        // Multi-point line from lifecycle history
+        points = o.lifecycle.map(p => ({
+          time: toUtcSec(p.time) as UTCTimestamp,
+          value: p.price,
+        }));
+        if (isOpen) {
+          points = [...points, { time: nowSec, value: points[points.length - 1].value }];
+        }
+        representativePrice = points[Math.floor(points.length / 2)].value;
+      } else {
+        // No lifecycle — render as a single point on the most recent relevant candle.
+        const anchorRaw = isOpen ? nowSec : toUtcSec(o.last_seen ?? o.first_seen ?? '');
+        if (!anchorRaw) return;
+        const anchor = anchorRaw as UTCTimestamp;
+        const candleWidthSec = candleMin * 60;
+        points = [
+          { time: (anchor - candleWidthSec) as UTCTimestamp, value: o.price },
+          { time: anchor, value: o.price },
+        ];
+        representativePrice = o.price;
+      }
 
       const series = chart.addLineSeries({
         color,
@@ -184,12 +206,8 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
         crosshairMarkerRadius: isSelected ? 5 : 3,
       });
 
-      series.setData([
-        { time: startSec, value: o.price },
-        { time: endSec, value: o.price },
-      ]);
-
-      seriesInfo.set(series, { offerId: o.id, price: o.price });
+      series.setData(points);
+      seriesInfo.set(series, { offerId: o.id, price: representativePrice });
     });
 
     // Apply visible range — restore saved range if available (e.g. after load-more)

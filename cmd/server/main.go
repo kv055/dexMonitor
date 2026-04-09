@@ -381,16 +381,30 @@ func main() {
 			is_live BOOLEAN NOT NULL DEFAULT 0,
 			duration INTEGER,
 			historical_analysis_status TEXT,
-			avg_ref_price_10m REAL,
-			avg_premium_10m_pct REAL,
-			avg_trade_cost_pct_10m REAL,
-			avg_trade_cost_btc_10m REAL,
-			avg_net_premium_10m_pct REAL,
-			avg_estimated_profit_btc_10m REAL,
-			avg_estimated_profit_fiat_10m REAL,
-			avg_btc_amount_10m REAL,
-			best_route_cex_10m TEXT,
-			best_route_method_10m TEXT
+			avg_ref_price REAL,
+			avg_premium_pct REAL,
+			avg_trade_cost_pct REAL,
+			avg_trade_cost_btc REAL,
+			avg_net_premium_pct REAL,
+			avg_estimated_profit_btc REAL,
+			avg_estimated_profit_fiat REAL,
+			avg_btc_amount REAL,
+			price_type TEXT,
+			best_route_cex TEXT,
+			best_route_method TEXT
+		)`,
+		`CREATE TABLE IF NOT EXISTS order_lifecycle (
+			id               INTEGER PRIMARY KEY AUTOINCREMENT,
+			offer_db_id      INTEGER NOT NULL,
+			snapshot_time    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+			price            REAL    NOT NULL,
+			ref_price        REAL    NOT NULL,
+			premium_pct      REAL    NOT NULL,
+			trade_cost_pct   REAL,
+			trade_cost_btc   REAL,
+			net_premium_pct  REAL,
+			net_premium_btc  REAL,
+			btc_amount       REAL
 		)`,
 		`CREATE TABLE IF NOT EXISTS snapshot_log (
 			id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -412,6 +426,8 @@ func main() {
 		`CREATE INDEX IF NOT EXISTS idx_offers_last_seen ON offers(last_seen)`,
 		`CREATE INDEX IF NOT EXISTS idx_offers_fingerprint ON offers(exchange, direction, price, btc_min, btc_max, payment_method)`,
 		`CREATE UNIQUE INDEX IF NOT EXISTS idx_offers_offer_id ON offers(offer_id) WHERE offer_id IS NOT NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_lifecycle_offer ON order_lifecycle(offer_db_id)`,
+		`CREATE INDEX IF NOT EXISTS idx_lifecycle_time  ON order_lifecycle(snapshot_time)`,
 	} {
 		if _, err := db.Exec(stmt); err != nil {
 			fmt.Fprintf(os.Stderr, "schema init error: %v\n", err)
@@ -422,16 +438,29 @@ func main() {
 	db.Exec("ALTER TABLE offers ADD COLUMN is_live BOOLEAN NOT NULL DEFAULT 0")
 	db.Exec("ALTER TABLE offers ADD COLUMN duration INTEGER")
 	db.Exec("ALTER TABLE offers ADD COLUMN historical_analysis_status TEXT")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_ref_price_10m REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_premium_10m_pct REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_pct_10m REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_btc_10m REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_net_premium_10m_pct REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_btc_10m REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_fiat_10m REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_btc_amount_10m REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN best_route_cex_10m TEXT")
-	db.Exec("ALTER TABLE offers ADD COLUMN best_route_method_10m TEXT")
+	db.Exec("ALTER TABLE offers ADD COLUMN price_type TEXT")
+	db.Exec("ALTER TABLE offers ADD COLUMN best_route_cex TEXT")
+	db.Exec("ALTER TABLE offers ADD COLUMN best_route_method TEXT")
+	// Clean lifecycle-based analysis columns (replace _10m variants)
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_ref_price REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_premium_pct REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_pct REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_btc REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_net_premium_pct REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_btc REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_fiat REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_btc_amount REAL")
+	// Drop obsolete 10-minute-window columns (SQLite 3.35+ / modernc.org/sqlite v1.48)
+	db.Exec("ALTER TABLE offers DROP COLUMN avg_ref_price_10m")
+	db.Exec("ALTER TABLE offers DROP COLUMN avg_premium_10m_pct")
+	db.Exec("ALTER TABLE offers DROP COLUMN avg_trade_cost_pct_10m")
+	db.Exec("ALTER TABLE offers DROP COLUMN avg_trade_cost_btc_10m")
+	db.Exec("ALTER TABLE offers DROP COLUMN avg_net_premium_10m_pct")
+	db.Exec("ALTER TABLE offers DROP COLUMN avg_estimated_profit_btc_10m")
+	db.Exec("ALTER TABLE offers DROP COLUMN avg_estimated_profit_fiat_10m")
+	db.Exec("ALTER TABLE offers DROP COLUMN avg_btc_amount_10m")
+	db.Exec("ALTER TABLE offers DROP COLUMN best_route_cex_10m")
+	db.Exec("ALTER TABLE offers DROP COLUMN best_route_method_10m")
 
 	// Seed hub from DB in the background — computing trade costs makes outbound
 	// HTTP requests (mempool.space, exchange APIs) that must not block startup.
@@ -570,7 +599,55 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, o)
 	}
 
+	// Embed lifecycle price history for chart visualization.
+	ids := make([]int64, 0, len(filtered))
+	for _, o := range filtered {
+		ids = append(ids, int64(offerFloat(o, "id")))
+	}
+	lifecycle := fetchOfferLifecycle(ids)
+	for _, o := range filtered {
+		id := int64(offerFloat(o, "id"))
+		if pts, ok := lifecycle[id]; ok {
+			o["lifecycle"] = pts
+		}
+	}
+
 	writeJSON(w, filtered)
+}
+
+// fetchOfferLifecycle returns lifecycle (snapshot_time, price) points grouped by offer_db_id.
+func fetchOfferLifecycle(ids []int64) map[int64][]map[string]any {
+	result := make(map[int64][]map[string]any, len(ids))
+	if len(ids) == 0 {
+		return result
+	}
+	placeholders := strings.Repeat("?,", len(ids))
+	placeholders = placeholders[:len(placeholders)-1]
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		args[i] = id
+	}
+	rows, err := db.Query(fmt.Sprintf(
+		`SELECT offer_db_id, snapshot_time, price FROM order_lifecycle WHERE offer_db_id IN (%s) ORDER BY offer_db_id, snapshot_time`,
+		placeholders,
+	), args...)
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var offerID int64
+		var snapTime string
+		var price float64
+		if err := rows.Scan(&offerID, &snapTime, &price); err != nil {
+			continue
+		}
+		result[offerID] = append(result[offerID], map[string]any{
+			"time":  snapTime,
+			"price": price,
+		})
+	}
+	return result
 }
 
 func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
@@ -703,8 +780,69 @@ func addPastOfferCostFields(o map[string]any) pastOfferAnalysis {
 	}
 }
 
-// handleInternalLiveOffers receives the live offer list from the snapshot tool
-// and updates the hub. No DB read needed — data comes directly from the source.
+// writeLifecycleEntries persists a computed snapshot of each live offer's
+// metrics into order_lifecycle, and updates best_route_cex / best_route_method
+// on the offers table when the optimizer found a valid route.
+func writeLifecycleEntries(offers []liveOutOffer) {
+	if len(offers) == 0 || db == nil {
+		return
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		fmt.Printf("[Lifecycle] begin tx error: %v\n", err)
+		return
+	}
+	insStmt, err := tx.Prepare(`
+		INSERT INTO order_lifecycle
+			(offer_db_id, price, ref_price, premium_pct,
+			 trade_cost_pct, trade_cost_btc, net_premium_pct, net_premium_btc, btc_amount)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`)
+	if err != nil {
+		tx.Rollback()
+		fmt.Printf("[Lifecycle] prepare insert error: %v\n", err)
+		return
+	}
+	defer insStmt.Close()
+
+	updStmt, err := tx.Prepare(`
+		UPDATE offers SET best_route_cex = ?, best_route_method = ? WHERE id = ?
+	`)
+	if err != nil {
+		tx.Rollback()
+		fmt.Printf("[Lifecycle] prepare update error: %v\n", err)
+		return
+	}
+	defer updStmt.Close()
+
+	for _, o := range offers {
+		if o.RefPrice <= 0 {
+			continue
+		}
+		bd := o.CostBreakdown
+		_, _ = insStmt.Exec(
+			o.ID,
+			round4(o.Price),
+			round4(o.RefPrice),
+			round4(o.PriceDiffPct),
+			round4(bd.TotalCostPct),
+			round8(bd.TotalCostBTC),
+			round4(o.NetPremiumPct),
+			round8(bd.EstimatedProfitBTC),
+			round8(bd.BTCAmount),
+		)
+		if bd.RouteCEX != "" {
+			_, _ = updStmt.Exec(bd.RouteCEX, bd.RouteMethod, o.ID)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		fmt.Printf("[Lifecycle] commit error: %v\n", err)
+	}
+}
+
+// handleInternalLiveOffers receives the live offer list from the snapshot tool,
+// updates the hub, and persists a lifecycle snapshot to the DB.
 func handleInternalLiveOffers(w http.ResponseWriter, r *http.Request) {
 	var offers []LiveOffer
 	if err := json.NewDecoder(r.Body).Decode(&offers); err != nil {
@@ -712,6 +850,9 @@ func handleInternalLiveOffers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hub.setOffers(offers)
+	price := getCexPrice(defaultCEX)
+	outOffers := hub.computeOutOffers(price, defaultCEX)
+	go writeLifecycleEntries(outOffers)
 	fmt.Printf("[LiveHub] updated with %d live offers from snapshot\n", len(offers))
 	w.WriteHeader(http.StatusNoContent)
 }

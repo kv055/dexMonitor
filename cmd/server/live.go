@@ -183,11 +183,10 @@ func (h *LiveHub) broadcastAll() {
 	}
 }
 
-// computePayload builds the JSON payload for a given price and CEX.
+// computeOutOffers returns the enriched offer slice for a given price and CEX.
 // If the selected CEX has no price yet, falls back to the default CEX price so
 // that price_diff_percent is always meaningful and offers remain visible.
-// Returns nil on marshal error.
-func (h *LiveHub) computePayload(price float64, cex string) []byte {
+func (h *LiveHub) computeOutOffers(price float64, cex string) []liveOutOffer {
 	if price <= 0 {
 		price = getCexPrice(defaultCEX)
 	}
@@ -220,6 +219,13 @@ func (h *LiveHub) computePayload(price float64, cex string) []byte {
 			PriceType:     o.PriceType,
 		})
 	}
+	return result
+}
+
+// computePayload builds the JSON payload for a given price and CEX.
+// Returns nil on marshal error.
+func (h *LiveHub) computePayload(price float64, cex string) []byte {
+	result := h.computeOutOffers(price, cex)
 	data, err := json.Marshal(result)
 	if err != nil {
 		fmt.Printf("[LiveHub] marshal error: %v\n", err)
