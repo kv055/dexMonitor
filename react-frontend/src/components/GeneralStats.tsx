@@ -1,18 +1,6 @@
-import { useEffect, useRef, useMemo } from 'react';
-import { Chart, PieController, ArcElement, Tooltip } from 'chart.js';
-import { useFilters } from '../context/FiltersContext';
+import { useMemo, useState } from 'react';
 import { LoadingSpinner } from './LoadingSpinner';
-
-Chart.register(PieController, ArcElement, Tooltip);
-
-const PALETTE = [
-  '#f7931a', '#3fb950', '#bc8cff', '#58a6ff', '#f85149',
-  '#d29922', '#39d353', '#db61a2', '#79c0ff', '#e3b341', '#4a4f58',
-];
-
-function normalizeTs(ts: string): string {
-  return ts.replace(' ', 'T') + (ts.endsWith('Z') ? '' : 'Z');
-}
+import type { GeneralStatsData } from '../types';
 
 function fmtDuration(ms: number): string {
   const h = Math.floor(ms / 3_600_000);
@@ -21,171 +9,279 @@ function fmtDuration(ms: number): string {
   return `${m}m`;
 }
 
-interface KpiCardProps {
-  label: string;
-  value: string;
-  sub?: string;
-  valueColor?: string;
-  barFill?: number;
-  barColor?: string;
+function fmtPct(v: number | null): string {
+  if (v == null) return '—';
+  return `${v > 0 ? '+' : ''}${v.toFixed(2)}%`;
 }
 
-function KpiCard({ label, value, sub, valueColor = 'text-text', barFill, barColor = 'bg-green' }: KpiCardProps) {
+function labelForTimeframe(timeframe: string): string {
+  switch (timeframe) {
+    case '6h': return '6h';
+    case '24h': return '24h';
+    case '48h': return '48h';
+    case '7d': return '7d';
+    default: return timeframe;
+  }
+}
+
+// Exchange → Tailwind color token (mirrors OHLCChart colors)
+const EXCHANGE_COLOR: Record<string, string> = {
+  bisq: 'text-accent',
+  hodlhodl: 'text-green',
+  robosats: 'text-purple',
+};
+// Hex values for bar fills (must match CSS tokens exactly)
+const EXCHANGE_HEX: Record<string, string> = {
+  bisq: '#f7931a',
+  hodlhodl: '#3fb950',
+  robosats: '#bc8cff',
+};
+
+function exchangeColor(name: string): string {
+  return EXCHANGE_COLOR[name.toLowerCase()] ?? 'text-muted';
+}
+function exchangeHex(name: string): string {
+  return EXCHANGE_HEX[name.toLowerCase()] ?? '#8b949e';
+}
+
+function premiumColor(v: number | null): string {
+  if (v == null) return 'text-muted';
+  if (v >= 3) return 'text-green';
+  if (v > 0) return 'text-accent';
+  return 'text-red';
+}
+
+function Card({ accent = 'bg-border', accentHex, bottomFill, bottomColor, children }: {
+  accent?: string;
+  accentHex?: string;
+  bottomFill?: number;
+  bottomColor?: string;
+  children: React.ReactNode;
+}) {
   return (
-    <div className="relative flex-1 bg-bg border border-border rounded-lg px-3 py-2 flex flex-col gap-0.5 overflow-hidden min-w-0 min-h-16">
-      <div className={`absolute left-0 top-2 bottom-2 w-0.5 rounded-full ${barFill != null ? barColor : 'bg-border'}`} />
-      <span className="text-[0.58rem] uppercase tracking-widest text-muted font-semibold leading-none">{label}</span>
-      <span className={`text-[1.35rem] font-bold leading-none tabular-nums ${valueColor}`}>{value}</span>
-      {sub && <span className="text-[0.6rem] text-muted leading-none">{sub}</span>}
-      {barFill != null && (
+    <div className="relative bg-bg border border-border rounded-lg px-3 py-2.5 flex flex-col gap-1.5 overflow-hidden min-w-0">
+      <div
+        className={`absolute left-0 top-2 bottom-2 w-0.5 rounded-full ${accentHex ? '' : accent}`}
+        style={accentHex ? { backgroundColor: accentHex } : undefined}
+      />
+      {children}
+      {bottomFill != null && bottomFill > 0 && (
         <div
-          className={`absolute bottom-0 left-0 h-0.5 opacity-30 ${barColor}`}
-          style={{ width: `${Math.min(barFill * 100, 100)}%` }}
+          className={`absolute bottom-0 left-0 h-0.5 opacity-20 ${bottomColor ?? 'bg-border'}`}
+          style={{ width: `${Math.min(bottomFill * 100, 100)}%` }}
         />
       )}
     </div>
   );
 }
 
-function PaymentPieChart({ theme }: { theme: 'dark' | 'light' }) {
-  const { filteredOffers: offers } = useFilters();
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const chartRef = useRef<Chart | null>(null);
-
-  useEffect(() => {
-    if (!canvasRef.current || !offers.length) return;
-
-    const counts: Record<string, number> = {};
-    offers.forEach(o => {
-      const pm = o.payment_method || 'Unknown';
-      counts[pm] = (counts[pm] || 0) + 1;
-    });
-    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    const top = sorted.slice(0, 10);
-    const rest = sorted.slice(10);
-    if (rest.length > 0) top.push(['Others', rest.reduce((s, e) => s + e[1], 0)]);
-
-    if (chartRef.current) chartRef.current.destroy();
-    chartRef.current = new Chart(canvasRef.current, {
-      type: 'pie',
-      data: {
-        labels: top.map(e => e[0]),
-        datasets: [{
-          data: top.map(e => e[1]),
-          backgroundColor: PALETTE.slice(0, top.length),
-          borderWidth: 1,
-          borderColor: 'transparent',
-        }],
-      },
-      options: {
-        responsive: true,
-        maintainAspectRatio: false,
-        plugins: {
-          legend: { display: false },
-          tooltip: { callbacks: { label: (c) => ` ${c.label}: ${c.raw}` } },
-        },
-        layout: { padding: 2 },
-      },
-    });
-    return () => { chartRef.current?.destroy(); chartRef.current = null; };
-  }, [offers, theme]);
-
+function Label({ children }: { children: React.ReactNode }) {
   return (
-    <div className="relative flex-1 bg-bg border border-border rounded-lg px-3 py-2 flex flex-col gap-0.5 overflow-hidden min-w-0">
-      <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-border" />
-      <span className="text-[0.58rem] uppercase tracking-widest text-muted font-semibold leading-none shrink-0">Payment Methods</span>
-      <div className="relative flex-1 min-h-0">
-        <canvas ref={canvasRef} />
-      </div>
-    </div>
+    <span className="text-[0.65rem] uppercase tracking-widest text-muted font-semibold leading-none shrink-0">
+      {children}
+    </span>
   );
 }
 
-export function GeneralStats({ theme }: { theme: 'dark' | 'light' }) {
-  const { offers, loading } = useFilters();
-
-  const stats = useMemo(() => {
-    const lastSeenMap: Record<string, string> = {};
-    offers.forEach(o => {
-      if (o.last_seen && (!lastSeenMap[o.exchange] || o.last_seen > lastSeenMap[o.exchange]))
-        lastSeenMap[o.exchange] = o.last_seen;
-    });
-
-    const openOffers   = offers.filter(o => o.last_seen === lastSeenMap[o.exchange]);
-    const closedOffers = offers.filter(o => o.last_seen !== lastSeenMap[o.exchange]);
-    const openAsks     = openOffers.filter(o => o.direction === 'sell' && o.price_diff_percent != null);
-
-    const bestAskPremium = openAsks.length
-      ? Math.max(...openAsks.map(o => o.price_diff_percent!)) : null;
-    const avgAskPremium = openAsks.length
-      ? openAsks.reduce((s, o) => s + o.price_diff_percent!, 0) / openAsks.length : null;
-
-    const exchangesLive = new Set(openOffers.map(o => o.exchange)).size;
-    const paymentMethods = new Set(openOffers.map(o => o.payment_method).filter(Boolean)).size;
-
-    const durations = closedOffers
-      .filter(o => o.first_seen && o.last_seen)
-      .map(o => new Date(normalizeTs(o.last_seen!)).getTime() - new Date(normalizeTs(o.first_seen!)).getTime())
-      .filter(d => d > 0);
-    const avgLifetime = durations.length
-      ? durations.reduce((s, d) => s + d, 0) / durations.length : null;
-
-    return { totalOffers: offers.length, activeOffers: openOffers.length, exchangesLive, bestAskPremium, avgAskPremium, avgLifetime, paymentMethods };
-  }, [offers]);
-
-  const premiumColor = (v: number | null) =>
-    v == null ? 'text-text' : v >= 3 ? 'text-green' : v >= 1 ? 'text-yellow' : 'text-red';
-  const premiumBarColor = (v: number | null) =>
-    v == null ? 'bg-border' : v >= 3 ? 'bg-green' : v >= 1 ? 'bg-yellow' : 'bg-red';
-
-  if (loading && offers.length === 0) {
-    return (
-      <div className="relative h-16">
-        <LoadingSpinner label="Loading statistics" />
-      </div>
-    );
-  }
+function ExchangesCard({ stats }: { stats: GeneralStatsData }) {
+  const entries = stats.offers_by_exchange ?? [];
+  const max = entries.reduce((m, e) => Math.max(m, e.count), 0);
+  // Accent bar: color of leading exchange
+  const leading = entries[0];
+  const accentHex = leading ? exchangeHex(leading.name) : undefined;
 
   return (
-    <div className="grid grid-cols-2 sm:grid-cols-3 lg:flex gap-1.5 lg:items-stretch h-full">
-      <KpiCard
-        label="Active Offers"
-        value={String(stats.activeOffers)}
-        sub={`${stats.totalOffers} tracked`}
-        barFill={stats.totalOffers > 0 ? stats.activeOffers / stats.totalOffers : 0}
-        barColor="bg-blue"
-      />
-      <KpiCard
-        label="Exchanges Live"
-        value={String(stats.exchangesLive)}
-        sub={`${stats.paymentMethods} pay methods`}
-        barFill={stats.exchangesLive / 5}
-        barColor="bg-purple"
-      />
-      <KpiCard
-        label="Best Ask Premium"
-        value={stats.bestAskPremium != null ? stats.bestAskPremium.toFixed(2) + '%' : '—'}
-        sub="highest open ask"
-        valueColor={premiumColor(stats.bestAskPremium)}
-        barFill={stats.bestAskPremium != null ? Math.min(stats.bestAskPremium / 10, 1) : undefined}
-        barColor={premiumBarColor(stats.bestAskPremium)}
-      />
-      <KpiCard
-        label="Avg Ask Premium"
-        value={stats.avgAskPremium != null ? stats.avgAskPremium.toFixed(2) + '%' : '—'}
-        sub="across open asks"
-        valueColor={premiumColor(stats.avgAskPremium)}
-        barFill={stats.avgAskPremium != null ? Math.min(stats.avgAskPremium / 10, 1) : undefined}
-        barColor={premiumBarColor(stats.avgAskPremium)}
-      />
-      <KpiCard
-        label="Avg Offer Lifetime"
-        value={stats.avgLifetime != null ? fmtDuration(stats.avgLifetime) : '—'}
-        sub="closed offers"
-        barFill={stats.avgLifetime != null ? Math.min(stats.avgLifetime / (24 * 3_600_000), 1) : undefined}
-        barColor="bg-muted"
-      />
-      <PaymentPieChart theme={theme} />
+    <Card accentHex={accentHex}>
+      <div className="flex items-baseline justify-between gap-2">
+        <Label>Exchanges Live</Label>
+        <span className="text-sm font-bold tabular-nums mono-nums leading-none text-text">
+          {stats.exchanges_live}
+        </span>
+      </div>
+      <div className="flex items-center gap-2.5 flex-wrap">
+        {entries.map(e => {
+          const hex = exchangeHex(e.name);
+          const pct = max > 0 ? e.count / max : 0;
+          return (
+            <div key={e.name} className="flex items-center gap-1">
+              {/* mini bar in exchange color */}
+              <div className="w-6 h-0.5 bg-border/40 rounded-full overflow-hidden">
+                <div className="h-full rounded-full" style={{ width: `${pct * 100}%`, backgroundColor: hex, opacity: 0.7 }} />
+              </div>
+              <span className={`text-[0.68rem] font-medium ${exchangeColor(e.name)}`}>{e.name}</span>
+              <span className="text-[0.68rem] tabular-nums mono-nums text-text">{e.count}</span>
+            </div>
+          );
+        })}
+      </div>
+    </Card>
+  );
+}
+
+function LifetimeCard({ stats }: { stats: GeneralStatsData }) {
+  const byExchange = stats.avg_offer_lifetime_ms_by_exchange ?? [];
+  const overall = stats.avg_offer_lifetime_ms;
+  return (
+    <Card accent="bg-muted" bottomFill={overall != null ? Math.min(overall / (24 * 3_600_000), 1) : 0} bottomColor="bg-muted">
+      <div className="flex items-baseline justify-between gap-2">
+        <Label>Avg Offer Lifetime</Label>
+        <span className="text-sm font-bold tabular-nums mono-nums leading-none text-text">
+          {overall != null ? fmtDuration(overall) : '—'}
+        </span>
+      </div>
+      {byExchange.length > 0 && (
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {byExchange.map(e => (
+            <div key={e.name} className="flex items-center gap-1">
+              <span className={`text-[0.68rem] font-medium ${exchangeColor(e.name)}`}>{e.name}</span>
+              <span className="text-[0.68rem] tabular-nums mono-nums text-muted">{fmtDuration(e.ms)}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+function PremiumsCard({ stats }: { stats: GeneralStatsData }) {
+  const bestAsk = stats.best_ask_premium_pct;
+  const avgAsk = stats.avg_ask_premium_pct;
+  const bestBid = stats.best_bid_premium_pct;
+  const avgBid = stats.avg_bid_premium_pct;
+  const bestOverall = Math.max(bestAsk ?? -Infinity, bestBid ?? -Infinity);
+  const barValue = isFinite(bestOverall) ? bestOverall : 0;
+  const barColor = barValue >= 3 ? 'bg-green' : barValue > 0 ? 'bg-accent' : 'bg-red';
+  const accent = barValue > 0 ? barColor : 'bg-border';
+
+  return (
+    <Card accent={accent} bottomFill={barValue > 0 ? Math.min(barValue / 10, 1) : 0} bottomColor={barColor}>
+      <Label>Open Premiums</Label>
+      <div className="flex items-center gap-3 flex-wrap">
+        <div className="flex items-center gap-1.5">
+          <span className="text-[0.68rem] font-bold text-accent leading-none">Asks</span>
+          <span className="text-[0.65rem] text-muted">best</span>
+          <span className={`text-[0.8rem] font-bold tabular-nums mono-nums leading-none ${premiumColor(bestAsk)}`}>{fmtPct(bestAsk)}</span>
+          <span className="text-[0.65rem] text-muted">avg</span>
+          <span className={`text-[0.8rem] font-bold tabular-nums mono-nums leading-none ${premiumColor(avgAsk)}`}>{fmtPct(avgAsk)}</span>
+        </div>
+        <div className="w-px h-3 bg-border/60 shrink-0" />
+        <div className="flex items-center gap-1.5">
+          <span className="text-[0.68rem] font-bold text-blue leading-none">Bids</span>
+          <span className="text-[0.65rem] text-muted">best</span>
+          <span className={`text-[0.8rem] font-bold tabular-nums mono-nums leading-none ${premiumColor(bestBid)}`}>{fmtPct(bestBid)}</span>
+          <span className="text-[0.65rem] text-muted">avg</span>
+          <span className={`text-[0.8rem] font-bold tabular-nums mono-nums leading-none ${premiumColor(avgBid)}`}>{fmtPct(avgBid)}</span>
+        </div>
+      </div>
+    </Card>
+  );
+}
+
+function PastPremiumsCard({ stats }: { stats: GeneralStatsData }) {
+  const frames = stats.past_premiums ?? [];
+  const [selectedTimeframe, setSelectedTimeframe] = useState('24h');
+  const selected = useMemo(() => (
+    frames.find(frame => frame.timeframe === selectedTimeframe)
+      ?? frames.find(frame => frame.timeframe === '24h')
+      ?? frames[0]
+      ?? null
+  ), [frames, selectedTimeframe]);
+  const entries = selected?.avg_premium_by_exchange ?? [];
+  const top = entries.slice(0, 3);
+  const rest = entries.length - top.length;
+  const topValue = top.reduce((best, entry) => Math.max(best, entry.avg_premium_pct), -Infinity);
+  const barValue = isFinite(topValue) ? topValue : 0;
+  const barColor = barValue >= 3 ? 'bg-green' : barValue > 0 ? 'bg-accent' : 'bg-red';
+  const accent = barValue > 0 ? barColor : 'bg-border';
+
+  return (
+    <Card accent={accent} bottomFill={barValue > 0 ? Math.min(barValue / 10, 1) : 0} bottomColor={barColor}>
+      <div className="flex items-baseline justify-between gap-2">
+        <Label>Past Premiums</Label>
+        <span className="text-sm font-bold tabular-nums mono-nums leading-none text-text">
+          {selected ? labelForTimeframe(selected.timeframe) : '—'}
+        </span>
+      </div>
+      <div className="flex items-center gap-1 flex-wrap">
+        {frames.map(frame => (
+          <button
+            key={frame.timeframe}
+            type="button"
+            onClick={() => setSelectedTimeframe(frame.timeframe)}
+            className={`rounded-md border px-2 py-0.5 text-[0.68rem] font-medium transition-colors ${
+              selected?.timeframe === frame.timeframe
+                ? 'border-accent bg-accent text-black'
+                : 'border-border bg-bg/40 text-muted hover:text-text'
+            }`}
+          >
+            {labelForTimeframe(frame.timeframe)}
+          </button>
+        ))}
+      </div>
+      {top.length > 0 ? (
+        <div className="flex items-center gap-2.5 flex-wrap">
+          {top.map(entry => (
+            <div key={`${selected?.timeframe}-${entry.name}`} className="flex items-center gap-1">
+              <span className={`text-[0.68rem] font-medium ${exchangeColor(entry.name)}`}>{entry.name}</span>
+              <span className={`text-[0.72rem] font-bold tabular-nums mono-nums ${premiumColor(entry.avg_premium_pct)}`}>{fmtPct(entry.avg_premium_pct)}</span>
+            </div>
+          ))}
+          {rest > 0 && <span className="text-[0.68rem] text-muted">+{rest}</span>}
+        </div>
+      ) : (
+        <span className="text-[0.68rem] text-muted">No past premiums available.</span>
+      )}
+    </Card>
+  );
+}
+
+function PaymentMethodsCard({ stats }: { stats: GeneralStatsData }) {
+  const counts = stats.payment_method_counts ?? [];
+  const top = counts.slice(0, 5);
+  const rest = counts.slice(5).reduce((s, e) => s + e.count, 0);
+  const max = top.reduce((m, e) => Math.max(m, e.count), 0);
+  // cycle through subtle accent colors for top methods
+  const methodColors = ['text-accent', 'text-blue', 'text-green', 'text-purple', 'text-red'];
+
+  return (
+    <Card accent="bg-blue">
+      <div className="flex items-baseline justify-between gap-2">
+        <Label>Payment Methods</Label>
+        <span className="text-sm font-bold tabular-nums mono-nums leading-none text-blue">{counts.length}</span>
+      </div>
+      <div className="flex items-center gap-2.5 flex-wrap">
+        {top.map((e, i) => {
+          const pct = max > 0 ? e.count / max : 0;
+          return (
+            <div key={e.name} className="flex items-center gap-1">
+              <div className="w-5 h-0.5 bg-border/40 rounded-full overflow-hidden">
+                <div className="h-full rounded-full opacity-60" style={{ width: `${pct * 100}%`, backgroundColor: ['#f7931a','#58a6ff','#3fb950','#bc8cff','#f85149'][i] }} />
+              </div>
+              <span className={`text-[0.68rem] font-medium ${methodColors[i]}`}>{e.name}</span>
+              <span className="text-[0.68rem] tabular-nums mono-nums text-muted">{e.count}</span>
+            </div>
+          );
+        })}
+        {rest > 0 && <span className="text-[0.68rem] text-muted">+{rest}</span>}
+      </div>
+    </Card>
+  );
+}
+
+export function GeneralStats({ theme: _theme, stats, loading }: { theme: 'dark' | 'light'; stats: GeneralStatsData | null; loading: boolean }) {
+  if (loading && !stats) {
+    return <div className="relative h-8"><LoadingSpinner label="Loading statistics" /></div>;
+  }
+  if (!stats) {
+    return <div className="text-sm text-muted">No statistics available.</div>;
+  }
+  return (
+    <div className="grid grid-cols-2 xl:grid-cols-5 gap-1.5">
+      <ExchangesCard stats={stats} />
+      <PremiumsCard stats={stats} />
+      <PastPremiumsCard stats={stats} />
+      <LifetimeCard stats={stats} />
+      <PaymentMethodsCard stats={stats} />
     </div>
   );
 }

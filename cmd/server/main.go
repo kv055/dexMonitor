@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"dexmonitor/internal/pastorders"
+
 	gorillaws "github.com/gorilla/websocket"
 	_ "modernc.org/sqlite"
 )
@@ -447,6 +449,8 @@ func main() {
 
 	// API
 	mux.HandleFunc("GET /api/past_offers", handlePastOffers)
+	mux.HandleFunc("GET /api/past_order_stats", handlePastOrderStats)
+	mux.HandleFunc("GET /api/general_stats", handleGeneralStats)
 	mux.HandleFunc("GET /api/live_offers", handleLiveOffersREST)
 	mux.HandleFunc("GET /ws/live_offers", handleLiveOffersWS)
 	mux.HandleFunc("GET /api/stats", handleStats)
@@ -536,6 +540,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 1000)
 	hours := queryInt(r, "hours", 24)
 	hoursArg := fmt.Sprintf("-%d hours", hours)
+	excludedPaymentMethods := queryExcludedPaymentMethods(r)
 
 	rows, err := db.Query(
 		"SELECT * FROM offers WHERE is_live = 0 AND last_seen >= datetime('now', ?) ORDER BY last_seen DESC LIMIT ?",
@@ -553,32 +558,146 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	filtered := make([]map[string]any, 0, len(offers))
 	for _, o := range offers {
-		dexExchange, _ := o["exchange"].(string)
-		direction, _ := o["direction"].(string)
-		price, _ := o["price"].(float64)
-		refPrice, _ := o["ref_price"].(float64)
-		priceDiff := computeDirectionalPremiumPct(direction, price, refPrice)
-		if refPrice > 0 {
-			o["price_diff_percent"] = priceDiff
+		if isPaymentMethodExcluded(offerString(o, "payment_method"), excludedPaymentMethods) {
+			continue
 		}
-		var btcMaxPtr, btcMinPtr *float64
-		if v, ok := o["btc_max"].(float64); ok && v > 0 {
-			btcMaxPtr = &v
-		}
-		if v, ok := o["btc_min"].(float64); ok && v > 0 {
-			btcMinPtr = &v
-		}
-
-		btcSize := selectBTCTradeSize(btcMaxPtr, btcMinPtr)
-		tradeCostPct, netPremium, bd := computeNetPremiumFields(priceDiff, btcSize, dexExchange)
-
-		o["trade_cost_percent"] = tradeCostPct
-		o["net_premium_percent"] = netPremium
-		o["cost_breakdown"] = bd
+		addPastOfferCostFields(o)
+		filtered = append(filtered, o)
 	}
 
-	writeJSON(w, offers)
+	writeJSON(w, filtered)
+}
+
+func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
+	excludedPaymentMethods := queryExcludedPaymentMethods(r)
+	fiatCurrency := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("fiat")))
+	if fiatCurrency == "" {
+		fiatCurrency = "EUR"
+	}
+
+	rows, err := db.Query(
+		"SELECT * FROM offers WHERE is_live = 0 AND last_seen >= datetime('now', ?) ORDER BY last_seen DESC",
+		"-168 hours",
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer rows.Close()
+
+	offers, err := scanOffers(rows)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	premiumOrders := make([]pastorders.PremiumOrder, 0, len(offers))
+	for _, o := range offers {
+		analysis := addPastOfferCostFields(o)
+		if !analysis.isPremium {
+			continue
+		}
+		premiumOrders = append(premiumOrders, pastorders.PremiumOrder{
+			PaymentMethod: offerString(o, "payment_method"),
+			LastSeen:      parseDBTime(offerString(o, "last_seen")),
+			BTCAmount:     analysis.btcSize,
+			NetProfitBTC:  analysis.estimatedProfitBTC,
+			NetProfitFiat: analysis.estimatedProfitBTC * analysis.refPrice,
+		})
+	}
+
+	writeJSON(w, pastorders.BuildStats(premiumOrders, time.Now(), fiatCurrency, excludedPaymentMethods))
+}
+
+func handleGeneralStats(w http.ResponseWriter, r *http.Request) {
+	hours := queryInt(r, "hours", 24)
+	historyHours := hours
+	if historyHours < 168 {
+		historyHours = 168
+	}
+	hoursArg := fmt.Sprintf("-%d hours", historyHours)
+	excludedPaymentMethods := queryExcludedPaymentMethods(r)
+
+	rows, err := db.Query(
+		"SELECT * FROM offers WHERE last_seen >= datetime('now', ?) ORDER BY last_seen DESC",
+		hoursArg,
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer rows.Close()
+
+	offers, err := scanOffers(rows)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	generalOffers := make([]pastorders.Offer, 0, len(offers))
+	for _, o := range offers {
+		direction := offerString(o, "direction")
+		price := offerFloat(o, "price")
+		refPrice := offerFloat(o, "ref_price")
+		priceDiff := computeDirectionalPremiumPct(direction, price, refPrice)
+		var priceDiffPtr *float64
+		if refPrice > 0 {
+			priceDiffPtr = &priceDiff
+		}
+		generalOffers = append(generalOffers, pastorders.Offer{
+			Exchange:         offerString(o, "exchange"),
+			Direction:        direction,
+			PaymentMethod:    offerString(o, "payment_method"),
+			PriceDiffPercent: priceDiffPtr,
+			FirstSeen:        parseDBTime(offerString(o, "first_seen")),
+			LastSeen:         parseDBTime(offerString(o, "last_seen")),
+			IsLive:           offerBool(o, "is_live"),
+		})
+	}
+
+	writeJSON(w, pastorders.BuildGeneralStats(generalOffers, time.Now(), hours, excludedPaymentMethods))
+}
+
+type pastOfferAnalysis struct {
+	isPremium          bool
+	btcSize            float64
+	refPrice           float64
+	estimatedProfitBTC float64
+}
+
+func addPastOfferCostFields(o map[string]any) pastOfferAnalysis {
+	dexExchange := offerString(o, "exchange")
+	direction := offerString(o, "direction")
+	price := offerFloat(o, "price")
+	refPrice := offerFloat(o, "ref_price")
+	priceDiff := computeDirectionalPremiumPct(direction, price, refPrice)
+	if refPrice > 0 {
+		o["price_diff_percent"] = priceDiff
+	}
+
+	var btcMaxPtr, btcMinPtr *float64
+	if v := offerFloat(o, "btc_max"); v > 0 {
+		btcMaxPtr = &v
+	}
+	if v := offerFloat(o, "btc_min"); v > 0 {
+		btcMinPtr = &v
+	}
+
+	btcSize := selectBTCTradeSize(btcMaxPtr, btcMinPtr)
+	tradeCostPct, netPremium, bd := computeNetPremiumFields(priceDiff, btcSize, dexExchange)
+
+	o["trade_cost_percent"] = tradeCostPct
+	o["net_premium_percent"] = netPremium
+	o["cost_breakdown"] = bd
+
+	return pastOfferAnalysis{
+		isPremium:          priceDiff > 0,
+		btcSize:            btcSize,
+		refPrice:           refPrice,
+		estimatedProfitBTC: bd.EstimatedProfitBTC,
+	}
 }
 
 // handleInternalLiveOffers receives the live offer list from the snapshot tool
@@ -1003,8 +1122,8 @@ func fetchCoinbaseOHLC(hours int) []map[string]any {
 
 func parseDBTime(s string) time.Time {
 	for _, layout := range []string{"2006-01-02T15:04:05Z", "2006-01-02T15:04:05", "2006-01-02 15:04:05"} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t
+		if t, err := time.ParseInLocation(layout, s, time.UTC); err == nil {
+			return t.UTC()
 		}
 	}
 	return time.Time{}
@@ -1055,6 +1174,86 @@ func queryInt(r *http.Request, key string, defaultVal int) int {
 		return defaultVal
 	}
 	return v
+}
+
+func queryExcludedPaymentMethods(r *http.Request) []string {
+	values := append([]string{}, r.URL.Query()["exclude_payment_methods"]...)
+	values = append(values, r.URL.Query()["exclude_payment_method"]...)
+
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, raw := range values {
+		for _, part := range strings.Split(raw, ",") {
+			method := strings.TrimSpace(part)
+			if method == "" {
+				continue
+			}
+			if _, ok := seen[method]; ok {
+				continue
+			}
+			seen[method] = struct{}{}
+			result = append(result, method)
+		}
+	}
+	return result
+}
+
+func isPaymentMethodExcluded(method string, excluded []string) bool {
+	for _, blocked := range excluded {
+		if method == blocked {
+			return true
+		}
+	}
+	return false
+}
+
+func offerString(o map[string]any, key string) string {
+	switch v := o[key].(type) {
+	case string:
+		return v
+	case []byte:
+		return string(v)
+	case time.Time:
+		return v.UTC().Format("2006-01-02 15:04:05")
+	default:
+		return ""
+	}
+}
+
+func offerFloat(o map[string]any, key string) float64 {
+	switch v := o[key].(type) {
+	case float64:
+		return v
+	case int64:
+		return float64(v)
+	case int:
+		return float64(v)
+	case []byte:
+		f, _ := strconv.ParseFloat(string(v), 64)
+		return f
+	case string:
+		f, _ := strconv.ParseFloat(v, 64)
+		return f
+	default:
+		return 0
+	}
+}
+
+func offerBool(o map[string]any, key string) bool {
+	switch v := o[key].(type) {
+	case bool:
+		return v
+	case int64:
+		return v != 0
+	case int:
+		return v != 0
+	case []byte:
+		return string(v) == "1" || strings.EqualFold(string(v), "true")
+	case string:
+		return v == "1" || strings.EqualFold(v, "true")
+	default:
+		return false
+	}
 }
 
 func forwardMMControllerJSON(w http.ResponseWriter, r *http.Request, path string) {

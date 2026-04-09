@@ -105,6 +105,37 @@ export interface PastOrderStats {
   timeframes: PastOrderTimeframeStats[];
 }
 
+export interface NamedCount {
+  name: string;
+  count: number;
+}
+
+export interface NamedPremium {
+  name: string;
+  avg_premium_pct: number;
+}
+
+export interface PastPremiumTimeframeStats {
+  timeframe: string;
+  hours: number;
+  avg_premium_by_exchange: NamedPremium[];
+}
+
+export interface GeneralStatsData {
+  total_offers: number;
+  active_offers: number;
+  exchanges_live: number;
+  offers_by_exchange: NamedCount[];
+  best_ask_premium_pct: number | null;
+  avg_ask_premium_pct: number | null;
+  best_bid_premium_pct: number | null;
+  avg_bid_premium_pct: number | null;
+  avg_offer_lifetime_ms: number | null;
+  avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[];
+  payment_method_counts: NamedCount[];
+  past_premiums?: PastPremiumTimeframeStats[];
+}
+
 export interface Filters {
   direction: string;
   exchange: string;
