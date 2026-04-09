@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { ExchangeTag } from './ExchangeTag';
-import { formatNum, formatBtc, premiumClass } from '../utils/formatters';
+import { formatNum, formatBtc, premiumClass, formatTime, formatDuration } from '../utils/formatters';
+import { useTimezone } from '../context/TimezoneContext';
 import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
 import type { CostBreakdown, BTCNetworkFeeDetail as BTCDetail } from '../types';
@@ -276,8 +277,37 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
   );
 }
 
+function OfferTimeMeta({ firstSeen, lastSeen, isLive, timezone }: {
+  firstSeen: string | null;
+  lastSeen: string | null;
+  isLive: boolean;
+  timezone: string;
+}) {
+  return (
+    <div className="flex flex-wrap gap-x-4 gap-y-1 text-[0.68rem] text-muted">
+      <span>
+        <span className="uppercase tracking-wide text-[0.6rem] mr-1">First seen</span>
+        <span className="text-text">{formatTime(firstSeen, timezone)}</span>
+      </span>
+      {!isLive && (
+        <>
+          <span>
+            <span className="uppercase tracking-wide text-[0.6rem] mr-1">Last seen</span>
+            <span className="text-text">{formatTime(lastSeen, timezone)}</span>
+          </span>
+          <span>
+            <span className="uppercase tracking-wide text-[0.6rem] mr-1">Duration</span>
+            <span className="text-text">{formatDuration(firstSeen, lastSeen)}</span>
+          </span>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function OffersPreviewTable() {
   const { filteredOffers: offers, selectedOfferId, setSelectedOfferId, loading } = useFilters();
+  const { timezone } = useTimezone();
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
 
@@ -367,6 +397,7 @@ export function OffersPreviewTable() {
               >
                 ×
               </button>
+              <OfferTimeMeta firstSeen={selectedOffer.first_seen} lastSeen={selectedOffer.last_seen} isLive={selectedOffer.is_live} timezone={timezone} />
               {selectedOffer.cost_breakdown ? (
                 <CostBreakdownPanel
                   bd={selectedOffer.cost_breakdown}
@@ -404,14 +435,15 @@ export function OffersPreviewTable() {
               <th className={`${TH_BASE} text-right ${hasSelection ? 'w-[1%]' : ''}`}>Price</th>
               <th className={`${TH_BASE} text-right ${hasSelection ? 'w-[1%]' : ''}`}>Min BTC</th>
               <th className={`${TH_BASE} text-right ${hasSelection ? 'w-[1%]' : ''}`}>Max BTC</th>
-              {!hasSelection && <th className={`${TH_BASE} text-right`}>Fiat Min</th>}
-              {!hasSelection && <th className={`${TH_BASE} text-right`}>Fiat Max</th>}
+              <th className={`${TH_BASE} text-right ${hasSelection ? 'w-[1%]' : ''}`}>Fiat Min</th>
+              <th className={`${TH_BASE} text-right ${hasSelection ? 'w-[1%]' : ''}`}>Fiat Max</th>
+              <th className={`${TH_BASE} ${hasSelection ? 'w-[1%]' : ''}`}>Status</th>
               <th className={TH_BASE}>Payment</th>
             </tr>
           </thead>
           <tbody>
             {offers.length === 0 ? (
-              !loading && <tr><td colSpan={hasSelection ? 7 : 9} className="p-4 text-center text-muted">No offers</td></tr>
+              !loading && <tr><td colSpan={10} className="p-4 text-center text-muted">No offers</td></tr>
             ) : offers.map((o) => {
               const isSelected = o.id === selectedOfferId;
               return (
@@ -435,16 +467,18 @@ export function OffersPreviewTable() {
                   <td className={`${TD} text-right`}>€{formatNum(o.price)}</td>
                   <td className={`${TD} text-right`}>{formatBtc(o.btc_min)}</td>
                   <td className={`${TD} text-right`}>{formatBtc(o.btc_max)}</td>
-                  {!hasSelection && (
-                    <td className={`${TD} text-right`}>
-                      {o.btc_min != null ? `€${formatNum(o.btc_min * o.price)}` : '—'}
-                    </td>
-                  )}
-                  {!hasSelection && (
-                    <td className={`${TD} text-right`}>
-                      {o.btc_max != null ? `€${formatNum(o.btc_max * o.price)}` : '—'}
-                    </td>
-                  )}
+                  <td className={`${TD} text-right`}>
+                    {o.btc_min != null ? `€${formatNum(o.btc_min * o.price)}` : '—'}
+                  </td>
+                  <td className={`${TD} text-right`}>
+                    {o.btc_max != null ? `€${formatNum(o.btc_max * o.price)}` : '—'}
+                  </td>
+                  <td className={TD}>
+                    {o.is_live
+                      ? <span className="text-green">live</span>
+                      : <span className="text-muted">closed</span>
+                    }
+                  </td>
                   <td className={`${TD} overflow-hidden`}>
                     <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
                       {o.payment_method || '—'}
@@ -467,15 +501,18 @@ export function OffersPreviewTable() {
         }}
       >
         {selectedOffer && (
-          <div className="relative pt-10 px-4 pb-4 h-full overflow-y-auto">
+          <div className="relative flex flex-col h-full overflow-hidden">
             <button
               onClick={() => setSelectedOfferId(null)}
-              className="absolute top-3 right-3 z-20 w-7 h-7 flex items-center justify-center text-red hover:text-red/70 bg-transparent border-none cursor-pointer text-xl leading-none rounded transition-colors"
+              className="absolute top-1 right-2 z-20 w-5 h-5 flex items-center justify-center text-red hover:text-red/70 bg-transparent border-none cursor-pointer text-lg leading-none rounded transition-colors"
               title="Close"
             >
               ×
             </button>
-
+            <div className="px-4 pt-1.5 pb-1 pr-8 shrink-0">
+              <OfferTimeMeta firstSeen={selectedOffer.first_seen} lastSeen={selectedOffer.last_seen} isLive={selectedOffer.is_live} timezone={timezone} />
+            </div>
+            <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
             {selectedOffer.cost_breakdown ? (
               <CostBreakdownPanel
                 bd={selectedOffer.cost_breakdown}
@@ -486,6 +523,7 @@ export function OffersPreviewTable() {
             ) : (
               <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
             )}
+            </div>
           </div>
         )}
       </div>
