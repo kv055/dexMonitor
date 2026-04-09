@@ -29,6 +29,7 @@ type LiveOffer struct {
 	OfferID       *string  `json:"offer_id"`
 	FirstSeen     string   `json:"first_seen"`
 	LastSeen      string   `json:"last_seen"`
+	PriceType     *string  `json:"price_type"`
 }
 
 // liveOutOffer is the shape sent to clients — includes computed premium fields.
@@ -51,6 +52,7 @@ type liveOutOffer struct {
 	FirstSeen     string        `json:"first_seen"`
 	LastSeen      string        `json:"last_seen"`
 	IsLive        bool          `json:"is_live"`
+	PriceType     *string       `json:"price_type"`
 }
 
 func computePriceDiffPct(offerPrice, refPrice float64) float64 {
@@ -215,6 +217,7 @@ func (h *LiveHub) computePayload(price float64, cex string) []byte {
 			FirstSeen:     o.FirstSeen,
 			LastSeen:      o.LastSeen,
 			IsLive:        true,
+			PriceType:     o.PriceType,
 		})
 	}
 	data, err := json.Marshal(result)

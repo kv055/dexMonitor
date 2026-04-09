@@ -51,7 +51,7 @@ var tradeRouteOptimizer *TradeRouteOptimizer
 func seedHubFromDB() {
 	rows, err := db.Query(`
 		SELECT id, exchange, direction, price, btc_min, btc_max,
-		       fiat_min, fiat_max, payment_method, offer_id, first_seen, last_seen
+		       fiat_min, fiat_max, payment_method, offer_id, first_seen, last_seen, price_type
 		FROM offers WHERE is_live = 1
 	`)
 	if err != nil {
@@ -65,11 +65,11 @@ func seedHubFromDB() {
 		var o LiveOffer
 		var btcMin, btcMax sql.NullFloat64
 		var fiatMin, fiatMax sql.NullInt64
-		var paymentMethod, offerID sql.NullString
+		var paymentMethod, offerID, priceType sql.NullString
 		if err := rows.Scan(
 			&o.ID, &o.Exchange, &o.Direction, &o.Price,
 			&btcMin, &btcMax, &fiatMin, &fiatMax,
-			&paymentMethod, &offerID, &o.FirstSeen, &o.LastSeen,
+			&paymentMethod, &offerID, &o.FirstSeen, &o.LastSeen, &priceType,
 		); err != nil {
 			continue
 		}
@@ -90,6 +90,9 @@ func seedHubFromDB() {
 		}
 		if offerID.Valid {
 			o.OfferID = &offerID.String
+		}
+		if priceType.Valid {
+			o.PriceType = &priceType.String
 		}
 		offers = append(offers, o)
 	}

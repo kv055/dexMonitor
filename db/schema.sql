@@ -34,7 +34,8 @@ CREATE TABLE offers (
     avg_estimated_profit_fiat_10m REAL,
     avg_btc_amount_10m REAL,
     best_route_cex_10m TEXT,
-    best_route_method_10m TEXT
+    best_route_method_10m TEXT,
+    price_type TEXT
 );
 
 CREATE INDEX idx_snapshots_time ON snapshots(timestamp);

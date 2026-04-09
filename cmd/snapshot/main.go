@@ -71,12 +71,16 @@ type offer struct {
 	FiatMin       *int     `json:"fiat_min,omitempty"`
 	FiatMax       *int     `json:"fiat_max,omitempty"`
 	PaymentMethod string   `json:"payment_method,omitempty"`
+	PriceType     *string  `json:"price_type,omitempty"`
 }
 
 type fetchResult struct {
 	BTCPrice float64
 	Offers   []offer
 }
+
+func priceTypeFixed() *string    { s := "fixed"; return &s }
+func priceTypeFloating() *string { s := "floating"; return &s }
 
 // --- HTTP clients ---
 
@@ -226,6 +230,10 @@ func fetchBisq(direction string, btcPrice int) *fetchResult {
 		btcMax := float64(o.Amount) / 1e8
 		fiatMin := int(parseFloatStr(o.MinVolume))
 		fiatMax := int(parseFloatStr(o.Volume))
+		pt := priceTypeFixed()
+		if o.UseMarketBasedPrice {
+			pt = priceTypeFloating()
+		}
 		offers = append(offers, offer{
 			OfferID:       o.Id,
 			Price:         price,
@@ -234,6 +242,7 @@ func fetchBisq(direction string, btcPrice int) *fetchResult {
 			FiatMin:       &fiatMin,
 			FiatMax:       &fiatMax,
 			PaymentMethod: o.PaymentMethodShortName,
+			PriceType:     pt,
 		})
 	}
 
@@ -252,10 +261,11 @@ func fetchHodlHodl(direction string, btcPrice int) *fetchResult {
 
 	var data struct {
 		Offers []struct {
-			ID        string `json:"id"`
-			Price     string `json:"price"`
-			MinAmount string `json:"min_amount"`
-			MaxAmount string `json:"max_amount"`
+			ID          string `json:"id"`
+			Price       string `json:"price"`
+			PriceSource string `json:"price_source"`
+			MinAmount   string `json:"min_amount"`
+			MaxAmount   string `json:"max_amount"`
 			PaymentMethods []struct {
 				Name string `json:"name"`
 			} `json:"payment_methods"`
@@ -290,6 +300,14 @@ func fetchHodlHodl(direction string, btcPrice int) *fetchResult {
 			method = "NATIONAL_BANK"
 		}
 
+		var pt *string
+		switch o.PriceSource {
+		case "fixed_value":
+			pt = priceTypeFixed()
+		case "exchange_rate":
+			pt = priceTypeFloating()
+		}
+
 		btcMin := round8(float64(fiatMin) / price)
 		btcMax := round8(float64(fiatMax) / price)
 		offers = append(offers, offer{
@@ -300,6 +318,7 @@ func fetchHodlHodl(direction string, btcPrice int) *fetchResult {
 			FiatMin:       &fiatMin,
 			FiatMax:       &fiatMax,
 			PaymentMethod: method,
+			PriceType:     pt,
 		})
 	}
 
@@ -356,12 +375,14 @@ func fetchRobosats(direction string, btcPrice int) *fetchResult {
 			}
 			// RoboSats sometimes returns price=0 with only a premium percentage.
 			// Derive absolute price from the reference BTC price in that case.
+			pt := priceTypeFixed()
 			if price == 0 {
 				premium, _ := line.Premium.Float64()
 				if premium == 0 || btcPrice == 0 {
 					continue
 				}
 				price = float64(btcPrice) * (1 + premium/100)
+				pt = priceTypeFloating()
 			}
 
 			var fiatMin, fiatMax int
@@ -387,6 +408,7 @@ func fetchRobosats(direction string, btcPrice int) *fetchResult {
 				FiatMin:       &fiatMin,
 				FiatMax:       &fiatMax,
 				PaymentMethod: line.PaymentMethod,
+				PriceType:     pt,
 			})
 		}
 
@@ -440,10 +462,10 @@ func saveSnapshot(sdb *sql.DB, exchange, fiat, direction string, btcPrice float6
 		} else {
 			tx.Exec(`INSERT INTO offers
 				(exchange, direction, price, btc_min, btc_max,
-				 fiat_min, fiat_max, payment_method, offer_id)
-				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+				 fiat_min, fiat_max, payment_method, offer_id, price_type)
+				VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 				exchange, direction, o.Price, o.BTCMin, o.BTCMax,
-				o.FiatMin, o.FiatMax, o.PaymentMethod, nilIfEmpty(o.OfferID))
+				o.FiatMin, o.FiatMax, o.PaymentMethod, nilIfEmpty(o.OfferID), o.PriceType)
 			inserted++
 		}
 	}
@@ -503,6 +525,7 @@ func main() {
 	sdb.Exec("ALTER TABLE offers ADD COLUMN avg_btc_amount_10m REAL")
 	sdb.Exec("ALTER TABLE offers ADD COLUMN best_route_cex_10m TEXT")
 	sdb.Exec("ALTER TABLE offers ADD COLUMN best_route_method_10m TEXT")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN price_type TEXT")
 	sdb.Exec(`CREATE TABLE IF NOT EXISTS kraken_ohlc (
 		time  DATETIME PRIMARY KEY,
 		open  REAL NOT NULL,
@@ -748,11 +771,12 @@ func pushLiveOffersToServer(sdb *sql.DB, serverURL string) {
 		OfferID       *string  `json:"offer_id"`
 		FirstSeen     string   `json:"first_seen"`
 		LastSeen      string   `json:"last_seen"`
+		PriceType     *string  `json:"price_type"`
 	}
 
 	rows, err := sdb.Query(`
 		SELECT id, exchange, direction, price, btc_min, btc_max,
-		       fiat_min, fiat_max, payment_method, offer_id, first_seen, last_seen
+		       fiat_min, fiat_max, payment_method, offer_id, first_seen, last_seen, price_type
 		FROM offers WHERE is_live = 1
 	`)
 	if err != nil {
@@ -766,11 +790,11 @@ func pushLiveOffersToServer(sdb *sql.DB, serverURL string) {
 		var o livePayload
 		var btcMin, btcMax sql.NullFloat64
 		var fiatMin, fiatMax sql.NullInt64
-		var paymentMethod, offerID sql.NullString
+		var paymentMethod, offerID, priceType sql.NullString
 		if err := rows.Scan(
 			&o.ID, &o.Exchange, &o.Direction, &o.Price,
 			&btcMin, &btcMax, &fiatMin, &fiatMax,
-			&paymentMethod, &offerID, &o.FirstSeen, &o.LastSeen,
+			&paymentMethod, &offerID, &o.FirstSeen, &o.LastSeen, &priceType,
 		); err != nil {
 			fmt.Printf("[LivePush] scan error: %v\n", err)
 			continue
@@ -781,6 +805,7 @@ func pushLiveOffersToServer(sdb *sql.DB, serverURL string) {
 		if fiatMax.Valid       { o.FiatMax = &fiatMax.Int64 }
 		if paymentMethod.Valid { o.PaymentMethod = &paymentMethod.String }
 		if offerID.Valid       { o.OfferID = &offerID.String }
+		if priceType.Valid     { o.PriceType = &priceType.String }
 		offers = append(offers, o)
 	}
 	rows.Close()
@@ -866,8 +891,8 @@ func fetchAndStoreKrakenOHLCSince(sdb *sql.DB, sinceUnix int64) {
 // Returns 0 if parsing fails.
 func parseDBTimeUnix(s string) int64 {
 	for _, layout := range []string{"2006-01-02 15:04:05", "2006-01-02T15:04:05", "2006-01-02T15:04:05Z"} {
-		if t, err := time.Parse(layout, s); err == nil {
-			return t.Unix()
+		if t, err := time.ParseInLocation(layout, s, time.UTC); err == nil {
+			return t.UTC().Unix()
 		}
 	}
 	return 0
