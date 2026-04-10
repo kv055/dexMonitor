@@ -76,8 +76,15 @@ function OnchainFeeDetail({ d, conf }: { d: BTCDetail; conf: number }) {
             <span className="text-muted">Tx structure</span>
             <span className="text-text font-mono">
               {d.tx_inputs}in · {d.tx_outputs}out · {d.tx_type} · {d.tx_vbytes} vB
+              {d.num_txs > 1 && <span className="text-orange-400 ml-1.5">× {d.num_txs} txs</span>}
             </span>
           </div>
+          {d.num_txs > 1 && (
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted">Why 2 txs?</span>
+              <span className="text-muted text-right">CEX withdraw → pre-approved addr → trade wallet</span>
+            </div>
+          )}
           {/* Selected rate */}
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted">Selected rate</span>
@@ -149,10 +156,14 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
     ? !!bd.network_fee_detail
     : bd.network_fee_method === 'lightning';
 
+  const isAsk = bd.trade_direction === 'ask';
+  const numTxs = bd.num_network_txs ?? (isAsk ? 1 : 2);
+  const networkFeeLabel = `BTC network fee${numTxs > 1 ? ` ×${numTxs} txs` : ''}`;
+
   const rows: { label: string; btc: number; pct: number; expandable?: boolean }[] = [
     { label: 'CEX taker fee',    btc: bd.cex_taker_fee_btc,  pct: bd.cex_taker_fee_pct  },
-    { label: 'CEX withdrawal',   btc: bd.withdrawal_fee_btc,  pct: bd.withdrawal_fee_pct  },
-    { label: 'BTC network fee',  btc: bd.network_fee_btc,     pct: bd.network_fee_pct,    expandable: hasNetworkFeeDetail },
+    ...(!isAsk ? [{ label: 'CEX withdrawal', btc: bd.withdrawal_fee_btc, pct: bd.withdrawal_fee_pct }] : []),
+    { label: networkFeeLabel,    btc: bd.network_fee_btc,     pct: bd.network_fee_pct,    expandable: hasNetworkFeeDetail },
     { label: 'DEX platform fee', btc: bd.dex_fee_btc,         pct: bd.dex_fee_pct         },
   ];
   const routeCex = bd.route_cex || '—';
@@ -177,7 +188,12 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
     <div className="flex flex-col gap-3 text-[0.72rem]">
       {/* Section header */}
       <div className="flex items-baseline justify-between gap-2 flex-wrap">
-        <span className="text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Trade cost breakdown</span>
+        <div className="flex items-center gap-2">
+          <span className="text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Trade cost breakdown</span>
+          <span className={`text-[0.6rem] font-semibold px-1.5 py-0.5 rounded ${isAsk ? 'bg-orange-900/30 text-orange-400' : 'bg-blue-900/30 text-blue-400'}`}>
+            {isAsk ? 'Ask side' : 'Bid side'}
+          </span>
+        </div>
         <div className="flex items-baseline gap-1.5">
           <span className="text-text text-[0.9rem] font-semibold mono-nums">{fmt8(bd.btc_amount)} BTC</span>
           <span className="text-muted text-[0.75rem] mono-nums">{fmtFiatAmount(fiatValue(bd.btc_amount))}</span>

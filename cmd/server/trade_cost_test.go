@@ -64,19 +64,19 @@ func TestTradeCostEstimatorCostPctUsesAllComponents(t *testing.T) {
 func TestTradeCostEstimatorBreakdownMatchesComponentSum(t *testing.T) {
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
 
-	bd := est.Breakdown(0.1, "bisq")
+	bd := est.Breakdown(0.1, "bisq", "buy")
 
 	assertFloat(t, bd.BTCAmount, 0.1)
 	assertFloat(t, bd.CexTakerFeeBTC, 0.00025)
 	assertFloat(t, bd.CexTakerFeePct, 0.25)
 	assertFloat(t, bd.WithdrawalFeeBTC, 0.00015)
 	assertFloat(t, bd.WithdrawalFeePct, 0.15)
-	assertFloat(t, bd.NetworkFeeBTC, 0.00005)
-	assertFloat(t, bd.NetworkFeePct, 0.05)
+	assertFloat(t, bd.NetworkFeeBTC, 0.0001) // 2 txs × 0.00005
+	assertFloat(t, bd.NetworkFeePct, 0.1)
 	assertFloat(t, bd.DexFeeBTC, 0.0001)
 	assertFloat(t, bd.DexFeePct, 0.1)
-	assertFloat(t, bd.TotalCostBTC, 0.00055)
-	assertFloat(t, bd.TotalCostPct, 0.55)
+	assertFloat(t, bd.TotalCostBTC, 0.0006)
+	assertFloat(t, bd.TotalCostPct, 0.6)
 	if bd.NetworkFeeMethod != "onchain" {
 		t.Fatalf("network method = %q, want onchain", bd.NetworkFeeMethod)
 	}
@@ -88,7 +88,7 @@ func TestTradeCostEstimatorBreakdownMatchesComponentSum(t *testing.T) {
 func TestTradeCostEstimatorBreakdownRoundsBTCAndPercentFields(t *testing.T) {
 	est := fixedCostEstimator("kraken", "bisq", 0.00123456789, 0.000000004, 0.00098765432, 0.000000006)
 
-	bd := est.Breakdown(0.123456789, "bisq")
+	bd := est.Breakdown(0.123456789, "bisq", "buy")
 
 	assertFloat(t, bd.BTCAmount, 0.12345679)
 	assertFloat(t, bd.CexTakerFeeBTC, 0.00015242)
@@ -104,7 +104,7 @@ func TestTradeCostEstimatorZeroAmountReturnsEmptyCost(t *testing.T) {
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
 
 	assertFloat(t, est.CostPct(0, "bisq"), 0)
-	if bd := est.Breakdown(0, "bisq"); bd != (CostBreakdown{}) {
+	if bd := est.Breakdown(0, "bisq", "buy"); bd != (CostBreakdown{}) {
 		t.Fatalf("zero amount breakdown = %#v, want empty breakdown", bd)
 	}
 }
@@ -136,14 +136,14 @@ func TestComputeNetPremiumFields(t *testing.T) {
 	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
 	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
 
-	tradeCostPct, netPremium, bd := computeNetPremiumFields(2.5, 0.1, "bisq")
+	tradeCostPct, netPremium, bd := computeNetPremiumFields(2.5, 0.1, "bisq", "buy")
 
-	assertFloat(t, tradeCostPct, 0.55)
-	assertFloat(t, netPremium, 1.95)
-	assertFloat(t, bd.EstimatedProfitPct, 1.95)
-	assertFloat(t, bd.EstimatedProfitBTC, 0.00195)
+	assertFloat(t, tradeCostPct, 0.6)
+	assertFloat(t, netPremium, 1.9)
+	assertFloat(t, bd.EstimatedProfitPct, 1.9)
+	assertFloat(t, bd.EstimatedProfitBTC, 0.0019)
 
-	tradeCostPct, netPremium, bd = computeNetPremiumFields(-1, 0.1, "bisq")
+	tradeCostPct, netPremium, bd = computeNetPremiumFields(-1, 0.1, "bisq", "buy")
 	assertFloat(t, tradeCostPct, 0)
 	assertFloat(t, netPremium, 0)
 	if bd != (CostBreakdown{}) {

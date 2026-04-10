@@ -803,7 +803,7 @@ func addPastOfferCostFields(o map[string]any) pastOfferAnalysis {
 	}
 
 	btcSize := selectBTCTradeSize(btcMaxPtr, btcMinPtr)
-	tradeCostPct, netPremium, bd := computeNetPremiumFields(priceDiff, btcSize, dexExchange)
+	tradeCostPct, netPremium, bd := computeNetPremiumFields(priceDiff, btcSize, dexExchange, direction)
 
 	o["trade_cost_percent"] = tradeCostPct
 	o["net_premium_percent"] = netPremium

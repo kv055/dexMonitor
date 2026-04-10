@@ -671,10 +671,11 @@ func NewTradeRouteOptimizer(estimators map[string]*TradeCostEstimator) *TradeRou
 // BTCNetworkFeeDetail carries the full onchain fee calculation context for display.
 // Only populated for onchain transfers; nil for Lightning.
 type BTCNetworkFeeDetail struct {
-	TxVBytes           int64   `json:"tx_vbytes"` // calculated virtual size
+	TxVBytes           int64   `json:"tx_vbytes"` // calculated virtual size (per tx)
 	TxType             string  `json:"tx_type"`   // "P2WPKH", "P2TR", etc.
 	TxInputs           int     `json:"tx_inputs"`
 	TxOutputs          int     `json:"tx_outputs"`
+	NumTxs             int     `json:"num_txs"`   // number of transactions (2 for bid side, 1 for ask side)
 	SelectedSatVB      int64   `json:"selected_sat_vb"` // fee rate for the chosen tier
 	EconomicSatVB      int64   `json:"economic_sat_vb"` // all-tier rates for comparison
 	StandardSatVB      int64   `json:"standard_sat_vb"`
@@ -813,12 +814,14 @@ type CostBreakdown struct {
 	RouteCEX             string               `json:"route_cex"`              // chosen CEX for the cheapest route
 	RouteDEX             string               `json:"route_dex"`              // DEX of the evaluated offer
 	RouteMethod          string               `json:"route_method"`           // chosen settlement method for the cheapest route
+	TradeDirection       string               `json:"trade_direction"`        // "bid" (buy CEX→sell DEX) or "ask" (buy DEX→sell CEX)
+	NumNetworkTxs        int                  `json:"num_network_txs"`        // 2 for bid side (pre-approved addr hop), 1 for ask side
 	EstimatedProfitPct   float64              `json:"estimated_profit_pct"`   // net premium after costs as % of trade
 	EstimatedProfitBTC   float64              `json:"estimated_profit_btc"`   // estimated profit in BTC for the chosen trade size
 	CexTakerFeePct       float64              `json:"cex_taker_fee_pct"`      // CEX taker fee as % of trade
 	CexTakerFeeBTC       float64              `json:"cex_taker_fee_btc"`      // CEX taker fee in BTC
-	WithdrawalFeePct     float64              `json:"withdrawal_fee_pct"`     // CEX BTC withdrawal fee as % of trade
-	WithdrawalFeeBTC     float64              `json:"withdrawal_fee_btc"`     // CEX BTC withdrawal fee in BTC
+	WithdrawalFeePct     float64              `json:"withdrawal_fee_pct"`     // CEX BTC withdrawal fee as % of trade (0 for ask side)
+	WithdrawalFeeBTC     float64              `json:"withdrawal_fee_btc"`     // CEX BTC withdrawal fee in BTC (0 for ask side)
 	NetworkFeePct        float64              `json:"network_fee_pct"`        // settlement network fee as % of trade
 	NetworkFeeBTC        float64              `json:"network_fee_btc"`        // settlement network fee in BTC
 	NetworkFeeMethod     string               `json:"network_fee_method"`     // "onchain" or "lightning"
@@ -839,27 +842,47 @@ func round4(v float64) float64 {
 	return math.Round(v*1e4) / 1e4
 }
 
-// Breakdown returns a full per-component cost breakdown for a given trade size and DEX.
-func (e *TradeCostEstimator) Breakdown(btcAmount float64, dexExchange string) CostBreakdown {
+// Breakdown returns a full per-component cost breakdown for a given trade size, DEX, and offer direction.
+// direction should be the DEX offer direction: "buy" (bid side) or "sell" (ask side).
+func (e *TradeCostEstimator) Breakdown(btcAmount float64, dexExchange string, direction string) CostBreakdown {
 	if btcAmount <= 0 {
 		return CostBreakdown{}
 	}
 	method := resolveWithdrawalMethod(e.cexProfile, dexExchange)
-	return e.breakdownForMethod(btcAmount, dexExchange, method)
+	return e.breakdownForMethod(btcAmount, dexExchange, method, direction)
 }
 
-func (e *TradeCostEstimator) breakdownForMethod(btcAmount float64, dexExchange string, method WithdrawalMethod) CostBreakdown {
+func (e *TradeCostEstimator) breakdownForMethod(btcAmount float64, dexExchange string, method WithdrawalMethod, direction string) CostBreakdown {
 	if btcAmount <= 0 {
 		return CostBreakdown{}
 	}
 	takerFrac := e.taker.get()
-	withdrawalFee := e.withdrawal.get(method)
-	netFee := e.getNetworkFeeForMethod(method, btcAmount)
 	dexFeeFrac := e.getDexFeeFrac(dexExchange)
+	netFee := e.getNetworkFeeForMethod(method, btcAmount)
+
+	// Ask side: buyer purchases BTC from DEX seller then deposits to CEX — no CEX withdrawal fee,
+	// and only 1 network transaction (DEX wallet → CEX deposit address).
+	// Bid side (default): buyer purchases BTC on CEX then withdraws — withdrawal fee applies,
+	// and 2 network transactions are needed because withdrawals must go via a pre-approved address.
+	isBid := direction != "sell"
+	tradeDir := "bid"
+	withdrawalFee := 0.0
+	numNetworkTxs := 1
+	if isBid {
+		withdrawalFee = e.withdrawal.get(method)
+		numNetworkTxs = 2
+	} else {
+		tradeDir = "ask"
+	}
+
+	if netFee.detail != nil {
+		netFee.detail.NumTxs = numNetworkTxs
+	}
 
 	takerBTC := btcAmount * takerFrac
 	dexBTC := btcAmount * dexFeeFrac
-	totalBTC := takerBTC + withdrawalFee + netFee.feeBTC + dexBTC
+	networkFeeBTC := netFee.feeBTC * float64(numNetworkTxs)
+	totalBTC := takerBTC + withdrawalFee + networkFeeBTC + dexBTC
 	totalPct := totalBTC / btcAmount * 100
 
 	pct := func(btc float64) float64 { return round4(btc / btcAmount * 100) }
@@ -869,12 +892,14 @@ func (e *TradeCostEstimator) breakdownForMethod(btcAmount float64, dexExchange s
 		RouteCEX:             e.exchange,
 		RouteDEX:             dexExchange,
 		RouteMethod:          string(method),
+		TradeDirection:       tradeDir,
+		NumNetworkTxs:        numNetworkTxs,
 		CexTakerFeePct:       pct(takerBTC),
 		CexTakerFeeBTC:       round8(takerBTC),
 		WithdrawalFeePct:     pct(withdrawalFee),
 		WithdrawalFeeBTC:     round8(withdrawalFee),
-		NetworkFeePct:        pct(netFee.feeBTC),
-		NetworkFeeBTC:        round8(netFee.feeBTC),
+		NetworkFeePct:        pct(networkFeeBTC),
+		NetworkFeeBTC:        round8(networkFeeBTC),
 		NetworkFeeMethod:     string(netFee.method),
 		NetworkFeeTier:       netFee.tier,
 		NetworkFeeConfidence: round4(netFee.confidence),
@@ -886,7 +911,7 @@ func (e *TradeCostEstimator) breakdownForMethod(btcAmount float64, dexExchange s
 	}
 }
 
-func (o *TradeRouteOptimizer) BestBreakdown(btcAmount float64, dexExchange string) CostBreakdown {
+func (o *TradeRouteOptimizer) BestBreakdown(btcAmount float64, dexExchange string, direction string) CostBreakdown {
 	if o == nil || btcAmount <= 0 {
 		return CostBreakdown{}
 	}
@@ -899,7 +924,7 @@ func (o *TradeRouteOptimizer) BestBreakdown(btcAmount float64, dexExchange strin
 			continue
 		}
 		for _, method := range supportedWithdrawalMethods(est.cexProfile, dexExchange) {
-			bd := est.breakdownForMethod(btcAmount, dexExchange, method)
+			bd := est.breakdownForMethod(btcAmount, dexExchange, method, direction)
 			if !found || bd.TotalCostPct < best.TotalCostPct {
 				best = bd
 				found = true

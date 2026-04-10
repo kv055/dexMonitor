@@ -3,6 +3,7 @@ export interface BTCNetworkFeeDetail {
   tx_type: string;
   tx_inputs: number;
   tx_outputs: number;
+  num_txs: number;
   selected_sat_vb: number;
   economic_sat_vb: number;
   standard_sat_vb: number;
@@ -19,6 +20,8 @@ export interface CostBreakdown {
   route_cex: string;
   route_dex: string;
   route_method: string;
+  trade_direction: string;   // "bid" (buy CEX→sell DEX) or "ask" (buy DEX→sell CEX)
+  num_network_txs: number;   // 2 for bid side, 1 for ask side
   estimated_profit_pct: number;
   estimated_profit_btc: number;
   cex_taker_fee_pct: number;

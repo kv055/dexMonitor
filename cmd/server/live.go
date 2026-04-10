@@ -87,12 +87,12 @@ func selectBTCTradeSize(btcMax, btcMin *float64) float64 {
 	return defaultBTCTradeSize
 }
 
-func computeNetPremiumFields(premiumPct float64, btcSize float64, dexExchange string) (float64, float64, CostBreakdown) {
+func computeNetPremiumFields(premiumPct float64, btcSize float64, dexExchange string, direction string) (float64, float64, CostBreakdown) {
 	if tradeRouteOptimizer == nil || premiumPct <= 0 {
 		return 0, 0, CostBreakdown{}
 	}
 
-	bd := tradeRouteOptimizer.BestBreakdown(btcSize, dexExchange)
+	bd := tradeRouteOptimizer.BestBreakdown(btcSize, dexExchange, direction)
 	if bd.RouteCEX == "" {
 		return 0, 0, CostBreakdown{}
 	}
@@ -215,7 +215,7 @@ func (h *LiveHub) computeOutOffers(price float64, cex string) []liveOutOffer {
 	for _, o := range offers {
 		pct := computeDirectionalPremiumPct(o.Direction, o.Price, price)
 		btcSize := selectBTCTradeSize(o.BTCMax, o.BTCMin)
-		tradeCostPct, netPremium, bd := computeNetPremiumFields(pct, btcSize, o.Exchange)
+		tradeCostPct, netPremium, bd := computeNetPremiumFields(pct, btcSize, o.Exchange, o.Direction)
 
 		result = append(result, liveOutOffer{
 			ID:            o.ID,
