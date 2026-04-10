@@ -3,12 +3,12 @@
 ### Stats — last 24h
 # Returns: { price_stats: [{exchange, snapshot_count, min_price, max_price, avg_price}],
 #            offer_counts: [{exchange, offer_count}], hours: int }
-GET {{base_url}}/api/stats
+GET {{baseUrl}}/api/stats
 
 ###
 
 ### Stats — custom window
-GET {{base_url}}/api/stats?hours=48
+GET {{baseUrl}}/api/stats?hours=48
 
 ###
 
@@ -16,9 +16,9 @@ GET {{base_url}}/api/stats?hours=48
 # Returns: { candles: [{time, open, high, low, close}],
 #            offers: [{time, price, premium, exchange, direction, payment_method}],
 #            interval_min: int }
-GET {{base_url}}/api/ohlc
+GET {{baseUrl}}/api/ohlc
 
 ###
 
 ### OHLC — custom window
-GET {{base_url}}/api/ohlc?hours=72
+GET {{baseUrl}}/api/ohlc?hours=72

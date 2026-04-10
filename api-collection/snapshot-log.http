@@ -2,9 +2,9 @@
 
 ### Snapshot Log — last 50 entries (default)
 # Returns: [{ id, timestamp, exchanges: { <name>: { count, ids: [] } }, offers_count }]
-GET {{base_url}}/api/snapshot-log
+GET {{baseUrl}}/api/snapshot-log
 
 ###
 
 ### Snapshot Log — more entries
-GET {{base_url}}/api/snapshot-log?limit=200
+GET {{baseUrl}}/api/snapshot-log?limit=200

@@ -6,16 +6,16 @@
 #         trade_cost_percent, net_premium_percent, cost_breakdown{...},
 #         btc_min, btc_max, fiat_min, fiat_max, payment_method,
 #         offer_id, first_seen, last_seen, is_live
-GET {{base_url}}/api/live_offers
+GET {{baseUrl}}/api/live_offers
 
 ###
 
 ### Past Offers — last 24h, up to 1000
 # Default: limit=1000, hours=24
-GET {{base_url}}/api/past_offers
+GET {{baseUrl}}/api/past_offers
 
 ###
 
 ### Past Offers — custom window
 # Adjust limit and hours as needed
-GET {{base_url}}/api/past_offers?limit=100&hours=48
+GET {{baseUrl}}/api/past_offers?limit=100&hours=48

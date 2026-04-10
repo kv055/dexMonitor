@@ -5,7 +5,7 @@
 ### Push Live Offers Update
 # Used by the scraper/snapshot tool to update the in-memory hub.
 # Returns: HTTP 204 No Content on success.
-POST {{base_url}}/internal/live_offers
+POST {{baseUrl}}/internal/live_offers
 Content-Type: application/json
 
 [

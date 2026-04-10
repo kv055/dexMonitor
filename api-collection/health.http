@@ -4,4 +4,4 @@
 
 ### Health Check
 # Returns: { "status": "ok", "timestamp": "<ISO 8601>" }
-GET {{base_url}}/health
+GET {{baseUrl}}/health
