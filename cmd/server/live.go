@@ -32,27 +32,34 @@ type LiveOffer struct {
 	PriceType     *string  `json:"price_type"`
 }
 
+// LifecyclePoint is a single price observation from the order_lifecycle table.
+type LifecyclePoint struct {
+	Time  string  `json:"time"`
+	Price float64 `json:"price"`
+}
+
 // liveOutOffer is the shape sent to clients — includes computed premium fields.
 type liveOutOffer struct {
-	ID            int64         `json:"id"`
-	Exchange      string        `json:"exchange"`
-	Direction     string        `json:"direction"`
-	Price         float64       `json:"price"`
-	PriceDiffPct  float64       `json:"price_diff_percent"`
-	RefPrice      float64       `json:"ref_price"`
-	TradeCostPct  float64       `json:"trade_cost_percent"`  // estimated CEX→DEX arbitrage cost as % of trade value
-	NetPremiumPct float64       `json:"net_premium_percent"` // PriceDiffPct minus TradeCostPct
-	CostBreakdown CostBreakdown `json:"cost_breakdown"`      // per-component cost detail
-	BTCMin        *float64      `json:"btc_min"`
-	BTCMax        *float64      `json:"btc_max"`
-	FiatMin       *int64        `json:"fiat_min"`
-	FiatMax       *int64        `json:"fiat_max"`
-	PaymentMethod *string       `json:"payment_method"`
-	OfferID       *string       `json:"offer_id"`
-	FirstSeen     string        `json:"first_seen"`
-	LastSeen      string        `json:"last_seen"`
-	IsLive        bool          `json:"is_live"`
-	PriceType     *string       `json:"price_type"`
+	ID            int64            `json:"id"`
+	Exchange      string           `json:"exchange"`
+	Direction     string           `json:"direction"`
+	Price         float64          `json:"price"`
+	PriceDiffPct  float64          `json:"price_diff_percent"`
+	RefPrice      float64          `json:"ref_price"`
+	TradeCostPct  float64          `json:"trade_cost_percent"`  // estimated CEX→DEX arbitrage cost as % of trade value
+	NetPremiumPct float64          `json:"net_premium_percent"` // PriceDiffPct minus TradeCostPct
+	CostBreakdown CostBreakdown    `json:"cost_breakdown"`      // per-component cost detail
+	BTCMin        *float64         `json:"btc_min"`
+	BTCMax        *float64         `json:"btc_max"`
+	FiatMin       *int64           `json:"fiat_min"`
+	FiatMax       *int64           `json:"fiat_max"`
+	PaymentMethod *string          `json:"payment_method"`
+	OfferID       *string          `json:"offer_id"`
+	FirstSeen     string           `json:"first_seen"`
+	LastSeen      string           `json:"last_seen"`
+	IsLive        bool             `json:"is_live"`
+	PriceType     *string          `json:"price_type"`
+	Lifecycle     []LifecyclePoint `json:"lifecycle,omitempty"`
 }
 
 func computePriceDiffPct(offerPrice, refPrice float64) float64 {
@@ -98,15 +105,25 @@ func computeNetPremiumFields(premiumPct float64, btcSize float64, dexExchange st
 // LiveHub holds live offers in memory and broadcasts to WebSocket subscribers
 // on every CEX price tick.
 type LiveHub struct {
-	offersMu sync.RWMutex
-	offers   []LiveOffer
+	offersMu  sync.RWMutex
+	offers    []LiveOffer
+	lifecycle map[int64][]LifecyclePoint // keyed by offer DB ID; protected by offersMu
 
 	subsMu      sync.Mutex
 	subscribers map[chan []byte]string // value = CEX preference (e.g. "kraken")
 }
 
 var hub = &LiveHub{
+	lifecycle:   make(map[int64][]LifecyclePoint),
 	subscribers: make(map[chan []byte]string),
+}
+
+// setLifecycle replaces the in-memory lifecycle cache (called before setOffers
+// so that the subsequent broadcast already includes fresh lifecycle points).
+func (h *LiveHub) setLifecycle(lc map[int64][]LifecyclePoint) {
+	h.offersMu.Lock()
+	h.lifecycle = lc
+	h.offersMu.Unlock()
 }
 
 // setOffers replaces the in-memory offer list and broadcasts to all subscribers.
@@ -191,6 +208,9 @@ func (h *LiveHub) computeOutOffers(price float64, cex string) []liveOutOffer {
 		price = getCexPrice(defaultCEX)
 	}
 	offers := h.getOffers()
+	h.offersMu.RLock()
+	lc := h.lifecycle
+	h.offersMu.RUnlock()
 	result := make([]liveOutOffer, 0, len(offers))
 	for _, o := range offers {
 		pct := computeDirectionalPremiumPct(o.Direction, o.Price, price)
@@ -217,6 +237,7 @@ func (h *LiveHub) computeOutOffers(price float64, cex string) []liveOutOffer {
 			LastSeen:      o.LastSeen,
 			IsLive:        true,
 			PriceType:     o.PriceType,
+			Lifecycle:     lc[o.ID],
 		})
 	}
 	return result

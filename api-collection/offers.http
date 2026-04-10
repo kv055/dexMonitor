@@ -5,7 +5,8 @@
 # Fields: id, exchange, direction, price, price_diff_percent, ref_price,
 #         trade_cost_percent, net_premium_percent, cost_breakdown{...},
 #         btc_min, btc_max, fiat_min, fiat_max, payment_method,
-#         offer_id, first_seen, last_seen, is_live
+#         offer_id, first_seen, last_seen, is_live, price_type,
+#         lifecycle[{time, price}] (omitted if no history yet)
 GET {{baseUrl}}/api/live_offers
 
 ###

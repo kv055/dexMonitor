@@ -460,8 +460,8 @@ func saveSnapshot(sdb *sql.DB, exchange, fiat, direction string, btcPrice float6
 		}
 
 		if found {
-			tx.Exec("UPDATE offers SET last_seen = CURRENT_TIMESTAMP, price = ? WHERE id = ?",
-				o.Price, existingID)
+			tx.Exec("UPDATE offers SET last_seen = CURRENT_TIMESTAMP, price = ?, price_type = ? WHERE id = ?",
+				o.Price, o.PriceType, existingID)
 			updated++
 		} else {
 			tx.Exec(`INSERT INTO offers

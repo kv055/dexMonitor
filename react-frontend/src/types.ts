@@ -54,6 +54,7 @@ export interface Offer {
   last_seen: string | null;
   is_live: boolean;
   ref_price: number | null;
+  price_type?: string | null;
   premium?: number | null;
   time?: string;
   lifecycle?: { time: string; price: number }[];

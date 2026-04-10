@@ -105,6 +105,11 @@ func seedHubFromDB() {
 			}
 			offers = append(offers, o)
 		}
+		ids := make([]int64, len(offers))
+		for i, o := range offers {
+			ids[i] = o.ID
+		}
+		hub.setLifecycle(fetchOfferLifecycle(ids))
 		hub.setOffers(offers)
 		fmt.Printf("[Hub] seeded %d live offers from DB\n", len(offers))
 		return
@@ -640,8 +645,8 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 }
 
 // fetchOfferLifecycle returns lifecycle (snapshot_time, price) points grouped by offer_db_id.
-func fetchOfferLifecycle(ids []int64) map[int64][]map[string]any {
-	result := make(map[int64][]map[string]any, len(ids))
+func fetchOfferLifecycle(ids []int64) map[int64][]LifecyclePoint {
+	result := make(map[int64][]LifecyclePoint, len(ids))
 	if len(ids) == 0 {
 		return result
 	}
@@ -666,10 +671,7 @@ func fetchOfferLifecycle(ids []int64) map[int64][]map[string]any {
 		if err := rows.Scan(&offerID, &snapTime, &price); err != nil {
 			continue
 		}
-		result[offerID] = append(result[offerID], map[string]any{
-			"time":  snapTime,
-			"price": price,
-		})
+		result[offerID] = append(result[offerID], LifecyclePoint{Time: snapTime, Price: price})
 	}
 	return result
 }
@@ -873,6 +875,12 @@ func handleInternalLiveOffers(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	// Fetch lifecycle from previous snapshot cycles and cache before broadcasting.
+	ids := make([]int64, len(offers))
+	for i, o := range offers {
+		ids[i] = o.ID
+	}
+	hub.setLifecycle(fetchOfferLifecycle(ids))
 	hub.setOffers(offers)
 	price := getCexPrice(defaultCEX)
 	outOffers := hub.computeOutOffers(price, defaultCEX)

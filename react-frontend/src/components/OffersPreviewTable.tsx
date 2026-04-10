@@ -277,11 +277,12 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
   );
 }
 
-function OfferTimeMeta({ firstSeen, lastSeen, isLive, timezone }: {
+function OfferTimeMeta({ firstSeen, lastSeen, isLive, timezone, priceType }: {
   firstSeen: string | null;
   lastSeen: string | null;
   isLive: boolean;
   timezone: string;
+  priceType?: string | null;
 }) {
   return (
     <div className="flex flex-wrap gap-x-4 gap-y-1 text-[0.68rem] text-muted">
@@ -300,6 +301,12 @@ function OfferTimeMeta({ firstSeen, lastSeen, isLive, timezone }: {
             <span className="text-text">{formatDuration(firstSeen, lastSeen)}</span>
           </span>
         </>
+      )}
+      {priceType && (
+        <Badge
+          label={priceType === 'floating' ? 'floating price' : 'fixed price'}
+          colorCls={priceType === 'floating' ? 'text-accent' : 'text-muted'}
+        />
       )}
     </div>
   );
@@ -397,7 +404,7 @@ export function OffersPreviewTable() {
               >
                 ×
               </button>
-              <OfferTimeMeta firstSeen={selectedOffer.first_seen} lastSeen={selectedOffer.last_seen} isLive={selectedOffer.is_live} timezone={timezone} />
+              <OfferTimeMeta firstSeen={selectedOffer.first_seen} lastSeen={selectedOffer.last_seen} isLive={selectedOffer.is_live} timezone={timezone} priceType={selectedOffer.price_type} />
               {selectedOffer.cost_breakdown ? (
                 <CostBreakdownPanel
                   bd={selectedOffer.cost_breakdown}
@@ -510,7 +517,7 @@ export function OffersPreviewTable() {
               ×
             </button>
             <div className="px-4 pt-1.5 pb-1 pr-8 shrink-0">
-              <OfferTimeMeta firstSeen={selectedOffer.first_seen} lastSeen={selectedOffer.last_seen} isLive={selectedOffer.is_live} timezone={timezone} />
+              <OfferTimeMeta firstSeen={selectedOffer.first_seen} lastSeen={selectedOffer.last_seen} isLive={selectedOffer.is_live} timezone={timezone} priceType={selectedOffer.price_type} />
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
             {selectedOffer.cost_breakdown ? (
