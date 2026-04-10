@@ -24,5 +24,8 @@ USER root
 
 CMD ["sh", "-c", \
     "chown -R appuser:appuser /app/data && \
-     if [ ! -f \"$DB_PATH\" ]; then sqlite3 \"$DB_PATH\" < /app/schema.sql; fi && \
+     mkdir -p \"$(dirname \"$DB_PATH\")\" && \
+     if ! sqlite3 \"$DB_PATH\" \"SELECT 1 FROM sqlite_master WHERE type='table' AND name='offers';\" | grep -q 1; then \
+       sqlite3 \"$DB_PATH\" < /app/schema.sql; \
+     fi && \
      exec su-exec appuser sh -c 'while true; do /app/snapshot; sleep $((SNAPSHOT_INTERVAL_MIN * 60)); done'"]

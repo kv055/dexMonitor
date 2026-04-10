@@ -49,55 +49,79 @@ var tradeRouteOptimizer *TradeRouteOptimizer
 // seedHubFromDB loads is_live=1 offers from the DB into the hub once at startup
 // so live data is available before the first snapshot push arrives.
 func seedHubFromDB() {
-	rows, err := db.Query(`
-		SELECT id, exchange, direction, price, btc_min, btc_max,
-		       fiat_min, fiat_max, payment_method, offer_id, first_seen, last_seen, price_type
-		FROM offers WHERE is_live = 1
-	`)
-	if err != nil {
-		fmt.Printf("[Hub] seed error: %v\n", err)
-		return
-	}
-	defer rows.Close()
-
-	offers := make([]LiveOffer, 0)
-	for rows.Next() {
-		var o LiveOffer
-		var btcMin, btcMax sql.NullFloat64
-		var fiatMin, fiatMax sql.NullInt64
-		var paymentMethod, offerID, priceType sql.NullString
-		if err := rows.Scan(
-			&o.ID, &o.Exchange, &o.Direction, &o.Price,
-			&btcMin, &btcMax, &fiatMin, &fiatMax,
-			&paymentMethod, &offerID, &o.FirstSeen, &o.LastSeen, &priceType,
-		); err != nil {
+	const maxAttempts = 10
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		if !coreTablesReady() {
+			fmt.Printf("[Hub] core tables not ready yet (attempt %d/%d)\n", attempt, maxAttempts)
+			time.Sleep(3 * time.Second)
 			continue
 		}
-		if btcMin.Valid {
-			o.BTCMin = &btcMin.Float64
+
+		rows, err := db.Query(`
+			SELECT id, exchange, direction, price, btc_min, btc_max,
+			       fiat_min, fiat_max, payment_method, offer_id, first_seen, last_seen, price_type
+			FROM offers WHERE is_live = 1
+		`)
+		if err != nil {
+			fmt.Printf("[Hub] seed error (attempt %d/%d): %v\n", attempt, maxAttempts, err)
+			time.Sleep(3 * time.Second)
+			continue
 		}
-		if btcMax.Valid {
-			o.BTCMax = &btcMax.Float64
+		defer rows.Close()
+
+		offers := make([]LiveOffer, 0)
+		for rows.Next() {
+			var o LiveOffer
+			var btcMin, btcMax sql.NullFloat64
+			var fiatMin, fiatMax sql.NullInt64
+			var paymentMethod, offerID, priceType sql.NullString
+			if err := rows.Scan(
+				&o.ID, &o.Exchange, &o.Direction, &o.Price,
+				&btcMin, &btcMax, &fiatMin, &fiatMax,
+				&paymentMethod, &offerID, &o.FirstSeen, &o.LastSeen, &priceType,
+			); err != nil {
+				continue
+			}
+			if btcMin.Valid {
+				o.BTCMin = &btcMin.Float64
+			}
+			if btcMax.Valid {
+				o.BTCMax = &btcMax.Float64
+			}
+			if fiatMin.Valid {
+				o.FiatMin = &fiatMin.Int64
+			}
+			if fiatMax.Valid {
+				o.FiatMax = &fiatMax.Int64
+			}
+			if paymentMethod.Valid {
+				o.PaymentMethod = &paymentMethod.String
+			}
+			if offerID.Valid {
+				o.OfferID = &offerID.String
+			}
+			if priceType.Valid {
+				o.PriceType = &priceType.String
+			}
+			offers = append(offers, o)
 		}
-		if fiatMin.Valid {
-			o.FiatMin = &fiatMin.Int64
-		}
-		if fiatMax.Valid {
-			o.FiatMax = &fiatMax.Int64
-		}
-		if paymentMethod.Valid {
-			o.PaymentMethod = &paymentMethod.String
-		}
-		if offerID.Valid {
-			o.OfferID = &offerID.String
-		}
-		if priceType.Valid {
-			o.PriceType = &priceType.String
-		}
-		offers = append(offers, o)
+		hub.setOffers(offers)
+		fmt.Printf("[Hub] seeded %d live offers from DB\n", len(offers))
+		return
 	}
-	hub.setOffers(offers)
-	fmt.Printf("[Hub] seeded %d live offers from DB\n", len(offers))
+	fmt.Printf("[Hub] giving up seeding after %d attempts\n", maxAttempts)
+}
+
+func coreTablesReady() bool {
+	var count int
+	if err := db.QueryRow(`
+		SELECT COUNT(*)
+		FROM sqlite_master
+		WHERE type = 'table' AND name IN ('offers', 'snapshot_log')
+	`).Scan(&count); err != nil {
+		return false
+	}
+	return count == 2
 }
 
 func getCexPrice(cex string) float64 {
@@ -1028,6 +1052,15 @@ func handleMmControllerTransactionByID(w http.ResponseWriter, r *http.Request) {
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
+	if !coreTablesReady() {
+		w.WriteHeader(http.StatusServiceUnavailable)
+		writeJSON(w, map[string]string{
+			"status":    "starting",
+			"timestamp": time.Now().UTC().Format("2006-01-02T15:04:05"),
+		})
+		return
+	}
+
 	writeJSON(w, map[string]string{
 		"status":    "ok",
 		"timestamp": time.Now().UTC().Format("2006-01-02T15:04:05"),
