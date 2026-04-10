@@ -312,8 +312,18 @@ function OfferTimeMeta({ firstSeen, lastSeen, isLive, timezone, priceType }: {
   );
 }
 
+function useGroupLabel() {
+  const { groups } = useFilters();
+  return (method: string | null): string => {
+    if (!method) return '—';
+    const group = groups.find(g => g.methods.includes(method));
+    return group ? group.display_name : method;
+  };
+}
+
 export function OffersPreviewTable() {
   const { filteredOffers: offers, selectedOfferId, setSelectedOfferId, loading } = useFilters();
+  const groupLabel = useGroupLabel();
   const { timezone } = useTimezone();
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
@@ -377,7 +387,7 @@ export function OffersPreviewTable() {
                     <td className={`${TD} text-right`}>€{formatNum(o.price)}</td>
                     <td className={`${TD} overflow-hidden max-w-32`}>
                       <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
-                        {o.payment_method || '—'}
+                        {groupLabel(o.payment_method)}
                       </span>
                     </td>
                   </tr>
@@ -405,6 +415,12 @@ export function OffersPreviewTable() {
                 ×
               </button>
               <OfferTimeMeta firstSeen={selectedOffer.first_seen} lastSeen={selectedOffer.last_seen} isLive={selectedOffer.is_live} timezone={timezone} priceType={selectedOffer.price_type} />
+              {selectedOffer.payment_method && (
+                <div className="mt-1 mb-2 text-[0.68rem] text-muted">
+                  <span className="uppercase tracking-wide text-[0.6rem] mr-1">Payment</span>
+                  <span className="text-text">{selectedOffer.payment_method}</span>
+                </div>
+              )}
               {selectedOffer.cost_breakdown ? (
                 <CostBreakdownPanel
                   bd={selectedOffer.cost_breakdown}
@@ -488,7 +504,7 @@ export function OffersPreviewTable() {
                   </td>
                   <td className={`${TD} overflow-hidden`}>
                     <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
-                      {o.payment_method || '—'}
+                      {groupLabel(o.payment_method)}
                     </span>
                   </td>
                 </tr>
@@ -518,6 +534,12 @@ export function OffersPreviewTable() {
             </button>
             <div className="px-4 pt-1.5 pb-1 pr-8 shrink-0">
               <OfferTimeMeta firstSeen={selectedOffer.first_seen} lastSeen={selectedOffer.last_seen} isLive={selectedOffer.is_live} timezone={timezone} priceType={selectedOffer.price_type} />
+              {selectedOffer.payment_method && (
+                <div className="mt-1 text-[0.68rem] text-muted">
+                  <span className="uppercase tracking-wide text-[0.6rem] mr-1">Payment</span>
+                  <span className="text-text">{selectedOffer.payment_method}</span>
+                </div>
+              )}
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
             {selectedOffer.cost_breakdown ? (

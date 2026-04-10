@@ -24,7 +24,7 @@ interface PaymentDropdownProps {
 }
 
 function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDropdownProps) {
-  const { offers, filters } = useFilters();
+  const { offers, filters, groups } = useFilters();
   const [open, setOpen] = useState(false);
   const [menuMaxWidth, setMenuMaxWidth] = useState<number | undefined>(undefined);
   const ref = useRef<HTMLDivElement>(null);
@@ -46,7 +46,8 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
     setOpen(o => !o);
   };
 
-  const sorted = useMemo(() => {
+  // Count offers per individual method (excluding payment filter itself).
+  const { methodCounts, total } = useMemo(() => {
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
@@ -63,13 +64,49 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
       const pm = o.payment_method || 'Unknown';
       counts[pm] = (counts[pm] || 0) + 1;
     });
-    return Object.entries(counts).sort((a, b) => b[1] - a[1]);
+    return { methodCounts: counts, total: f.length };
   }, [offers, filters]);
 
-  const maxCount = sorted[0]?.[1] ?? 1;
-  const total = sorted.reduce((s, [, c]) => s + c, 0);
-  const selectedIdx = value ? sorted.findIndex(([m]) => m === value) : -1;
-  const selectedColor = selectedIdx >= 0 ? PAYMENT_PALETTE[selectedIdx % PAYMENT_PALETTE.length] : null;
+  // Build group-level counts and sort groups by total count descending.
+  const groupRows = useMemo(() => {
+    return groups
+      .map((g, i) => ({
+        group: g,
+        color: PAYMENT_PALETTE[i % PAYMENT_PALETTE.length],
+        count: g.methods.reduce((s, m) => s + (methodCounts[m] ?? 0), 0),
+        methods: g.methods
+          .map(m => ({ name: m, count: methodCounts[m] ?? 0 }))
+          .filter(m => m.count > 0)
+          .sort((a, b) => b.count - a.count),
+      }))
+      .filter(g => g.count > 0)
+      .sort((a, b) => b.count - a.count);
+  }, [groups, methodCounts]);
+
+  // Methods that don't belong to any group.
+  const ungroupedMethods = useMemo(() => {
+    const grouped = new Set(groups.flatMap(g => g.methods));
+    return Object.entries(methodCounts)
+      .filter(([m]) => !grouped.has(m))
+      .sort((a, b) => b[1] - a[1]);
+  }, [groups, methodCounts]);
+
+  const maxCount = Math.max(
+    ...groupRows.map(g => g.count),
+    ...ungroupedMethods.map(([, c]) => c),
+    1
+  );
+
+  // Resolve the display label for the trigger button.
+  const { triggerLabel, triggerColor } = useMemo(() => {
+    if (!value) return { triggerLabel: '', triggerColor: null };
+    const grp = groupRows.find(g => g.group.name === value);
+    if (grp) return { triggerLabel: grp.group.display_name, triggerColor: grp.color };
+    // Individual method — find its group color.
+    const parentGroup = groupRows.find(g => g.methods.some(m => m.name === value));
+    const color = parentGroup?.color ?? PAYMENT_PALETTE[ungroupedMethods.findIndex(([m]) => m === value) % PAYMENT_PALETTE.length] ?? PAYMENT_PALETTE[0];
+    return { triggerLabel: value, triggerColor: color };
+  }, [value, groupRows, ungroupedMethods]);
 
   return (
     <div ref={ref} className="relative">
@@ -77,10 +114,10 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
         onClick={handleToggle}
         className={`${inputCls} flex items-center gap-1.5 w-full`}
       >
-        {value && selectedColor ? (
+        {value && triggerColor ? (
           <>
-            <span className="w-1.75 h-1.75 rounded-full shrink-0" style={{ backgroundColor: selectedColor }} />
-            <span className="text-[0.8rem] truncate">{value}</span>
+            <span className="w-1.75 h-1.75 rounded-full shrink-0" style={{ backgroundColor: triggerColor }} />
+            <span className="text-[0.8rem] truncate">{triggerLabel}</span>
           </>
         ) : (
           <span className="text-[0.8rem]">All Payments</span>
@@ -89,7 +126,8 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
       </button>
 
       {open && (
-        <div className="absolute top-full left-0 mt-1 z-50 bg-surface border border-border rounded-md overflow-hidden shadow-lg min-w-45" style={{ maxWidth: menuMaxWidth }}>
+        <div className="absolute top-full left-0 mt-1 z-50 bg-surface border border-border rounded-md overflow-hidden shadow-lg min-w-52" style={{ maxWidth: menuMaxWidth }}>
+          {/* All Payments row */}
           <button
             onClick={() => { onChange(''); setOpen(false); }}
             className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors flex items-center justify-between ${!value ? 'text-accent' : 'text-text'}`}
@@ -97,27 +135,78 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
             <span className="text-[0.8rem]">All Payments</span>
             <span className="text-muted text-[0.75rem]">{total}</span>
           </button>
-          <div className="max-h-65 overflow-y-auto">
-            {sorted.map(([method, count], i) => {
+
+          <div className="max-h-72 overflow-y-auto">
+            {/* Grouped rows */}
+            {groupRows.map(({ group, color, count, methods }) => {
               const pct = (count / maxCount) * 100;
-              const color = PAYMENT_PALETTE[i % PAYMENT_PALETTE.length];
-              const isSelected = value === method;
+              const isGroupSelected = value === group.name;
               return (
-                <button
-                  key={method}
-                  onClick={() => { onChange(method); setOpen(false); }}
-                  className={`w-full text-left px-3 py-1.25 flex items-center gap-2 relative overflow-hidden transition-colors ${isSelected ? 'bg-bg' : 'hover:bg-bg'}`}
-                >
-                  <div
-                    className="absolute left-0 top-0 bottom-0 pointer-events-none rounded-r-sm"
-                    style={{ width: `${pct}%`, backgroundColor: color, opacity: 0.55 }}
-                  />
-                  <span className="relative w-1.75 h-1.75 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                  <span className="relative text-[0.78rem] text-text flex-1 truncate">{method}</span>
-                  <span className="relative text-[0.72rem] text-muted">{count}</span>
-                </button>
+                <div key={group.name}>
+                  {/* Group header row */}
+                  <button
+                    onClick={() => { onChange(group.name); setOpen(false); }}
+                    className={`w-full text-left px-3 py-1.25 flex items-center gap-2 relative overflow-hidden transition-colors border-t border-border/40 ${isGroupSelected ? 'bg-bg' : 'hover:bg-bg'}`}
+                  >
+                    <div
+                      className="absolute left-0 top-0 bottom-0 pointer-events-none"
+                      style={{ width: `${pct}%`, backgroundColor: color, opacity: 0.35 }}
+                    />
+                    <span className="relative w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                    <span className="relative text-[0.8rem] font-semibold text-text flex-1 truncate">{group.display_name}</span>
+                    <span className="relative text-[0.72rem] text-muted">{count}</span>
+                  </button>
+                  {/* Individual method rows within group */}
+                  {methods.map(({ name: method, count: mCount }) => {
+                    const mPct = (mCount / maxCount) * 100;
+                    const isSelected = value === method;
+                    return (
+                      <button
+                        key={method}
+                        onClick={() => { onChange(method); setOpen(false); }}
+                        className={`w-full text-left pl-7 pr-3 py-1 flex items-center gap-2 relative overflow-hidden transition-colors ${isSelected ? 'bg-bg' : 'hover:bg-bg'}`}
+                      >
+                        <div
+                          className="absolute left-0 top-0 bottom-0 pointer-events-none"
+                          style={{ width: `${mPct}%`, backgroundColor: color, opacity: 0.2 }}
+                        />
+                        <span className="relative text-[0.75rem] text-muted flex-1 truncate">{method}</span>
+                        <span className="relative text-[0.7rem] text-muted">{mCount}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               );
             })}
+
+            {/* Ungrouped methods */}
+            {ungroupedMethods.length > 0 && (
+              <div>
+                <div className="px-3 py-1 border-t border-border/40">
+                  <span className="text-[0.65rem] uppercase tracking-widest text-muted">Other</span>
+                </div>
+                {ungroupedMethods.map(([method, count], i) => {
+                  const pct = (count / maxCount) * 100;
+                  const color = PAYMENT_PALETTE[(groupRows.length + i) % PAYMENT_PALETTE.length];
+                  const isSelected = value === method;
+                  return (
+                    <button
+                      key={method}
+                      onClick={() => { onChange(method); setOpen(false); }}
+                      className={`w-full text-left px-3 py-1.25 flex items-center gap-2 relative overflow-hidden transition-colors ${isSelected ? 'bg-bg' : 'hover:bg-bg'}`}
+                    >
+                      <div
+                        className="absolute left-0 top-0 bottom-0 pointer-events-none"
+                        style={{ width: `${pct}%`, backgroundColor: color, opacity: 0.2 }}
+                      />
+                      <span className="relative w-1.75 h-1.75 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                      <span className="relative text-[0.78rem] text-text flex-1 truncate">{method}</span>
+                      <span className="relative text-[0.72rem] text-muted">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

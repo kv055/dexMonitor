@@ -20,26 +20,73 @@ function cssVar(name: string, fallback: string): string {
 }
 
 export function PaymentChart({ theme }: Props) {
-  const { filteredOffers: offers, loading } = useFilters();
+  const { filteredOffers: offers, loading, filters, groups } = useFilters();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const chartRef = useRef<Chart | null>(null);
 
   useEffect(() => {
     if (!canvasRef.current || !offers.length) return;
 
-    const counts: Record<string, number> = {};
+    // Count offers per individual payment method.
+    const methodCounts: Record<string, number> = {};
     offers.forEach(o => {
       const pm = o.payment_method || 'Unknown';
-      counts[pm] = (counts[pm] || 0) + 1;
+      methodCounts[pm] = (methodCounts[pm] || 0) + 1;
     });
 
-    const sorted = Object.entries(counts).sort((a, b) => b[1] - a[1]);
-    const top = sorted.slice(0, 10);
-    const rest = sorted.slice(10);
-    if (rest.length > 0) top.push(['Others', rest.reduce((s, e) => s + e[1], 0)]);
+    const activeGroup = groups.find(g => g.name === filters.payment);
+    let labels: string[];
+    let data: number[];
+    let colors: string[];
 
-    const labels = top.map(e => e[0]);
-    const data = top.map(e => e[1]);
+    if (activeGroup) {
+      // Drill-down: show individual methods within the selected group.
+      const entries = activeGroup.methods
+        .map(m => [m, methodCounts[m] ?? 0] as [string, number])
+        .filter(([, c]) => c > 0)
+        .sort((a, b) => b[1] - a[1]);
+      const groupIdx = groups.findIndex(g => g.name === activeGroup.name);
+      const baseColor = PALETTE[groupIdx % PALETTE.length];
+      labels = entries.map(([m]) => m);
+      data = entries.map(([, c]) => c);
+      colors = labels.map(() => baseColor);
+    } else {
+      // Default: show one bar per group + "Other" for ungrouped methods.
+      const groupedSet = new Set(groups.flatMap(g => g.methods));
+      let otherCount = 0;
+      Object.entries(methodCounts).forEach(([m, c]) => {
+        if (!groupedSet.has(m)) otherCount += c;
+      });
+
+      const groupEntries = groups
+        .map((g, i) => ({
+          label: g.display_name,
+          count: g.methods.reduce((s, m) => s + (methodCounts[m] ?? 0), 0),
+          color: PALETTE[i % PALETTE.length],
+        }))
+        .filter(g => g.count > 0)
+        .sort((a, b) => b.count - a.count);
+
+      labels = groupEntries.map(g => g.label);
+      data = groupEntries.map(g => g.count);
+      colors = groupEntries.map(g => g.color);
+
+      // If no groups loaded yet, fall back to top individual methods.
+      if (groups.length === 0) {
+        const sorted = Object.entries(methodCounts).sort((a, b) => b[1] - a[1]);
+        const top = sorted.slice(0, 10);
+        const rest = sorted.slice(10);
+        const restCount = rest.reduce((s, [, c]) => s + c, 0) + otherCount;
+        if (restCount > 0) top.push(['Others', restCount]);
+        labels = top.map(([m]) => m);
+        data = top.map(([, c]) => c);
+        colors = PALETTE.slice(0, labels.length);
+      } else if (otherCount > 0) {
+        labels.push('Other');
+        data.push(otherCount);
+        colors.push(PALETTE[groupEntries.length % PALETTE.length]);
+      }
+    }
     const textStrong = cssVar('--app-text', '#e6edf3');
     const muted = cssVar('--app-muted', '#8b949e');
     const subtle = cssVar('--app-subtle', '#606670');
@@ -98,7 +145,7 @@ export function PaymentChart({ theme }: Props) {
         labels,
         datasets: [{
           data,
-          backgroundColor: PALETTE.slice(0, labels.length),
+          backgroundColor: colors,
           borderRadius: 5,
           borderSkipped: false,
           barPercentage: 0.82,
@@ -122,7 +169,7 @@ export function PaymentChart({ theme }: Props) {
     });
 
     return () => { chartRef.current?.destroy(); chartRef.current = null; };
-  }, [offers, theme]);
+  }, [offers, theme, filters.payment, groups]);
 
   return (
     <div className="relative flex-1 min-h-40">

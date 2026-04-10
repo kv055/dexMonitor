@@ -1,5 +1,5 @@
 import { useState, useMemo } from 'react';
-import type { Offer, Filters } from '../types';
+import type { Offer, Filters, PaymentMethodGroup } from '../types';
 import { ExchangeTag } from './ExchangeTag';
 import { useTimezone } from '../context/TimezoneContext';
 import { formatNum, formatBtc, formatTime, formatDuration, durationMinutes, premiumClass } from '../utils/formatters';
@@ -7,11 +7,16 @@ import { formatNum, formatBtc, formatTime, formatDuration, durationMinutes, prem
 interface Props {
   offers: Offer[];
   filters: Filters;
+  groups?: PaymentMethodGroup[];
 }
 
 type SortCol = 'exchange' | 'direction' | 'price' | 'price_diff_percent' | 'btc_min' | 'btc_max' | 'payment_method' | 'first_seen' | 'last_seen' | 'duration';
 
-export function OffersTable({ offers, filters }: Props) {
+export function OffersTable({ offers, filters, groups = [] }: Props) {
+  const groupLabel = (method: string | null) => {
+    if (!method) return '—';
+    return groups.find(g => g.methods.includes(method))?.display_name ?? method;
+  };
   const [sortCol, setSortCol] = useState<SortCol>('price_diff_percent');
   const [sortAsc, setSortAsc] = useState(true);
   const { timezone } = useTimezone();
@@ -101,7 +106,7 @@ export function OffersTable({ offers, filters }: Props) {
               </td>
               <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border">{formatBtc(o.btc_min)}</td>
               <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border">{formatBtc(o.btc_max)}</td>
-              <td className="px-2.5 py-1.5 border-b border-border">{o.payment_method || '—'}</td>
+              <td className="px-2.5 py-1.5 border-b border-border">{groupLabel(o.payment_method)}</td>
               <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.first_seen, timezone)}</td>
               <td className="hidden sm:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.last_seen, timezone)}</td>
               <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatDuration(o.first_seen, o.last_seen)}</td>

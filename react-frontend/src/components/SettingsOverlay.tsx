@@ -1,15 +1,16 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-
-type PaymentMethodMode = 'neutral' | 'include' | 'exclude';
+import type { PaymentMethodGroup } from '../types';
 
 interface Props {
   open: boolean;
   onClose: () => void;
   preferredTimezone: string;
   onTimezoneChange: (timezone: string) => void;
-  paymentMethodModes: Record<string, PaymentMethodMode>;
-  onPaymentMethodModeChange: (method: string, mode: PaymentMethodMode) => void;
+  groups: PaymentMethodGroup[];
+  excludedMethods: string[];
+  onToggleMethod: (method: string) => void;
+  onToggleGroup: (groupMethods: string[], exclude: boolean) => void;
 }
 
 function getOffsetMinutes(timezone: string): number {
@@ -165,21 +166,27 @@ function getAllTimezonesSorted(): { value: string; label: string; offsetMinutes:
 
 const allTimezones = getAllTimezonesSorted();
 
-const modeButtonClass = (active: boolean) =>
-  `px-2 py-1 rounded-md border text-xs font-medium transition-colors ${
-    active
-      ? 'bg-bg border-accent text-text'
-      : 'bg-transparent border-border text-muted hover:text-text hover:border-muted'
-  }`;
 
 export function SettingsOverlay({
   open,
   onClose,
   preferredTimezone,
   onTimezoneChange,
-  paymentMethodModes,
-  onPaymentMethodModeChange,
+  groups,
+  excludedMethods,
+  onToggleMethod,
+  onToggleGroup,
 }: Props) {
+  const excludedSet = new Set(excludedMethods);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+
+  const toggleCollapse = (name: string) =>
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      next.has(name) ? next.delete(name) : next.add(name);
+      return next;
+    });
+
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
@@ -199,8 +206,9 @@ export function SettingsOverlay({
         aria-label="Close settings"
       />
 
-      <aside className="relative z-10 w-full sm:max-w-md rounded-t-xl sm:rounded-xl border border-border bg-surface/95 shadow-2xl shadow-black/30 overflow-y-auto max-h-[90dvh] sm:max-h-none sm:overflow-hidden animate-[settings-slide_220ms_ease-out]">
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between">
+      <aside className="relative z-10 w-full sm:max-w-md rounded-t-xl sm:rounded-xl border border-border bg-surface/95 shadow-2xl shadow-black/30 flex flex-col max-h-[90dvh] animate-[settings-slide_220ms_ease-out]">
+        {/* Fixed header */}
+        <div className="px-4 py-3 border-b border-border flex items-center justify-between shrink-0">
           <div>
             <p className="text-[0.7rem] uppercase tracking-wide text-muted">Interface Preferences</p>
             <h2 className="text-sm font-semibold text-text">Settings</h2>
@@ -214,11 +222,8 @@ export function SettingsOverlay({
           </button>
         </div>
 
-        <div className="p-4 flex flex-col gap-4">
-          <div className="rounded-md border border-red bg-error px-3 py-2 text-sm text-red font-semibold">
-            Preview only: this settings panel is currently a dummy mockup.
-          </div>
-
+        {/* Scrollable body */}
+        <div className="overflow-y-auto flex-1 p-4 flex flex-col gap-4">
           <section className="rounded-lg border border-border bg-bg/50 p-3">
             <div className="mb-2">
               <p className="text-[0.7rem] uppercase tracking-wide text-muted">Timezone</p>
@@ -239,43 +244,80 @@ export function SettingsOverlay({
           </section>
 
           <section className="rounded-lg border border-border bg-bg/50 p-3">
-            <div className="mb-2">
+            <div className="mb-3">
               <p className="text-[0.7rem] uppercase tracking-wide text-muted">Payment Methods</p>
-              <h3 className="text-sm font-medium">Include or Exclude</h3>
+              <h3 className="text-sm font-medium">Enable / Disable</h3>
+              <p className="mt-1 text-xs text-muted">Disabled methods are hidden from all views and excluded from API queries.</p>
             </div>
 
-            <div className="space-y-2">
-              {Object.entries(paymentMethodModes).map(([method, mode]) => (
-                <div key={method} className="rounded-md border border-border px-2 py-2">
-                  <div className="flex items-center justify-between gap-2">
-                    <span className="text-sm text-text">{method}</span>
-                    <div className="flex gap-1">
-                      <button
-                        type="button"
-                        className={modeButtonClass(mode === 'neutral')}
-                        onClick={() => onPaymentMethodModeChange(method, 'neutral')}
-                      >
-                        All
-                      </button>
-                      <button
-                        type="button"
-                        className={modeButtonClass(mode === 'include')}
-                        onClick={() => onPaymentMethodModeChange(method, 'include')}
-                      >
-                        Include
-                      </button>
-                      <button
-                        type="button"
-                        className={modeButtonClass(mode === 'exclude')}
-                        onClick={() => onPaymentMethodModeChange(method, 'exclude')}
-                      >
-                        Exclude
-                      </button>
+            {groups.length === 0 ? (
+              <p className="text-xs text-muted">No payment methods found yet — offers need to be fetched first.</p>
+            ) : (
+              <div className="flex flex-col gap-2">
+                {groups.map(group => {
+                  const allExcluded = group.methods.every(m => excludedSet.has(m));
+                  const someExcluded = group.methods.some(m => excludedSet.has(m));
+                  const collapsed = collapsedGroups.has(group.name);
+                  return (
+                    <div key={group.name} className="rounded-md border border-border overflow-hidden">
+                      {/* Group header row — click left side to collapse, right button to toggle */}
+                      <div className={`flex items-center gap-2 px-3 py-2 ${allExcluded ? 'bg-bg/80' : 'bg-bg/30'}`}>
+                        <button
+                          type="button"
+                          onClick={() => toggleCollapse(group.name)}
+                          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                        >
+                          <span className={`text-[0.65rem] text-muted transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}>▶</span>
+                          <span className={`text-[0.78rem] font-semibold ${allExcluded ? 'text-muted line-through' : 'text-text'}`}>
+                            {group.display_name}
+                          </span>
+                          <span className="text-[0.65rem] text-muted">({group.methods.length})</span>
+                          {someExcluded && !allExcluded && (
+                            <span className="text-[0.6rem] uppercase tracking-wide text-accent border border-accent/40 rounded px-1 py-px">partial</span>
+                          )}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onToggleGroup(group.methods, !allExcluded)}
+                          className={`shrink-0 text-xs px-2.5 py-0.5 rounded-md border font-medium transition-colors ${
+                            allExcluded
+                              ? 'border-green/50 text-green hover:bg-green/10'
+                              : 'border-red/50 text-red hover:bg-red/10'
+                          }`}
+                        >
+                          {allExcluded ? 'Enable all' : 'Disable all'}
+                        </button>
+                      </div>
+
+                      {/* Individual methods — hidden when collapsed */}
+                      {!collapsed && (
+                      <div className="divide-y divide-border/50">
+                        {group.methods.map(method => {
+                          const excluded = excludedSet.has(method);
+                          return (
+                            <div key={method} className={`flex items-center justify-between gap-2 px-3 py-1.5 pl-5 ${excluded ? 'opacity-50' : ''}`}>
+                              <span className={`text-[0.75rem] ${excluded ? 'text-muted line-through' : 'text-text'}`}>{method}</span>
+                              <button
+                                type="button"
+                                onClick={() => onToggleMethod(method)}
+                                className={`text-[0.7rem] px-2 py-0.5 rounded border font-medium transition-colors ${
+                                  excluded
+                                    ? 'border-green/40 text-green hover:bg-green/10'
+                                    : 'border-border text-muted hover:border-red/50 hover:text-red'
+                                }`}
+                              >
+                                {excluded ? 'Enable' : 'Disable'}
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      )}
                     </div>
-                  </div>
-                </div>
-              ))}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </section>
         </div>
       </aside>

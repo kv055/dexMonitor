@@ -1,6 +1,7 @@
 import { useState, useEffect, useMemo, useLayoutEffect } from 'react';
 import { useDashboard } from './hooks/useDashboard';
 import { useLiveOffers } from './hooks/useLiveOffers';
+import { usePaymentMethodGroups } from './hooks/usePaymentMethodGroups';
 import { FiltersProvider, useFilters } from './context/FiltersContext';
 import { TimezoneProvider } from './context/TimezoneContext';
 import { Header } from './components/Header';
@@ -16,9 +17,6 @@ import { MmTransactionsLog } from './components/MmTransactionsLog';
 import { TakerOpportunities } from './components/TakerOpportunities';
 
 type ThemeMode = 'dark' | 'light';
-type PaymentMethodMode = 'neutral' | 'include' | 'exclude';
-
-const PAYMENT_METHODS = ['SEPA', 'Revolut', 'Wise', 'Zelle', 'PayPal', 'Cash App'] as const;
 
 function getInitialTheme(): ThemeMode {
   const stored = localStorage.getItem('dex-theme');
@@ -162,12 +160,13 @@ function InsightsView({ theme, pastOrderStats, generalStats, loading, load, excl
 export default function App() {
   const { pastOffers, stats, pastOrderStats, generalStats, ohlcData, lastUpdatedAt, error, loading, load, extendOhlc } = useDashboard();
   const { liveOffers, refreshForCex } = useLiveOffers();
+  const { groups } = usePaymentMethodGroups();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [preferredTimezone, setPreferredTimezone] = useState(() => localStorage.getItem('dex-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
-  const [paymentMethodModes, setPaymentMethodModes] = useState<Record<string, PaymentMethodMode>>(
-    () => Object.fromEntries(PAYMENT_METHODS.map(method => [method, 'neutral']))
+  const [excludedMethods, setExcludedMethods] = useState<string[]>(
+    () => JSON.parse(localStorage.getItem('dex-excluded-payment-methods') || '[]')
   );
 
   const allOffers = useMemo(
@@ -175,12 +174,24 @@ export default function App() {
     [liveOffers, pastOffers]
   );
 
-  const excludedPaymentMethods = useMemo(
-    () => Object.entries(paymentMethodModes)
-      .filter(([, mode]) => mode === 'exclude')
-      .map(([method]) => method),
-    [paymentMethodModes]
-  );
+  const excludedPaymentMethods = excludedMethods;
+
+  useEffect(() => {
+    localStorage.setItem('dex-excluded-payment-methods', JSON.stringify(excludedMethods));
+  }, [excludedMethods]);
+
+  const handleToggleMethod = (method: string) => {
+    setExcludedMethods(prev =>
+      prev.includes(method) ? prev.filter(m => m !== method) : [...prev, method]
+    );
+  };
+
+  const handleToggleGroup = (groupMethods: string[], exclude: boolean) => {
+    setExcludedMethods(prev => {
+      const without = prev.filter(m => !groupMethods.includes(m));
+      return exclude ? [...without, ...groupMethods] : without;
+    });
+  };
 
   useLayoutEffect(() => {
     document.documentElement.setAttribute('data-theme', theme);
@@ -197,7 +208,7 @@ export default function App() {
 
   return (
     <TimezoneProvider timezone={preferredTimezone}>
-      <FiltersProvider offers={allOffers} loading={loading}>
+      <FiltersProvider offers={allOffers} loading={loading} groups={groups} excludedMethods={excludedMethods}>
       <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-bg text-text p-2 sm:p-3 gap-2 sm:gap-3">
         <Header
           activeTab={activeTab}
@@ -212,10 +223,10 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           preferredTimezone={preferredTimezone}
           onTimezoneChange={setPreferredTimezone}
-          paymentMethodModes={paymentMethodModes}
-          onPaymentMethodModeChange={(method, mode) => {
-            setPaymentMethodModes(prev => ({ ...prev, [method]: mode }));
-          }}
+          groups={groups}
+          excludedMethods={excludedMethods}
+          onToggleMethod={handleToggleMethod}
+          onToggleGroup={handleToggleGroup}
         />
 
         {activeTab === 'monitor' && (

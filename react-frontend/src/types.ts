@@ -138,6 +138,12 @@ export interface GeneralStatsData {
   past_premiums?: PastPremiumTimeframeStats[];
 }
 
+export interface PaymentMethodGroup {
+  name: string;
+  display_name: string;
+  methods: string[];
+}
+
 export interface Filters {
   direction: string;
   exchange: string;
