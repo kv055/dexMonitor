@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"dexmonitor/internal/pastorders"
+	"dexmonitor/internal/paymentmethods"
 
 	gorillaws "github.com/gorilla/websocket"
 	_ "modernc.org/sqlite"
@@ -27,6 +28,7 @@ var (
 	frontendDir         string
 	mmControllerAPIURL  string
 	db                  *sql.DB
+	pmService           *paymentmethods.Service
 )
 
 var (
@@ -502,6 +504,14 @@ func main() {
 		go runCexPriceFeed(ctx, c)
 	}
 
+	// Payment method grouping service — loads once at startup, refreshes every hour.
+	if svc, err := paymentmethods.NewService(db); err != nil {
+		fmt.Fprintf(os.Stderr, "paymentmethods init warning: %v\n", err)
+	} else {
+		pmService = svc
+		go pmService.RefreshLoop(ctx, time.Hour)
+	}
+
 	mux := http.NewServeMux()
 
 	// Static frontend
@@ -517,6 +527,7 @@ func main() {
 	mux.HandleFunc("GET /api/stats", handleStats)
 	mux.HandleFunc("GET /api/ohlc", handleOHLC)
 	mux.HandleFunc("GET /api/snapshot-log", handleSnapshotLog)
+	mux.HandleFunc("GET /api/payment_method_groups", handlePaymentMethodGroups)
 	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
 	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
 	mux.HandleFunc("GET /health", handleHealth)
@@ -1010,6 +1021,15 @@ func handleOHLC(w http.ResponseWriter, r *http.Request) {
 		"offers":       offers,
 		"interval_min": snapshotIntervalMin,
 	})
+}
+
+func handlePaymentMethodGroups(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if pmService == nil {
+		json.NewEncoder(w).Encode(map[string]any{"groups": []any{}})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"groups": pmService.GetGroups()})
 }
 
 func handleSnapshotLog(w http.ResponseWriter, r *http.Request) {
