@@ -27,7 +27,7 @@ var (
 	bisqGRPCHost    string
 	bisqAPIPassword string
 	priceProvider   string
-	torProxy       = "socks5h://127.0.0.1:9050"
+	torProxy        string
 	robosatsOnions = []string{
 		"http://ngdk7ocdzmz5kzsysa3om6du7ycj2evxp2f2olfkyq37htx3gllwp2yd.onion",
 		"http://mmhaqzuirth5rx7gl24d4773lknltjhik57k7ahec5iefktezv4b3uid.onion",
@@ -49,6 +49,10 @@ func init() {
 	priceProvider = os.Getenv("PRICE_PROVIDER")
 	if priceProvider == "" {
 		priceProvider = "bisq_tor"
+	}
+	torProxy = os.Getenv("TOR_PROXY_URL")
+	if torProxy == "" {
+		torProxy = "socks5h://127.0.0.1:9050"
 	}
 }
 

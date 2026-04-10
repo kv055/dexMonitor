@@ -10,4 +10,4 @@ HEALTHCHECK --interval=10s --timeout=5s --start-period=30s --retries=5 \
     CMD curl -sf --socks5 127.0.0.1:9050 http://example.com > /dev/null 2>&1 || exit 1
 
 USER toruser
-CMD ["tor", "--SocksPort", "0.0.0.0:9050", "--ControlPort", "9051", "--CookieAuthentication", "0"]
+CMD ["tor", "--SocksPort", "0.0.0.0:9050", "--ControlPort", "127.0.0.1:9051", "--CookieAuthentication", "0"]

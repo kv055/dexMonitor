@@ -553,7 +553,11 @@ var robosatsOnions = []string{
 
 // newTorHTTPClient returns an HTTP client routed through the local Tor SOCKS5 proxy.
 func newTorHTTPClient() (*http.Client, error) {
-	dialer, err := proxy.SOCKS5("tcp", "127.0.0.1:9050", nil, proxy.Direct)
+	torProxyAddr := os.Getenv("TOR_PROXY_ADDR")
+	if torProxyAddr == "" {
+		torProxyAddr = "127.0.0.1:9050"
+	}
+	dialer, err := proxy.SOCKS5("tcp", torProxyAddr, nil, proxy.Direct)
 	if err != nil {
 		return nil, fmt.Errorf("tor proxy: %w", err)
 	}

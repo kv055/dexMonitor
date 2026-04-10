@@ -34,6 +34,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfontconfig1 \
     libfreetype6 \
     libgcc-s1 \
+    procps \
     libstdc++6 \
     zlib1g \
     && rm -rf /var/lib/apt/lists/*
