@@ -17,16 +17,17 @@ export function useDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = []) => {
+  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], confirmations: number = 1) => {
     setLoading(true);
     setError(null);
     try {
       const excludedQuery = excludedPaymentQuery(excludedPaymentMethods);
+      const confirmationsQuery = `&confirmations=${confirmations}`;
       const [s, o, ohlc, pos, gs] = await Promise.all([
         apiFetch<Stats>(`/api/stats?hours=${hours}`),
-        apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&cex=${cex}${excludedQuery}`),
+        apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&cex=${cex}${excludedQuery}${confirmationsQuery}`),
         apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`),
-        apiFetch<PastOrderStats>(`/api/past_order_stats?fiat=EUR${excludedQuery}`),
+        apiFetch<PastOrderStats>(`/api/past_order_stats?fiat=EUR${excludedQuery}${confirmationsQuery}`),
         apiFetch<GeneralStatsData>(`/api/general_stats?hours=${hours}${excludedQuery}`),
       ]);
       setStats(s);

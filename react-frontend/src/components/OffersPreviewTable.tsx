@@ -32,6 +32,15 @@ function fmtFiatAmount(n: number | null | undefined): string {
   return '€' + abs;
 }
 
+function fmtEtaMinutes(totalMinutes: number): string {
+  if (totalMinutes <= 0) return '—';
+  if (totalMinutes < 60) return `~${totalMinutes}m`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (minutes === 0) return `~${hours}h`;
+  return `~${hours}h ${minutes}m`;
+}
+
 const TIER_COLOR: Record<string, string> = {
   economic:  'text-green',
   standard:  'text-accent',
@@ -108,6 +117,25 @@ function OnchainFeeDetail({ d, conf }: { d: BTCDetail; conf: number }) {
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted">Mempool</span>
             <span className="text-text">{d.mempool_size_mb} MB · {d.unconfirmed_tx_count.toLocaleString()} txs</span>
+          </div>
+          <div className="flex items-start justify-between gap-3">
+            <span className="text-muted">Prediction</span>
+            <div className="text-right">
+              <div className="text-text">
+                {d.required_confirmations} conf
+                <span className="text-muted"> · </span>
+                selected {fmtEtaMinutes(d.selected_full_confirmation_minutes)}
+              </div>
+              <div className="text-[0.64rem] text-muted">
+                eco {fmtEtaMinutes(d.economic_full_confirmation_minutes)}
+                <span className="text-border"> · </span>
+                std {fmtEtaMinutes(d.standard_full_confirmation_minutes)}
+                <span className="text-border"> · </span>
+                fast {fmtEtaMinutes(d.fast_full_confirmation_minutes)}
+                <span className="text-border"> · </span>
+                exp {fmtEtaMinutes(d.express_full_confirmation_minutes)}
+              </div>
+            </div>
           </div>
           {/* Data age */}
           <div className="flex items-center justify-between gap-3">

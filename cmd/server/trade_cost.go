@@ -671,20 +671,31 @@ func NewTradeRouteOptimizer(estimators map[string]*TradeCostEstimator) *TradeRou
 // BTCNetworkFeeDetail carries the full onchain fee calculation context for display.
 // Only populated for onchain transfers; nil for Lightning.
 type BTCNetworkFeeDetail struct {
-	TxVBytes           int64   `json:"tx_vbytes"` // calculated virtual size (per tx)
-	TxType             string  `json:"tx_type"`   // "P2WPKH", "P2TR", etc.
-	TxInputs           int     `json:"tx_inputs"`
-	TxOutputs          int     `json:"tx_outputs"`
-	NumTxs             int     `json:"num_txs"`   // number of transactions (2 for bid side, 1 for ask side)
-	SelectedSatVB      int64   `json:"selected_sat_vb"` // fee rate for the chosen tier
-	EconomicSatVB      int64   `json:"economic_sat_vb"` // all-tier rates for comparison
-	StandardSatVB      int64   `json:"standard_sat_vb"`
-	FastSatVB          int64   `json:"fast_sat_vb"`
-	ExpressSatVB       int64   `json:"express_sat_vb"`
-	CongestionLevel    string  `json:"congestion_level"`
-	MempoolSizeMB      float64 `json:"mempool_size_mb"`
-	UnconfirmedTxCount int64   `json:"unconfirmed_tx_count"`
-	DataAgeMinutes     int     `json:"data_age_minutes"`
+	TxVBytes                        int64   `json:"tx_vbytes"` // calculated virtual size (per tx)
+	TxType                          string  `json:"tx_type"`   // "P2WPKH", "P2TR", etc.
+	TxInputs                        int     `json:"tx_inputs"`
+	TxOutputs                       int     `json:"tx_outputs"`
+	NumTxs                          int     `json:"num_txs"`         // number of transactions (2 for bid side, 1 for ask side)
+	SelectedSatVB                   int64   `json:"selected_sat_vb"` // fee rate for the chosen tier
+	RequiredConfirmations           int     `json:"required_confirmations"`
+	SelectedInclusionMinutes        int     `json:"selected_inclusion_minutes"`
+	SelectedFullConfirmationMinutes int     `json:"selected_full_confirmation_minutes"`
+	EconomicSatVB                   int64   `json:"economic_sat_vb"` // all-tier rates for comparison
+	EconomicInclusionMinutes        int     `json:"economic_inclusion_minutes"`
+	EconomicFullConfirmationMinutes int     `json:"economic_full_confirmation_minutes"`
+	StandardSatVB                   int64   `json:"standard_sat_vb"`
+	StandardInclusionMinutes        int     `json:"standard_inclusion_minutes"`
+	StandardFullConfirmationMinutes int     `json:"standard_full_confirmation_minutes"`
+	FastSatVB                       int64   `json:"fast_sat_vb"`
+	FastInclusionMinutes            int     `json:"fast_inclusion_minutes"`
+	FastFullConfirmationMinutes     int     `json:"fast_full_confirmation_minutes"`
+	ExpressSatVB                    int64   `json:"express_sat_vb"`
+	ExpressInclusionMinutes         int     `json:"express_inclusion_minutes"`
+	ExpressFullConfirmationMinutes  int     `json:"express_full_confirmation_minutes"`
+	CongestionLevel                 string  `json:"congestion_level"`
+	MempoolSizeMB                   float64 `json:"mempool_size_mb"`
+	UnconfirmedTxCount              int64   `json:"unconfirmed_tx_count"`
+	DataAgeMinutes                  int     `json:"data_age_minutes"`
 }
 
 // networkFeeDetails bundles the fee amount with metadata about how it was calculated.
@@ -700,20 +711,24 @@ type networkFeeDetails struct {
 // dexExchange is the name of the DEX the offer is on (e.g. "bisq", "robosats", "hodlhodl").
 // A DEX offer premium must exceed this value to be profitable.
 func (e *TradeCostEstimator) CostPct(btcAmount float64, dexExchange string) float64 {
+	return e.CostPctWithConfirmations(btcAmount, dexExchange, 1)
+}
+
+func (e *TradeCostEstimator) CostPctWithConfirmations(btcAmount float64, dexExchange string, requiredConfirmations int) float64 {
 	if btcAmount <= 0 {
 		return 0
 	}
 	method := resolveWithdrawalMethod(e.cexProfile, dexExchange)
-	return e.costPctForMethod(btcAmount, dexExchange, method)
+	return e.costPctForMethod(btcAmount, dexExchange, method, requiredConfirmations)
 }
 
-func (e *TradeCostEstimator) costPctForMethod(btcAmount float64, dexExchange string, method WithdrawalMethod) float64 {
+func (e *TradeCostEstimator) costPctForMethod(btcAmount float64, dexExchange string, method WithdrawalMethod, requiredConfirmations int) float64 {
 	if btcAmount <= 0 {
 		return 0
 	}
 	takerFrac := e.taker.get()
 	withdrawalFee := e.withdrawal.get(method)
-	netFee := e.getNetworkFeeForMethod(method, btcAmount)
+	netFee := e.getNetworkFeeForMethod(method, btcAmount, requiredConfirmations)
 	dexFeeFrac := e.getDexFeeFrac(dexExchange)
 
 	tradingFee := btcAmount * takerFrac
@@ -729,10 +744,10 @@ func (e *TradeCostEstimator) costPctForMethod(btcAmount float64, dexExchange str
 //     congestion-adaptive prediction via the bitcoin fee predictor.
 func (e *TradeCostEstimator) getNetworkFee(dexExchange string, btcAmount float64) networkFeeDetails {
 	method := resolveWithdrawalMethod(e.cexProfile, dexExchange)
-	return e.getNetworkFeeForMethod(method, btcAmount)
+	return e.getNetworkFeeForMethod(method, btcAmount, 1)
 }
 
-func (e *TradeCostEstimator) getNetworkFeeForMethod(method WithdrawalMethod, btcAmount float64) networkFeeDetails {
+func (e *TradeCostEstimator) getNetworkFeeForMethod(method WithdrawalMethod, btcAmount float64, requiredConfirmations int) networkFeeDetails {
 	if e.networkFeeOverride != nil {
 		return e.networkFeeOverride(method, btcAmount)
 	}
@@ -758,10 +773,11 @@ func (e *TradeCostEstimator) getNetworkFeeForMethod(method WithdrawalMethod, btc
 		}
 	}
 
-	ctx, err := e.btcPredictor.GetDetailedRecommendation(
+	ctx, err := e.btcPredictor.GetDetailedRecommendationWithConfirmations(
 		e.cexProfile.TypicalInputs,
 		e.cexProfile.TypicalOutputs,
 		e.cexProfile.OnchainTxType,
+		requiredConfirmations,
 	)
 	if err != nil || ctx.Recommendation == nil {
 		return networkFeeDetails{method: MethodOnchain}
@@ -770,19 +786,30 @@ func (e *TradeCostEstimator) getNetworkFeeForMethod(method WithdrawalMethod, btc
 	var detail *BTCNetworkFeeDetail
 	if ctx.Estimate != nil {
 		detail = &BTCNetworkFeeDetail{
-			TxVBytes:        ctx.Estimate.TransactionSize,
-			TxType:          ctx.TxType,
-			TxInputs:        ctx.TxInputs,
-			TxOutputs:       ctx.TxOutputs,
-			SelectedSatVB:   ctx.Recommendation.FeeRateSatVB,
-			CongestionLevel: ctx.Estimate.NetworkCongestion,
-			DataAgeMinutes:  ctx.DataAgeMinutes,
+			TxVBytes:                        ctx.Estimate.TransactionSize,
+			TxType:                          ctx.TxType,
+			TxInputs:                        ctx.TxInputs,
+			TxOutputs:                       ctx.TxOutputs,
+			SelectedSatVB:                   ctx.Recommendation.FeeRateSatVB,
+			RequiredConfirmations:           requiredConfirmations,
+			SelectedInclusionMinutes:        int(ctx.Recommendation.EstimatedInclusionTime / time.Minute),
+			SelectedFullConfirmationMinutes: int(ctx.Recommendation.EstimatedFullConfirmationTime / time.Minute),
+			CongestionLevel:                 ctx.Estimate.NetworkCongestion,
+			DataAgeMinutes:                  ctx.DataAgeMinutes,
 		}
 		if ctx.FeeRates != nil {
 			detail.EconomicSatVB = ctx.FeeRates.EconomicFee
+			detail.EconomicInclusionMinutes = int(ctx.Estimate.EconomicInclusionTime / time.Minute)
+			detail.EconomicFullConfirmationMinutes = int(ctx.Estimate.EconomicTime / time.Minute)
 			detail.StandardSatVB = ctx.FeeRates.StandardFee
+			detail.StandardInclusionMinutes = int(ctx.Estimate.StandardInclusionTime / time.Minute)
+			detail.StandardFullConfirmationMinutes = int(ctx.Estimate.StandardTime / time.Minute)
 			detail.FastSatVB = ctx.FeeRates.FastFee
+			detail.FastInclusionMinutes = int(ctx.Estimate.FastInclusionTime / time.Minute)
+			detail.FastFullConfirmationMinutes = int(ctx.Estimate.FastTime / time.Minute)
 			detail.ExpressSatVB = ctx.FeeRates.ExpressFee
+			detail.ExpressInclusionMinutes = int(ctx.Estimate.ExpressInclusionTime / time.Minute)
+			detail.ExpressFullConfirmationMinutes = int(ctx.Estimate.ExpressTime / time.Minute)
 		}
 		if ctx.NetworkStats != nil {
 			detail.MempoolSizeMB = math.Round(float64(ctx.NetworkStats.MempoolSize)/(1024*1024)*100) / 100
@@ -845,20 +872,24 @@ func round4(v float64) float64 {
 // Breakdown returns a full per-component cost breakdown for a given trade size, DEX, and offer direction.
 // direction should be the DEX offer direction: "buy" (bid side) or "sell" (ask side).
 func (e *TradeCostEstimator) Breakdown(btcAmount float64, dexExchange string, direction string) CostBreakdown {
+	return e.BreakdownWithConfirmations(btcAmount, dexExchange, direction, 1)
+}
+
+func (e *TradeCostEstimator) BreakdownWithConfirmations(btcAmount float64, dexExchange string, direction string, requiredConfirmations int) CostBreakdown {
 	if btcAmount <= 0 {
 		return CostBreakdown{}
 	}
 	method := resolveWithdrawalMethod(e.cexProfile, dexExchange)
-	return e.breakdownForMethod(btcAmount, dexExchange, method, direction)
+	return e.breakdownForMethod(btcAmount, dexExchange, method, direction, requiredConfirmations)
 }
 
-func (e *TradeCostEstimator) breakdownForMethod(btcAmount float64, dexExchange string, method WithdrawalMethod, direction string) CostBreakdown {
+func (e *TradeCostEstimator) breakdownForMethod(btcAmount float64, dexExchange string, method WithdrawalMethod, direction string, requiredConfirmations int) CostBreakdown {
 	if btcAmount <= 0 {
 		return CostBreakdown{}
 	}
 	takerFrac := e.taker.get()
 	dexFeeFrac := e.getDexFeeFrac(dexExchange)
-	netFee := e.getNetworkFeeForMethod(method, btcAmount)
+	netFee := e.getNetworkFeeForMethod(method, btcAmount, requiredConfirmations)
 
 	// Ask side: buyer purchases BTC from DEX seller then deposits to CEX — no CEX withdrawal fee,
 	// and only 1 network transaction (DEX wallet → CEX deposit address).
@@ -912,6 +943,10 @@ func (e *TradeCostEstimator) breakdownForMethod(btcAmount float64, dexExchange s
 }
 
 func (o *TradeRouteOptimizer) BestBreakdown(btcAmount float64, dexExchange string, direction string) CostBreakdown {
+	return o.BestBreakdownWithConfirmations(btcAmount, dexExchange, direction, 1)
+}
+
+func (o *TradeRouteOptimizer) BestBreakdownWithConfirmations(btcAmount float64, dexExchange string, direction string, requiredConfirmations int) CostBreakdown {
 	if o == nil || btcAmount <= 0 {
 		return CostBreakdown{}
 	}
@@ -924,7 +959,7 @@ func (o *TradeRouteOptimizer) BestBreakdown(btcAmount float64, dexExchange strin
 			continue
 		}
 		for _, method := range supportedWithdrawalMethods(est.cexProfile, dexExchange) {
-			bd := est.breakdownForMethod(btcAmount, dexExchange, method, direction)
+			bd := est.breakdownForMethod(btcAmount, dexExchange, method, direction, requiredConfirmations)
 			if !found || bd.TotalCostPct < best.TotalCostPct {
 				best = bd
 				found = true

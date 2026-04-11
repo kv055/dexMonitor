@@ -141,7 +141,7 @@ func setCexPrice(cex string, p float64) {
 	cexPricesMu.Lock()
 	cexPrices[cex] = p
 	cexPricesMu.Unlock()
-	hub.broadcastForCex(cex)
+	hub.broadcastForConfig(cex, 1)
 }
 
 // --- CEX WebSocket price feeds ---
@@ -335,7 +335,7 @@ func runCoinbaseFeed(ctx context.Context, cex string) error {
 func init() {
 	dbPath = os.Getenv("DB_PATH")
 	if dbPath == "" {
-		dbPath = "/home/claudio_clawd_bot/orderbook/orderbook.db"
+		dbPath = filepath.Join("db", "orderbook.db")
 	}
 	interval := os.Getenv("SNAPSHOT_INTERVAL_MIN")
 	if interval == "" {
@@ -363,6 +363,10 @@ func init() {
 
 func main() {
 	var err error
+	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
+		fmt.Fprintf(os.Stderr, "failed to create database directory: %v\n", err)
+		os.Exit(1)
+	}
 	db, err = sql.Open("sqlite", dbPath)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to open database: %v\n", err)
@@ -406,7 +410,6 @@ func main() {
 			fiat_max INTEGER,
 			payment_method TEXT,
 			offer_id TEXT,
-			ref_price REAL,
 			first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
 			last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
 			is_live BOOLEAN NOT NULL DEFAULT 0,
@@ -416,6 +419,9 @@ func main() {
 			avg_premium_pct REAL,
 			avg_trade_cost_pct REAL,
 			avg_trade_cost_btc REAL,
+			cex_taker_fee_btc REAL,
+			cex_withdraw_fee_btc REAL,
+			network_fee_btc REAL,
 			avg_net_premium_pct REAL,
 			avg_estimated_profit_btc REAL,
 			avg_estimated_profit_fiat REAL,
@@ -433,6 +439,9 @@ func main() {
 			premium_pct      REAL    NOT NULL,
 			trade_cost_pct   REAL,
 			trade_cost_btc   REAL,
+			cex_taker_fee_btc REAL,
+			cex_withdraw_fee_btc REAL,
+			network_fee_btc  REAL,
 			net_premium_pct  REAL,
 			net_premium_btc  REAL,
 			btc_amount       REAL
@@ -477,10 +486,19 @@ func main() {
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_premium_pct REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_pct REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_btc REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN cex_taker_fee_btc REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN cex_withdraw_fee_btc REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN network_fee_btc REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_net_premium_pct REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_btc REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_fiat REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_btc_amount REAL")
+	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN cex_taker_fee_btc REAL")
+	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN cex_withdraw_fee_btc REAL")
+	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN network_fee_btc REAL")
+	db.Exec("ALTER TABLE offers DROP COLUMN avg_cex_fee_btc")
+	db.Exec("ALTER TABLE offers DROP COLUMN avg_network_fee_btc")
+	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN cex_fee_btc")
 	// Drop obsolete 10-minute-window columns (SQLite 3.35+ / modernc.org/sqlite v1.48)
 	db.Exec("ALTER TABLE offers DROP COLUMN avg_ref_price_10m")
 	db.Exec("ALTER TABLE offers DROP COLUMN avg_premium_10m_pct")
@@ -596,7 +614,8 @@ func handleOffers(w http.ResponseWriter, r *http.Request) {
 // Accepts optional ?cex= query param (default: "kraken").
 func handleLiveOffersREST(w http.ResponseWriter, r *http.Request) {
 	cex := queryCex(r)
-	payload := hub.computePayload(getCexPrice(cex), cex)
+	requiredConfirmations := queryConfirmations(r)
+	payload := hub.computePayload(getCexPrice(cex), cex, requiredConfirmations)
 	if payload == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("[]"))
@@ -613,6 +632,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	hours := queryInt(r, "hours", 24)
 	hoursArg := fmt.Sprintf("-%d hours", hours)
 	excludedPaymentMethods := queryExcludedPaymentMethods(r)
+	requiredConfirmations := queryConfirmations(r)
 
 	rows, err := db.Query(
 		"SELECT * FROM offers WHERE is_live = 0 AND last_seen >= datetime('now', ?) ORDER BY last_seen DESC LIMIT ?",
@@ -635,7 +655,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 		if isPaymentMethodExcluded(offerString(o, "payment_method"), excludedPaymentMethods) {
 			continue
 		}
-		addPastOfferCostFields(o)
+		addPastOfferCostFields(o, requiredConfirmations)
 		filtered = append(filtered, o)
 	}
 
@@ -668,7 +688,7 @@ func fetchOfferLifecycle(ids []int64) map[int64][]LifecyclePoint {
 		args[i] = id
 	}
 	rows, err := db.Query(fmt.Sprintf(
-		`SELECT offer_db_id, snapshot_time, price FROM order_lifecycle WHERE offer_db_id IN (%s) ORDER BY offer_db_id, snapshot_time`,
+		`SELECT offer_db_id, snapshot_time, price, net_premium_pct FROM order_lifecycle WHERE offer_db_id IN (%s) ORDER BY offer_db_id, snapshot_time`,
 		placeholders,
 	), args...)
 	if err != nil {
@@ -679,16 +699,22 @@ func fetchOfferLifecycle(ids []int64) map[int64][]LifecyclePoint {
 		var offerID int64
 		var snapTime string
 		var price float64
-		if err := rows.Scan(&offerID, &snapTime, &price); err != nil {
+		var netPremiumPct sql.NullFloat64
+		if err := rows.Scan(&offerID, &snapTime, &price, &netPremiumPct); err != nil {
 			continue
 		}
-		result[offerID] = append(result[offerID], LifecyclePoint{Time: snapTime, Price: price})
+		pt := LifecyclePoint{Time: snapTime, Price: price}
+		if netPremiumPct.Valid {
+			pt.NetPremiumPct = &netPremiumPct.Float64
+		}
+		result[offerID] = append(result[offerID], pt)
 	}
 	return result
 }
 
 func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
 	excludedPaymentMethods := queryExcludedPaymentMethods(r)
+	requiredConfirmations := queryConfirmations(r)
 	fiatCurrency := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("fiat")))
 	if fiatCurrency == "" {
 		fiatCurrency = "EUR"
@@ -712,7 +738,7 @@ func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
 
 	premiumOrders := make([]pastorders.PremiumOrder, 0, len(offers))
 	for _, o := range offers {
-		analysis := addPastOfferCostFields(o)
+		analysis := addPastOfferCostFields(o, requiredConfirmations)
 		if !analysis.isPremium {
 			continue
 		}
@@ -757,7 +783,7 @@ func handleGeneralStats(w http.ResponseWriter, r *http.Request) {
 	for _, o := range offers {
 		direction := offerString(o, "direction")
 		price := offerFloat(o, "price")
-		refPrice := offerFloat(o, "ref_price")
+		refPrice := offerRefPrice(o)
 		priceDiff := computeDirectionalPremiumPct(direction, price, refPrice)
 		var priceDiffPtr *float64
 		if refPrice > 0 {
@@ -784,13 +810,14 @@ type pastOfferAnalysis struct {
 	estimatedProfitBTC float64
 }
 
-func addPastOfferCostFields(o map[string]any) pastOfferAnalysis {
+func addPastOfferCostFields(o map[string]any, requiredConfirmations int) pastOfferAnalysis {
 	dexExchange := offerString(o, "exchange")
 	direction := offerString(o, "direction")
 	price := offerFloat(o, "price")
-	refPrice := offerFloat(o, "ref_price")
+	refPrice := offerRefPrice(o)
 	priceDiff := computeDirectionalPremiumPct(direction, price, refPrice)
 	if refPrice > 0 {
+		o["ref_price"] = refPrice
 		o["price_diff_percent"] = priceDiff
 	}
 
@@ -803,7 +830,7 @@ func addPastOfferCostFields(o map[string]any) pastOfferAnalysis {
 	}
 
 	btcSize := selectBTCTradeSize(btcMaxPtr, btcMinPtr)
-	tradeCostPct, netPremium, bd := computeNetPremiumFields(priceDiff, btcSize, dexExchange, direction)
+	tradeCostPct, netPremium, bd := computeNetPremiumFieldsWithConfirmations(priceDiff, btcSize, dexExchange, direction, requiredConfirmations)
 
 	o["trade_cost_percent"] = tradeCostPct
 	o["net_premium_percent"] = netPremium
@@ -832,8 +859,9 @@ func writeLifecycleEntries(offers []liveOutOffer) {
 	insStmt, err := tx.Prepare(`
 		INSERT INTO order_lifecycle
 			(offer_db_id, price, ref_price, premium_pct,
-			 trade_cost_pct, trade_cost_btc, net_premium_pct, net_premium_btc, btc_amount)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 trade_cost_pct, trade_cost_btc, cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc,
+			 net_premium_pct, net_premium_btc, btc_amount)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		tx.Rollback()
@@ -857,6 +885,10 @@ func writeLifecycleEntries(offers []liveOutOffer) {
 			continue
 		}
 		bd := o.CostBreakdown
+		var cexWithdrawFee any
+		if bd.TradeDirection != "ask" {
+			cexWithdrawFee = round8(bd.WithdrawalFeeBTC)
+		}
 		_, _ = insStmt.Exec(
 			o.ID,
 			round4(o.Price),
@@ -864,6 +896,9 @@ func writeLifecycleEntries(offers []liveOutOffer) {
 			round4(o.PriceDiffPct),
 			round4(bd.TotalCostPct),
 			round8(bd.TotalCostBTC),
+			round8(bd.CexTakerFeeBTC),
+			cexWithdrawFee,
+			round8(bd.NetworkFeeBTC),
 			round4(o.NetPremiumPct),
 			round8(bd.EstimatedProfitBTC),
 			round8(bd.BTCAmount),
@@ -894,7 +929,7 @@ func handleInternalLiveOffers(w http.ResponseWriter, r *http.Request) {
 	hub.setLifecycle(fetchOfferLifecycle(ids))
 	hub.setOffers(offers)
 	price := getCexPrice(defaultCEX)
-	outOffers := hub.computeOutOffers(price, defaultCEX)
+	outOffers := hub.computeOutOffers(price, defaultCEX, 1)
 	go writeLifecycleEntries(outOffers)
 	fmt.Printf("[LiveHub] updated with %d live offers from snapshot\n", len(offers))
 	w.WriteHeader(http.StatusNoContent)
@@ -985,11 +1020,8 @@ func handleOHLC(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := db.Query(`
-		SELECT price, ref_price, payment_method, exchange, direction, first_seen
-		FROM offers
+		SELECT * FROM offers
 		WHERE last_seen >= datetime('now', ?)
-		  AND ((direction = 'sell' AND price <= ref_price)
-		    OR (direction = 'buy' AND price >= ref_price))
 	`, fmt.Sprintf("-%d hours", hours))
 	if err != nil {
 		writeError(w, err)
@@ -997,22 +1029,34 @@ func handleOHLC(w http.ResponseWriter, r *http.Request) {
 	}
 	defer rows.Close()
 
-	offers := make([]map[string]any, 0)
-	for rows.Next() {
-		var price, refPrice float64
-		var paymentMethod, exchange, direction, firstSeen string
-		if err := rows.Scan(&price, &refPrice, &paymentMethod, &exchange, &direction, &firstSeen); err != nil {
-			writeError(w, err)
-			return
+	offerRows, err := scanOffers(rows)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	offers := make([]map[string]any, 0, len(offerRows))
+	for _, row := range offerRows {
+		price := offerFloat(row, "price")
+		refPrice := offerRefPrice(row)
+		direction := offerString(row, "direction")
+		if refPrice <= 0 {
+			continue
+		}
+		if direction == "sell" && price > refPrice {
+			continue
+		}
+		if direction == "buy" && price < refPrice {
+			continue
 		}
 		premium := computeDirectionalPremiumPct(direction, price, refPrice)
 		offers = append(offers, map[string]any{
-			"time":           firstSeen,
+			"time":           offerString(row, "first_seen"),
 			"price":          price,
 			"premium":        premium,
-			"exchange":       exchange,
+			"exchange":       offerString(row, "exchange"),
 			"direction":      direction,
-			"payment_method": paymentMethod,
+			"payment_method": offerString(row, "payment_method"),
 		})
 	}
 
@@ -1359,6 +1403,13 @@ func scanOffers(rows *sql.Rows) ([]map[string]any, error) {
 	return result, nil
 }
 
+func offerRefPrice(o map[string]any) float64 {
+	if v := offerFloat(o, "ref_price"); v > 0 {
+		return v
+	}
+	return offerFloat(o, "avg_ref_price")
+}
+
 // queryCex reads the ?cex= query param and validates it against supportedCEXes.
 // Falls back to defaultCEX if missing or unrecognised.
 func queryCex(r *http.Request) string {
@@ -1377,6 +1428,17 @@ func queryInt(r *http.Request, key string, defaultVal int) int {
 	v, err := strconv.Atoi(s)
 	if err != nil {
 		return defaultVal
+	}
+	return v
+}
+
+func queryConfirmations(r *http.Request) int {
+	v := queryInt(r, "confirmations", 1)
+	if v < 1 {
+		return 1
+	}
+	if v > 6 {
+		return 6
 	}
 	return v
 }

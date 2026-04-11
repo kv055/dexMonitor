@@ -185,7 +185,7 @@ func TestLiveOffersRESTReturnsComputedCostFields(t *testing.T) {
 		tradeCostEstimators = oldEstimators
 	}()
 
-	hub = &LiveHub{subscribers: map[chan []byte]string{}}
+	hub = &LiveHub{subscribers: map[chan []byte]liveSubscription{}}
 	cexPrices = map[string]float64{"kraken": 100}
 
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
@@ -224,12 +224,12 @@ func TestLiveOffersRESTReturnsComputedCostFields(t *testing.T) {
 
 	offer := offers[0]
 	assertFloat(t, offer.PriceDiffPct, 2.5)
-	assertFloat(t, offer.TradeCostPct, 0.55)
-	assertFloat(t, offer.NetPremiumPct, 1.95)
+	assertFloat(t, offer.TradeCostPct, 0.6)
+	assertFloat(t, offer.NetPremiumPct, 1.9)
 	assertFloat(t, offer.CostBreakdown.BTCAmount, 0.1)
-	assertFloat(t, offer.CostBreakdown.TotalCostPct, 0.55)
-	assertFloat(t, offer.CostBreakdown.TotalCostBTC, 0.00055)
-	assertFloat(t, offer.CostBreakdown.EstimatedProfitBTC, 0.00195)
+	assertFloat(t, offer.CostBreakdown.TotalCostPct, 0.6)
+	assertFloat(t, offer.CostBreakdown.TotalCostBTC, 0.0006)
+	assertFloat(t, offer.CostBreakdown.EstimatedProfitBTC, 0.0019)
 }
 
 func TestPastOffersRESTComputesCostsForClosedOrdersDump(t *testing.T) {
@@ -264,6 +264,9 @@ func TestPastOffersRESTComputesCostsForClosedOrdersDump(t *testing.T) {
 
 	if _, err := db.Exec(string(schemaSQL)); err != nil {
 		t.Fatalf("create schema: %v", err)
+	}
+	if _, err := db.Exec(`ALTER TABLE offers ADD COLUMN ref_price REAL`); err != nil {
+		t.Fatalf("add legacy ref_price column for fixture import: %v", err)
 	}
 	if _, err := db.Exec(string(closedOrdersSQL)); err != nil {
 		t.Fatalf("load closed orders dump: %v", err)
@@ -341,8 +344,8 @@ func TestPastOrderStatsRESTAggregatesPremiumOrdersByTimeframe(t *testing.T) {
 	if oneHour.PremiumOrderCount != 2 {
 		t.Fatalf("1h premium count = %d, want 2", oneHour.PremiumOrderCount)
 	}
-	assertFloat(t, oneHour.TotalProfitBTC, 0.02285)
-	assertFloat(t, oneHour.TotalProfitFiat, 2.28)
+	assertFloat(t, oneHour.TotalProfitBTC, 0.02296)
+	assertFloat(t, oneHour.TotalProfitFiat, 2.3)
 	assertFloat(t, oneHour.AverageOrderBTC, 0.25)
 	assertFloat(t, oneHour.SmallestOrderBTC, 0.1)
 	assertFloat(t, oneHour.BiggestOrderBTC, 0.4)
@@ -351,8 +354,8 @@ func TestPastOrderStatsRESTAggregatesPremiumOrdersByTimeframe(t *testing.T) {
 	if sixHour.PremiumOrderCount != 3 {
 		t.Fatalf("6h premium count = %d, want 3", sixHour.PremiumOrderCount)
 	}
-	assertFloat(t, sixHour.TotalProfitBTC, 0.03195)
-	assertFloat(t, sixHour.TotalProfitFiat, 3.2)
+	assertFloat(t, sixHour.TotalProfitBTC, 0.03222)
+	assertFloat(t, sixHour.TotalProfitFiat, 3.22)
 	assertFloat(t, sixHour.AverageOrderBTC, 0.23333333)
 	assertFloat(t, sixHour.SmallestOrderBTC, 0.1)
 	assertFloat(t, sixHour.BiggestOrderBTC, 0.4)
@@ -492,7 +495,7 @@ func TestGeneralStatsRESTIncludesPastPremiumsForFixedWindows(t *testing.T) {
 	withTempOrdersDB(t)
 
 	if _, err := db.Exec(`
-		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, ref_price, first_seen, last_seen, is_live)
+		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, first_seen, last_seen, is_live)
 		VALUES
 			('robosats', 'buy', 104, 0.1, 0.1, 'SEPA', 'robo-10h', 100, datetime('now', '-10 hours'), datetime('now', '-10 hours'), 0),
 			('robosats', 'sell', 94, 0.1, 0.1, 'SEPA', 'robo-5d', 100, datetime('now', '-5 days'), datetime('now', '-5 days'), 0),
@@ -574,7 +577,7 @@ func withTempOrdersDB(t *testing.T) {
 	}
 
 	if _, err := db.Exec(`
-		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, ref_price, first_seen, last_seen, is_live)
+		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, first_seen, last_seen, is_live)
 		VALUES
 			('bisq', 'buy', 105, 0.1, 0.1, 'Revolut', 'premium-30m', 100, datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
 			('bisq', 'sell', 95, 0.2, 0.2, 'Wise', 'premium-5h', 100, datetime('now', '-7 hours'), datetime('now', '-5 hours'), 0),

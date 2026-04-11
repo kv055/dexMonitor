@@ -7,6 +7,8 @@ interface Props {
   onClose: () => void;
   preferredTimezone: string;
   onTimezoneChange: (timezone: string) => void;
+  requiredConfirmations: number;
+  onConfirmationsChange: (confirmations: number) => void;
   groups: PaymentMethodGroup[];
   excludedMethods: string[];
   onToggleMethod: (method: string) => void;
@@ -172,6 +174,8 @@ export function SettingsOverlay({
   onClose,
   preferredTimezone,
   onTimezoneChange,
+  requiredConfirmations,
+  onConfirmationsChange,
   groups,
   excludedMethods,
   onToggleMethod,
@@ -241,6 +245,25 @@ export function SettingsOverlay({
               ))}
             </select>
             <p className="mt-2 text-xs text-muted">This controls how timestamps are displayed across dashboard panels.</p>
+          </section>
+
+          <section className="rounded-lg border border-border bg-bg/50 p-3">
+            <div className="mb-2">
+              <p className="text-[0.7rem] uppercase tracking-wide text-muted">Bitcoin Fees</p>
+              <h3 className="text-sm font-medium">Target Confirmations</h3>
+            </div>
+            <select
+              value={requiredConfirmations}
+              onChange={event => onConfirmationsChange(Number(event.target.value))}
+              className="w-full rounded-md border border-border bg-surface px-2 py-2 text-sm text-text outline-none focus:border-accent"
+            >
+              {[1, 2, 3, 4, 5, 6].map(value => (
+                <option key={value} value={value}>
+                  {value} confirmation{value === 1 ? '' : 's'}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-muted">Used for Bitcoin onchain settlement ETA estimates. Change it anytime for bid or ask routes.</p>
           </section>
 
           <section className="rounded-lg border border-border bg-bg/50 p-3">

@@ -5,10 +5,21 @@ export interface BTCNetworkFeeDetail {
   tx_outputs: number;
   num_txs: number;
   selected_sat_vb: number;
+  required_confirmations: number;
+  selected_inclusion_minutes: number;
+  selected_full_confirmation_minutes: number;
   economic_sat_vb: number;
+  economic_inclusion_minutes: number;
+  economic_full_confirmation_minutes: number;
   standard_sat_vb: number;
+  standard_inclusion_minutes: number;
+  standard_full_confirmation_minutes: number;
   fast_sat_vb: number;
+  fast_inclusion_minutes: number;
+  fast_full_confirmation_minutes: number;
   express_sat_vb: number;
+  express_inclusion_minutes: number;
+  express_full_confirmation_minutes: number;
   congestion_level: string;
   mempool_size_mb: number;
   unconfirmed_tx_count: number;
@@ -60,7 +71,7 @@ export interface Offer {
   price_type?: string | null;
   premium?: number | null;
   time?: string;
-  lifecycle?: { time: string; price: number }[];
+  lifecycle?: { time: string; price: number; net_premium_pct?: number | null }[];
 }
 
 export interface ExchangeStat {

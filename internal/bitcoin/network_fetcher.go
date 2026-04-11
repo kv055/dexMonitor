@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
+	"slices"
 	"time"
 )
 
@@ -94,6 +96,41 @@ func (ndf *NetworkDataFetcher) FetchMempoolData() (*MempoolData, error) {
 		}
 	}
 
+	blocks, err := ndf.FetchMempoolBlocks()
+	if err != nil {
+		return nil, err
+	}
+	data.ProjectedBlocks = blocks
+	if len(blocks) > 0 {
+		data.MinFeeRate = math.MaxInt64
+		for i, block := range blocks {
+			if block.MedianFee > 0 {
+				data.MedianFeeRate = block.MedianFee
+			}
+			if len(block.FeeRange) == 0 {
+				continue
+			}
+			minFee := block.FeeRange[0]
+			maxFee := block.FeeRange[len(block.FeeRange)-1]
+			if minFee > maxFee {
+				minFee, maxFee = maxFee, minFee
+			}
+			if minFee > 0 && minFee < data.MinFeeRate {
+				data.MinFeeRate = minFee
+			}
+			if maxFee > data.MaxFeeRate {
+				data.MaxFeeRate = maxFee
+			}
+			data.BlockTarget[fmt.Sprintf("%d", i+1)] = minFee
+		}
+		if data.MinFeeRate == math.MaxInt64 {
+			data.MinFeeRate = 0
+		}
+		if data.MedianFeeRate == 0 {
+			data.MedianFeeRate = blocks[0].MedianFee
+		}
+	}
+
 	return data, nil
 }
 
@@ -120,39 +157,63 @@ func (ndf *NetworkDataFetcher) FetchBlockHeight() (int32, error) {
 
 // FetchFeePercentiles fetches fee rate percentiles from the first two mempool block projections.
 func (ndf *NetworkDataFetcher) FetchFeePercentiles() (map[string]int64, error) {
-	resp, err := ndf.makeRequest(ndf.baseURL + "/fees/mempool-blocks")
+	blocks, err := ndf.FetchMempoolBlocks()
 	if err != nil {
-		return nil, fmt.Errorf("failed to fetch fee percentiles: %w", err)
-	}
-	defer resp.Body.Close()
-
-	var blocks []map[string]interface{}
-	if err := json.NewDecoder(resp.Body).Decode(&blocks); err != nil {
-		return nil, fmt.Errorf("failed to decode fee percentiles: %w", err)
+		return nil, err
 	}
 
 	percentiles := make(map[string]int64)
 
-	if len(blocks) > 0 && blocks[0] != nil {
-		if feeRange, ok := blocks[0]["feeRange"].([]interface{}); ok && len(feeRange) >= 2 {
-			if minFee, ok := feeRange[0].(float64); ok {
-				percentiles["min"] = int64(minFee)
-			}
-			if maxFee, ok := feeRange[len(feeRange)-1].(float64); ok {
-				percentiles["max"] = int64(maxFee)
-			}
+	if len(blocks) > 0 {
+		if feeRange := blocks[0].FeeRange; len(feeRange) >= 2 {
+			percentiles["min"] = feeRange[0]
+			percentiles["max"] = feeRange[len(feeRange)-1]
 		}
 	}
 
-	if len(blocks) > 1 && blocks[1] != nil {
-		if feeRange, ok := blocks[1]["feeRange"].([]interface{}); ok && len(feeRange) > 0 {
-			if medianFee, ok := feeRange[len(feeRange)/2].(float64); ok {
-				percentiles["median"] = int64(medianFee)
-			}
+	if len(blocks) > 1 {
+		if feeRange := blocks[1].FeeRange; len(feeRange) > 0 {
+			percentiles["median"] = feeRange[len(feeRange)/2]
 		}
 	}
 
 	return percentiles, nil
+}
+
+// FetchMempoolBlocks fetches the projected fee ranges for upcoming blocks.
+func (ndf *NetworkDataFetcher) FetchMempoolBlocks() ([]MempoolBlockProjection, error) {
+	resp, err := ndf.makeRequest(ndf.baseURL + "/fees/mempool-blocks")
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch mempool blocks: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var rawBlocks []struct {
+		BlockVSize float64   `json:"blockVSize"`
+		NTx        float64   `json:"nTx"`
+		MedianFee  float64   `json:"medianFee"`
+		FeeRange   []float64 `json:"feeRange"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&rawBlocks); err != nil {
+		return nil, fmt.Errorf("failed to decode mempool blocks response: %w", err)
+	}
+
+	blocks := make([]MempoolBlockProjection, 0, len(rawBlocks))
+	for _, raw := range rawBlocks {
+		feeRange := make([]int64, 0, len(raw.FeeRange))
+		for _, fee := range raw.FeeRange {
+			feeRange = append(feeRange, int64(math.Round(fee)))
+		}
+		slices.Sort(feeRange)
+		blocks = append(blocks, MempoolBlockProjection{
+			BlockVSize:    int64(math.Round(raw.BlockVSize)),
+			NTransactions: int64(math.Round(raw.NTx)),
+			MedianFee:     int64(math.Round(raw.MedianFee)),
+			FeeRange:      feeRange,
+		})
+	}
+
+	return blocks, nil
 }
 
 // FetchNetworkStats fetches and combines fee rates, mempool size, and block height

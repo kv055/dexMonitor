@@ -2,8 +2,11 @@ package bitcoin
 
 import (
 	"fmt"
+	"math"
 	"time"
 )
+
+const defaultRequiredConfirmations = 1
 
 // FeeAnalyzer processes network data to derive fee predictions
 type FeeAnalyzer struct {
@@ -103,15 +106,86 @@ func (fa *FeeAnalyzer) CalculateTransactionFees(txVirtualSize int64, feeEstimate
 	estimate.FastFee = float64(estimate.FastFeeSat) / satoshiPerBTC
 	estimate.ExpressFee = float64(estimate.ExpressFeeSat) / satoshiPerBTC
 
-	estimate.EconomicTime = 60 * time.Minute
-	estimate.StandardTime = 30 * time.Minute
-	estimate.FastTime = 10 * time.Minute
-	estimate.ExpressTime = 2 * time.Minute
+	estimate.EconomicInclusionTime = 60 * time.Minute
+	estimate.StandardInclusionTime = 30 * time.Minute
+	estimate.FastInclusionTime = 10 * time.Minute
+	estimate.ExpressInclusionTime = 10 * time.Minute
+
+	blockTime := 10 * time.Minute
+	estimate.EconomicTime = estimate.EconomicInclusionTime + 5*blockTime
+	estimate.StandardTime = estimate.StandardInclusionTime + 5*blockTime
+	estimate.FastTime = estimate.FastInclusionTime + 5*blockTime
+	estimate.ExpressTime = estimate.ExpressInclusionTime + 5*blockTime
 
 	estimate.RecommendedTier = "standard"
 	estimate.EstimatedConfidence = 0.90
 
 	return estimate
+}
+
+func fullConfirmationTime(inclusion time.Duration, requiredConfirmations int, blockTime time.Duration) time.Duration {
+	if requiredConfirmations < 1 {
+		requiredConfirmations = defaultRequiredConfirmations
+	}
+	return inclusion + time.Duration(requiredConfirmations-1)*blockTime
+}
+
+func (fa *FeeAnalyzer) estimateTierConfirmationTime(feeRate int64, stats *NetworkStats, mempool *MempoolData, fallbackBlocks int, requiredConfirmations int) (time.Duration, time.Duration) {
+	blockTime := 10 * time.Minute
+	if stats != nil && stats.AverageBlockTime > 0 {
+		blockTime = stats.AverageBlockTime
+	}
+
+	inclusionBlocks := fallbackBlocks
+	if projectedBlocks := fa.estimateProjectedInclusionBlocks(feeRate, mempool); projectedBlocks > 0 {
+		inclusionBlocks = projectedBlocks
+	}
+
+	inclusionTime := time.Duration(inclusionBlocks) * blockTime
+	return inclusionTime, fullConfirmationTime(inclusionTime, requiredConfirmations, blockTime)
+}
+
+func (fa *FeeAnalyzer) estimateProjectedInclusionBlocks(feeRate int64, mempool *MempoolData) int {
+	if mempool == nil || len(mempool.ProjectedBlocks) == 0 {
+		return 0
+	}
+
+	for i, block := range mempool.ProjectedBlocks {
+		if len(block.FeeRange) == 0 {
+			continue
+		}
+
+		minFee := block.FeeRange[0]
+		maxFee := block.FeeRange[len(block.FeeRange)-1]
+		if minFee > maxFee {
+			minFee, maxFee = maxFee, minFee
+		}
+
+		if feeRate >= maxFee {
+			return i + 1
+		}
+		if feeRate >= minFee {
+			return i + 1
+		}
+	}
+
+	lastBlock := mempool.ProjectedBlocks[len(mempool.ProjectedBlocks)-1]
+	if len(lastBlock.FeeRange) == 0 {
+		return len(mempool.ProjectedBlocks) + 1
+	}
+
+	lastMinFee := lastBlock.FeeRange[0]
+	lastMaxFee := lastBlock.FeeRange[len(lastBlock.FeeRange)-1]
+	if lastMinFee > lastMaxFee {
+		lastMinFee, lastMaxFee = lastMaxFee, lastMinFee
+	}
+	if feeRate >= lastMinFee {
+		return len(mempool.ProjectedBlocks)
+	}
+
+	// Extrapolate beyond the visible projections rather than falling back to a fixed hardcoded hour.
+	step := int(math.Max(1, math.Ceil(float64(lastMinFee-feeRate)/math.Max(1, float64(lastMinFee)/4))))
+	return len(mempool.ProjectedBlocks) + step
 }
 
 // DetermineCongestionLevel classifies network congestion based on mempool size.
@@ -186,19 +260,27 @@ func (fa *FeeAnalyzer) BlendEstimates(estimate *FeeEstimate, stats *NetworkStats
 		return nil
 	}
 
+	blended := *estimate
+
 	if stats != nil && stats.CongestionLevel == "high" {
-		estimate.EconomicFee = estimate.EconomicFee * 120 / 100
-		estimate.StandardFee = estimate.StandardFee * 120 / 100
-		estimate.FastFee = estimate.FastFee * 120 / 100
-		estimate.ExpressFee = estimate.ExpressFee * 120 / 100
-		estimate.Confidence = estimate.Confidence * 0.9
+		blended.EconomicFee = blended.EconomicFee * 120 / 100
+		blended.StandardFee = blended.StandardFee * 120 / 100
+		blended.FastFee = blended.FastFee * 120 / 100
+		blended.ExpressFee = blended.ExpressFee * 120 / 100
+		blended.Confidence = blended.Confidence * 0.9
 	}
 
-	return estimate
+	return &blended
 }
 
 // AnalyzeAndPredict performs full analysis to produce a transaction cost estimate.
 func (fa *FeeAnalyzer) AnalyzeAndPredict(feeEstimate *FeeEstimate, stats *NetworkStats, txVirtualSize int64, txType string) *TransactionCostEstimate {
+	return fa.AnalyzeAndPredictWithConfirmations(feeEstimate, stats, txVirtualSize, txType, defaultRequiredConfirmations)
+}
+
+// AnalyzeAndPredictWithConfirmations performs full analysis for a caller-selected
+// confirmation target between 1 and 6 blocks.
+func (fa *FeeAnalyzer) AnalyzeAndPredictWithConfirmations(feeEstimate *FeeEstimate, stats *NetworkStats, txVirtualSize int64, txType string, requiredConfirmations int) *TransactionCostEstimate {
 	if feeEstimate == nil {
 		return nil
 	}
@@ -207,6 +289,23 @@ func (fa *FeeAnalyzer) AnalyzeAndPredict(feeEstimate *FeeEstimate, stats *Networ
 	costEstimate := fa.CalculateTransactionFees(txVirtualSize, blendedEstimate)
 
 	if costEstimate != nil {
+		fa.feeEstimate = blendedEstimate
+		fa.networkStats = stats
+
+		economicInclusion, economicFull := fa.estimateTierConfirmationTime(blendedEstimate.EconomicFee, stats, fa.mempoolData, 6, requiredConfirmations)
+		standardInclusion, standardFull := fa.estimateTierConfirmationTime(blendedEstimate.StandardFee, stats, fa.mempoolData, 3, requiredConfirmations)
+		fastInclusion, fastFull := fa.estimateTierConfirmationTime(blendedEstimate.FastFee, stats, fa.mempoolData, 2, requiredConfirmations)
+		expressInclusion, expressFull := fa.estimateTierConfirmationTime(blendedEstimate.ExpressFee, stats, fa.mempoolData, 1, requiredConfirmations)
+
+		costEstimate.EconomicInclusionTime = economicInclusion
+		costEstimate.StandardInclusionTime = standardInclusion
+		costEstimate.FastInclusionTime = fastInclusion
+		costEstimate.ExpressInclusionTime = expressInclusion
+		costEstimate.EconomicTime = economicFull
+		costEstimate.StandardTime = standardFull
+		costEstimate.FastTime = fastFull
+		costEstimate.ExpressTime = expressFull
+
 		if stats != nil {
 			costEstimate.NetworkCongestion = fa.DetermineCongestionLevel(stats)
 		} else {

@@ -15,14 +15,15 @@ const failedFetchCooldown = 2 * time.Minute
 
 // BitcoinFeePredictor orchestrates fee fetching, analysis, and recommendations.
 type BitcoinFeePredictor struct {
-	fetcher          *NetworkDataFetcher
-	analyzer         *FeeAnalyzer
-	recommender      *FeeRecommender
-	lastFeeData      *FeeEstimate
-	lastNetStats     *NetworkStats
-	lastLightning    *LightningFeeStats
-	lastUpdateTime   time.Time // last successful fetch
-	lastAttemptTime  time.Time // last fetch attempt (success or failure)
+	fetcher         *NetworkDataFetcher
+	analyzer        *FeeAnalyzer
+	recommender     *FeeRecommender
+	lastFeeData     *FeeEstimate
+	lastNetStats    *NetworkStats
+	lastMempoolData *MempoolData
+	lastLightning   *LightningFeeStats
+	lastUpdateTime  time.Time // last successful fetch
+	lastAttemptTime time.Time // last fetch attempt (success or failure)
 }
 
 // NewBitcoinFeePredictor creates a fee predictor with a plain HTTP client.
@@ -66,8 +67,17 @@ func (bp *BitcoinFeePredictor) FetchLatestData() error {
 		return fmt.Errorf("failed to fetch network stats: %w", err)
 	}
 
+	mempool, err := bp.fetcher.FetchMempoolData()
+	if err != nil {
+		return fmt.Errorf("failed to fetch mempool data: %w", err)
+	}
+	if err := bp.analyzer.AnalyzeFeeDistribution(mempool); err != nil {
+		return fmt.Errorf("failed to analyze mempool data: %w", err)
+	}
+
 	bp.lastFeeData = feeData
 	bp.lastNetStats = stats
+	bp.lastMempoolData = mempool
 	bp.lastUpdateTime = time.Now()
 
 	// Lightning stats are best-effort — a failure here does not block onchain predictions.
@@ -83,12 +93,18 @@ func (bp *BitcoinFeePredictor) FetchLatestData() error {
 //   - outputCount: number of outputs
 //   - txType:      "P2PKH", "P2SH", "P2WPKH", "P2WSH", or "P2TR"
 func (bp *BitcoinFeePredictor) PredictTransactionCost(inputCount int, outputCount int, txType string) (*TransactionCostEstimate, error) {
+	return bp.PredictTransactionCostWithConfirmations(inputCount, outputCount, txType, defaultRequiredConfirmations)
+}
+
+// PredictTransactionCostWithConfirmations predicts fees and confirmation timing for a
+// caller-selected number of confirmations.
+func (bp *BitcoinFeePredictor) PredictTransactionCostWithConfirmations(inputCount int, outputCount int, txType string, requiredConfirmations int) (*TransactionCostEstimate, error) {
 	if bp.lastFeeData == nil {
 		return nil, fmt.Errorf("no fee data available, call FetchLatestData first")
 	}
 
 	virtualSize := bp.analyzer.CalculateVirtualSize(inputCount, outputCount, txType)
-	estimate := bp.analyzer.AnalyzeAndPredict(bp.lastFeeData, bp.lastNetStats, virtualSize, txType)
+	estimate := bp.analyzer.AnalyzeAndPredictWithConfirmations(bp.lastFeeData, bp.lastNetStats, virtualSize, txType, requiredConfirmations)
 	return estimate, nil
 }
 
@@ -207,7 +223,13 @@ type DetailedFeeContext struct {
 // GetDetailedRecommendation returns the congestion-adaptive recommendation together with
 // all intermediate data (vsize, all tier rates, mempool state) for display purposes.
 func (bp *BitcoinFeePredictor) GetDetailedRecommendation(inputCount, outputCount int, txType string) (*DetailedFeeContext, error) {
-	estimate, err := bp.PredictTransactionCost(inputCount, outputCount, txType)
+	return bp.GetDetailedRecommendationWithConfirmations(inputCount, outputCount, txType, defaultRequiredConfirmations)
+}
+
+// GetDetailedRecommendationWithConfirmations returns the congestion-adaptive
+// recommendation for a caller-selected confirmation target.
+func (bp *BitcoinFeePredictor) GetDetailedRecommendationWithConfirmations(inputCount, outputCount int, txType string, requiredConfirmations int) (*DetailedFeeContext, error) {
+	estimate, err := bp.PredictTransactionCostWithConfirmations(inputCount, outputCount, txType, requiredConfirmations)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +265,7 @@ func (bp *BitcoinFeePredictor) EstimateLightningRoutingFee(amountBTC float64) fl
 
 	amountSat := amountBTC * 1e8
 	baseFeeSat := float64(bp.lastLightning.AvgBaseFeeMsat) / 1000.0
-	feeSat := (amountSat*float64(bp.lastLightning.MedFeeRatePPM)/1_000_000.0+baseFeeSat) * lightningTypicalHops
+	feeSat := (amountSat*float64(bp.lastLightning.MedFeeRatePPM)/1_000_000.0 + baseFeeSat) * lightningTypicalHops
 	return feeSat / 1e8
 }
 

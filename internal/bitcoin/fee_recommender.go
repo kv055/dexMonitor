@@ -21,14 +21,16 @@ func (fr *FeeRecommender) GetEconomicFee(cost *TransactionCostEstimate, estimate
 		return nil
 	}
 	return &FeeRecommendation{
-		Tier:               "economic",
-		FeeRateSatVB:       estimate.EconomicFee,
-		TotalFeeBTC:        cost.EconomicFee,
-		TotalFeeSat:        cost.EconomicFeeSat,
-		EstimatedTime:      cost.EconomicTime,
-		Rationale:          fmt.Sprintf("Slowest option (1+ hour) but cheapest. %.8f BTC total.", cost.EconomicFee),
-		RiskLevel:          "medium",
-		ProbabilityByBlock: fr.analyzer.CalculateConfirmationProbability(estimate.EconomicFee, estimate),
+		Tier:                          "economic",
+		FeeRateSatVB:                  estimate.EconomicFee,
+		TotalFeeBTC:                   cost.EconomicFee,
+		TotalFeeSat:                   cost.EconomicFeeSat,
+		EstimatedTime:                 cost.EconomicTime,
+		EstimatedInclusionTime:        cost.EconomicInclusionTime,
+		EstimatedFullConfirmationTime: cost.EconomicTime,
+		Rationale:                     fmt.Sprintf("Slowest option but cheapest. %.8f BTC total.", cost.EconomicFee),
+		RiskLevel:                     "medium",
+		ProbabilityByBlock:            fr.analyzer.CalculateConfirmationProbability(estimate.EconomicFee, estimate),
 	}
 }
 
@@ -38,14 +40,16 @@ func (fr *FeeRecommender) GetStandardFee(cost *TransactionCostEstimate, estimate
 		return nil
 	}
 	return &FeeRecommendation{
-		Tier:               "standard",
-		FeeRateSatVB:       estimate.StandardFee,
-		TotalFeeBTC:        cost.StandardFee,
-		TotalFeeSat:        cost.StandardFeeSat,
-		EstimatedTime:      cost.StandardTime,
-		Rationale:          fmt.Sprintf("Balanced option (10-60 min). Recommended for most transactions. %.8f BTC total.", cost.StandardFee),
-		RiskLevel:          "low",
-		ProbabilityByBlock: fr.analyzer.CalculateConfirmationProbability(estimate.StandardFee, estimate),
+		Tier:                          "standard",
+		FeeRateSatVB:                  estimate.StandardFee,
+		TotalFeeBTC:                   cost.StandardFee,
+		TotalFeeSat:                   cost.StandardFeeSat,
+		EstimatedTime:                 cost.StandardTime,
+		EstimatedInclusionTime:        cost.StandardInclusionTime,
+		EstimatedFullConfirmationTime: cost.StandardTime,
+		Rationale:                     fmt.Sprintf("Balanced option. Recommended for most transactions. %.8f BTC total.", cost.StandardFee),
+		RiskLevel:                     "low",
+		ProbabilityByBlock:            fr.analyzer.CalculateConfirmationProbability(estimate.StandardFee, estimate),
 	}
 }
 
@@ -55,14 +59,16 @@ func (fr *FeeRecommender) GetFastFee(cost *TransactionCostEstimate, estimate *Fe
 		return nil
 	}
 	return &FeeRecommendation{
-		Tier:               "fast",
-		FeeRateSatVB:       estimate.FastFee,
-		TotalFeeBTC:        cost.FastFee,
-		TotalFeeSat:        cost.FastFeeSat,
-		EstimatedTime:      cost.FastTime,
-		Rationale:          fmt.Sprintf("Fast confirmation (<10 min). Premium of %.8f BTC vs. standard.", cost.FastFee-cost.StandardFee),
-		RiskLevel:          "low",
-		ProbabilityByBlock: fr.analyzer.CalculateConfirmationProbability(estimate.FastFee, estimate),
+		Tier:                          "fast",
+		FeeRateSatVB:                  estimate.FastFee,
+		TotalFeeBTC:                   cost.FastFee,
+		TotalFeeSat:                   cost.FastFeeSat,
+		EstimatedTime:                 cost.FastTime,
+		EstimatedInclusionTime:        cost.FastInclusionTime,
+		EstimatedFullConfirmationTime: cost.FastTime,
+		Rationale:                     fmt.Sprintf("Fast confirmation. Premium of %.8f BTC vs. standard.", cost.FastFee-cost.StandardFee),
+		RiskLevel:                     "low",
+		ProbabilityByBlock:            fr.analyzer.CalculateConfirmationProbability(estimate.FastFee, estimate),
 	}
 }
 
@@ -73,14 +79,16 @@ func (fr *FeeRecommender) GetExpressFee(cost *TransactionCostEstimate, estimate 
 	}
 	premium := cost.ExpressFee - cost.StandardFee
 	return &FeeRecommendation{
-		Tier:               "express",
-		FeeRateSatVB:       estimate.ExpressFee,
-		TotalFeeBTC:        cost.ExpressFee,
-		TotalFeeSat:        cost.ExpressFeeSat,
-		EstimatedTime:      cost.ExpressTime,
-		Rationale:          fmt.Sprintf("Fastest option (next block, ~2 min). Premium of %.8f BTC vs. standard.", premium),
-		RiskLevel:          "very_low",
-		ProbabilityByBlock: fr.analyzer.CalculateConfirmationProbability(estimate.ExpressFee, estimate),
+		Tier:                          "express",
+		FeeRateSatVB:                  estimate.ExpressFee,
+		TotalFeeBTC:                   cost.ExpressFee,
+		TotalFeeSat:                   cost.ExpressFeeSat,
+		EstimatedTime:                 cost.ExpressTime,
+		EstimatedInclusionTime:        cost.ExpressInclusionTime,
+		EstimatedFullConfirmationTime: cost.ExpressTime,
+		Rationale:                     fmt.Sprintf("Fastest option. Premium of %.8f BTC vs. standard.", premium),
+		RiskLevel:                     "very_low",
+		ProbabilityByBlock:            fr.analyzer.CalculateConfirmationProbability(estimate.ExpressFee, estimate),
 	}
 }
 
@@ -119,14 +127,16 @@ func (fr *FeeRecommender) GetCustomFee(cost *TransactionCostEstimate, estimate *
 	}
 
 	return &FeeRecommendation{
-		Tier:               tier,
-		FeeRateSatVB:       customSatVB,
-		TotalFeeBTC:        customFeeBTC,
-		TotalFeeSat:        customFeeSat,
-		EstimatedTime:      estimatedTime,
-		Rationale:          rationale,
-		RiskLevel:          riskLevel,
-		ProbabilityByBlock: fr.analyzer.CalculateConfirmationProbability(customSatVB, estimate),
+		Tier:                          tier,
+		FeeRateSatVB:                  customSatVB,
+		TotalFeeBTC:                   customFeeBTC,
+		TotalFeeSat:                   customFeeSat,
+		EstimatedTime:                 estimatedTime,
+		EstimatedInclusionTime:        estimatedTime,
+		EstimatedFullConfirmationTime: estimatedTime,
+		Rationale:                     rationale,
+		RiskLevel:                     riskLevel,
+		ProbabilityByBlock:            fr.analyzer.CalculateConfirmationProbability(customSatVB, estimate),
 	}
 }
 
