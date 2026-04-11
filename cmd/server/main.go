@@ -141,7 +141,7 @@ func setCexPrice(cex string, p float64) {
 	cexPricesMu.Lock()
 	cexPrices[cex] = p
 	cexPricesMu.Unlock()
-	hub.broadcastForConfig(cex, 1)
+	hub.broadcastForConfig(cex, 0)
 }
 
 // --- CEX WebSocket price feeds ---
@@ -934,7 +934,7 @@ func handleInternalLiveOffers(w http.ResponseWriter, r *http.Request) {
 	hub.setLifecycle(fetchOfferLifecycle(ids))
 	hub.setOffers(offers)
 	price := getCexPrice(defaultCEX)
-	outOffers := hub.computeOutOffers(price, defaultCEX, 1)
+	outOffers := hub.computeOutOffers(price, defaultCEX, 0)
 	go writeLifecycleEntries(outOffers)
 	fmt.Printf("[LiveHub] updated with %d live offers from snapshot\n", len(offers))
 	w.WriteHeader(http.StatusNoContent)
@@ -1438,9 +1438,9 @@ func queryInt(r *http.Request, key string, defaultVal int) int {
 }
 
 func queryConfirmations(r *http.Request) int {
-	v := queryInt(r, "confirmations", 1)
-	if v < 1 {
-		return 1
+	v := queryInt(r, "confirmations", 0)
+	if v <= 0 {
+		return 0
 	}
 	if v > 6 {
 		return 6

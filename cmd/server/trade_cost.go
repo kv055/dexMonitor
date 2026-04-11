@@ -707,6 +707,16 @@ type networkFeeDetails struct {
 	detail     *BTCNetworkFeeDetail
 }
 
+func resolveRequiredConfirmations(direction string, requested int) int {
+	if requested >= 1 && requested <= 6 {
+		return requested
+	}
+	if direction == "sell" {
+		return 4
+	}
+	return 2
+}
+
 // CostPct returns the estimated total arbitrage cost as a percentage of btcAmount.
 // dexExchange is the name of the DEX the offer is on (e.g. "bisq", "robosats", "hodlhodl").
 // A DEX offer premium must exceed this value to be profitable.
@@ -872,13 +882,14 @@ func round4(v float64) float64 {
 // Breakdown returns a full per-component cost breakdown for a given trade size, DEX, and offer direction.
 // direction should be the DEX offer direction: "buy" (bid side) or "sell" (ask side).
 func (e *TradeCostEstimator) Breakdown(btcAmount float64, dexExchange string, direction string) CostBreakdown {
-	return e.BreakdownWithConfirmations(btcAmount, dexExchange, direction, 1)
+	return e.BreakdownWithConfirmations(btcAmount, dexExchange, direction, 0)
 }
 
 func (e *TradeCostEstimator) BreakdownWithConfirmations(btcAmount float64, dexExchange string, direction string, requiredConfirmations int) CostBreakdown {
 	if btcAmount <= 0 {
 		return CostBreakdown{}
 	}
+	requiredConfirmations = resolveRequiredConfirmations(direction, requiredConfirmations)
 	method := resolveWithdrawalMethod(e.cexProfile, dexExchange)
 	return e.breakdownForMethod(btcAmount, dexExchange, method, direction, requiredConfirmations)
 }
@@ -943,7 +954,7 @@ func (e *TradeCostEstimator) breakdownForMethod(btcAmount float64, dexExchange s
 }
 
 func (o *TradeRouteOptimizer) BestBreakdown(btcAmount float64, dexExchange string, direction string) CostBreakdown {
-	return o.BestBreakdownWithConfirmations(btcAmount, dexExchange, direction, 1)
+	return o.BestBreakdownWithConfirmations(btcAmount, dexExchange, direction, 0)
 }
 
 func (o *TradeRouteOptimizer) BestBreakdownWithConfirmations(btcAmount float64, dexExchange string, direction string, requiredConfirmations int) CostBreakdown {

@@ -15,7 +15,6 @@ export function useLiveOffers() {
   const everOpenRef = useRef(false);
   const sessionRef  = useRef(0);
   const cexRef      = useRef('kraken');
-  const confirmationsRef = useRef(1);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -30,7 +29,7 @@ export function useLiveOffers() {
     const poll = async () => {
       if (sessionRef.current !== session || !mountedRef.current) return;
       try {
-        const offers = await apiFetch<Offer[]>(`/api/live_offers?cex=${cexRef.current}&confirmations=${confirmationsRef.current}`);
+        const offers = await apiFetch<Offer[]>(`/api/live_offers?cex=${cexRef.current}`);
         if (sessionRef.current === session && mountedRef.current) setLiveOffers(offers);
       } catch (e) {
         console.error('[LiveOffers] poll error', e);
@@ -45,7 +44,7 @@ export function useLiveOffers() {
 
     everOpenRef.current = false;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live_offers?cex=${cexRef.current}&confirmations=${confirmationsRef.current}`);
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live_offers?cex=${cexRef.current}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -95,14 +94,13 @@ export function useLiveOffers() {
 
   // Called directly by MonitorView when filters.cex changes.
   // Immediately fetches fresh offers with the new CEX's fees, then reconnects WS.
-  const refreshForConfig = useCallback((cex: string, confirmations: number) => {
+  const refreshForCex = useCallback((cex: string) => {
     cexRef.current = cex;
-    confirmationsRef.current = confirmations;
     const session = ++sessionRef.current;
     stopPolling();
     wsRef.current?.close();
 
-    apiFetch<Offer[]>(`/api/live_offers?cex=${cex}&confirmations=${confirmations}`)
+    apiFetch<Offer[]>(`/api/live_offers?cex=${cex}`)
       .then(offers => {
         if (sessionRef.current === session && mountedRef.current) setLiveOffers(offers);
       })
@@ -112,5 +110,5 @@ export function useLiveOffers() {
     connect(session);
   }, [connect, stopPolling]);
 
-  return { liveOffers, wssConnected, refreshForConfig };
+  return { liveOffers, wssConnected, refreshForCex };
 }

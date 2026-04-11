@@ -40,25 +40,24 @@ function OhlcPanelHeader() {
 }
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, stats, refreshForCex, excludedPaymentMethods, requiredConfirmations }: {
+function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, stats, refreshForCex, excludedPaymentMethods }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   stats: ReturnType<typeof useDashboard>['stats'] | null;
   lastUpdatedAt: string;
   error: string | null;
-  load: (hours: string, cex?: string, excludedPaymentMethods?: string[], confirmations?: number) => void;
+  load: (hours: string, cex?: string, excludedPaymentMethods?: string[]) => void;
   extendOhlc: (hours: number, cex?: string) => void;
-  refreshForCex: (cex: string, confirmations: number) => void;
+  refreshForCex: (cex: string) => void;
   excludedPaymentMethods: string[];
-  requiredConfirmations: number;
 }) {
   const { filters } = useFilters();
 
   useEffect(() => {
-    refreshForCex(filters.cex, requiredConfirmations);
-    load(filters.hours, filters.cex, excludedPaymentMethods, requiredConfirmations);
-    const interval = setInterval(() => load(filters.hours, filters.cex, excludedPaymentMethods, requiredConfirmations), 5 * 60 * 1000);
+    refreshForCex(filters.cex);
+    load(filters.hours, filters.cex, excludedPaymentMethods);
+    const interval = setInterval(() => load(filters.hours, filters.cex, excludedPaymentMethods), 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [filters.hours, filters.cex, excludedPaymentMethods, load, refreshForCex, requiredConfirmations]);
+  }, [filters.hours, filters.cex, excludedPaymentMethods, load, refreshForCex]);
 
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -72,7 +71,7 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, stats, 
       <div className="lg:flex-2 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_3fr] gap-2 sm:gap-3">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
           <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Control Panel</h3>
-          <ControlPanel onRefresh={() => load(filters.hours, filters.cex, excludedPaymentMethods, requiredConfirmations)} lastUpdatedAt={lastUpdatedAt} stats={stats} />
+          <ControlPanel onRefresh={() => load(filters.hours, filters.cex, excludedPaymentMethods)} lastUpdatedAt={lastUpdatedAt} stats={stats} />
         </div>
 
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
@@ -124,20 +123,19 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ theme, pastOrderStats, generalStats, loading, load, excludedPaymentMethods, requiredConfirmations }: {
+function InsightsView({ theme, pastOrderStats, generalStats, loading, load, excludedPaymentMethods }: {
   theme: ThemeMode;
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   generalStats: ReturnType<typeof useDashboard>['generalStats'];
   loading: boolean;
-  load: (hours: string, cex?: string, excludedPaymentMethods?: string[], confirmations?: number) => void;
+  load: (hours: string, cex?: string, excludedPaymentMethods?: string[]) => void;
   excludedPaymentMethods: string[];
-  requiredConfirmations: number;
 }) {
   const { filters } = useFilters();
 
   useEffect(() => {
-    load(filters.hours, filters.cex, excludedPaymentMethods, requiredConfirmations);
-  }, [filters.hours, filters.cex, excludedPaymentMethods, load, requiredConfirmations]);
+    load(filters.hours, filters.cex, excludedPaymentMethods);
+  }, [filters.hours, filters.cex, excludedPaymentMethods, load]);
 
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -161,16 +159,12 @@ function InsightsView({ theme, pastOrderStats, generalStats, loading, load, excl
 
 export default function App() {
   const { pastOffers, stats, pastOrderStats, generalStats, ohlcData, lastUpdatedAt, error, loading, load, extendOhlc } = useDashboard();
-  const { liveOffers, refreshForConfig } = useLiveOffers();
+  const { liveOffers, refreshForCex } = useLiveOffers();
   const { groups } = usePaymentMethodGroups();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
   const [theme, setTheme] = useState<ThemeMode>(getInitialTheme);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [preferredTimezone, setPreferredTimezone] = useState(() => localStorage.getItem('dex-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC');
-  const [requiredConfirmations, setRequiredConfirmations] = useState<number>(() => {
-    const raw = Number(localStorage.getItem('dex-required-confirmations') || '1');
-    return Number.isFinite(raw) && raw >= 1 && raw <= 6 ? raw : 1;
-  });
   const [excludedMethods, setExcludedMethods] = useState<string[]>(
     () => JSON.parse(localStorage.getItem('dex-excluded-payment-methods') || '[]')
   );
@@ -208,10 +202,6 @@ export default function App() {
     localStorage.setItem('dex-timezone', preferredTimezone);
   }, [preferredTimezone]);
 
-  useEffect(() => {
-    localStorage.setItem('dex-required-confirmations', String(requiredConfirmations));
-  }, [requiredConfirmations]);
-
   const toggleTheme = () => {
     setTheme(prev => (prev === 'dark' ? 'light' : 'dark'));
   };
@@ -233,8 +223,6 @@ export default function App() {
           onClose={() => setSettingsOpen(false)}
           preferredTimezone={preferredTimezone}
           onTimezoneChange={setPreferredTimezone}
-          requiredConfirmations={requiredConfirmations}
-          onConfirmationsChange={setRequiredConfirmations}
           groups={groups}
           excludedMethods={excludedMethods}
           onToggleMethod={handleToggleMethod}
@@ -249,9 +237,8 @@ export default function App() {
             error={error}
             load={load}
             extendOhlc={extendOhlc}
-            refreshForCex={refreshForConfig}
+            refreshForCex={refreshForCex}
             excludedPaymentMethods={excludedPaymentMethods}
-            requiredConfirmations={requiredConfirmations}
           />
         )}
 
@@ -267,7 +254,6 @@ export default function App() {
             loading={loading}
             load={load}
             excludedPaymentMethods={excludedPaymentMethods}
-            requiredConfirmations={requiredConfirmations}
           />
         )}
       </div>

@@ -89,7 +89,7 @@ func selectBTCTradeSize(btcMax, btcMin *float64) float64 {
 }
 
 func computeNetPremiumFields(premiumPct float64, btcSize float64, dexExchange string, direction string) (float64, float64, CostBreakdown) {
-	return computeNetPremiumFieldsWithConfirmations(premiumPct, btcSize, dexExchange, direction, 1)
+	return computeNetPremiumFieldsWithConfirmations(premiumPct, btcSize, dexExchange, direction, 0)
 }
 
 func computeNetPremiumFieldsWithConfirmations(premiumPct float64, btcSize float64, dexExchange string, direction string, requiredConfirmations int) (float64, float64, CostBreakdown) {
@@ -97,6 +97,7 @@ func computeNetPremiumFieldsWithConfirmations(premiumPct float64, btcSize float6
 		return 0, 0, CostBreakdown{}
 	}
 
+	requiredConfirmations = resolveRequiredConfirmations(direction, requiredConfirmations)
 	bd := tradeRouteOptimizer.BestBreakdownWithConfirmations(btcSize, dexExchange, direction, requiredConfirmations)
 	if bd.RouteCEX == "" {
 		return 0, 0, CostBreakdown{}
@@ -202,7 +203,7 @@ func (h *LiveHub) broadcastAll() {
 
 	// Always include the default so seedHubFromDB works even before any subscriber
 	if len(configSet) == 0 {
-		configSet[liveSubscription{cex: defaultCEX, requiredConfirmations: 1}] = struct{}{}
+		configSet[liveSubscription{cex: defaultCEX, requiredConfirmations: 0}] = struct{}{}
 	}
 
 	for sub := range configSet {
