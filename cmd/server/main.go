@@ -422,6 +422,7 @@ func main() {
 			cex_taker_fee_btc REAL,
 			cex_withdraw_fee_btc REAL,
 			network_fee_btc REAL,
+			dex_fee_btc REAL,
 			avg_net_premium_pct REAL,
 			avg_estimated_profit_btc REAL,
 			avg_estimated_profit_fiat REAL,
@@ -442,6 +443,7 @@ func main() {
 			cex_taker_fee_btc REAL,
 			cex_withdraw_fee_btc REAL,
 			network_fee_btc  REAL,
+			dex_fee_btc      REAL,
 			net_premium_pct  REAL,
 			net_premium_btc  REAL,
 			btc_amount       REAL
@@ -489,6 +491,7 @@ func main() {
 	db.Exec("ALTER TABLE offers ADD COLUMN cex_taker_fee_btc REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN cex_withdraw_fee_btc REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN network_fee_btc REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN dex_fee_btc REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_net_premium_pct REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_btc REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_fiat REAL")
@@ -496,6 +499,7 @@ func main() {
 	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN cex_taker_fee_btc REAL")
 	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN cex_withdraw_fee_btc REAL")
 	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN network_fee_btc REAL")
+	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN dex_fee_btc REAL")
 	db.Exec("ALTER TABLE offers DROP COLUMN avg_cex_fee_btc")
 	db.Exec("ALTER TABLE offers DROP COLUMN avg_network_fee_btc")
 	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN cex_fee_btc")
@@ -859,9 +863,9 @@ func writeLifecycleEntries(offers []liveOutOffer) {
 	insStmt, err := tx.Prepare(`
 		INSERT INTO order_lifecycle
 			(offer_db_id, price, ref_price, premium_pct,
-			 trade_cost_pct, trade_cost_btc, cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc,
+			 trade_cost_pct, trade_cost_btc, cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc, dex_fee_btc,
 			 net_premium_pct, net_premium_btc, btc_amount)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		tx.Rollback()
@@ -899,6 +903,7 @@ func writeLifecycleEntries(offers []liveOutOffer) {
 			round8(bd.CexTakerFeeBTC),
 			cexWithdrawFee,
 			round8(bd.NetworkFeeBTC),
+			round8(bd.DexFeeBTC),
 			round4(o.NetPremiumPct),
 			round8(bd.EstimatedProfitBTC),
 			round8(bd.BTCAmount),

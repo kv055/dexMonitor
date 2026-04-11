@@ -68,9 +68,9 @@ func analyzeSingleClosedOffer(sdb *sql.DB, offer closedOfferRecord) (string, boo
 	// AVG(CASE WHEN net_premium_pct > 0 THEN col END) returns NULL when no row matches,
 	// which maps cleanly to sql.NullFloat64.
 	var totalCount, profitableCount int
-	var overallAvgPremium sql.NullFloat64   // all entries — used for delete threshold
-	var avgRefPrice sql.NullFloat64         // all entries — market reference
-	var profAvgPremium sql.NullFloat64      // profitable entries only
+	var overallAvgPremium sql.NullFloat64 // all entries — used for delete threshold
+	var avgRefPrice sql.NullFloat64       // all entries — market reference
+	var profAvgPremium sql.NullFloat64    // profitable entries only
 	var profAvgTradeCostPct sql.NullFloat64
 	var profAvgTradeCostBTC sql.NullFloat64
 	var profAvgNetPremiumPct sql.NullFloat64
@@ -137,6 +137,15 @@ func analyzeSingleClosedOffer(sdb *sql.DB, offer closedOfferRecord) (string, boo
 	_ = sdb.QueryRow(`SELECT best_route_cex, best_route_method FROM offers WHERE id = ?`, offer.id).
 		Scan(&bestRouteCEX, &bestRouteMethod)
 
+	var cexTakerFeeBTC, cexWithdrawFeeBTC, networkFeeBTC, dexFeeBTC sql.NullFloat64
+	_ = sdb.QueryRow(`
+		SELECT cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc, dex_fee_btc
+		FROM order_lifecycle
+		WHERE offer_db_id = ? AND net_premium_pct > 0
+		ORDER BY snapshot_time DESC, id DESC
+		LIMIT 1
+	`, offer.id).Scan(&cexTakerFeeBTC, &cexWithdrawFeeBTC, &networkFeeBTC, &dexFeeBTC)
+
 	profitFiat := profAvgNetPremiumBTC.Float64 * avgRefPrice.Float64
 
 	_, _ = sdb.Exec(`
@@ -146,6 +155,10 @@ func analyzeSingleClosedOffer(sdb *sql.DB, offer closedOfferRecord) (string, boo
 			avg_premium_pct            = ?,
 			avg_trade_cost_pct         = ?,
 			avg_trade_cost_btc         = ?,
+			cex_taker_fee_btc          = ?,
+			cex_withdraw_fee_btc       = ?,
+			network_fee_btc            = ?,
+			dex_fee_btc                = ?,
 			avg_net_premium_pct        = ?,
 			avg_estimated_profit_btc   = ?,
 			avg_estimated_profit_fiat  = ?,
@@ -159,6 +172,10 @@ func analyzeSingleClosedOffer(sdb *sql.DB, offer closedOfferRecord) (string, boo
 		historicalRound4(profAvgPremium.Float64),
 		historicalRound4(profAvgTradeCostPct.Float64),
 		historicalRound8(profAvgTradeCostBTC.Float64),
+		nullHistoricalRound8(cexTakerFeeBTC),
+		nullHistoricalRound8(cexWithdrawFeeBTC),
+		nullHistoricalRound8(networkFeeBTC),
+		nullHistoricalRound8(dexFeeBTC),
 		historicalRound4(profAvgNetPremiumPct.Float64),
 		historicalRound8(profAvgNetPremiumBTC.Float64),
 		historicalRound4(profitFiat),
@@ -176,4 +193,11 @@ func historicalRound4(v float64) float64 {
 
 func historicalRound8(v float64) float64 {
 	return math.Round(v*1e8) / 1e8
+}
+
+func nullHistoricalRound8(v sql.NullFloat64) any {
+	if !v.Valid {
+		return nil
+	}
+	return historicalRound8(v.Float64)
 }

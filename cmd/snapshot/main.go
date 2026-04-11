@@ -17,9 +17,9 @@ import (
 
 	bisqgrpc "dexmonitor/bisq_grpc/go"
 
-	_ "modernc.org/sqlite"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	_ "modernc.org/sqlite"
 )
 
 var (
@@ -28,7 +28,7 @@ var (
 	bisqAPIPassword string
 	priceProvider   string
 	torProxy        string
-	robosatsOnions = []string{
+	robosatsOnions  = []string{
 		"http://ngdk7ocdzmz5kzsysa3om6du7ycj2evxp2f2olfkyq37htx3gllwp2yd.onion",
 		"http://mmhaqzuirth5rx7gl24d4773lknltjhik57k7ahec5iefktezv4b3uid.onion",
 		"http://4t4jxmivv6uqej6xzx2jx3fxh75gtt65v3szjoqmc4ugdlhipzdat6yd.onion",
@@ -265,11 +265,11 @@ func fetchHodlHodl(direction string, btcPrice int) *fetchResult {
 
 	var data struct {
 		Offers []struct {
-			ID          string `json:"id"`
-			Price       string `json:"price"`
-			PriceSource string `json:"price_source"`
-			MinAmount   string `json:"min_amount"`
-			MaxAmount   string `json:"max_amount"`
+			ID             string `json:"id"`
+			Price          string `json:"price"`
+			PriceSource    string `json:"price_source"`
+			MinAmount      string `json:"min_amount"`
+			MaxAmount      string `json:"max_amount"`
 			PaymentMethods []struct {
 				Name string `json:"name"`
 			} `json:"payment_methods"`
@@ -530,6 +530,17 @@ func main() {
 	sdb.Exec("ALTER TABLE offers ADD COLUMN best_route_cex_10m TEXT")
 	sdb.Exec("ALTER TABLE offers ADD COLUMN best_route_method_10m TEXT")
 	sdb.Exec("ALTER TABLE offers ADD COLUMN price_type TEXT")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN cex_taker_fee_btc REAL")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN cex_withdraw_fee_btc REAL")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN network_fee_btc REAL")
+	sdb.Exec("ALTER TABLE offers ADD COLUMN dex_fee_btc REAL")
+	sdb.Exec("ALTER TABLE order_lifecycle ADD COLUMN cex_taker_fee_btc REAL")
+	sdb.Exec("ALTER TABLE order_lifecycle ADD COLUMN cex_withdraw_fee_btc REAL")
+	sdb.Exec("ALTER TABLE order_lifecycle ADD COLUMN network_fee_btc REAL")
+	sdb.Exec("ALTER TABLE order_lifecycle ADD COLUMN dex_fee_btc REAL")
+	sdb.Exec("ALTER TABLE offers DROP COLUMN avg_cex_fee_btc")
+	sdb.Exec("ALTER TABLE offers DROP COLUMN avg_network_fee_btc")
+	sdb.Exec("ALTER TABLE order_lifecycle DROP COLUMN cex_fee_btc")
 	sdb.Exec(`CREATE TABLE IF NOT EXISTS kraken_ohlc (
 		time  DATETIME PRIMARY KEY,
 		open  REAL NOT NULL,
@@ -599,7 +610,7 @@ func main() {
 		}
 	}
 
-	// Settle closed offers: compute ref_price and price_diff_percent from historical OHLC
+	// Settle closed offers: compute avg_ref_price and price_diff_percent from historical OHLC
 	settleClosedOffers(sdb)
 	analyzeClosedOffers(sdb)
 
@@ -679,14 +690,14 @@ func fetchAndStoreKrakenOHLC(sdb *sql.DB) {
 	fmt.Printf("[OHLC] upserted %d candles\n", n)
 }
 
-// settleClosedOffers computes ref_price and price_diff_percent for offers that
-// just closed (is_live=0, ref_price IS NULL) using the average Kraken close price
+// settleClosedOffers computes avg_ref_price and price_diff_percent for offers that
+// just closed and do not have a settled historical reference price yet.
 // over the offer's lifetime.
 func settleClosedOffers(sdb *sql.DB) {
 	rows, err := sdb.Query(`
 		SELECT id, direction, price, first_seen, last_seen
 		FROM offers
-		WHERE is_live = 0 AND ref_price IS NULL
+		WHERE is_live = 0 AND avg_ref_price IS NULL
 	`)
 	if err != nil {
 		fmt.Printf("[Settle] query error: %v\n", err)
@@ -749,7 +760,7 @@ func settleClosedOffers(sdb *sql.DB) {
 		if o.direction == "sell" {
 			pct = -pct
 		}
-		sdb.Exec(`UPDATE offers SET ref_price = ?, price_diff_percent = ? WHERE id = ?`,
+		sdb.Exec(`UPDATE offers SET avg_ref_price = ?, price_diff_percent = ? WHERE id = ?`,
 			avgClose, pct, o.id)
 		settled++
 	}
@@ -803,13 +814,27 @@ func pushLiveOffersToServer(sdb *sql.DB, serverURL string) {
 			fmt.Printf("[LivePush] scan error: %v\n", err)
 			continue
 		}
-		if btcMin.Valid        { o.BTCMin = &btcMin.Float64 }
-		if btcMax.Valid        { o.BTCMax = &btcMax.Float64 }
-		if fiatMin.Valid       { o.FiatMin = &fiatMin.Int64 }
-		if fiatMax.Valid       { o.FiatMax = &fiatMax.Int64 }
-		if paymentMethod.Valid { o.PaymentMethod = &paymentMethod.String }
-		if offerID.Valid       { o.OfferID = &offerID.String }
-		if priceType.Valid     { o.PriceType = &priceType.String }
+		if btcMin.Valid {
+			o.BTCMin = &btcMin.Float64
+		}
+		if btcMax.Valid {
+			o.BTCMax = &btcMax.Float64
+		}
+		if fiatMin.Valid {
+			o.FiatMin = &fiatMin.Int64
+		}
+		if fiatMax.Valid {
+			o.FiatMax = &fiatMax.Int64
+		}
+		if paymentMethod.Valid {
+			o.PaymentMethod = &paymentMethod.String
+		}
+		if offerID.Valid {
+			o.OfferID = &offerID.String
+		}
+		if priceType.Valid {
+			o.PriceType = &priceType.String
+		}
 		offers = append(offers, o)
 	}
 	rows.Close()
