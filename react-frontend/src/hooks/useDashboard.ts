@@ -7,6 +7,13 @@ function excludedPaymentQuery(excludedPaymentMethods: string[]): string {
   return `&exclude_payment_methods=${encodeURIComponent(excludedPaymentMethods.join(','))}`;
 }
 
+function tradeCostQuery(excludedCEXes: string[], feeTier: string): string {
+  let q = '';
+  if (excludedCEXes.length > 0) q += `&exclude_cexes=${encodeURIComponent(excludedCEXes.join(','))}`;
+  if (feeTier) q += `&fee_tier=${encodeURIComponent(feeTier)}`;
+  return q;
+}
+
 export function useDashboard() {
   const [pastOffers, setPastOffers] = useState<Offer[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
@@ -17,14 +24,15 @@ export function useDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = []) => {
+  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '') => {
     setLoading(true);
     setError(null);
     try {
       const excludedQuery = excludedPaymentQuery(excludedPaymentMethods);
+      const tcQuery = tradeCostQuery(excludedCEXes, feeTier);
       const [s, o, ohlc, pos, gs] = await Promise.all([
         apiFetch<Stats>(`/api/stats?hours=${hours}`),
-        apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&cex=${cex}${excludedQuery}`),
+        apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&cex=${cex}${excludedQuery}${tcQuery}`),
         apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`),
         apiFetch<PastOrderStats>(`/api/past_order_stats?fiat=EUR${excludedQuery}`),
         apiFetch<GeneralStatsData>(`/api/general_stats?hours=${hours}${excludedQuery}`),

@@ -158,6 +158,22 @@ export interface PaymentMethodGroup {
   methods: string[];
 }
 
+export interface CexInfo {
+  name: string;
+  methods: string[];
+  has_lightning: boolean;
+}
+
+export interface FeeTierOption {
+  value: string;
+  label: string;
+}
+
+export interface TradeCostConfig {
+  cexes: CexInfo[];
+  fee_tiers: FeeTierOption[];
+}
+
 export interface Filters {
   direction: string;
   exchange: string;

@@ -20,7 +20,19 @@ interface Props {
   onNeedMoreData: (newHours: number) => void;
 }
 
-const EXCHANGE_COLORS: Record<string, string> = { bisq: '#f7931a', hodlhodl: '#3fb950', robosats: '#bc8cff' };
+const DIR_COLORS = {
+  bid_premium:  '#00d4ff',
+  bid_discount: '#0369a1',
+  ask_premium:  '#f472b6',
+  ask_discount: '#86198f',
+} as const;
+
+function offerColor(direction: string, netPremiumPct: number | null | undefined): string {
+  const isBid = direction === 'buy';
+  const isPremium = netPremiumPct != null && netPremiumPct > 0;
+  if (isBid) return isPremium ? DIR_COLORS.bid_premium : DIR_COLORS.bid_discount;
+  return isPremium ? DIR_COLORS.ask_premium : DIR_COLORS.ask_discount;
+}
 
 // Candle size options in minutes — only multiples >= source interval are shown
 const CANDLE_OPTIONS = [1, 5, 15, 30, 60, 240, 1440];
@@ -168,46 +180,83 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
     premiumOffers.forEach(o => {
       const isOpen = o.is_live;
       const isSelected = o.id === selectedOfferId;
-      const color = isSelected ? selectedLine : (EXCHANGE_COLORS[o.exchange] || '#888');
+      const lineWidth = isSelected ? 3 : 2;
+      const markerRadius = isSelected ? 5 : 3;
 
-      // Build line data: use lifecycle price history when available, otherwise flat line.
-      let points: { time: UTCTimestamp; value: number }[];
-      let representativePrice: number;
+      type TimeValue = { time: UTCTimestamp; value: number };
 
       if (o.lifecycle && o.lifecycle.length >= 2) {
-        // Multi-point line from lifecycle history
-        points = o.lifecycle.map(p => ({
+        // Multi-point line: split into colored segments by premium state at each point.
+        const lcPoints = o.lifecycle.map((p) => ({
           time: toUtcSec(p.time) as UTCTimestamp,
           value: p.price,
+          color: isSelected ? selectedLine : offerColor(o.direction, p.net_premium_pct),
         }));
         if (isOpen) {
-          points = [...points, { time: nowSec, value: points[points.length - 1].value }];
+          const last = lcPoints[lcPoints.length - 1];
+          lcPoints.push({ ...last, time: nowSec });
         }
-        representativePrice = points[Math.floor(points.length / 2)].value;
+
+        const representativePrice = lcPoints[Math.floor(lcPoints.length / 2)].value;
+
+        // Group into contiguous segments of the same color.
+        type Segment = { points: TimeValue[]; color: string };
+        const segments: Segment[] = [];
+        let seg: TimeValue[] = [{ time: lcPoints[0].time, value: lcPoints[0].value }];
+        let segColor = lcPoints[0].color;
+
+        for (let i = 1; i < lcPoints.length; i++) {
+          const pt = lcPoints[i];
+          if (pt.color !== segColor) {
+            // Overlap: include this point in the closing segment before starting a new one.
+            segments.push({ points: [...seg, { time: pt.time, value: pt.value }], color: segColor });
+            seg = [{ time: pt.time, value: pt.value }];
+            segColor = pt.color;
+          } else {
+            seg.push({ time: pt.time, value: pt.value });
+          }
+        }
+        segments.push({ points: seg, color: segColor });
+
+        let clickTargetRegistered = false;
+        for (const { points: segPts, color } of segments) {
+          if (segPts.length < 2) continue;
+          const series = chart.addLineSeries({
+            color,
+            lineWidth,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: true,
+            crosshairMarkerRadius: markerRadius,
+          });
+          series.setData(segPts);
+          if (!clickTargetRegistered) {
+            seriesInfo.set(series, { offerId: o.id, price: representativePrice });
+            clickTargetRegistered = true;
+          }
+        }
       } else {
-        // No lifecycle — render as a single point on the most recent relevant candle.
+        // No lifecycle — flat line, colored by current premium state.
         const anchorRaw = isOpen ? nowSec : toUtcSec(o.last_seen ?? o.first_seen ?? '');
         if (!anchorRaw) return;
         const anchor = anchorRaw as UTCTimestamp;
         const candleWidthSec = candleMin * 60;
-        points = [
+        const points: TimeValue[] = [
           { time: (anchor - candleWidthSec) as UTCTimestamp, value: o.price },
           { time: anchor, value: o.price },
         ];
-        representativePrice = o.price;
+        const color = isSelected ? selectedLine : offerColor(o.direction, o.net_premium_percent);
+        const series = chart.addLineSeries({
+          color,
+          lineWidth,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: true,
+          crosshairMarkerRadius: markerRadius,
+        });
+        series.setData(points);
+        seriesInfo.set(series, { offerId: o.id, price: o.price });
       }
-
-      const series = chart.addLineSeries({
-        color,
-        lineWidth: isSelected ? 3 : 2,
-        priceLineVisible: false,
-        lastValueVisible: false,
-        crosshairMarkerVisible: true,
-        crosshairMarkerRadius: isSelected ? 5 : 3,
-      });
-
-      series.setData(points);
-      seriesInfo.set(series, { offerId: o.id, price: representativePrice });
     });
 
     // Apply visible range — restore saved range if available (e.g. after load-more)

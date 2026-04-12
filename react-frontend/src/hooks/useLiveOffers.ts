@@ -5,6 +5,13 @@ import type { Offer } from '../types';
 const POLL_INTERVAL_MS = 15_000;
 const RECONNECT_DELAY_MS = 5_000;
 
+function buildTradeCostQuery(excludedCEXes: string[], feeTier: string): string {
+  let q = '';
+  if (excludedCEXes.length > 0) q += `&exclude_cexes=${encodeURIComponent(excludedCEXes.join(','))}`;
+  if (feeTier) q += `&fee_tier=${encodeURIComponent(feeTier)}`;
+  return q;
+}
+
 export function useLiveOffers() {
   const [liveOffers, setLiveOffers] = useState<Offer[]>([]);
   const [wssConnected, setWssConnected] = useState(false);
@@ -15,6 +22,8 @@ export function useLiveOffers() {
   const everOpenRef = useRef(false);
   const sessionRef  = useRef(0);
   const cexRef      = useRef('kraken');
+  const excludedCEXesRef = useRef<string[]>([]);
+  const feeTierRef = useRef('');
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -23,13 +32,17 @@ export function useLiveOffers() {
     }
   }, []);
 
+  const buildQueryString = useCallback(() => {
+    return `cex=${cexRef.current}${buildTradeCostQuery(excludedCEXesRef.current, feeTierRef.current)}`;
+  }, []);
+
   const startPolling = useCallback((session: number) => {
     if (pollRef.current) return;
     setWssConnected(false);
     const poll = async () => {
       if (sessionRef.current !== session || !mountedRef.current) return;
       try {
-        const offers = await apiFetch<Offer[]>(`/api/live_offers?cex=${cexRef.current}`);
+        const offers = await apiFetch<Offer[]>(`/api/live_offers?${buildQueryString()}`);
         if (sessionRef.current === session && mountedRef.current) setLiveOffers(offers);
       } catch (e) {
         console.error('[LiveOffers] poll error', e);
@@ -37,14 +50,14 @@ export function useLiveOffers() {
     };
     poll();
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
-  }, [stopPolling]);
+  }, [stopPolling, buildQueryString]);
 
   const connect = useCallback((session: number) => {
     if (!mountedRef.current || sessionRef.current !== session) return;
 
     everOpenRef.current = false;
     const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live_offers?cex=${cexRef.current}`);
+    const ws = new WebSocket(`${protocol}//${window.location.host}/ws/live_offers?${buildQueryString()}`);
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -92,15 +105,17 @@ export function useLiveOffers() {
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Called directly by MonitorView when filters.cex changes.
-  // Immediately fetches fresh offers with the new CEX's fees, then reconnects WS.
-  const refreshForCex = useCallback((cex: string) => {
+  // Called by MonitorView when filters.cex or trade cost settings change.
+  // Immediately fetches fresh offers, then reconnects WS.
+  const refreshForCex = useCallback((cex: string, excludedCEXes: string[] = [], feeTier: string = '') => {
     cexRef.current = cex;
+    excludedCEXesRef.current = excludedCEXes;
+    feeTierRef.current = feeTier;
     const session = ++sessionRef.current;
     stopPolling();
     wsRef.current?.close();
 
-    apiFetch<Offer[]>(`/api/live_offers?cex=${cex}`)
+    apiFetch<Offer[]>(`/api/live_offers?${buildQueryString()}`)
       .then(offers => {
         if (sessionRef.current === session && mountedRef.current) setLiveOffers(offers);
       })
@@ -108,7 +123,7 @@ export function useLiveOffers() {
 
     setWssConnected(false);
     connect(session);
-  }, [connect, stopPolling]);
+  }, [connect, stopPolling, buildQueryString]);
 
   return { liveOffers, wssConnected, refreshForCex };
 }
