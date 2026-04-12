@@ -42,9 +42,9 @@ var cexProfiles = map[string]CexWithdrawalProfile{
 		TypicalInputs:  1,
 		TypicalOutputs: 2,
 	},
-	// Coinbase: native SegWit (bech32), no Lightning on the main platform.
+	// Coinbase: native SegWit (bech32), Lightning enabled.
 	"coinbase": {
-		Methods:        []WithdrawalMethod{MethodOnchain},
+		Methods:        []WithdrawalMethod{MethodOnchain, MethodLightning},
 		OnchainTxType:  "P2WPKH",
 		TypicalInputs:  1,
 		TypicalOutputs: 2,

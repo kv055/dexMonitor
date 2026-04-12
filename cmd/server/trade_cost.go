@@ -37,7 +37,8 @@ var withdrawalFallbacks = map[string]map[WithdrawalMethod]float64{
 		MethodLightning: 0.0,
 	},
 	"coinbase": {
-		MethodOnchain: 0.0,
+		MethodOnchain:   0.0,
+		MethodLightning: 0.0,
 	},
 	"bitstamp": {
 		MethodOnchain: 0.0003,
@@ -164,7 +165,7 @@ func (f *withdrawalFeeFetcher) fetchLive(method WithdrawalMethod) (float64, erro
 	case "binance":
 		return f.fetchBinance(method)
 	case "coinbase":
-		if method == MethodOnchain {
+		if method == MethodOnchain || method == MethodLightning {
 			return 0, nil
 		}
 		return 0, fmt.Errorf("coinbase does not support %s withdrawals", method)
@@ -758,6 +759,10 @@ func (e *TradeCostEstimator) getNetworkFee(dexExchange string, btcAmount float64
 }
 
 func (e *TradeCostEstimator) getNetworkFeeForMethod(method WithdrawalMethod, btcAmount float64, requiredConfirmations int) networkFeeDetails {
+	return e.getNetworkFeeForMethodWithTier(method, btcAmount, requiredConfirmations, "")
+}
+
+func (e *TradeCostEstimator) getNetworkFeeForMethodWithTier(method WithdrawalMethod, btcAmount float64, requiredConfirmations int, feeTier string) networkFeeDetails {
 	if e.networkFeeOverride != nil {
 		return e.networkFeeOverride(method, btcAmount)
 	}
@@ -783,11 +788,12 @@ func (e *TradeCostEstimator) getNetworkFeeForMethod(method WithdrawalMethod, btc
 		}
 	}
 
-	ctx, err := e.btcPredictor.GetDetailedRecommendationWithConfirmations(
+	ctx, err := e.btcPredictor.GetDetailedRecommendationForTier(
 		e.cexProfile.TypicalInputs,
 		e.cexProfile.TypicalOutputs,
 		e.cexProfile.OnchainTxType,
 		requiredConfirmations,
+		feeTier,
 	)
 	if err != nil || ctx.Recommendation == nil {
 		return networkFeeDetails{method: MethodOnchain}
@@ -895,12 +901,16 @@ func (e *TradeCostEstimator) BreakdownWithConfirmations(btcAmount float64, dexEx
 }
 
 func (e *TradeCostEstimator) breakdownForMethod(btcAmount float64, dexExchange string, method WithdrawalMethod, direction string, requiredConfirmations int) CostBreakdown {
+	return e.breakdownForMethodWithTier(btcAmount, dexExchange, method, direction, requiredConfirmations, "")
+}
+
+func (e *TradeCostEstimator) breakdownForMethodWithTier(btcAmount float64, dexExchange string, method WithdrawalMethod, direction string, requiredConfirmations int, feeTier string) CostBreakdown {
 	if btcAmount <= 0 {
 		return CostBreakdown{}
 	}
 	takerFrac := e.taker.get()
 	dexFeeFrac := e.getDexFeeFrac(dexExchange)
-	netFee := e.getNetworkFeeForMethod(method, btcAmount, requiredConfirmations)
+	netFee := e.getNetworkFeeForMethodWithTier(method, btcAmount, requiredConfirmations, feeTier)
 
 	// Ask side: buyer purchases BTC from DEX seller then deposits to CEX — no CEX withdrawal fee,
 	// and only 1 network transaction (DEX wallet → CEX deposit address).
@@ -958,19 +968,33 @@ func (o *TradeRouteOptimizer) BestBreakdown(btcAmount float64, dexExchange strin
 }
 
 func (o *TradeRouteOptimizer) BestBreakdownWithConfirmations(btcAmount float64, dexExchange string, direction string, requiredConfirmations int) CostBreakdown {
+	return o.BestBreakdownFull(btcAmount, dexExchange, direction, requiredConfirmations, nil, "")
+}
+
+// BestBreakdownFull finds the lowest-cost route, optionally excluding certain CEXes
+// and/or forcing a specific BTC network fee tier.
+func (o *TradeRouteOptimizer) BestBreakdownFull(btcAmount float64, dexExchange string, direction string, requiredConfirmations int, excludedCEXes []string, feeTier string) CostBreakdown {
 	if o == nil || btcAmount <= 0 {
 		return CostBreakdown{}
+	}
+
+	excluded := make(map[string]struct{}, len(excludedCEXes))
+	for _, c := range excludedCEXes {
+		excluded[c] = struct{}{}
 	}
 
 	best := CostBreakdown{}
 	found := false
 	for _, cex := range supportedCEXes {
+		if _, skip := excluded[cex]; skip {
+			continue
+		}
 		est := o.estimators[cex]
 		if est == nil {
 			continue
 		}
 		for _, method := range supportedWithdrawalMethods(est.cexProfile, dexExchange) {
-			bd := est.breakdownForMethod(btcAmount, dexExchange, method, direction, requiredConfirmations)
+			bd := est.breakdownForMethodWithTier(btcAmount, dexExchange, method, direction, requiredConfirmations, feeTier)
 			if !found || bd.TotalCostPct < best.TotalCostPct {
 				best = bd
 				found = true

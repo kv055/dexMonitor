@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { PaymentMethodGroup } from '../types';
+import type { PaymentMethodGroup, TradeCostConfig } from '../types';
 
 interface Props {
   open: boolean;
@@ -11,6 +11,11 @@ interface Props {
   excludedMethods: string[];
   onToggleMethod: (method: string) => void;
   onToggleGroup: (groupMethods: string[], exclude: boolean) => void;
+  tradeCostConfig: TradeCostConfig;
+  excludedCEXes: string[];
+  onToggleCEX: (cex: string) => void;
+  feeTier: string;
+  onFeeTierChange: (tier: string) => void;
 }
 
 function getOffsetMinutes(timezone: string): number {
@@ -176,9 +181,27 @@ export function SettingsOverlay({
   excludedMethods,
   onToggleMethod,
   onToggleGroup,
+  tradeCostConfig,
+  excludedCEXes,
+  onToggleCEX,
+  feeTier,
+  onFeeTierChange,
 }: Props) {
   const excludedSet = new Set(excludedMethods);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const excludedCEXSet = new Set(excludedCEXes);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set(groups.map(g => g.name)));
+
+  // Keep newly loaded groups collapsed by default
+  useEffect(() => {
+    setCollapsedGroups(prev => {
+      const next = new Set(prev);
+      let changed = false;
+      for (const g of groups) {
+        if (!next.has(g.name)) { next.add(g.name); changed = true; }
+      }
+      return changed ? next : prev;
+    });
+  }, [groups]);
 
   const toggleCollapse = (name: string) =>
     setCollapsedGroups(prev => {
@@ -206,16 +229,16 @@ export function SettingsOverlay({
         aria-label="Close settings"
       />
 
-      <aside className="relative z-10 w-full sm:max-w-md rounded-t-xl sm:rounded-xl border border-border bg-surface/95 shadow-2xl shadow-black/30 flex flex-col max-h-[90dvh] animate-[settings-slide_220ms_ease-out]">
+      <aside className="relative z-10 w-full sm:max-w-md lg:max-w-[50vw] rounded-t-xl sm:rounded-xl border border-border bg-surface/95 shadow-2xl shadow-black/30 flex flex-col max-h-[90dvh] animate-[settings-slide_220ms_ease-out]">
         {/* Fixed header */}
-        <div className="px-4 py-3 border-b border-border flex items-center justify-between shrink-0">
+        <div className="px-3 py-2 border-b border-border flex items-center justify-between shrink-0">
           <div>
-            <p className="text-[0.7rem] uppercase tracking-wide text-muted">Interface Preferences</p>
-            <h2 className="text-sm font-semibold text-text">Settings</h2>
+            <p className="text-[0.6rem] uppercase tracking-wide text-muted">Interface Preferences</p>
+            <h2 className="text-xs font-semibold text-text">Settings</h2>
           </div>
           <button
             type="button"
-            className="px-2 py-0.5 text-sm border border-border rounded-md text-muted hover:text-text hover:border-muted"
+            className="px-2 py-0.5 text-xs border border-border rounded-md text-muted hover:text-text hover:border-muted"
             onClick={onClose}
           >
             Close
@@ -223,16 +246,18 @@ export function SettingsOverlay({
         </div>
 
         {/* Scrollable body */}
-        <div className="overflow-y-auto flex-1 p-4 flex flex-col gap-4">
-          <section className="rounded-lg border border-border bg-bg/50 p-3">
-            <div className="mb-2">
-              <p className="text-[0.7rem] uppercase tracking-wide text-muted">Timezone</p>
-              <h3 className="text-sm font-medium">Preferred Timezone</h3>
+        <div className="overflow-y-auto flex-1 p-3 flex flex-col gap-2.5">
+          <section className="rounded-lg border border-border bg-bg/50 p-2.5">
+            <div className="mb-1.5 lg:flex lg:items-baseline lg:gap-3">
+              <div className="shrink-0">
+                <h3 className="text-xs font-medium">Preferred Timezone</h3>
+              </div>
+              <p className="mt-0.5 lg:mt-0 lg:ml-auto lg:text-right text-[0.65rem] text-muted leading-tight">This controls how timestamps are displayed across dashboard panels.</p>
             </div>
             <select
               value={preferredTimezone}
               onChange={event => onTimezoneChange(event.target.value)}
-              className="w-full rounded-md border border-border bg-surface px-2 py-2 text-sm text-text outline-none focus:border-accent"
+              className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent"
             >
               {allTimezones.map(tz => (
                 <option key={tz.value} value={tz.value}>
@@ -240,20 +265,20 @@ export function SettingsOverlay({
                 </option>
               ))}
             </select>
-            <p className="mt-2 text-xs text-muted">This controls how timestamps are displayed across dashboard panels.</p>
           </section>
 
-          <section className="rounded-lg border border-border bg-bg/50 p-3">
-            <div className="mb-3">
-              <p className="text-[0.7rem] uppercase tracking-wide text-muted">Payment Methods</p>
-              <h3 className="text-sm font-medium">Enable / Disable</h3>
-              <p className="mt-1 text-xs text-muted">Disabled methods are hidden from all views and excluded from API queries.</p>
+          <section className="rounded-lg border border-border bg-bg/50 p-2.5">
+            <div className="mb-2 lg:flex lg:items-baseline lg:gap-3">
+              <div className="shrink-0">
+                <h3 className="text-xs font-medium">Payment Methods</h3>
+              </div>
+              <p className="mt-0.5 lg:mt-0 lg:ml-auto lg:text-right text-[0.65rem] text-muted leading-tight">Disabled methods are hidden from all views and excluded from API queries.</p>
             </div>
 
             {groups.length === 0 ? (
-              <p className="text-xs text-muted">No payment methods found yet — offers need to be fetched first.</p>
+              <p className="text-[0.65rem] text-muted">No payment methods found yet — offers need to be fetched first.</p>
             ) : (
-              <div className="flex flex-col gap-2">
+              <div className="flex flex-col gap-1.5">
                 {groups.map(group => {
                   const allExcluded = group.methods.every(m => excludedSet.has(m));
                   const someExcluded = group.methods.some(m => excludedSet.has(m));
@@ -261,25 +286,25 @@ export function SettingsOverlay({
                   return (
                     <div key={group.name} className="rounded-md border border-border overflow-hidden">
                       {/* Group header row — click left side to collapse, right button to toggle */}
-                      <div className={`flex items-center gap-2 px-3 py-2 ${allExcluded ? 'bg-bg/80' : 'bg-bg/30'}`}>
+                      <div className={`flex items-center gap-1.5 px-2.5 py-1.5 ${allExcluded ? 'bg-bg/80' : 'bg-bg/30'}`}>
                         <button
                           type="button"
                           onClick={() => toggleCollapse(group.name)}
-                          className="flex items-center gap-2 flex-1 min-w-0 text-left"
+                          className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
                         >
-                          <span className={`text-[0.65rem] text-muted transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}>▶</span>
-                          <span className={`text-[0.78rem] font-semibold ${allExcluded ? 'text-muted line-through' : 'text-text'}`}>
+                          <span className={`text-[0.55rem] text-muted transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}>▶</span>
+                          <span className={`text-[0.7rem] font-semibold ${allExcluded ? 'text-muted line-through' : 'text-text'}`}>
                             {group.display_name}
                           </span>
-                          <span className="text-[0.65rem] text-muted">({group.methods.length})</span>
+                          <span className="text-[0.55rem] text-muted">({group.methods.length})</span>
                           {someExcluded && !allExcluded && (
-                            <span className="text-[0.6rem] uppercase tracking-wide text-accent border border-accent/40 rounded px-1 py-px">partial</span>
+                            <span className="text-[0.5rem] uppercase tracking-wide text-accent border border-accent/40 rounded px-0.5 py-px">partial</span>
                           )}
                         </button>
                         <button
                           type="button"
                           onClick={() => onToggleGroup(group.methods, !allExcluded)}
-                          className={`shrink-0 text-xs px-2.5 py-0.5 rounded-md border font-medium transition-colors ${
+                          className={`shrink-0 text-[0.65rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
                             allExcluded
                               ? 'border-green/50 text-green hover:bg-green/10'
                               : 'border-red/50 text-red hover:bg-red/10'
@@ -295,12 +320,12 @@ export function SettingsOverlay({
                         {group.methods.map(method => {
                           const excluded = excludedSet.has(method);
                           return (
-                            <div key={method} className={`flex items-center justify-between gap-2 px-3 py-1.5 pl-5 ${excluded ? 'opacity-50' : ''}`}>
-                              <span className={`text-[0.75rem] ${excluded ? 'text-muted line-through' : 'text-text'}`}>{method}</span>
+                            <div key={method} className={`flex items-center justify-between gap-1.5 px-2.5 py-1 pl-4 ${excluded ? 'opacity-50' : ''}`}>
+                              <span className={`text-[0.65rem] ${excluded ? 'text-muted line-through' : 'text-text'}`}>{method}</span>
                               <button
                                 type="button"
                                 onClick={() => onToggleMethod(method)}
-                                className={`text-[0.7rem] px-2 py-0.5 rounded border font-medium transition-colors ${
+                                className={`text-[0.6rem] px-1.5 py-0.5 rounded border font-medium transition-colors ${
                                   excluded
                                     ? 'border-green/40 text-green hover:bg-green/10'
                                     : 'border-border text-muted hover:border-red/50 hover:text-red'
@@ -318,6 +343,70 @@ export function SettingsOverlay({
                 })}
               </div>
             )}
+          </section>
+
+          <section className="rounded-lg border border-border bg-bg/50 p-2.5">
+            <div className="mb-2 lg:flex lg:items-baseline lg:gap-3">
+              <div className="shrink-0">
+                <h3 className="text-xs font-medium">CEX Exchanges</h3>
+              </div>
+              <p className="mt-0.5 lg:mt-0 lg:ml-auto lg:text-right text-[0.65rem] text-muted leading-tight">Disabled exchanges are excluded from the best-route cost calculation.</p>
+            </div>
+
+            {tradeCostConfig.cexes.length === 0 ? (
+              <p className="text-[0.65rem] text-muted">Loading exchanges…</p>
+            ) : (
+              <div className="flex flex-col gap-1">
+                {tradeCostConfig.cexes.map(cex => {
+                  const excluded = excludedCEXSet.has(cex.name);
+                  const label = cex.name.charAt(0).toUpperCase() + cex.name.slice(1);
+                  return (
+                    <div key={cex.name} className={`flex items-center justify-between gap-1.5 px-2.5 py-1 rounded-md border border-border ${excluded ? 'opacity-50' : ''}`}>
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span className={`text-[0.7rem] font-semibold ${excluded ? 'text-muted line-through' : 'text-text'}`}>{label}</span>
+                        <span className="text-[0.5rem] text-muted">{cex.methods.join(', ')}</span>
+                        {cex.has_lightning && (
+                          <span className="text-[0.5rem] uppercase tracking-wide text-yellow border border-yellow/40 rounded px-0.5 py-px">⚡ LN</span>
+                        )}
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => onToggleCEX(cex.name)}
+                        className={`text-[0.6rem] px-1.5 py-0.5 rounded border font-medium transition-colors ${
+                          excluded
+                            ? 'border-green/40 text-green hover:bg-green/10'
+                            : 'border-border text-muted hover:border-red/50 hover:text-red'
+                        }`}
+                      >
+                        {excluded ? 'Enable' : 'Disable'}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+
+          <section className="rounded-lg border border-border bg-bg/50 p-2.5">
+            <div className="mb-1.5 lg:flex lg:items-baseline lg:gap-3">
+              <div className="shrink-0">
+                <h3 className="text-xs font-medium">BTC Network Fee Tier</h3>
+              </div>
+              <p className="mt-0.5 lg:mt-0 lg:ml-auto lg:text-right text-[0.65rem] text-muted leading-tight">
+                Auto selects the optimal tier based on mempool congestion. Override to lock a specific fee speed.
+              </p>
+            </div>
+            <select
+              value={feeTier}
+              onChange={event => onFeeTierChange(event.target.value)}
+              className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent"
+            >
+              {tradeCostConfig.fee_tiers.map(tier => (
+                <option key={tier.value} value={tier.value}>
+                  {tier.label}
+                </option>
+              ))}
+            </select>
           </section>
         </div>
       </aside>
