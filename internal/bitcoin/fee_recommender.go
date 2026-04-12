@@ -153,6 +153,27 @@ func (fr *FeeRecommender) GetAllRecommendations(cost *TransactionCostEstimate, e
 	}
 }
 
+// RecommendForTier returns the recommendation for a specific tier name.
+// Valid tiers: "economic", "standard", "fast", "express".
+// Returns nil for unknown tiers or nil inputs.
+func (fr *FeeRecommender) RecommendForTier(cost *TransactionCostEstimate, estimate *FeeEstimate, tier string) *FeeRecommendation {
+	if cost == nil || estimate == nil {
+		return nil
+	}
+	switch tier {
+	case "economic":
+		return fr.GetEconomicFee(cost, estimate)
+	case "standard":
+		return fr.GetStandardFee(cost, estimate)
+	case "fast":
+		return fr.GetFastFee(cost, estimate)
+	case "express":
+		return fr.GetExpressFee(cost, estimate)
+	default:
+		return nil
+	}
+}
+
 // RecommendBestTier selects the optimal tier based on current network congestion.
 // Low/low_medium → economic; medium → standard; high → fast.
 func (fr *FeeRecommender) RecommendBestTier(cost *TransactionCostEstimate, estimate *FeeEstimate, stats *NetworkStats) *FeeRecommendation {

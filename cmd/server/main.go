@@ -141,7 +141,7 @@ func setCexPrice(cex string, p float64) {
 	cexPricesMu.Lock()
 	cexPrices[cex] = p
 	cexPricesMu.Unlock()
-	hub.broadcastForConfig(cex, 0)
+	hub.broadcastForCex(cex)
 }
 
 // --- CEX WebSocket price feeds ---
@@ -550,6 +550,7 @@ func main() {
 	mux.HandleFunc("GET /api/ohlc", handleOHLC)
 	mux.HandleFunc("GET /api/snapshot-log", handleSnapshotLog)
 	mux.HandleFunc("GET /api/payment_method_groups", handlePaymentMethodGroups)
+	mux.HandleFunc("GET /api/trade_cost_config", handleTradeCostConfig)
 	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
 	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
 	mux.HandleFunc("GET /health", handleHealth)
@@ -615,11 +616,14 @@ func handleOffers(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleLiveOffersREST is the REST fallback for /ws/live_offers.
-// Accepts optional ?cex= query param (default: "kraken").
 func handleLiveOffersREST(w http.ResponseWriter, r *http.Request) {
-	cex := queryCex(r)
-	requiredConfirmations := queryConfirmations(r)
-	payload := hub.computePayload(getCexPrice(cex), cex, requiredConfirmations)
+	sub := liveSubscription{
+		cex:                   queryCex(r),
+		requiredConfirmations: queryConfirmations(r),
+		excludedCEXes:         strings.Join(queryExcludedCEXes(r), ","),
+		feeTier:               queryFeeTier(r),
+	}
+	payload := hub.computePayload(getCexPrice(sub.cex), sub)
 	if payload == nil {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte("[]"))
@@ -637,6 +641,8 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	hoursArg := fmt.Sprintf("-%d hours", hours)
 	excludedPaymentMethods := queryExcludedPaymentMethods(r)
 	requiredConfirmations := queryConfirmations(r)
+	excludedCEXes := queryExcludedCEXes(r)
+	feeTier := queryFeeTier(r)
 
 	rows, err := db.Query(
 		"SELECT * FROM offers WHERE is_live = 0 AND last_seen >= datetime('now', ?) ORDER BY last_seen DESC LIMIT ?",
@@ -659,7 +665,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 		if isPaymentMethodExcluded(offerString(o, "payment_method"), excludedPaymentMethods) {
 			continue
 		}
-		addPastOfferCostFields(o, requiredConfirmations)
+		addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier)
 		filtered = append(filtered, o)
 	}
 
@@ -815,6 +821,10 @@ type pastOfferAnalysis struct {
 }
 
 func addPastOfferCostFields(o map[string]any, requiredConfirmations int) pastOfferAnalysis {
+	return addPastOfferCostFieldsFull(o, requiredConfirmations, nil, "")
+}
+
+func addPastOfferCostFieldsFull(o map[string]any, requiredConfirmations int, excludedCEXes []string, feeTier string) pastOfferAnalysis {
 	dexExchange := offerString(o, "exchange")
 	direction := offerString(o, "direction")
 	price := offerFloat(o, "price")
@@ -834,7 +844,7 @@ func addPastOfferCostFields(o map[string]any, requiredConfirmations int) pastOff
 	}
 
 	btcSize := selectBTCTradeSize(btcMaxPtr, btcMinPtr)
-	tradeCostPct, netPremium, bd := computeNetPremiumFieldsWithConfirmations(priceDiff, btcSize, dexExchange, direction, requiredConfirmations)
+	tradeCostPct, netPremium, bd := computeNetPremiumFieldsFull(priceDiff, btcSize, dexExchange, direction, requiredConfirmations, excludedCEXes, feeTier)
 
 	o["trade_cost_percent"] = tradeCostPct
 	o["net_premium_percent"] = netPremium
@@ -934,7 +944,7 @@ func handleInternalLiveOffers(w http.ResponseWriter, r *http.Request) {
 	hub.setLifecycle(fetchOfferLifecycle(ids))
 	hub.setOffers(offers)
 	price := getCexPrice(defaultCEX)
-	outOffers := hub.computeOutOffers(price, defaultCEX, 0)
+	outOffers := hub.computeOutOffers(price, liveSubscription{cex: defaultCEX})
 	go writeLifecycleEntries(outOffers)
 	fmt.Printf("[LiveHub] updated with %d live offers from snapshot\n", len(offers))
 	w.WriteHeader(http.StatusNoContent)
@@ -1079,6 +1089,41 @@ func handlePaymentMethodGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"groups": pmService.GetGroups()})
+}
+
+func handleTradeCostConfig(w http.ResponseWriter, r *http.Request) {
+	type cexInfo struct {
+		Name       string   `json:"name"`
+		Methods    []string `json:"methods"`
+		HasLightning bool   `json:"has_lightning"`
+	}
+	cexes := make([]cexInfo, 0, len(supportedCEXes))
+	for _, name := range supportedCEXes {
+		profile := cexProfileFor(name)
+		methods := make([]string, 0, len(profile.Methods))
+		hasLN := false
+		for _, m := range profile.Methods {
+			methods = append(methods, string(m))
+			if m == MethodLightning {
+				hasLN = true
+			}
+		}
+		cexes = append(cexes, cexInfo{Name: name, Methods: methods, HasLightning: hasLN})
+	}
+
+	tiers := []map[string]string{
+		{"value": "", "label": "Auto (congestion-based)"},
+		{"value": "economic", "label": "Economic (cheapest, ~1h)"},
+		{"value": "standard", "label": "Standard (balanced, ~30min)"},
+		{"value": "fast", "label": "Fast (priority, ~10min)"},
+		{"value": "express", "label": "Express (next block, ~2min)"},
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(map[string]any{
+		"cexes":     cexes,
+		"fee_tiers": tiers,
+	})
 }
 
 func handleSnapshotLog(w http.ResponseWriter, r *http.Request) {
@@ -1446,6 +1491,44 @@ func queryConfirmations(r *http.Request) int {
 		return 6
 	}
 	return v
+}
+
+// validFeeTiers lists the fee tiers the user can lock in via settings.
+var validFeeTiers = map[string]bool{
+	"economic": true,
+	"standard": true,
+	"fast":     true,
+	"express":  true,
+}
+
+// queryFeeTier reads the ?fee_tier= query param. Returns "" (auto) for missing/unknown values.
+func queryFeeTier(r *http.Request) string {
+	tier := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("fee_tier")))
+	if validFeeTiers[tier] {
+		return tier
+	}
+	return ""
+}
+
+// queryExcludedCEXes reads the ?exclude_cexes= query param (comma-separated).
+func queryExcludedCEXes(r *http.Request) []string {
+	values := append([]string{}, r.URL.Query()["exclude_cexes"]...)
+	seen := make(map[string]struct{}, len(values))
+	result := make([]string, 0, len(values))
+	for _, raw := range values {
+		for _, part := range strings.Split(raw, ",") {
+			cex := strings.TrimSpace(strings.ToLower(part))
+			if cex == "" {
+				continue
+			}
+			if _, ok := seen[cex]; ok {
+				continue
+			}
+			seen[cex] = struct{}{}
+			result = append(result, cex)
+		}
+	}
+	return result
 }
 
 func queryExcludedPaymentMethods(r *http.Request) []string {

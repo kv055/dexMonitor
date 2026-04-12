@@ -36,6 +36,7 @@ Thumbs.db
 /snapshot
 /cmd/server/server
 /cmd/snapshot/snapshot
+/vendor/
 *.exe
 
 # Environment

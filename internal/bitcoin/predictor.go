@@ -226,6 +226,39 @@ func (bp *BitcoinFeePredictor) GetDetailedRecommendation(inputCount, outputCount
 	return bp.GetDetailedRecommendationWithConfirmations(inputCount, outputCount, txType, defaultRequiredConfirmations)
 }
 
+// GetDetailedRecommendationForTier returns the recommendation for a specific fee tier
+// together with all intermediate data. If tier is empty, falls back to congestion-adaptive.
+func (bp *BitcoinFeePredictor) GetDetailedRecommendationForTier(inputCount, outputCount int, txType string, requiredConfirmations int, tier string) (*DetailedFeeContext, error) {
+	estimate, err := bp.PredictTransactionCostWithConfirmations(inputCount, outputCount, txType, requiredConfirmations)
+	if err != nil {
+		return nil, err
+	}
+
+	var rec *FeeRecommendation
+	if tier != "" {
+		rec = bp.recommender.RecommendForTier(estimate, bp.lastFeeData, tier)
+	}
+	if rec == nil {
+		rec = bp.recommender.RecommendBestTier(estimate, bp.lastFeeData, bp.lastNetStats)
+	}
+
+	ageMinutes := 0
+	if !bp.lastUpdateTime.IsZero() {
+		ageMinutes = int(time.Since(bp.lastUpdateTime).Minutes())
+	}
+
+	return &DetailedFeeContext{
+		Recommendation: rec,
+		Estimate:       estimate,
+		FeeRates:       bp.lastFeeData,
+		NetworkStats:   bp.lastNetStats,
+		DataAgeMinutes: ageMinutes,
+		TxInputs:       inputCount,
+		TxOutputs:      outputCount,
+		TxType:         txType,
+	}, nil
+}
+
 // GetDetailedRecommendationWithConfirmations returns the congestion-adaptive
 // recommendation for a caller-selected confirmation target.
 func (bp *BitcoinFeePredictor) GetDetailedRecommendationWithConfirmations(inputCount, outputCount int, txType string, requiredConfirmations int) (*DetailedFeeContext, error) {

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -93,12 +94,16 @@ func computeNetPremiumFields(premiumPct float64, btcSize float64, dexExchange st
 }
 
 func computeNetPremiumFieldsWithConfirmations(premiumPct float64, btcSize float64, dexExchange string, direction string, requiredConfirmations int) (float64, float64, CostBreakdown) {
+	return computeNetPremiumFieldsFull(premiumPct, btcSize, dexExchange, direction, requiredConfirmations, nil, "")
+}
+
+func computeNetPremiumFieldsFull(premiumPct float64, btcSize float64, dexExchange string, direction string, requiredConfirmations int, excludedCEXes []string, feeTier string) (float64, float64, CostBreakdown) {
 	if tradeRouteOptimizer == nil || premiumPct <= 0 {
 		return 0, 0, CostBreakdown{}
 	}
 
 	requiredConfirmations = resolveRequiredConfirmations(direction, requiredConfirmations)
-	bd := tradeRouteOptimizer.BestBreakdownWithConfirmations(btcSize, dexExchange, direction, requiredConfirmations)
+	bd := tradeRouteOptimizer.BestBreakdownFull(btcSize, dexExchange, direction, requiredConfirmations, excludedCEXes, feeTier)
 	if bd.RouteCEX == "" {
 		return 0, 0, CostBreakdown{}
 	}
@@ -122,6 +127,8 @@ type LiveHub struct {
 type liveSubscription struct {
 	cex                   string
 	requiredConfirmations int
+	excludedCEXes         string // comma-joined for map key comparability
+	feeTier               string
 }
 
 var hub = &LiveHub{
@@ -154,10 +161,10 @@ func (h *LiveHub) getOffers() []LiveOffer {
 }
 
 // subscribe registers a new WebSocket client with a CEX preference.
-func (h *LiveHub) subscribe(cex string, requiredConfirmations int) chan []byte {
+func (h *LiveHub) subscribe(sub liveSubscription) chan []byte {
 	ch := make(chan []byte, 8)
 	h.subsMu.Lock()
-	h.subscribers[ch] = liveSubscription{cex: cex, requiredConfirmations: requiredConfirmations}
+	h.subscribers[ch] = sub
 	h.subsMu.Unlock()
 	return ch
 }
@@ -170,17 +177,33 @@ func (h *LiveHub) unsubscribe(ch chan []byte) {
 	close(ch)
 }
 
-// broadcastForCex computes premiums for the given CEX and pushes to subscribers
-// that selected that CEX. Called on every price tick for that exchange.
-func (h *LiveHub) broadcastForConfig(cex string, requiredConfirmations int) {
-	price := getCexPrice(cex)
-	data := h.computePayload(price, cex, requiredConfirmations)
+// broadcastForCex broadcasts to all subscribers that use the given CEX,
+// regardless of their other settings. Called on every price tick.
+func (h *LiveHub) broadcastForCex(cex string) {
+	h.subsMu.Lock()
+	configSet := make(map[liveSubscription]struct{}, 4)
+	for _, sub := range h.subscribers {
+		if sub.cex == cex {
+			configSet[sub] = struct{}{}
+		}
+	}
+	h.subsMu.Unlock()
+
+	for sub := range configSet {
+		h.broadcastForConfig(sub)
+	}
+}
+
+// broadcastForConfig computes premiums for the given config and pushes to matching subscribers.
+func (h *LiveHub) broadcastForConfig(sub liveSubscription) {
+	price := getCexPrice(sub.cex)
+	data := h.computePayload(price, sub)
 	if data == nil {
 		return
 	}
 	h.subsMu.Lock()
-	for ch, sub := range h.subscribers {
-		if sub.cex == cex && sub.requiredConfirmations == requiredConfirmations {
+	for ch, s := range h.subscribers {
+		if s == sub {
 			select {
 			case ch <- data:
 			default: // drop if subscriber is too slow
@@ -190,10 +213,10 @@ func (h *LiveHub) broadcastForConfig(cex string, requiredConfirmations int) {
 	h.subsMu.Unlock()
 }
 
-// broadcastAll broadcasts to every subscriber grouped by their CEX preference.
+// broadcastAll broadcasts to every subscriber grouped by their config.
 // Called after offer data changes (new snapshot).
 func (h *LiveHub) broadcastAll() {
-	// Collect unique CEXes among active subscribers
+	// Collect unique configs among active subscribers
 	h.subsMu.Lock()
 	configSet := make(map[liveSubscription]struct{}, 4)
 	for _, sub := range h.subscribers {
@@ -203,18 +226,26 @@ func (h *LiveHub) broadcastAll() {
 
 	// Always include the default so seedHubFromDB works even before any subscriber
 	if len(configSet) == 0 {
-		configSet[liveSubscription{cex: defaultCEX, requiredConfirmations: 0}] = struct{}{}
+		configSet[liveSubscription{cex: defaultCEX}] = struct{}{}
 	}
 
 	for sub := range configSet {
-		h.broadcastForConfig(sub.cex, sub.requiredConfirmations)
+		h.broadcastForConfig(sub)
 	}
 }
 
-// computeOutOffers returns the enriched offer slice for a given price and CEX.
+// parseExcludedCEXes splits the comma-joined excluded CEX string back into a slice.
+func parseExcludedCEXes(joined string) []string {
+	if joined == "" {
+		return nil
+	}
+	return strings.Split(joined, ",")
+}
+
+// computeOutOffers returns the enriched offer slice for a given price and subscription config.
 // If the selected CEX has no price yet, falls back to the default CEX price so
 // that price_diff_percent is always meaningful and offers remain visible.
-func (h *LiveHub) computeOutOffers(price float64, cex string, requiredConfirmations int) []liveOutOffer {
+func (h *LiveHub) computeOutOffers(price float64, sub liveSubscription) []liveOutOffer {
 	if price <= 0 {
 		price = getCexPrice(defaultCEX)
 	}
@@ -222,11 +253,12 @@ func (h *LiveHub) computeOutOffers(price float64, cex string, requiredConfirmati
 	h.offersMu.RLock()
 	lc := h.lifecycle
 	h.offersMu.RUnlock()
+	excludedCEXes := parseExcludedCEXes(sub.excludedCEXes)
 	result := make([]liveOutOffer, 0, len(offers))
 	for _, o := range offers {
 		pct := computeDirectionalPremiumPct(o.Direction, o.Price, price)
 		btcSize := selectBTCTradeSize(o.BTCMax, o.BTCMin)
-		tradeCostPct, netPremium, bd := computeNetPremiumFieldsWithConfirmations(pct, btcSize, o.Exchange, o.Direction, requiredConfirmations)
+		tradeCostPct, netPremium, bd := computeNetPremiumFieldsFull(pct, btcSize, o.Exchange, o.Direction, sub.requiredConfirmations, excludedCEXes, sub.feeTier)
 
 		result = append(result, liveOutOffer{
 			ID:            o.ID,
@@ -254,10 +286,10 @@ func (h *LiveHub) computeOutOffers(price float64, cex string, requiredConfirmati
 	return result
 }
 
-// computePayload builds the JSON payload for a given price and CEX.
+// computePayload builds the JSON payload for a given subscription config.
 // Returns nil on marshal error.
-func (h *LiveHub) computePayload(price float64, cex string, requiredConfirmations int) []byte {
-	result := h.computeOutOffers(price, cex, requiredConfirmations)
+func (h *LiveHub) computePayload(price float64, sub liveSubscription) []byte {
+	result := h.computeOutOffers(price, sub)
 	data, err := json.Marshal(result)
 	if err != nil {
 		fmt.Printf("[LiveHub] marshal error: %v\n", err)
@@ -268,10 +300,14 @@ func (h *LiveHub) computePayload(price float64, cex string, requiredConfirmation
 
 // handleLiveOffersWS is the WebSocket handler. It sends the current state
 // immediately on connect, then streams every subsequent broadcast.
-// Accepts optional ?cex= query param (default: "kraken").
+// Accepts optional ?cex=, ?fee_tier=, ?exclude_cexes= query params.
 func handleLiveOffersWS(w http.ResponseWriter, r *http.Request) {
-	cex := queryCex(r)
-	requiredConfirmations := queryConfirmations(r)
+	sub := liveSubscription{
+		cex:                   queryCex(r),
+		requiredConfirmations: queryConfirmations(r),
+		excludedCEXes:         strings.Join(queryExcludedCEXes(r), ","),
+		feeTier:               queryFeeTier(r),
+	}
 
 	ws, err := upgrader.Upgrade(w, r, nil)
 	if err != nil {
@@ -280,7 +316,7 @@ func handleLiveOffersWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer ws.Close()
 
-	ch := hub.subscribe(cex, requiredConfirmations)
+	ch := hub.subscribe(sub)
 	defer hub.unsubscribe(ch)
 
 	// Respond to pings so the browser doesn't drop the connection.
@@ -301,7 +337,7 @@ func handleLiveOffersWS(w http.ResponseWriter, r *http.Request) {
 	}()
 
 	// Send current state immediately on connect.
-	if payload := hub.computePayload(getCexPrice(cex), cex, requiredConfirmations); payload != nil {
+	if payload := hub.computePayload(getCexPrice(sub.cex), sub); payload != nil {
 		if err := ws.WriteMessage(websocket.TextMessage, payload); err != nil {
 			return
 		}
