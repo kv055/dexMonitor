@@ -45,6 +45,17 @@ export interface CostBreakdown {
   network_fee_tier: string;
   network_fee_confidence: number;
   network_fee_detail: BTCNetworkFeeDetail | null;
+  hedge_open_fee_pct: number;
+  hedge_open_fee_btc: number;
+  hedge_close_fee_pct: number;
+  hedge_close_fee_btc: number;
+  hedge_funding_fee_pct: number;
+  hedge_funding_fee_btc: number;
+  hedge_fee_pct: number;
+  hedge_fee_btc: number;
+  hedge_venue: string;
+  hedge_instrument: string;
+  hedge_transfer_minutes: number;
   dex_fee_pct: number;
   dex_fee_btc: number;
   total_cost_pct: number;

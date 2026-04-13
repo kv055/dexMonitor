@@ -22,6 +22,7 @@ import (
 	"golang.org/x/net/proxy"
 
 	"dexmonitor/internal/bitcoin"
+	"dexmonitor/internal/hedge"
 )
 
 // withdrawalFallbacks are the static BTC withdrawal fees used when the live exchange
@@ -620,6 +621,7 @@ type TradeCostEstimator struct {
 	btcPredictor       *bitcoin.BitcoinFeePredictor
 	cexProfile         CexWithdrawalProfile
 	networkFeeOverride func(WithdrawalMethod, float64) networkFeeDetails
+	hedgeCostOverride  func(btcAmount float64, transferMinutes float64) hedgeCostDetails
 }
 
 func NewTradeCostEstimator(exchange string) *TradeCostEstimator {
@@ -706,6 +708,20 @@ type networkFeeDetails struct {
 	tier       string  // "economic", "standard", "fast", "express", "lightning"
 	confidence float64 // 0–1.0
 	detail     *BTCNetworkFeeDetail
+}
+
+type hedgeCostDetails struct {
+	feeBTC          float64
+	feePct          float64
+	openFeeBTC      float64
+	openFeePct      float64
+	closeFeeBTC     float64
+	closeFeePct     float64
+	fundingFeeBTC   float64
+	fundingFeePct   float64
+	venue           string
+	instrument      string
+	transferMinutes float64
 }
 
 func resolveRequiredConfirmations(direction string, requested int) int {
@@ -871,6 +887,17 @@ type CostBreakdown struct {
 	NetworkFeeTier       string               `json:"network_fee_tier"`       // "economic", "standard", "fast", "express", "lightning"
 	NetworkFeeConfidence float64              `json:"network_fee_confidence"` // 0–1.0 estimate reliability
 	NetworkFeeDetail     *BTCNetworkFeeDetail `json:"network_fee_detail"`     // full onchain calc context; nil for Lightning
+	HedgeOpenFeePct      float64              `json:"hedge_open_fee_pct"`     // perp opening fee as % of trade
+	HedgeOpenFeeBTC      float64              `json:"hedge_open_fee_btc"`     // perp opening fee in BTC
+	HedgeCloseFeePct     float64              `json:"hedge_close_fee_pct"`    // perp closing fee as % of trade
+	HedgeCloseFeeBTC     float64              `json:"hedge_close_fee_btc"`    // perp closing fee in BTC
+	HedgeFundingFeePct   float64              `json:"hedge_funding_fee_pct"`  // perp funding cost over transfer window as % of trade
+	HedgeFundingFeeBTC   float64              `json:"hedge_funding_fee_btc"`  // perp funding cost over transfer window in BTC
+	HedgeFeePct          float64              `json:"hedge_fee_pct"`          // perp open+close+funding as % of trade
+	HedgeFeeBTC          float64              `json:"hedge_fee_btc"`          // perp open+close+funding in BTC
+	HedgeVenue           string               `json:"hedge_venue"`            // chosen hedge venue
+	HedgeInstrument      string               `json:"hedge_instrument"`       // chosen perp instrument
+	HedgeTransferMinutes int                  `json:"hedge_transfer_minutes"` // transfer-time input used for hedge costing
 	DexFeePct            float64              `json:"dex_fee_pct"`            // DEX platform fee as % of trade
 	DexFeeBTC            float64              `json:"dex_fee_btc"`            // DEX platform fee in BTC
 	TotalCostPct         float64              `json:"total_cost_pct"`         // sum of all components as % of trade
@@ -934,7 +961,16 @@ func (e *TradeCostEstimator) breakdownForMethodWithTier(btcAmount float64, dexEx
 	takerBTC := btcAmount * takerFrac
 	dexBTC := btcAmount * dexFeeFrac
 	networkFeeBTC := netFee.feeBTC * float64(numNetworkTxs)
-	totalBTC := takerBTC + withdrawalFee + networkFeeBTC + dexBTC
+	hedgeCost := hedgeCostDetails{}
+	if isBid {
+		transferMinutes := 0.0
+		if netFee.detail != nil && netFee.detail.SelectedFullConfirmationMinutes > 0 {
+			transferMinutes = float64(netFee.detail.SelectedFullConfirmationMinutes * numNetworkTxs)
+		}
+		hedgeCost = e.estimateBestHedgeCost(btcAmount, transferMinutes)
+	}
+
+	totalBTC := takerBTC + withdrawalFee + networkFeeBTC + hedgeCost.feeBTC + dexBTC
 	totalPct := totalBTC / btcAmount * 100
 
 	pct := func(btc float64) float64 { return round4(btc / btcAmount * 100) }
@@ -956,11 +992,76 @@ func (e *TradeCostEstimator) breakdownForMethodWithTier(btcAmount float64, dexEx
 		NetworkFeeTier:       netFee.tier,
 		NetworkFeeConfidence: round4(netFee.confidence),
 		NetworkFeeDetail:     netFee.detail,
+		HedgeOpenFeePct:      pct(hedgeCost.openFeeBTC),
+		HedgeOpenFeeBTC:      round8(hedgeCost.openFeeBTC),
+		HedgeCloseFeePct:     pct(hedgeCost.closeFeeBTC),
+		HedgeCloseFeeBTC:     round8(hedgeCost.closeFeeBTC),
+		HedgeFundingFeePct:   pct(hedgeCost.fundingFeeBTC),
+		HedgeFundingFeeBTC:   round8(hedgeCost.fundingFeeBTC),
+		HedgeFeePct:          pct(hedgeCost.feeBTC),
+		HedgeFeeBTC:          round8(hedgeCost.feeBTC),
+		HedgeVenue:           hedgeCost.venue,
+		HedgeInstrument:      hedgeCost.instrument,
+		HedgeTransferMinutes: int(math.Round(hedgeCost.transferMinutes)),
 		DexFeePct:            pct(dexBTC),
 		DexFeeBTC:            round8(dexBTC),
 		TotalCostPct:         round4(totalPct),
 		TotalCostBTC:         round8(totalBTC),
 	}
+}
+
+func (e *TradeCostEstimator) estimateBestHedgeCost(btcAmount float64, transferMinutes float64) hedgeCostDetails {
+	if e.hedgeCostOverride != nil {
+		return e.hedgeCostOverride(btcAmount, transferMinutes)
+	}
+	if btcAmount <= 0 {
+		return hedgeCostDetails{}
+	}
+
+	candidates := []hedge.Venue{hedge.VenueKrakenFutures, hedge.VenueCoinbaseFutures}
+	best := hedgeCostDetails{}
+	found := false
+
+	for _, venue := range candidates {
+		inputs, err := hedge.FetchDefaultVenueInputs(venue)
+		if err != nil {
+			inputs, err = hedge.FallbackVenueInputs(venue)
+			if err != nil {
+				continue
+			}
+		}
+
+		cfg := hedge.Config{TransferMinutes: transferMinutes}
+		cfg = hedge.ApplyLivePerpInputs(cfg, inputs)
+		openFeeBTC := btcAmount * cfg.PerpOpenFeeRate
+		closeFeeBTC := btcAmount * cfg.PerpCloseFeeRate
+		fundingFeeBTC := btcAmount * cfg.FundingCostRate
+		feeBTC := openFeeBTC + closeFeeBTC + fundingFeeBTC
+		rate := cfg.PerpOpenFeeRate + cfg.PerpCloseFeeRate + cfg.FundingCostRate
+
+		details := hedgeCostDetails{
+			feeBTC:          feeBTC,
+			feePct:          rate * 100,
+			openFeeBTC:      openFeeBTC,
+			openFeePct:      cfg.PerpOpenFeeRate * 100,
+			closeFeeBTC:     closeFeeBTC,
+			closeFeePct:     cfg.PerpCloseFeeRate * 100,
+			fundingFeeBTC:   fundingFeeBTC,
+			fundingFeePct:   cfg.FundingCostRate * 100,
+			venue:           inputs.Venue,
+			instrument:      inputs.Instrument,
+			transferMinutes: transferMinutes,
+		}
+		if !found || details.feeBTC < best.feeBTC {
+			best = details
+			found = true
+		}
+	}
+
+	if !found {
+		return hedgeCostDetails{}
+	}
+	return best
 }
 
 func (o *TradeRouteOptimizer) BestBreakdown(btcAmount float64, dexExchange string, direction string) CostBreakdown {

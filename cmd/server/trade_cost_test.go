@@ -41,9 +41,29 @@ func fixedCostEstimator(exchange, dexExchange string, takerFeeFrac, withdrawalFe
 				method:     method,
 				tier:       "standard",
 				confidence: 0.875,
+				detail: &BTCNetworkFeeDetail{
+					SelectedFullConfirmationMinutes: 30,
+				},
 			}
 		},
+		hedgeCostOverride: func(btcAmount float64, transferMinutes float64) hedgeCostDetails {
+			return hedgeCostDetails{}
+		},
 	}
+}
+
+func fixedCostEstimatorWithHedge(exchange, dexExchange string, takerFeeFrac, withdrawalFeeBTC, dexFeeFrac, networkFeeBTC, hedgeFeeBTC float64) *TradeCostEstimator {
+	est := fixedCostEstimator(exchange, dexExchange, takerFeeFrac, withdrawalFeeBTC, dexFeeFrac, networkFeeBTC)
+	est.hedgeCostOverride = func(btcAmount float64, transferMinutes float64) hedgeCostDetails {
+		return hedgeCostDetails{
+			feeBTC:          hedgeFeeBTC,
+			feePct:          hedgeFeeBTC / btcAmount * 100,
+			venue:           "coinbase_futures",
+			instrument:      "BTC-PERP",
+			transferMinutes: transferMinutes,
+		}
+	}
+	return est
 }
 
 func assertFloat(t *testing.T, got, want float64) {
@@ -83,6 +103,32 @@ func TestTradeCostEstimatorBreakdownMatchesComponentSum(t *testing.T) {
 	if bd.NetworkFeeConfidence != 0.875 {
 		t.Fatalf("network confidence = %.12f, want 0.875", bd.NetworkFeeConfidence)
 	}
+}
+
+func TestTradeCostEstimatorBreakdownIncludesHedgeCostOnBidSide(t *testing.T) {
+	est := fixedCostEstimatorWithHedge("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005, 0.0002)
+
+	bd := est.Breakdown(0.1, "bisq", "buy")
+
+	assertFloat(t, bd.HedgeFeeBTC, 0.0002)
+	assertFloat(t, bd.HedgeFeePct, 0.2)
+	assertFloat(t, bd.TotalCostBTC, 0.0008)
+	assertFloat(t, bd.TotalCostPct, 0.8)
+	if bd.HedgeVenue != "coinbase_futures" {
+		t.Fatalf("hedge venue = %q, want coinbase_futures", bd.HedgeVenue)
+	}
+	if bd.HedgeTransferMinutes != 60 {
+		t.Fatalf("hedge transfer minutes = %d, want 60", bd.HedgeTransferMinutes)
+	}
+}
+
+func TestTradeCostEstimatorDoesNotIncludeHedgeCostOnAskSide(t *testing.T) {
+	est := fixedCostEstimatorWithHedge("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005, 0.0002)
+
+	bd := est.Breakdown(0.1, "bisq", "sell")
+
+	assertFloat(t, bd.HedgeFeeBTC, 0)
+	assertFloat(t, bd.HedgeFeePct, 0)
 }
 
 func TestTradeCostEstimatorBreakdownRoundsBTCAndPercentFields(t *testing.T) {

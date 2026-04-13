@@ -70,107 +70,166 @@ function OnchainFeeDetail({ d, conf }: { d: BTCDetail; conf: number }) {
   const confPct = conf > 0 ? Math.round(conf * 100) + '%' : null;
 
   return (
-    <tr>
-      <td colSpan={4} className="pt-0 pb-2">
-        {/* Badge row */}
-        <div className="flex items-center gap-1.5 mb-1.5 pl-0.5">
-          <Badge label="onchain" />
-          <Badge label={d.congestion_level.replace('_', ' ') + ' congestion'} colorCls={congCls} />
-          {confPct && <span className="text-[0.6rem] text-muted">{confPct} conf.</span>}
+    <>
+      <div className="flex items-center gap-1.5 mb-1.5 pl-0.5">
+        <Badge label="onchain" />
+        <Badge label={d.congestion_level.replace('_', ' ') + ' congestion'} colorCls={congCls} />
+        {confPct && <span className="text-[0.6rem] text-muted">{confPct} conf.</span>}
+      </div>
+      <div className="bg-bg rounded-md border border-border px-2.5 py-2 flex flex-col gap-1.5 text-[0.68rem]">
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-muted">Tx structure</span>
+          <span className="text-text font-mono">
+            {d.tx_inputs}in · {d.tx_outputs}out · {d.tx_type} · {d.tx_vbytes} vB
+            {d.num_txs > 1 && <span className="text-orange-400 ml-1.5">× {d.num_txs} txs</span>}
+          </span>
         </div>
-        {/* Detail grid */}
-        <div className="bg-bg rounded-md border border-border px-2.5 py-2 flex flex-col gap-1.5 text-[0.68rem]">
-          {/* Tx structure */}
+        {d.num_txs > 1 && (
           <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Tx structure</span>
-            <span className="text-text font-mono">
-              {d.tx_inputs}in · {d.tx_outputs}out · {d.tx_type} · {d.tx_vbytes} vB
-              {d.num_txs > 1 && <span className="text-orange-400 ml-1.5">× {d.num_txs} txs</span>}
-            </span>
+            <span className="text-muted">Why 2 txs?</span>
+            <span className="text-muted text-right">CEX withdraw → pre-approved addr → trade wallet</span>
           </div>
-          {d.num_txs > 1 && (
-            <div className="flex items-center justify-between gap-3">
-              <span className="text-muted">Why 2 txs?</span>
-              <span className="text-muted text-right">CEX withdraw → pre-approved addr → trade wallet</span>
-            </div>
-          )}
-          {/* Selected rate */}
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Selected rate</span>
-            <span className={`font-medium ${tierCls}`}>{d.selected_sat_vb} sat/vB</span>
-          </div>
-          {/* All tiers */}
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted shrink-0">All tiers</span>
-            <div className="flex items-center gap-2 flex-wrap justify-end">
-              <span><span className="text-green">eco</span> <span className="text-text">{d.economic_sat_vb}</span></span>
-              <span className="text-border">·</span>
-              <span><span className="text-accent">std</span> <span className="text-text">{d.standard_sat_vb}</span></span>
-              <span className="text-border">·</span>
-              <span><span className="text-red">fast</span> <span className="text-text">{d.fast_sat_vb}</span></span>
-              <span className="text-border">·</span>
-              <span><span className="text-red">exp</span> <span className="text-text">{d.express_sat_vb}</span></span>
-              <span className="text-muted">sat/vB</span>
-            </div>
-          </div>
-          {/* Mempool */}
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Mempool</span>
-            <span className="text-text">{d.mempool_size_mb} MB · {d.unconfirmed_tx_count.toLocaleString()} txs</span>
-          </div>
-          <div className="flex items-start justify-between gap-3">
-            <span className="text-muted">Prediction</span>
-            <div className="text-right">
-              <div className="text-text">
-                {d.required_confirmations} conf
-                <span className="text-muted"> · </span>
-                selected {fmtEtaMinutes(d.selected_full_confirmation_minutes)}
-              </div>
-              <div className="text-[0.64rem] text-muted">
-                eco {fmtEtaMinutes(d.economic_full_confirmation_minutes)}
-                <span className="text-border"> · </span>
-                std {fmtEtaMinutes(d.standard_full_confirmation_minutes)}
-                <span className="text-border"> · </span>
-                fast {fmtEtaMinutes(d.fast_full_confirmation_minutes)}
-                <span className="text-border"> · </span>
-                exp {fmtEtaMinutes(d.express_full_confirmation_minutes)}
-              </div>
-            </div>
-          </div>
-          {/* Data age */}
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Data age</span>
-            <span className="text-muted">{d.data_age_minutes}m ago</span>
+        )}
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-muted">Selected rate</span>
+          <span className={`font-medium ${tierCls}`}>{d.selected_sat_vb} sat/vB</span>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-muted shrink-0">All tiers</span>
+          <div className="flex items-center gap-2 flex-wrap justify-end">
+            <span><span className="text-green">eco</span> <span className="text-text">{d.economic_sat_vb}</span></span>
+            <span className="text-border">·</span>
+            <span><span className="text-accent">std</span> <span className="text-text">{d.standard_sat_vb}</span></span>
+            <span className="text-border">·</span>
+            <span><span className="text-red">fast</span> <span className="text-text">{d.fast_sat_vb}</span></span>
+            <span className="text-border">·</span>
+            <span><span className="text-red">exp</span> <span className="text-text">{d.express_sat_vb}</span></span>
+            <span className="text-muted">sat/vB</span>
           </div>
         </div>
-      </td>
-    </tr>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-muted">Mempool</span>
+          <span className="text-text">{d.mempool_size_mb} MB · {d.unconfirmed_tx_count.toLocaleString()} txs</span>
+        </div>
+        <div className="flex items-start justify-between gap-3">
+          <span className="text-muted">Prediction</span>
+          <div className="text-right">
+            <div className="text-text">
+              {d.required_confirmations} conf
+              <span className="text-muted"> · </span>
+              selected {fmtEtaMinutes(d.selected_full_confirmation_minutes)}
+            </div>
+            <div className="text-[0.64rem] text-muted">
+              eco {fmtEtaMinutes(d.economic_full_confirmation_minutes)}
+              <span className="text-border"> · </span>
+              std {fmtEtaMinutes(d.standard_full_confirmation_minutes)}
+              <span className="text-border"> · </span>
+              fast {fmtEtaMinutes(d.fast_full_confirmation_minutes)}
+              <span className="text-border"> · </span>
+              exp {fmtEtaMinutes(d.express_full_confirmation_minutes)}
+            </div>
+          </div>
+        </div>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-muted">Data age</span>
+          <span className="text-muted">{d.data_age_minutes}m ago</span>
+        </div>
+      </div>
+    </>
   );
 }
 
 function LightningFeeDetail({ conf }: { conf: number }) {
   const confPct = conf > 0 ? Math.round(conf * 100) + '%' : null;
   return (
-    <tr>
-      <td colSpan={4} className="pb-1 pt-0">
-        <div className="flex items-center gap-1.5 pl-0.5">
-          <Badge label="lightning" colorCls="text-[#bc8cff]" />
-          {confPct && <span className="text-[0.6rem] text-muted">{confPct} conf.</span>}
-          <span className="text-[0.6rem] text-muted">amount-proportional estimate</span>
+    <div className="flex items-center gap-1.5 pl-0.5">
+      <Badge label="lightning" colorCls="text-[#bc8cff]" />
+      {confPct && <span className="text-[0.6rem] text-muted">{confPct} conf.</span>}
+      <span className="text-[0.6rem] text-muted">amount-proportional estimate</span>
+    </div>
+  );
+}
+
+function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
+  if (bd.hedge_fee_btc <= 0) return null;
+
+  return (
+    <div className="bg-bg rounded-md border border-border px-2.5 py-2 flex flex-col gap-1.5 text-[0.68rem]">
+      <div className="flex items-center gap-1.5 mb-0.5 pl-0.5">
+        <Badge label="hedge" colorCls="text-accent" />
+        {bd.hedge_venue && <Badge label={bd.hedge_venue.replaceAll('_', ' ')} colorCls="text-accent" />}
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-muted">Instrument</span>
+        <span className="text-text font-mono">{bd.hedge_instrument || '—'}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-muted">Transfer window</span>
+        <span className="text-text">{fmtEtaMinutes(bd.hedge_transfer_minutes)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-muted">Hedge cost</span>
+        <div className="text-right">
+          <div className="text-text mono-nums">{fmt8(bd.hedge_fee_btc)} BTC</div>
+          <div className="text-[0.64rem] text-muted mono-nums">{fmtPct(bd.hedge_fee_pct)}</div>
         </div>
-      </td>
-    </tr>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-muted">Open fee</span>
+        <div className="text-right">
+          <div className="text-text mono-nums">{fmt8(bd.hedge_open_fee_btc)} BTC</div>
+          <div className="text-[0.64rem] text-muted mono-nums">{fmtPct(bd.hedge_open_fee_pct)}</div>
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-muted">Close fee</span>
+        <div className="text-right">
+          <div className="text-text mono-nums">{fmt8(bd.hedge_close_fee_btc)} BTC</div>
+          <div className="text-[0.64rem] text-muted mono-nums">{fmtPct(bd.hedge_close_fee_pct)}</div>
+        </div>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-muted">Funding</span>
+        <div className="text-right">
+          <div className="text-text mono-nums">{fmt8(bd.hedge_funding_fee_btc)} BTC</div>
+          <div className="text-[0.64rem] text-muted mono-nums">{fmtPct(bd.hedge_funding_fee_pct)}</div>
+        </div>
+      </div>
+    </div>
   );
 }
 
 function NetworkFeeDetail({ bd }: { bd: CostBreakdown }) {
   if (bd.network_fee_method === 'onchain' && bd.network_fee_detail) {
-    return <OnchainFeeDetail d={bd.network_fee_detail} conf={bd.network_fee_confidence} />;
+    return (
+      <tr>
+        <td colSpan={4} className="pt-0 pb-2">
+          <OnchainFeeDetail d={bd.network_fee_detail} conf={bd.network_fee_confidence} />
+        </td>
+      </tr>
+    );
   }
   if (bd.network_fee_method === 'lightning') {
-    return <LightningFeeDetail conf={bd.network_fee_confidence} />;
+    return (
+      <tr>
+        <td colSpan={4} className="pt-0 pb-2">
+          <LightningFeeDetail conf={bd.network_fee_confidence} />
+        </td>
+      </tr>
+    );
   }
   return null;
+}
+
+function HedgeDetailRow({ bd }: { bd: CostBreakdown }) {
+  if (bd.hedge_fee_btc <= 0) return null;
+  return (
+    <tr>
+      <td colSpan={4} className="pt-0 pb-2">
+        <HedgeFeeDetail bd={bd} />
+      </td>
+    </tr>
+  );
 }
 
 function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
@@ -179,7 +238,9 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
   netPremiumPct: number | null;
   refPrice: number | null;
 }) {
+  type BreakdownRow = { label: string; btc: number; pct: number; expandable?: 'network' | 'hedge' };
   const [networkFeeOpen, setNetworkFeeOpen] = useState(false);
+  const [hedgeFeeOpen, setHedgeFeeOpen] = useState(false);
   const hasNetworkFeeDetail = bd.network_fee_method === 'onchain'
     ? !!bd.network_fee_detail
     : bd.network_fee_method === 'lightning';
@@ -188,10 +249,23 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
   const numTxs = bd.num_network_txs ?? (isAsk ? 1 : 2);
   const networkFeeLabel = `BTC network fee${numTxs > 1 ? ` ×${numTxs} txs` : ''}`;
 
-  const rows: { label: string; btc: number; pct: number; expandable?: boolean }[] = [
+  const withdrawalRows: BreakdownRow[] = !isAsk
+    ? [{ label: 'CEX withdrawal', btc: bd.withdrawal_fee_btc, pct: bd.withdrawal_fee_pct }]
+    : [];
+  const hedgeRows: BreakdownRow[] = bd.hedge_fee_btc > 0
+    ? [{
+      label: `Hedge cost${bd.hedge_venue ? ` (${bd.hedge_venue.replace('_', ' ')})` : ''}`,
+      btc: bd.hedge_fee_btc,
+      pct: bd.hedge_fee_pct,
+      expandable: 'hedge',
+    }]
+    : [];
+
+  const rows: BreakdownRow[] = [
     { label: 'CEX taker fee',    btc: bd.cex_taker_fee_btc,  pct: bd.cex_taker_fee_pct  },
-    ...(!isAsk ? [{ label: 'CEX withdrawal', btc: bd.withdrawal_fee_btc, pct: bd.withdrawal_fee_pct }] : []),
-    { label: networkFeeLabel,    btc: bd.network_fee_btc,     pct: bd.network_fee_pct,    expandable: hasNetworkFeeDetail },
+    ...withdrawalRows,
+    { label: networkFeeLabel, btc: bd.network_fee_btc, pct: bd.network_fee_pct, ...(hasNetworkFeeDetail ? { expandable: 'network' as const } : {}) },
+    ...hedgeRows,
     { label: 'DEX platform fee', btc: bd.dex_fee_btc,         pct: bd.dex_fee_pct         },
   ];
   const routeCex = bd.route_cex || '—';
@@ -252,18 +326,26 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
         </thead>
         <tbody>
           {rows.map((r, i) => {
-            const isNetworkFee = r.expandable;
+            const isNetworkFee = r.expandable === 'network';
+            const isHedgeFee = r.expandable === 'hedge';
+            const isExpandable = !!r.expandable;
             return (
               <React.Fragment key={r.label}>
                 <tr
-                  className={`${i % 2 === 0 ? 'bg-grid/40' : ''} ${isNetworkFee ? 'cursor-pointer hover:brightness-110' : ''}`}
-                  onClick={isNetworkFee ? () => setNetworkFeeOpen(o => !o) : undefined}
+                  className={`${i % 2 === 0 ? 'bg-grid/40' : ''} ${isExpandable ? 'cursor-pointer hover:brightness-110' : ''}`}
+                  onClick={
+                    isNetworkFee
+                      ? () => setNetworkFeeOpen(o => !o)
+                      : isHedgeFee
+                        ? () => setHedgeFeeOpen(o => !o)
+                        : undefined
+                  }
                 >
                   <td className="pr-3 py-1 text-muted rounded-l">
-                    {isNetworkFee ? (
+                    {isExpandable ? (
                       <span className="flex items-center gap-1.5">
                         {r.label}
-                        <span className={`text-[0.6rem] text-muted transition-transform duration-150 inline-block ${networkFeeOpen ? 'rotate-180' : ''}`}>▾</span>
+                        <span className={`text-[0.6rem] text-muted transition-transform duration-150 inline-block ${(isNetworkFee ? networkFeeOpen : hedgeFeeOpen) ? 'rotate-180' : ''}`}>▾</span>
                       </span>
                     ) : r.label}
                   </td>
@@ -272,6 +354,7 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
                   <td className="py-1 text-right text-text mono-nums rounded-r">{fmtPct(r.pct)}</td>
                 </tr>
                 {isNetworkFee && networkFeeOpen && <NetworkFeeDetail bd={bd} />}
+                {isHedgeFee && hedgeFeeOpen && <HedgeDetailRow bd={bd} />}
               </React.Fragment>
             );
           })}
