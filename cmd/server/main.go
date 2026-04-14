@@ -488,9 +488,17 @@ func main() {
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_premium_pct REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_pct REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_btc REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN avg_hedge_fee_sum_btc REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN cex_taker_fee_btc REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN cex_withdraw_fee_btc REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN network_fee_btc REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN hedge_open_fee_btc REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN hedge_close_fee_btc REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN hedge_funding_fee_btc REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN hedge_fee_sum_btc REAL")
+	db.Exec("ALTER TABLE offers ADD COLUMN hedge_venue TEXT")
+	db.Exec("ALTER TABLE offers ADD COLUMN hedge_instrument TEXT")
+	db.Exec("ALTER TABLE offers ADD COLUMN hedge_transfer_minutes INTEGER")
 	db.Exec("ALTER TABLE offers ADD COLUMN dex_fee_btc REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_net_premium_pct REAL")
 	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_btc REAL")
@@ -500,6 +508,13 @@ func main() {
 	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN cex_withdraw_fee_btc REAL")
 	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN network_fee_btc REAL")
 	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN dex_fee_btc REAL")
+	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_open_fee_btc")
+	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_close_fee_btc")
+	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_funding_fee_btc")
+	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_fee_btc")
+	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_venue")
+	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_instrument")
+	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_transfer_minutes")
 	db.Exec("ALTER TABLE offers DROP COLUMN avg_cex_fee_btc")
 	db.Exec("ALTER TABLE offers DROP COLUMN avg_network_fee_btc")
 	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN cex_fee_btc")
@@ -885,7 +900,17 @@ func writeLifecycleEntries(offers []liveOutOffer) {
 	defer insStmt.Close()
 
 	updStmt, err := tx.Prepare(`
-		UPDATE offers SET best_route_cex = ?, best_route_method = ? WHERE id = ?
+		UPDATE offers SET
+			best_route_cex = ?,
+			best_route_method = ?,
+			hedge_open_fee_btc = ?,
+			hedge_close_fee_btc = ?,
+			hedge_funding_fee_btc = ?,
+			hedge_fee_sum_btc = ?,
+			hedge_venue = ?,
+			hedge_instrument = ?,
+			hedge_transfer_minutes = ?
+		WHERE id = ?
 	`)
 	if err != nil {
 		tx.Rollback()
@@ -919,13 +944,38 @@ func writeLifecycleEntries(offers []liveOutOffer) {
 			round8(bd.BTCAmount),
 		)
 		if bd.RouteCEX != "" {
-			_, _ = updStmt.Exec(bd.RouteCEX, bd.RouteMethod, o.ID)
+			_, _ = updStmt.Exec(
+				bd.RouteCEX,
+				bd.RouteMethod,
+				round8(bd.HedgeOpenFeeBTC),
+				round8(bd.HedgeCloseFeeBTC),
+				round8(bd.HedgeFundingFeeBTC),
+				round8(bd.HedgeFeeSumBTC),
+				nullIfEmpty(bd.HedgeVenue),
+				nullIfEmpty(bd.HedgeInstrument),
+				nullIfZeroInt(bd.HedgeTransferMinutes),
+				o.ID,
+			)
 		}
 	}
 
 	if err := tx.Commit(); err != nil {
 		fmt.Printf("[Lifecycle] commit error: %v\n", err)
 	}
+}
+
+func nullIfEmpty(s string) any {
+	if strings.TrimSpace(s) == "" {
+		return nil
+	}
+	return s
+}
+
+func nullIfZeroInt(v int) any {
+	if v == 0 {
+		return nil
+	}
+	return v
 }
 
 // handleInternalLiveOffers receives the live offer list from the snapshot tool,
@@ -1093,9 +1143,9 @@ func handlePaymentMethodGroups(w http.ResponseWriter, r *http.Request) {
 
 func handleTradeCostConfig(w http.ResponseWriter, r *http.Request) {
 	type cexInfo struct {
-		Name       string   `json:"name"`
-		Methods    []string `json:"methods"`
-		HasLightning bool   `json:"has_lightning"`
+		Name         string   `json:"name"`
+		Methods      []string `json:"methods"`
+		HasLightning bool     `json:"has_lightning"`
 	}
 	cexes := make([]cexInfo, 0, len(supportedCEXes))
 	for _, name := range supportedCEXes {

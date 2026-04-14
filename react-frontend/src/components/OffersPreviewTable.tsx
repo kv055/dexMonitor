@@ -151,7 +151,7 @@ function LightningFeeDetail({ conf }: { conf: number }) {
 }
 
 function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
-  if (bd.hedge_fee_btc <= 0) return null;
+  if (bd.hedge_fee_sum_btc <= 0) return null;
 
   return (
     <div className="bg-bg rounded-md border border-border px-2.5 py-2 flex flex-col gap-1.5 text-[0.68rem]">
@@ -170,8 +170,8 @@ function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
       <div className="flex items-center justify-between gap-3">
         <span className="text-muted">Hedge cost</span>
         <div className="text-right">
-          <div className="text-text mono-nums">{fmt8(bd.hedge_fee_btc)} BTC</div>
-          <div className="text-[0.64rem] text-muted mono-nums">{fmtPct(bd.hedge_fee_pct)}</div>
+          <div className="text-text mono-nums">{fmt8(bd.hedge_fee_sum_btc)} BTC</div>
+          <div className="text-[0.64rem] text-muted mono-nums">{fmtPct(bd.hedge_fee_sum_pct)}</div>
         </div>
       </div>
       <div className="flex items-center justify-between gap-3">
@@ -222,7 +222,7 @@ function NetworkFeeDetail({ bd }: { bd: CostBreakdown }) {
 }
 
 function HedgeDetailRow({ bd }: { bd: CostBreakdown }) {
-  if (bd.hedge_fee_btc <= 0) return null;
+  if (bd.hedge_fee_sum_btc <= 0) return null;
   return (
     <tr>
       <td colSpan={4} className="pt-0 pb-2">
@@ -252,11 +252,11 @@ function CostBreakdownPanel({ bd, priceDiffPct, netPremiumPct, refPrice }: {
   const withdrawalRows: BreakdownRow[] = !isAsk
     ? [{ label: 'CEX withdrawal', btc: bd.withdrawal_fee_btc, pct: bd.withdrawal_fee_pct }]
     : [];
-  const hedgeRows: BreakdownRow[] = bd.hedge_fee_btc > 0
+  const hedgeRows: BreakdownRow[] = bd.hedge_fee_sum_btc > 0
     ? [{
       label: `Hedge cost${bd.hedge_venue ? ` (${bd.hedge_venue.replace('_', ' ')})` : ''}`,
-      btc: bd.hedge_fee_btc,
-      pct: bd.hedge_fee_pct,
+      btc: bd.hedge_fee_sum_btc,
+      pct: bd.hedge_fee_sum_pct,
       expandable: 'hedge',
     }]
     : [];

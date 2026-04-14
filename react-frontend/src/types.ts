@@ -51,8 +51,8 @@ export interface CostBreakdown {
   hedge_close_fee_btc: number;
   hedge_funding_fee_pct: number;
   hedge_funding_fee_btc: number;
-  hedge_fee_pct: number;
-  hedge_fee_btc: number;
+  hedge_fee_sum_pct: number;
+  hedge_fee_sum_btc: number;
   hedge_venue: string;
   hedge_instrument: string;
   hedge_transfer_minutes: number;

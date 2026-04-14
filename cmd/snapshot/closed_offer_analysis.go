@@ -73,6 +73,7 @@ func analyzeSingleClosedOffer(sdb *sql.DB, offer closedOfferRecord) (string, boo
 	var profAvgPremium sql.NullFloat64    // profitable entries only
 	var profAvgTradeCostPct sql.NullFloat64
 	var profAvgTradeCostBTC sql.NullFloat64
+	var profAvgHedgeFeeSumBTC sql.NullFloat64
 	var profAvgNetPremiumPct sql.NullFloat64
 	var profAvgNetPremiumBTC sql.NullFloat64
 	var profAvgBTCAmount sql.NullFloat64
@@ -86,6 +87,7 @@ func analyzeSingleClosedOffer(sdb *sql.DB, offer closedOfferRecord) (string, boo
 			AVG(CASE WHEN net_premium_pct > 0 THEN premium_pct    END),
 			AVG(CASE WHEN net_premium_pct > 0 THEN trade_cost_pct END),
 			AVG(CASE WHEN net_premium_pct > 0 THEN trade_cost_btc END),
+			AVG(CASE WHEN net_premium_pct > 0 THEN hedge_fee_sum_btc END),
 			AVG(CASE WHEN net_premium_pct > 0 THEN net_premium_pct END),
 			AVG(CASE WHEN net_premium_pct > 0 THEN net_premium_btc END),
 			AVG(CASE WHEN net_premium_pct > 0 THEN btc_amount     END)
@@ -99,6 +101,7 @@ func analyzeSingleClosedOffer(sdb *sql.DB, offer closedOfferRecord) (string, boo
 		&profAvgPremium,
 		&profAvgTradeCostPct,
 		&profAvgTradeCostBTC,
+		&profAvgHedgeFeeSumBTC,
 		&profAvgNetPremiumPct,
 		&profAvgNetPremiumBTC,
 		&profAvgBTCAmount,
@@ -137,14 +140,28 @@ func analyzeSingleClosedOffer(sdb *sql.DB, offer closedOfferRecord) (string, boo
 	_ = sdb.QueryRow(`SELECT best_route_cex, best_route_method FROM offers WHERE id = ?`, offer.id).
 		Scan(&bestRouteCEX, &bestRouteMethod)
 
-	var cexTakerFeeBTC, cexWithdrawFeeBTC, networkFeeBTC, dexFeeBTC sql.NullFloat64
+	var cexTakerFeeBTC, cexWithdrawFeeBTC, networkFeeBTC, hedgeOpenFeeBTC, hedgeCloseFeeBTC, hedgeFundingFeeBTC, hedgeFeeSumBTC, dexFeeBTC sql.NullFloat64
+	var hedgeVenue, hedgeInstrument sql.NullString
+	var hedgeTransferMinutes sql.NullInt64
 	_ = sdb.QueryRow(`
-		SELECT cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc, dex_fee_btc
-		FROM order_lifecycle
-		WHERE offer_db_id = ? AND net_premium_pct > 0
-		ORDER BY snapshot_time DESC, id DESC
-		LIMIT 1
-	`, offer.id).Scan(&cexTakerFeeBTC, &cexWithdrawFeeBTC, &networkFeeBTC, &dexFeeBTC)
+		SELECT cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc,
+		       hedge_open_fee_btc, hedge_close_fee_btc, hedge_funding_fee_btc, hedge_fee_sum_btc, hedge_venue, hedge_instrument, hedge_transfer_minutes,
+		       dex_fee_btc
+		FROM offers
+		WHERE id = ?
+	`, offer.id).Scan(
+		&cexTakerFeeBTC,
+		&cexWithdrawFeeBTC,
+		&networkFeeBTC,
+		&hedgeOpenFeeBTC,
+		&hedgeCloseFeeBTC,
+		&hedgeFundingFeeBTC,
+		&hedgeFeeSumBTC,
+		&hedgeVenue,
+		&hedgeInstrument,
+		&hedgeTransferMinutes,
+		&dexFeeBTC,
+	)
 
 	profitFiat := profAvgNetPremiumBTC.Float64 * avgRefPrice.Float64
 
@@ -155,9 +172,17 @@ func analyzeSingleClosedOffer(sdb *sql.DB, offer closedOfferRecord) (string, boo
 			avg_premium_pct            = ?,
 			avg_trade_cost_pct         = ?,
 			avg_trade_cost_btc         = ?,
+			avg_hedge_fee_sum_btc      = ?,
 			cex_taker_fee_btc          = ?,
 			cex_withdraw_fee_btc       = ?,
 			network_fee_btc            = ?,
+			hedge_open_fee_btc         = ?,
+			hedge_close_fee_btc        = ?,
+			hedge_funding_fee_btc      = ?,
+			hedge_fee_sum_btc          = ?,
+			hedge_venue                = ?,
+			hedge_instrument           = ?,
+			hedge_transfer_minutes     = ?,
 			dex_fee_btc                = ?,
 			avg_net_premium_pct        = ?,
 			avg_estimated_profit_btc   = ?,
@@ -172,9 +197,17 @@ func analyzeSingleClosedOffer(sdb *sql.DB, offer closedOfferRecord) (string, boo
 		historicalRound4(profAvgPremium.Float64),
 		historicalRound4(profAvgTradeCostPct.Float64),
 		historicalRound8(profAvgTradeCostBTC.Float64),
+		nullHistoricalRound8(profAvgHedgeFeeSumBTC),
 		nullHistoricalRound8(cexTakerFeeBTC),
 		nullHistoricalRound8(cexWithdrawFeeBTC),
 		nullHistoricalRound8(networkFeeBTC),
+		nullHistoricalRound8(hedgeOpenFeeBTC),
+		nullHistoricalRound8(hedgeCloseFeeBTC),
+		nullHistoricalRound8(hedgeFundingFeeBTC),
+		nullHistoricalRound8(hedgeFeeSumBTC),
+		nullHistoricalString(hedgeVenue),
+		nullHistoricalString(hedgeInstrument),
+		nullHistoricalInt(hedgeTransferMinutes),
 		nullHistoricalRound8(dexFeeBTC),
 		historicalRound4(profAvgNetPremiumPct.Float64),
 		historicalRound8(profAvgNetPremiumBTC.Float64),
@@ -200,4 +233,18 @@ func nullHistoricalRound8(v sql.NullFloat64) any {
 		return nil
 	}
 	return historicalRound8(v.Float64)
+}
+
+func nullHistoricalString(v sql.NullString) any {
+	if !v.Valid || v.String == "" {
+		return nil
+	}
+	return v.String
+}
+
+func nullHistoricalInt(v sql.NullInt64) any {
+	if !v.Valid {
+		return nil
+	}
+	return v.Int64
 }
