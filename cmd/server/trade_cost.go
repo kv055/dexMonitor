@@ -887,21 +887,25 @@ type CostBreakdown struct {
 	NetworkFeeTier       string               `json:"network_fee_tier"`       // "economic", "standard", "fast", "express", "lightning"
 	NetworkFeeConfidence float64              `json:"network_fee_confidence"` // 0–1.0 estimate reliability
 	NetworkFeeDetail     *BTCNetworkFeeDetail `json:"network_fee_detail"`     // full onchain calc context; nil for Lightning
-	HedgeOpenFeePct      float64              `json:"hedge_open_fee_pct"`     // perp opening fee as % of trade
-	HedgeOpenFeeBTC      float64              `json:"hedge_open_fee_btc"`     // perp opening fee in BTC
-	HedgeCloseFeePct     float64              `json:"hedge_close_fee_pct"`    // perp closing fee as % of trade
-	HedgeCloseFeeBTC     float64              `json:"hedge_close_fee_btc"`    // perp closing fee in BTC
-	HedgeFundingFeePct   float64              `json:"hedge_funding_fee_pct"`  // perp funding cost over transfer window as % of trade
-	HedgeFundingFeeBTC   float64              `json:"hedge_funding_fee_btc"`  // perp funding cost over transfer window in BTC
-	HedgeFeeSumPct       float64              `json:"hedge_fee_sum_pct"`      // perp open+close+funding as % of trade
-	HedgeFeeSumBTC       float64              `json:"hedge_fee_sum_btc"`      // perp open+close+funding in BTC
-	HedgeVenue           string               `json:"hedge_venue"`            // chosen hedge venue
-	HedgeInstrument      string               `json:"hedge_instrument"`       // chosen perp instrument
-	HedgeTransferMinutes int                  `json:"hedge_transfer_minutes"` // transfer-time input used for hedge costing
+	Hedge                HedgeBreakdown       `json:"hedge"`                  // perp hedge detail grouped under its own nested object
 	DexFeePct            float64              `json:"dex_fee_pct"`            // DEX platform fee as % of trade
 	DexFeeBTC            float64              `json:"dex_fee_btc"`            // DEX platform fee in BTC
 	TotalCostPct         float64              `json:"total_cost_pct"`         // sum of all components as % of trade
 	TotalCostBTC         float64              `json:"total_cost_btc"`         // sum of all components in BTC
+}
+
+type HedgeBreakdown struct {
+	OpenFeePct      float64 `json:"open_fee_pct"`      // perp opening fee as % of trade
+	OpenFeeBTC      float64 `json:"open_fee_btc"`      // perp opening fee in BTC
+	CloseFeePct     float64 `json:"close_fee_pct"`     // perp closing fee as % of trade
+	CloseFeeBTC     float64 `json:"close_fee_btc"`     // perp closing fee in BTC
+	FundingFeePct   float64 `json:"funding_fee_pct"`   // perp funding cost over transfer window as % of trade
+	FundingFeeBTC   float64 `json:"funding_fee_btc"`   // perp funding cost over transfer window in BTC
+	FeeSumPct       float64 `json:"fee_sum_pct"`       // perp open+close+funding as % of trade
+	FeeSumBTC       float64 `json:"fee_sum_btc"`       // perp open+close+funding in BTC
+	Venue           string  `json:"venue"`             // chosen hedge venue
+	Instrument      string  `json:"instrument"`        // chosen perp instrument
+	TransferMinutes int     `json:"transfer_minutes"`  // transfer-time input used for hedge costing
 }
 
 func round8(v float64) float64 {
@@ -992,17 +996,19 @@ func (e *TradeCostEstimator) breakdownForMethodWithTier(btcAmount float64, dexEx
 		NetworkFeeTier:       netFee.tier,
 		NetworkFeeConfidence: round4(netFee.confidence),
 		NetworkFeeDetail:     netFee.detail,
-		HedgeOpenFeePct:      pct(hedgeCost.openFeeBTC),
-		HedgeOpenFeeBTC:      round8(hedgeCost.openFeeBTC),
-		HedgeCloseFeePct:     pct(hedgeCost.closeFeeBTC),
-		HedgeCloseFeeBTC:     round8(hedgeCost.closeFeeBTC),
-		HedgeFundingFeePct:   pct(hedgeCost.fundingFeeBTC),
-		HedgeFundingFeeBTC:   round8(hedgeCost.fundingFeeBTC),
-		HedgeFeeSumPct:       pct(hedgeCost.feeBTC),
-		HedgeFeeSumBTC:       round8(hedgeCost.feeBTC),
-		HedgeVenue:           hedgeCost.venue,
-		HedgeInstrument:      hedgeCost.instrument,
-		HedgeTransferMinutes: int(math.Round(hedgeCost.transferMinutes)),
+		Hedge: HedgeBreakdown{
+			OpenFeePct:      pct(hedgeCost.openFeeBTC),
+			OpenFeeBTC:      round8(hedgeCost.openFeeBTC),
+			CloseFeePct:     pct(hedgeCost.closeFeeBTC),
+			CloseFeeBTC:     round8(hedgeCost.closeFeeBTC),
+			FundingFeePct:   pct(hedgeCost.fundingFeeBTC),
+			FundingFeeBTC:   round8(hedgeCost.fundingFeeBTC),
+			FeeSumPct:       pct(hedgeCost.feeBTC),
+			FeeSumBTC:       round8(hedgeCost.feeBTC),
+			Venue:           hedgeCost.venue,
+			Instrument:      hedgeCost.instrument,
+			TransferMinutes: int(math.Round(hedgeCost.transferMinutes)),
+		},
 		DexFeePct:            pct(dexBTC),
 		DexFeeBTC:            round8(dexBTC),
 		TotalCostPct:         round4(totalPct),

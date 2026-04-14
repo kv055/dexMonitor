@@ -110,15 +110,15 @@ func TestTradeCostEstimatorBreakdownIncludesHedgeCostOnBidSide(t *testing.T) {
 
 	bd := est.Breakdown(0.1, "bisq", "buy")
 
-	assertFloat(t, bd.HedgeFeeSumBTC, 0.0002)
-	assertFloat(t, bd.HedgeFeeSumPct, 0.2)
+	assertFloat(t, bd.Hedge.FeeSumBTC, 0.0002)
+	assertFloat(t, bd.Hedge.FeeSumPct, 0.2)
 	assertFloat(t, bd.TotalCostBTC, 0.0008)
 	assertFloat(t, bd.TotalCostPct, 0.8)
-	if bd.HedgeVenue != "coinbase_futures" {
-		t.Fatalf("hedge venue = %q, want coinbase_futures", bd.HedgeVenue)
+	if bd.Hedge.Venue != "coinbase_futures" {
+		t.Fatalf("hedge venue = %q, want coinbase_futures", bd.Hedge.Venue)
 	}
-	if bd.HedgeTransferMinutes != 60 {
-		t.Fatalf("hedge transfer minutes = %d, want 60", bd.HedgeTransferMinutes)
+	if bd.Hedge.TransferMinutes != 60 {
+		t.Fatalf("hedge transfer minutes = %d, want 60", bd.Hedge.TransferMinutes)
 	}
 }
 
@@ -127,8 +127,8 @@ func TestTradeCostEstimatorDoesNotIncludeHedgeCostOnAskSide(t *testing.T) {
 
 	bd := est.Breakdown(0.1, "bisq", "sell")
 
-	assertFloat(t, bd.HedgeFeeSumBTC, 0)
-	assertFloat(t, bd.HedgeFeeSumPct, 0)
+	assertFloat(t, bd.Hedge.FeeSumBTC, 0)
+	assertFloat(t, bd.Hedge.FeeSumPct, 0)
 }
 
 func TestTradeCostEstimatorBreakdownRoundsBTCAndPercentFields(t *testing.T) {

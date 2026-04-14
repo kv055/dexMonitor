@@ -947,13 +947,13 @@ func writeLifecycleEntries(offers []liveOutOffer) {
 			_, _ = updStmt.Exec(
 				bd.RouteCEX,
 				bd.RouteMethod,
-				round8(bd.HedgeOpenFeeBTC),
-				round8(bd.HedgeCloseFeeBTC),
-				round8(bd.HedgeFundingFeeBTC),
-				round8(bd.HedgeFeeSumBTC),
-				nullIfEmpty(bd.HedgeVenue),
-				nullIfEmpty(bd.HedgeInstrument),
-				nullIfZeroInt(bd.HedgeTransferMinutes),
+				round8(bd.Hedge.OpenFeeBTC),
+				round8(bd.Hedge.CloseFeeBTC),
+				round8(bd.Hedge.FundingFeeBTC),
+				round8(bd.Hedge.FeeSumBTC),
+				nullIfEmpty(bd.Hedge.Venue),
+				nullIfEmpty(bd.Hedge.Instrument),
+				nullIfZeroInt(bd.Hedge.TransferMinutes),
 				o.ID,
 			)
 		}
