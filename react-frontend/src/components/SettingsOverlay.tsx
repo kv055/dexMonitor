@@ -18,6 +18,8 @@ interface Props {
   onFeeTierChange: (tier: string) => void;
   coupledHedge: boolean;
   onCoupledHedgeChange: (v: boolean) => void;
+  maxFiatLimit: number | null;
+  onMaxFiatLimitChange: (v: number | null) => void;
 }
 
 function getOffsetMinutes(timezone: string): number {
@@ -190,6 +192,8 @@ export function SettingsOverlay({
   onFeeTierChange,
   coupledHedge,
   onCoupledHedgeChange,
+  maxFiatLimit,
+  onMaxFiatLimitChange,
 }: Props) {
   const excludedSet = new Set(excludedMethods);
   const excludedCEXSet = new Set(excludedCEXes);
@@ -432,6 +436,41 @@ export function SettingsOverlay({
               >
                 {coupledHedge ? 'Coupled' : 'Independent'}
               </button>
+            </div>
+          </section>
+
+          <section className="rounded-lg border border-border bg-bg/50 p-2.5">
+            <div className="mb-1.5 lg:flex lg:items-baseline lg:gap-3">
+              <div className="shrink-0">
+                <h3 className="text-xs font-medium">Max Position Size (Fiat)</h3>
+              </div>
+              <p className="mt-0.5 lg:mt-0 lg:ml-auto lg:text-right text-[0.65rem] text-muted leading-tight">
+                Cap profit calculations to this EUR amount. Larger orders will show both the full-size and the capped result.
+              </p>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted">€</span>
+              <input
+                type="number"
+                min={0}
+                step={50}
+                placeholder="No limit"
+                value={maxFiatLimit ?? ''}
+                onChange={e => {
+                  const v = e.target.value;
+                  onMaxFiatLimitChange(v === '' ? null : Math.max(0, Number(v)));
+                }}
+                className="flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent mono-nums"
+              />
+              {maxFiatLimit != null && (
+                <button
+                  type="button"
+                  onClick={() => onMaxFiatLimitChange(null)}
+                  className="text-[0.65rem] px-2 py-0.5 rounded-md border border-border text-muted hover:border-red/50 hover:text-red transition-colors"
+                >
+                  Clear
+                </button>
+              )}
             </div>
           </section>
         </div>

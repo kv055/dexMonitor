@@ -64,6 +64,21 @@ export interface HedgeBreakdown {
   venue: string;
   instrument: string;
   transfer_minutes: number;
+  position?: HedgePositionDetail | null;
+}
+
+export interface HedgePositionDetail {
+  hedge_ratio: number;
+  leverage_used: number;
+  hedge_notional_eur: number;
+  initial_margin_eur: number;
+  recommended_collateral_eur: number;
+  stress_move_pct: number;
+  stress_loss_eur: number;
+  maintenance_requirement_eur: number;
+  free_collateral_after_stress_eur: number;
+  liquidation_move_pct: number;
+  btc_price_eur: number;
 }
 
 export interface Offer {
@@ -75,6 +90,9 @@ export interface Offer {
   trade_cost_percent: number | null;
   net_premium_percent: number | null;
   cost_breakdown: CostBreakdown | null;
+  cost_breakdown_capped?: CostBreakdown | null;
+  trade_cost_percent_capped?: number | null;
+  net_premium_percent_capped?: number | null;
   btc_min: number | null;
   btc_max: number | null;
   payment_method: string | null;

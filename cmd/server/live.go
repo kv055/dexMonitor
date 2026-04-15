@@ -50,7 +50,10 @@ type liveOutOffer struct {
 	RefPrice      float64          `json:"ref_price"`
 	TradeCostPct  float64          `json:"trade_cost_percent"`  // estimated CEX→DEX arbitrage cost as % of trade value
 	NetPremiumPct float64          `json:"net_premium_percent"` // PriceDiffPct minus TradeCostPct
-	CostBreakdown CostBreakdown    `json:"cost_breakdown"`      // per-component cost detail
+	CostBreakdown       CostBreakdown  `json:"cost_breakdown"`               // per-component cost detail (full size)
+	CostBreakdownCapped *CostBreakdown `json:"cost_breakdown_capped,omitempty"` // capped to max fiat limit (only set when limit < offer size)
+	TradeCostPctCapped  *float64       `json:"trade_cost_percent_capped,omitempty"`
+	NetPremiumPctCapped *float64       `json:"net_premium_percent_capped,omitempty"`
 	BTCMin        *float64         `json:"btc_min"`
 	BTCMax        *float64         `json:"btc_max"`
 	FiatMin       *int64           `json:"fiat_min"`
@@ -130,6 +133,7 @@ type liveSubscription struct {
 	excludedCEXes         string // comma-joined for map key comparability
 	feeTier               string
 	coupledHedge          bool
+	maxFiatLimitEUR       float64 // 0 = disabled
 }
 
 var hub = &LiveHub{
@@ -261,17 +265,34 @@ func (h *LiveHub) computeOutOffers(price float64, sub liveSubscription) []liveOu
 		btcSize := selectBTCTradeSize(o.BTCMax, o.BTCMin)
 		tradeCostPct, netPremium, bd := computeNetPremiumFieldsFull(pct, btcSize, price, o.Exchange, o.Direction, sub.requiredConfirmations, excludedCEXes, sub.feeTier, sub.coupledHedge)
 
+		// If a max fiat limit is set and the offer's full size exceeds it, compute a second
+		// breakdown capped to that fiat amount so the frontend can show both side by side.
+		var bdCapped *CostBreakdown
+		var tcCapped, npCapped *float64
+		if sub.maxFiatLimitEUR > 0 && price > 0 {
+			btcCap := sub.maxFiatLimitEUR / price
+			if btcSize > btcCap {
+				tc2, np2, bd2 := computeNetPremiumFieldsFull(pct, btcCap, price, o.Exchange, o.Direction, sub.requiredConfirmations, excludedCEXes, sub.feeTier, sub.coupledHedge)
+				bdCapped = &bd2
+				tcCapped = &tc2
+				npCapped = &np2
+			}
+		}
+
 		result = append(result, liveOutOffer{
-			ID:            o.ID,
-			Exchange:      o.Exchange,
-			Direction:     o.Direction,
-			Price:         o.Price,
-			PriceDiffPct:  pct,
-			RefPrice:      price,
-			TradeCostPct:  tradeCostPct,
-			NetPremiumPct: netPremium,
-			CostBreakdown: bd,
-			BTCMin:        o.BTCMin,
+			ID:                  o.ID,
+			Exchange:            o.Exchange,
+			Direction:           o.Direction,
+			Price:               o.Price,
+			PriceDiffPct:        pct,
+			RefPrice:            price,
+			TradeCostPct:        tradeCostPct,
+			NetPremiumPct:       netPremium,
+			CostBreakdown:       bd,
+			CostBreakdownCapped: bdCapped,
+			TradeCostPctCapped:  tcCapped,
+			NetPremiumPctCapped: npCapped,
+			BTCMin:              o.BTCMin,
 			BTCMax:        o.BTCMax,
 			FiatMin:       o.FiatMin,
 			FiatMax:       o.FiatMax,
@@ -309,6 +330,7 @@ func handleLiveOffersWS(w http.ResponseWriter, r *http.Request) {
 		excludedCEXes:         strings.Join(queryExcludedCEXes(r), ","),
 		feeTier:               queryFeeTier(r),
 		coupledHedge:          queryCoupledHedge(r),
+		maxFiatLimitEUR:       queryMaxFiatLimitEUR(r),
 	}
 
 	ws, err := upgrader.Upgrade(w, r, nil)

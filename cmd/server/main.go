@@ -638,6 +638,7 @@ func handleLiveOffersREST(w http.ResponseWriter, r *http.Request) {
 		excludedCEXes:         strings.Join(queryExcludedCEXes(r), ","),
 		feeTier:               queryFeeTier(r),
 		coupledHedge:          queryCoupledHedge(r),
+		maxFiatLimitEUR:       queryMaxFiatLimitEUR(r),
 	}
 	payload := hub.computePayload(getCexPrice(sub.cex), sub)
 	if payload == nil {
@@ -1586,6 +1587,20 @@ func queryExcludedCEXes(r *http.Request) []string {
 func queryCoupledHedge(r *http.Request) bool {
 	v := r.URL.Query().Get("coupled_hedge")
 	return v != "false" && v != "0"
+}
+
+// queryMaxFiatLimitEUR reads the ?max_fiat_limit= query param (EUR amount, positive float).
+// Returns 0 when absent, zero, or invalid.
+func queryMaxFiatLimitEUR(r *http.Request) float64 {
+	v := r.URL.Query().Get("max_fiat_limit")
+	if v == "" {
+		return 0
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil || f <= 0 {
+		return 0
+	}
+	return f
 }
 
 func queryExcludedPaymentMethods(r *http.Request) []string {

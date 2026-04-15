@@ -41,27 +41,28 @@ function OhlcPanelHeader() {
 }
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, stats, refreshForCex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge }: {
+function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, stats, refreshForCex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   stats: ReturnType<typeof useDashboard>['stats'] | null;
   lastUpdatedAt: string;
   error: string | null;
   load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string) => void;
   extendOhlc: (hours: number, cex?: string) => void;
-  refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean) => void;
+  refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
   excludedPaymentMethods: string[];
   excludedCEXes: string[];
   feeTier: string;
   coupledHedge: boolean;
+  maxFiatLimit: number | null;
 }) {
   const { filters } = useFilters();
 
   useEffect(() => {
-    refreshForCex(filters.cex, excludedCEXes, feeTier, coupledHedge);
+    refreshForCex(filters.cex, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
     load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier);
     const interval = setInterval(() => load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier), 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, load, refreshForCex]);
+  }, [filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, load, refreshForCex]);
 
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -184,6 +185,10 @@ export default function App() {
   const [coupledHedge, setCoupledHedge] = useState<boolean>(
     () => localStorage.getItem('dex-coupled-hedge') !== 'false'
   );
+  const [maxFiatLimit, setMaxFiatLimit] = useState<number | null>(() => {
+    const v = localStorage.getItem('dex-max-fiat-limit');
+    return v ? Number(v) : null;
+  });
 
   const allOffers = useMemo(
     () => [...liveOffers, ...pastOffers],
@@ -207,6 +212,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('dex-coupled-hedge', String(coupledHedge));
   }, [coupledHedge]);
+
+  useEffect(() => {
+    localStorage.setItem('dex-max-fiat-limit', maxFiatLimit != null ? String(maxFiatLimit) : '');
+  }, [maxFiatLimit]);
 
   const handleToggleCEX = (cex: string) => {
     setExcludedCEXes(prev =>
@@ -268,6 +277,8 @@ export default function App() {
           onFeeTierChange={setFeeTier}
           coupledHedge={coupledHedge}
           onCoupledHedgeChange={setCoupledHedge}
+          maxFiatLimit={maxFiatLimit}
+          onMaxFiatLimitChange={setMaxFiatLimit}
         />
 
         {activeTab === 'monitor' && (
@@ -283,6 +294,7 @@ export default function App() {
             excludedCEXes={excludedCEXes}
             feeTier={feeTier}
             coupledHedge={coupledHedge}
+            maxFiatLimit={maxFiatLimit}
           />
         )}
 

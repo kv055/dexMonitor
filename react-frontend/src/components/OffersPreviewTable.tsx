@@ -17,6 +17,14 @@ function fmtPct(n: number): string {
   return n.toFixed(4).replace(/\.?0+$/, '') + '%';
 }
 
+function fmtRatioPct(n: number): string {
+  return (n * 100).toFixed(2).replace(/\.?0+$/, '') + '%';
+}
+
+function fmtLeverage(n: number): string {
+  return n.toFixed(2).replace(/\.?0+$/, '') + 'x';
+}
+
 function fmtSignedBtc(n: number): string {
   const abs = fmt8(Math.abs(n));
   if (n > 0) return '+' + abs;
@@ -30,6 +38,11 @@ function fmtFiatAmount(n: number | null | undefined): string {
   if (n > 0) return '+€' + abs;
   if (n < 0) return '-€' + abs;
   return '€' + abs;
+}
+
+function fmtEurAmount(n: number | null | undefined): string {
+  if (n == null || !Number.isFinite(n)) return '—';
+  return Number(n).toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 });
 }
 
 function fmtEtaMinutes(totalMinutes: number): string {
@@ -152,6 +165,7 @@ function LightningFeeDetail({ conf }: { conf: number }) {
 
 function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
   if (bd.hedge.fee_sum_btc <= 0) return null;
+  const position = bd.hedge.position;
 
   return (
     <div className="bg-bg rounded-md border border-border px-2.5 py-2 flex flex-col gap-1.5 text-[0.68rem]">
@@ -195,6 +209,60 @@ function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
           <div className="text-[0.64rem] text-muted mono-nums">{fmtPct(bd.hedge.funding_fee_pct)}</div>
         </div>
       </div>
+      {position && (
+        <>
+          <div className="mt-1 pt-1.5 border-t border-border/80 flex items-center gap-1.5 mb-0.5 pl-0.5">
+            <Badge label="position" colorCls="text-blue" />
+            <span className="text-[0.6rem] text-muted">live hedge sizing</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Hedge ratio</span>
+            <span className="text-text mono-nums">{fmtRatioPct(position.hedge_ratio)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Leverage</span>
+            <span className="text-text mono-nums">{fmtLeverage(position.leverage_used)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">BTC ref price</span>
+            <span className="text-text mono-nums">{fmtEurAmount(position.btc_price_eur)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Hedge notional</span>
+            <span className="text-text mono-nums">{fmtEurAmount(position.hedge_notional_eur)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Initial margin</span>
+            <span className="text-text mono-nums">{fmtEurAmount(position.initial_margin_eur)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Recommended collateral</span>
+            <span className="text-text mono-nums">{fmtEurAmount(position.recommended_collateral_eur)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Stress move</span>
+            <span className="text-text mono-nums">{fmtRatioPct(position.stress_move_pct)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Stress loss</span>
+            <span className="text-text mono-nums">{fmtEurAmount(position.stress_loss_eur)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Maintenance requirement</span>
+            <span className="text-text mono-nums">{fmtEurAmount(position.maintenance_requirement_eur)}</span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Free collateral after stress</span>
+            <span className={`mono-nums ${position.free_collateral_after_stress_eur < 0 ? 'text-red' : 'text-text'}`}>
+              {fmtEurAmount(position.free_collateral_after_stress_eur)}
+            </span>
+          </div>
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-muted">Liquidation move</span>
+            <span className="text-text mono-nums">{fmtRatioPct(position.liquidation_move_pct)}</span>
+          </div>
+        </>
+      )}
     </div>
   );
 }
@@ -229,6 +297,41 @@ function HedgeDetailRow({ bd }: { bd: CostBreakdown }) {
         <HedgeFeeDetail bd={bd} />
       </td>
     </tr>
+  );
+}
+
+function SizeToggle({ showCapped, onToggle, cappedBtc, refPrice }: {
+  showCapped: boolean;
+  onToggle: (v: boolean) => void;
+  cappedBtc: number | null | undefined;
+  refPrice: number | null;
+}) {
+  const cappedEur = cappedBtc != null && refPrice != null ? Math.round(cappedBtc * refPrice) : null;
+  return (
+    <div className="flex items-center gap-1 self-start">
+      <button
+        type="button"
+        onClick={() => onToggle(false)}
+        className={`text-[0.63rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
+          !showCapped
+            ? 'border-accent/60 text-accent bg-accent/10'
+            : 'border-border text-muted hover:border-muted/60'
+        }`}
+      >
+        Full size
+      </button>
+      <button
+        type="button"
+        onClick={() => onToggle(true)}
+        className={`text-[0.63rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
+          showCapped
+            ? 'border-accent/60 text-accent bg-accent/10'
+            : 'border-border text-muted hover:border-muted/60'
+        }`}
+      >
+        {cappedEur != null ? `€${cappedEur} cap` : 'Capped'}
+      </button>
+    </div>
   );
 }
 
@@ -454,6 +557,10 @@ export function OffersPreviewTable() {
   const { timezone } = useTimezone();
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
+  const [showCapped, setShowCapped] = useState(false);
+
+  // Reset to full-size view whenever the selected offer changes.
+  useEffect(() => { setShowCapped(false); }, [selectedOfferId]);
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 1023px)');
@@ -549,12 +656,22 @@ export function OffersPreviewTable() {
                 </div>
               )}
               {selectedOffer.cost_breakdown ? (
-                <CostBreakdownPanel
-                  bd={selectedOffer.cost_breakdown}
-                  priceDiffPct={selectedOffer.price_diff_percent}
-                  netPremiumPct={selectedOffer.net_premium_percent}
-                  refPrice={selectedOffer.ref_price}
-                />
+                <div className="flex flex-col gap-3">
+                  {selectedOffer.cost_breakdown_capped && (
+                    <SizeToggle
+                      showCapped={showCapped}
+                      onToggle={setShowCapped}
+                      cappedBtc={selectedOffer.cost_breakdown_capped.btc_amount}
+                      refPrice={selectedOffer.ref_price}
+                    />
+                  )}
+                  <CostBreakdownPanel
+                    bd={showCapped && selectedOffer.cost_breakdown_capped ? selectedOffer.cost_breakdown_capped : selectedOffer.cost_breakdown}
+                    priceDiffPct={selectedOffer.price_diff_percent}
+                    netPremiumPct={showCapped ? (selectedOffer.net_premium_percent_capped ?? null) : selectedOffer.net_premium_percent}
+                    refPrice={selectedOffer.ref_price}
+                  />
+                </div>
               ) : (
                 <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
               )}
@@ -670,12 +787,22 @@ export function OffersPreviewTable() {
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
             {selectedOffer.cost_breakdown ? (
-              <CostBreakdownPanel
-                bd={selectedOffer.cost_breakdown}
-                priceDiffPct={selectedOffer.price_diff_percent}
-                netPremiumPct={selectedOffer.net_premium_percent}
-                refPrice={selectedOffer.ref_price}
-              />
+              <div className="flex flex-col gap-3">
+                {selectedOffer.cost_breakdown_capped && (
+                  <SizeToggle
+                    showCapped={showCapped}
+                    onToggle={setShowCapped}
+                    cappedBtc={selectedOffer.cost_breakdown_capped.btc_amount}
+                    refPrice={selectedOffer.ref_price}
+                  />
+                )}
+                <CostBreakdownPanel
+                  bd={showCapped && selectedOffer.cost_breakdown_capped ? selectedOffer.cost_breakdown_capped : selectedOffer.cost_breakdown}
+                  priceDiffPct={selectedOffer.price_diff_percent}
+                  netPremiumPct={showCapped ? (selectedOffer.net_premium_percent_capped ?? null) : selectedOffer.net_premium_percent}
+                  refPrice={selectedOffer.ref_price}
+                />
+              </div>
             ) : (
               <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
             )}
