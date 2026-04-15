@@ -5,10 +5,11 @@ import type { Offer } from '../types';
 const POLL_INTERVAL_MS = 15_000;
 const RECONNECT_DELAY_MS = 5_000;
 
-function buildTradeCostQuery(excludedCEXes: string[], feeTier: string): string {
+function buildTradeCostQuery(excludedCEXes: string[], feeTier: string, coupledHedge: boolean): string {
   let q = '';
   if (excludedCEXes.length > 0) q += `&exclude_cexes=${encodeURIComponent(excludedCEXes.join(','))}`;
   if (feeTier) q += `&fee_tier=${encodeURIComponent(feeTier)}`;
+  if (!coupledHedge) q += '&coupled_hedge=false';
   return q;
 }
 
@@ -24,6 +25,7 @@ export function useLiveOffers() {
   const cexRef      = useRef('kraken');
   const excludedCEXesRef = useRef<string[]>([]);
   const feeTierRef = useRef('');
+  const coupledHedgeRef = useRef(true);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -33,7 +35,7 @@ export function useLiveOffers() {
   }, []);
 
   const buildQueryString = useCallback(() => {
-    return `cex=${cexRef.current}${buildTradeCostQuery(excludedCEXesRef.current, feeTierRef.current)}`;
+    return `cex=${cexRef.current}${buildTradeCostQuery(excludedCEXesRef.current, feeTierRef.current, coupledHedgeRef.current)}`;
   }, []);
 
   const startPolling = useCallback((session: number) => {
@@ -107,10 +109,11 @@ export function useLiveOffers() {
 
   // Called by MonitorView when filters.cex or trade cost settings change.
   // Immediately fetches fresh offers, then reconnects WS.
-  const refreshForCex = useCallback((cex: string, excludedCEXes: string[] = [], feeTier: string = '') => {
+  const refreshForCex = useCallback((cex: string, excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true) => {
     cexRef.current = cex;
     excludedCEXesRef.current = excludedCEXes;
     feeTierRef.current = feeTier;
+    coupledHedgeRef.current = coupledHedge;
     const session = ++sessionRef.current;
     stopPolling();
     wsRef.current?.close();

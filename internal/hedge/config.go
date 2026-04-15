@@ -1,15 +1,17 @@
 package hedge
 
 import (
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
-	"runtime"
 	"sync"
 	"time"
 )
+
+//go:embed config.json
+var embeddedConfigJSON []byte
 
 type hedgeFileConfig struct {
 	API struct {
@@ -46,33 +48,21 @@ var (
 
 func loadHedgeConfig() (hedgeFileConfig, error) {
 	configOnce.Do(func() {
-		path, err := hedgeConfigPath()
-		if err != nil {
-			cachedConfigErr = err
-			return
-		}
-		data, err := os.ReadFile(path)
-		if err != nil {
-			cachedConfigErr = fmt.Errorf("read hedge config %s: %w", path, err)
-			return
+		data := embeddedConfigJSON
+		if override := os.Getenv("DEXMONITOR_HEDGE_CONFIG"); override != "" {
+			b, err := os.ReadFile(override)
+			if err != nil {
+				cachedConfigErr = fmt.Errorf("read hedge config %s: %w", override, err)
+				return
+			}
+			data = b
 		}
 		if err := json.Unmarshal(data, &cachedConfig); err != nil {
-			cachedConfigErr = fmt.Errorf("parse hedge config %s: %w", path, err)
+			cachedConfigErr = fmt.Errorf("parse hedge config: %w", err)
 			return
 		}
 	})
 	return cachedConfig, cachedConfigErr
-}
-
-func hedgeConfigPath() (string, error) {
-	if override := os.Getenv("DEXMONITOR_HEDGE_CONFIG"); override != "" {
-		return override, nil
-	}
-	_, file, _, ok := runtime.Caller(0)
-	if !ok {
-		return "", fmt.Errorf("could not determine hedge config path")
-	}
-	return filepath.Join(filepath.Dir(file), "config.json"), nil
 }
 
 func configuredMaxSupportedLeverage() float64 {

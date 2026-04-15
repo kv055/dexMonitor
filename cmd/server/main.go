@@ -637,6 +637,7 @@ func handleLiveOffersREST(w http.ResponseWriter, r *http.Request) {
 		requiredConfirmations: queryConfirmations(r),
 		excludedCEXes:         strings.Join(queryExcludedCEXes(r), ","),
 		feeTier:               queryFeeTier(r),
+		coupledHedge:          queryCoupledHedge(r),
 	}
 	payload := hub.computePayload(getCexPrice(sub.cex), sub)
 	if payload == nil {
@@ -859,7 +860,7 @@ func addPastOfferCostFieldsFull(o map[string]any, requiredConfirmations int, exc
 	}
 
 	btcSize := selectBTCTradeSize(btcMaxPtr, btcMinPtr)
-	tradeCostPct, netPremium, bd := computeNetPremiumFieldsFull(priceDiff, btcSize, dexExchange, direction, requiredConfirmations, excludedCEXes, feeTier)
+	tradeCostPct, netPremium, bd := computeNetPremiumFieldsFull(priceDiff, btcSize, refPrice, dexExchange, direction, requiredConfirmations, excludedCEXes, feeTier, true)
 
 	o["trade_cost_percent"] = tradeCostPct
 	o["net_premium_percent"] = netPremium
@@ -1579,6 +1580,12 @@ func queryExcludedCEXes(r *http.Request) []string {
 		}
 	}
 	return result
+}
+
+// queryCoupledHedge reads the ?coupled_hedge= query param. Default is true.
+func queryCoupledHedge(r *http.Request) bool {
+	v := r.URL.Query().Get("coupled_hedge")
+	return v != "false" && v != "0"
 }
 
 func queryExcludedPaymentMethods(r *http.Request) []string {

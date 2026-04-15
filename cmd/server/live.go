@@ -94,16 +94,16 @@ func computeNetPremiumFields(premiumPct float64, btcSize float64, dexExchange st
 }
 
 func computeNetPremiumFieldsWithConfirmations(premiumPct float64, btcSize float64, dexExchange string, direction string, requiredConfirmations int) (float64, float64, CostBreakdown) {
-	return computeNetPremiumFieldsFull(premiumPct, btcSize, dexExchange, direction, requiredConfirmations, nil, "")
+	return computeNetPremiumFieldsFull(premiumPct, btcSize, 0, dexExchange, direction, requiredConfirmations, nil, "", true)
 }
 
-func computeNetPremiumFieldsFull(premiumPct float64, btcSize float64, dexExchange string, direction string, requiredConfirmations int, excludedCEXes []string, feeTier string) (float64, float64, CostBreakdown) {
+func computeNetPremiumFieldsFull(premiumPct float64, btcSize float64, refPriceEUR float64, dexExchange string, direction string, requiredConfirmations int, excludedCEXes []string, feeTier string, coupledHedge bool) (float64, float64, CostBreakdown) {
 	if tradeRouteOptimizer == nil || premiumPct <= 0 {
 		return 0, 0, CostBreakdown{}
 	}
 
 	requiredConfirmations = resolveRequiredConfirmations(direction, requiredConfirmations)
-	bd := tradeRouteOptimizer.BestBreakdownFull(btcSize, dexExchange, direction, requiredConfirmations, excludedCEXes, feeTier)
+	bd := tradeRouteOptimizer.BestBreakdownFull(btcSize, refPriceEUR, dexExchange, direction, requiredConfirmations, excludedCEXes, feeTier, coupledHedge)
 	if bd.RouteCEX == "" {
 		return 0, 0, CostBreakdown{}
 	}
@@ -129,6 +129,7 @@ type liveSubscription struct {
 	requiredConfirmations int
 	excludedCEXes         string // comma-joined for map key comparability
 	feeTier               string
+	coupledHedge          bool
 }
 
 var hub = &LiveHub{
@@ -258,7 +259,7 @@ func (h *LiveHub) computeOutOffers(price float64, sub liveSubscription) []liveOu
 	for _, o := range offers {
 		pct := computeDirectionalPremiumPct(o.Direction, o.Price, price)
 		btcSize := selectBTCTradeSize(o.BTCMax, o.BTCMin)
-		tradeCostPct, netPremium, bd := computeNetPremiumFieldsFull(pct, btcSize, o.Exchange, o.Direction, sub.requiredConfirmations, excludedCEXes, sub.feeTier)
+		tradeCostPct, netPremium, bd := computeNetPremiumFieldsFull(pct, btcSize, price, o.Exchange, o.Direction, sub.requiredConfirmations, excludedCEXes, sub.feeTier, sub.coupledHedge)
 
 		result = append(result, liveOutOffer{
 			ID:            o.ID,
@@ -307,6 +308,7 @@ func handleLiveOffersWS(w http.ResponseWriter, r *http.Request) {
 		requiredConfirmations: queryConfirmations(r),
 		excludedCEXes:         strings.Join(queryExcludedCEXes(r), ","),
 		feeTier:               queryFeeTier(r),
+		coupledHedge:          queryCoupledHedge(r),
 	}
 
 	ws, err := upgrader.Upgrade(w, r, nil)

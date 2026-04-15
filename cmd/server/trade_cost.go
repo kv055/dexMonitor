@@ -621,7 +621,7 @@ type TradeCostEstimator struct {
 	btcPredictor       *bitcoin.BitcoinFeePredictor
 	cexProfile         CexWithdrawalProfile
 	networkFeeOverride func(WithdrawalMethod, float64) networkFeeDetails
-	hedgeCostOverride  func(btcAmount float64, transferMinutes float64) hedgeCostDetails
+	hedgeCostOverride  func(btcAmount float64, refPriceEUR float64, transferMinutes float64) hedgeCostDetails
 }
 
 func NewTradeCostEstimator(exchange string) *TradeCostEstimator {
@@ -722,6 +722,7 @@ type hedgeCostDetails struct {
 	venue           string
 	instrument      string
 	transferMinutes float64
+	position        *HedgePositionDetail
 }
 
 func resolveRequiredConfirmations(direction string, requested int) int {
@@ -895,17 +896,35 @@ type CostBreakdown struct {
 }
 
 type HedgeBreakdown struct {
-	OpenFeePct      float64 `json:"open_fee_pct"`      // perp opening fee as % of trade
-	OpenFeeBTC      float64 `json:"open_fee_btc"`      // perp opening fee in BTC
-	CloseFeePct     float64 `json:"close_fee_pct"`     // perp closing fee as % of trade
-	CloseFeeBTC     float64 `json:"close_fee_btc"`     // perp closing fee in BTC
-	FundingFeePct   float64 `json:"funding_fee_pct"`   // perp funding cost over transfer window as % of trade
-	FundingFeeBTC   float64 `json:"funding_fee_btc"`   // perp funding cost over transfer window in BTC
-	FeeSumPct       float64 `json:"fee_sum_pct"`       // perp open+close+funding as % of trade
-	FeeSumBTC       float64 `json:"fee_sum_btc"`       // perp open+close+funding in BTC
-	Venue           string  `json:"venue"`             // chosen hedge venue
-	Instrument      string  `json:"instrument"`        // chosen perp instrument
-	TransferMinutes int     `json:"transfer_minutes"`  // transfer-time input used for hedge costing
+	OpenFeePct      float64              `json:"open_fee_pct"`      // perp opening fee as % of trade
+	OpenFeeBTC      float64              `json:"open_fee_btc"`      // perp opening fee in BTC
+	CloseFeePct     float64              `json:"close_fee_pct"`     // perp closing fee as % of trade
+	CloseFeeBTC     float64              `json:"close_fee_btc"`     // perp closing fee in BTC
+	FundingFeePct   float64              `json:"funding_fee_pct"`   // perp funding cost over transfer window as % of trade
+	FundingFeeBTC   float64              `json:"funding_fee_btc"`   // perp funding cost over transfer window in BTC
+	FeeSumPct       float64              `json:"fee_sum_pct"`       // perp open+close+funding as % of trade
+	FeeSumBTC       float64              `json:"fee_sum_btc"`       // perp open+close+funding in BTC
+	Venue           string               `json:"venue"`             // chosen hedge venue
+	Instrument      string               `json:"instrument"`        // chosen perp instrument
+	TransferMinutes int                  `json:"transfer_minutes"`  // transfer-time input used for hedge costing
+	Position        *HedgePositionDetail `json:"position"`          // position sizing simulation; nil when unavailable (e.g. ask side or missing ref price)
+}
+
+// HedgePositionDetail is the per-offer simulation of how the short perp hedge
+// would be executed: hedge notional, leverage, collateral, and liquidation
+// headroom. All EUR amounts are rounded to 2 decimals; rates are unrounded.
+type HedgePositionDetail struct {
+	HedgeRatio                   float64 `json:"hedge_ratio"`                       // fraction of spot transfer that is hedged (1.0 = full)
+	LeverageUsed                 float64 `json:"leverage_used"`                     // leverage assumed for sizing (venue max)
+	HedgeNotionalEUR             float64 `json:"hedge_notional_eur"`                // short perp notional in EUR
+	InitialMarginEUR             float64 `json:"initial_margin_eur"`                // required initial margin = notional / leverage
+	RecommendedCollateralEUR     float64 `json:"recommended_collateral_eur"`        // collateral to post so the position survives the stress move
+	StressMovePct                float64 `json:"stress_move_pct"`                   // adverse BTC move assumed in the stress scenario (e.g. 0.10)
+	StressLossEUR                float64 `json:"stress_loss_eur"`                   // unrealized loss on the short under the stress move
+	MaintenanceRequirementEUR    float64 `json:"maintenance_requirement_eur"`       // venue maintenance margin on the notional
+	FreeCollateralAfterStressEUR float64 `json:"free_collateral_after_stress_eur"`  // equity left above maintenance after the stress move
+	LiquidationMovePct           float64 `json:"liquidation_move_pct"`              // adverse BTC move that would liquidate the position at the chosen leverage
+	BTCPriceEUR                  float64 `json:"btc_price_eur"`                     // CEX ref price used to size the notional
 }
 
 func round8(v float64) float64 {
@@ -914,6 +933,10 @@ func round8(v float64) float64 {
 
 func round4(v float64) float64 {
 	return math.Round(v*1e4) / 1e4
+}
+
+func round2(v float64) float64 {
+	return math.Round(v*1e2) / 1e2
 }
 
 // Breakdown returns a full per-component cost breakdown for a given trade size, DEX, and offer direction.
@@ -928,14 +951,14 @@ func (e *TradeCostEstimator) BreakdownWithConfirmations(btcAmount float64, dexEx
 	}
 	requiredConfirmations = resolveRequiredConfirmations(direction, requiredConfirmations)
 	method := resolveWithdrawalMethod(e.cexProfile, dexExchange)
-	return e.breakdownForMethod(btcAmount, dexExchange, method, direction, requiredConfirmations)
+	return e.breakdownForMethod(btcAmount, 0, dexExchange, method, direction, requiredConfirmations, false)
 }
 
-func (e *TradeCostEstimator) breakdownForMethod(btcAmount float64, dexExchange string, method WithdrawalMethod, direction string, requiredConfirmations int) CostBreakdown {
-	return e.breakdownForMethodWithTier(btcAmount, dexExchange, method, direction, requiredConfirmations, "")
+func (e *TradeCostEstimator) breakdownForMethod(btcAmount float64, refPriceEUR float64, dexExchange string, method WithdrawalMethod, direction string, requiredConfirmations int, coupledHedge bool) CostBreakdown {
+	return e.breakdownForMethodWithTier(btcAmount, refPriceEUR, dexExchange, method, direction, requiredConfirmations, "", coupledHedge)
 }
 
-func (e *TradeCostEstimator) breakdownForMethodWithTier(btcAmount float64, dexExchange string, method WithdrawalMethod, direction string, requiredConfirmations int, feeTier string) CostBreakdown {
+func (e *TradeCostEstimator) breakdownForMethodWithTier(btcAmount float64, refPriceEUR float64, dexExchange string, method WithdrawalMethod, direction string, requiredConfirmations int, feeTier string, coupledHedge bool) CostBreakdown {
 	if btcAmount <= 0 {
 		return CostBreakdown{}
 	}
@@ -971,7 +994,7 @@ func (e *TradeCostEstimator) breakdownForMethodWithTier(btcAmount float64, dexEx
 		if netFee.detail != nil && netFee.detail.SelectedFullConfirmationMinutes > 0 {
 			transferMinutes = float64(netFee.detail.SelectedFullConfirmationMinutes * numNetworkTxs)
 		}
-		hedgeCost = e.estimateBestHedgeCost(btcAmount, transferMinutes)
+		hedgeCost = e.estimateBestHedgeCost(btcAmount, refPriceEUR, transferMinutes, coupledHedge)
 	}
 
 	totalBTC := takerBTC + withdrawalFee + networkFeeBTC + hedgeCost.feeBTC + dexBTC
@@ -1008,6 +1031,7 @@ func (e *TradeCostEstimator) breakdownForMethodWithTier(btcAmount float64, dexEx
 			Venue:           hedgeCost.venue,
 			Instrument:      hedgeCost.instrument,
 			TransferMinutes: int(math.Round(hedgeCost.transferMinutes)),
+			Position:        hedgeCost.position,
 		},
 		DexFeePct:            pct(dexBTC),
 		DexFeeBTC:            round8(dexBTC),
@@ -1016,19 +1040,37 @@ func (e *TradeCostEstimator) breakdownForMethodWithTier(btcAmount float64, dexEx
 	}
 }
 
-func (e *TradeCostEstimator) estimateBestHedgeCost(btcAmount float64, transferMinutes float64) hedgeCostDetails {
+// cexToHedgeVenue maps a spot CEX name to its paired perp hedge venue.
+// Used in coupled mode to ensure the same exchange is used for both legs.
+var cexToHedgeVenue = map[string]hedge.Venue{
+	"kraken":   hedge.VenueKrakenFutures,
+	"coinbase": hedge.VenueCoinbaseFutures,
+}
+
+func (e *TradeCostEstimator) estimateBestHedgeCost(btcAmount float64, refPriceEUR float64, transferMinutes float64, coupledHedge bool) hedgeCostDetails {
 	if e.hedgeCostOverride != nil {
-		return e.hedgeCostOverride(btcAmount, transferMinutes)
+		return e.hedgeCostOverride(btcAmount, refPriceEUR, transferMinutes)
 	}
 	if btcAmount <= 0 {
 		return hedgeCostDetails{}
 	}
 
-	candidates := []hedge.Venue{hedge.VenueKrakenFutures, hedge.VenueCoinbaseFutures}
+	allCandidates := []hedge.Venue{hedge.VenueKrakenFutures, hedge.VenueCoinbaseFutures}
+	candidates := allCandidates
+	if coupledHedge {
+		if paired, ok := cexToHedgeVenue[e.exchange]; ok {
+			candidates = []hedge.Venue{paired}
+		}
+	}
 	best := hedgeCostDetails{}
 	found := false
 
 	for _, venue := range candidates {
+		profile, err := hedge.DefaultVenueProfile(venue)
+		if err != nil {
+			continue
+		}
+
 		inputs, err := hedge.FetchDefaultVenueInputs(venue)
 		if err != nil {
 			inputs, err = hedge.FallbackVenueInputs(venue)
@@ -1038,12 +1080,31 @@ func (e *TradeCostEstimator) estimateBestHedgeCost(btcAmount float64, transferMi
 		}
 
 		cfg := hedge.Config{TransferMinutes: transferMinutes}
+		cfg = hedge.ApplyVenueProfile(cfg, profile)
 		cfg = hedge.ApplyLivePerpInputs(cfg, inputs)
 		openFeeBTC := btcAmount * cfg.PerpOpenFeeRate
 		closeFeeBTC := btcAmount * cfg.PerpCloseFeeRate
 		fundingFeeBTC := btcAmount * cfg.FundingCostRate
 		feeBTC := openFeeBTC + closeFeeBTC + fundingFeeBTC
 		rate := cfg.PerpOpenFeeRate + cfg.PerpCloseFeeRate + cfg.FundingCostRate
+
+		var position *HedgePositionDetail
+		if refPriceEUR > 0 {
+			sim := hedge.SimulatePosition(cfg, btcAmount, refPriceEUR)
+			position = &HedgePositionDetail{
+				HedgeRatio:                   round4(sim.HedgeRatio),
+				LeverageUsed:                 round4(sim.LeverageUsed),
+				HedgeNotionalEUR:             round2(sim.HedgeNotionalEUR),
+				InitialMarginEUR:             round2(sim.InitialMarginEUR),
+				RecommendedCollateralEUR:     round2(sim.RecommendedCollateralEUR),
+				StressMovePct:                round4(sim.StressMovePct),
+				StressLossEUR:                round2(sim.StressLossEUR),
+				MaintenanceRequirementEUR:    round2(sim.MaintenanceRequirementEUR),
+				FreeCollateralAfterStressEUR: round2(sim.FreeCollateralAfterStressEUR),
+				LiquidationMovePct:           round4(sim.LiquidationMovePct),
+				BTCPriceEUR:                  round2(sim.BTCPriceEUR),
+			}
+		}
 
 		details := hedgeCostDetails{
 			feeBTC:          feeBTC,
@@ -1057,6 +1118,7 @@ func (e *TradeCostEstimator) estimateBestHedgeCost(btcAmount float64, transferMi
 			venue:           inputs.Venue,
 			instrument:      inputs.Instrument,
 			transferMinutes: transferMinutes,
+			position:        position,
 		}
 		if !found || details.feeBTC < best.feeBTC {
 			best = details
@@ -1075,12 +1137,15 @@ func (o *TradeRouteOptimizer) BestBreakdown(btcAmount float64, dexExchange strin
 }
 
 func (o *TradeRouteOptimizer) BestBreakdownWithConfirmations(btcAmount float64, dexExchange string, direction string, requiredConfirmations int) CostBreakdown {
-	return o.BestBreakdownFull(btcAmount, dexExchange, direction, requiredConfirmations, nil, "")
+	return o.BestBreakdownFull(btcAmount, 0, dexExchange, direction, requiredConfirmations, nil, "", false)
 }
 
 // BestBreakdownFull finds the lowest-cost route, optionally excluding certain CEXes
 // and/or forcing a specific BTC network fee tier.
-func (o *TradeRouteOptimizer) BestBreakdownFull(btcAmount float64, dexExchange string, direction string, requiredConfirmations int, excludedCEXes []string, feeTier string) CostBreakdown {
+// refPriceEUR is the CEX reference price used to size the hedge position
+// simulation; pass 0 to skip the simulation.
+// coupledHedge forces the hedge venue to match the spot CEX where a pairing exists.
+func (o *TradeRouteOptimizer) BestBreakdownFull(btcAmount float64, refPriceEUR float64, dexExchange string, direction string, requiredConfirmations int, excludedCEXes []string, feeTier string, coupledHedge bool) CostBreakdown {
 	if o == nil || btcAmount <= 0 {
 		return CostBreakdown{}
 	}
@@ -1101,7 +1166,7 @@ func (o *TradeRouteOptimizer) BestBreakdownFull(btcAmount float64, dexExchange s
 			continue
 		}
 		for _, method := range supportedWithdrawalMethods(est.cexProfile, dexExchange) {
-			bd := est.breakdownForMethodWithTier(btcAmount, dexExchange, method, direction, requiredConfirmations, feeTier)
+			bd := est.breakdownForMethodWithTier(btcAmount, refPriceEUR, dexExchange, method, direction, requiredConfirmations, feeTier, coupledHedge)
 			if !found || bd.TotalCostPct < best.TotalCostPct {
 				best = bd
 				found = true

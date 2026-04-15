@@ -46,7 +46,7 @@ func fixedCostEstimator(exchange, dexExchange string, takerFeeFrac, withdrawalFe
 				},
 			}
 		},
-		hedgeCostOverride: func(btcAmount float64, transferMinutes float64) hedgeCostDetails {
+		hedgeCostOverride: func(btcAmount float64, refPriceEUR float64, transferMinutes float64) hedgeCostDetails {
 			return hedgeCostDetails{}
 		},
 	}
@@ -54,7 +54,7 @@ func fixedCostEstimator(exchange, dexExchange string, takerFeeFrac, withdrawalFe
 
 func fixedCostEstimatorWithHedge(exchange, dexExchange string, takerFeeFrac, withdrawalFeeBTC, dexFeeFrac, networkFeeBTC, hedgeFeeBTC float64) *TradeCostEstimator {
 	est := fixedCostEstimator(exchange, dexExchange, takerFeeFrac, withdrawalFeeBTC, dexFeeFrac, networkFeeBTC)
-	est.hedgeCostOverride = func(btcAmount float64, transferMinutes float64) hedgeCostDetails {
+	est.hedgeCostOverride = func(btcAmount float64, refPriceEUR float64, transferMinutes float64) hedgeCostDetails {
 		return hedgeCostDetails{
 			feeBTC:          hedgeFeeBTC,
 			feePct:          hedgeFeeBTC / btcAmount * 100,

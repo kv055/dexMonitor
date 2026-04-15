@@ -16,6 +16,8 @@ interface Props {
   onToggleCEX: (cex: string) => void;
   feeTier: string;
   onFeeTierChange: (tier: string) => void;
+  coupledHedge: boolean;
+  onCoupledHedgeChange: (v: boolean) => void;
 }
 
 function getOffsetMinutes(timezone: string): number {
@@ -186,6 +188,8 @@ export function SettingsOverlay({
   onToggleCEX,
   feeTier,
   onFeeTierChange,
+  coupledHedge,
+  onCoupledHedgeChange,
 }: Props) {
   const excludedSet = new Set(excludedMethods);
   const excludedCEXSet = new Set(excludedCEXes);
@@ -407,6 +411,28 @@ export function SettingsOverlay({
                 </option>
               ))}
             </select>
+          </section>
+
+          <section className="rounded-lg border border-border bg-bg/50 p-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-xs font-medium">CEX Spot Trade &amp; Hedge</h3>
+                <p className="mt-0.5 text-[0.65rem] text-muted leading-tight">
+                  When enabled, the perp hedge venue is locked to the same exchange as the spot CEX (Kraken&nbsp;→&nbsp;Kraken Futures, Coinbase&nbsp;→&nbsp;Coinbase Futures). Exchanges without a paired perp fall back to the cheapest available.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => onCoupledHedgeChange(!coupledHedge)}
+                className={`shrink-0 text-[0.65rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
+                  coupledHedge
+                    ? 'border-accent/60 text-accent bg-accent/10'
+                    : 'border-border text-muted hover:border-muted'
+                }`}
+              >
+                {coupledHedge ? 'Coupled' : 'Independent'}
+              </button>
+            </div>
           </section>
         </div>
       </aside>

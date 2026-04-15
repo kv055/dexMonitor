@@ -41,26 +41,27 @@ function OhlcPanelHeader() {
 }
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, stats, refreshForCex, excludedPaymentMethods, excludedCEXes, feeTier }: {
+function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, stats, refreshForCex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   stats: ReturnType<typeof useDashboard>['stats'] | null;
   lastUpdatedAt: string;
   error: string | null;
   load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string) => void;
   extendOhlc: (hours: number, cex?: string) => void;
-  refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string) => void;
+  refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean) => void;
   excludedPaymentMethods: string[];
   excludedCEXes: string[];
   feeTier: string;
+  coupledHedge: boolean;
 }) {
   const { filters } = useFilters();
 
   useEffect(() => {
-    refreshForCex(filters.cex, excludedCEXes, feeTier);
+    refreshForCex(filters.cex, excludedCEXes, feeTier, coupledHedge);
     load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier);
     const interval = setInterval(() => load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier), 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, load, refreshForCex]);
+  }, [filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, load, refreshForCex]);
 
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -180,6 +181,9 @@ export default function App() {
   const [feeTier, setFeeTier] = useState<string>(
     () => localStorage.getItem('dex-fee-tier') || ''
   );
+  const [coupledHedge, setCoupledHedge] = useState<boolean>(
+    () => localStorage.getItem('dex-coupled-hedge') !== 'false'
+  );
 
   const allOffers = useMemo(
     () => [...liveOffers, ...pastOffers],
@@ -199,6 +203,10 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem('dex-fee-tier', feeTier);
   }, [feeTier]);
+
+  useEffect(() => {
+    localStorage.setItem('dex-coupled-hedge', String(coupledHedge));
+  }, [coupledHedge]);
 
   const handleToggleCEX = (cex: string) => {
     setExcludedCEXes(prev =>
@@ -258,6 +266,8 @@ export default function App() {
           onToggleCEX={handleToggleCEX}
           feeTier={feeTier}
           onFeeTierChange={setFeeTier}
+          coupledHedge={coupledHedge}
+          onCoupledHedgeChange={setCoupledHedge}
         />
 
         {activeTab === 'monitor' && (
@@ -272,6 +282,7 @@ export default function App() {
             excludedPaymentMethods={excludedPaymentMethods}
             excludedCEXes={excludedCEXes}
             feeTier={feeTier}
+            coupledHedge={coupledHedge}
           />
         )}
 
