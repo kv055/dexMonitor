@@ -7,10 +7,11 @@ function excludedPaymentQuery(excludedPaymentMethods: string[]): string {
   return `&exclude_payment_methods=${encodeURIComponent(excludedPaymentMethods.join(','))}`;
 }
 
-function tradeCostQuery(excludedCEXes: string[], feeTier: string): string {
+function tradeCostQuery(excludedCEXes: string[], feeTier: string, maxFiatLimit: number | null = null): string {
   let q = '';
   if (excludedCEXes.length > 0) q += `&exclude_cexes=${encodeURIComponent(excludedCEXes.join(','))}`;
   if (feeTier) q += `&fee_tier=${encodeURIComponent(feeTier)}`;
+  if (maxFiatLimit != null && maxFiatLimit > 0) q += `&max_fiat_limit=${maxFiatLimit}`;
   return q;
 }
 
@@ -18,29 +19,34 @@ export function useDashboard() {
   const [pastOffers, setPastOffers] = useState<Offer[]>([]);
   const [stats, setStats] = useState<Stats | null>(null);
   const [pastOrderStats, setPastOrderStats] = useState<PastOrderStats | null>(null);
+  const [pastOrderStatsAll, setPastOrderStatsAll] = useState<PastOrderStats | null>(null);
   const [generalStats, setGeneralStats] = useState<GeneralStatsData | null>(null);
   const [ohlcData, setOhlcData] = useState<OHLCData | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '') => {
+  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', maxFiatLimit: number | null = null) => {
     setLoading(true);
     setError(null);
     try {
       const excludedQuery = excludedPaymentQuery(excludedPaymentMethods);
-      const tcQuery = tradeCostQuery(excludedCEXes, feeTier);
-      const [s, o, ohlc, pos, gs] = await Promise.all([
+      const tcQuery = tradeCostQuery(excludedCEXes, feeTier, maxFiatLimit);
+      const posAllQuery = `/api/past_order_stats?fiat=EUR${tcQuery}`;
+      const posFilteredQuery = `/api/past_order_stats?fiat=EUR${excludedQuery}${tcQuery}`;
+      const [s, o, ohlc, posAll, posFiltered, gs] = await Promise.all([
         apiFetch<Stats>(`/api/stats?hours=${hours}`),
         apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&cex=${cex}${excludedQuery}${tcQuery}`),
         apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`),
-        apiFetch<PastOrderStats>(`/api/past_order_stats?fiat=EUR${excludedQuery}`),
+        apiFetch<PastOrderStats>(posAllQuery),
+        excludedQuery ? apiFetch<PastOrderStats>(posFilteredQuery) : Promise.resolve(null),
         apiFetch<GeneralStatsData>(`/api/general_stats?hours=${hours}${excludedQuery}`),
       ]);
       setStats(s);
       setPastOffers(o);
       setOhlcData(ohlc);
-      setPastOrderStats(pos);
+      setPastOrderStatsAll(posAll);
+      setPastOrderStats(posFiltered ?? posAll);
       setGeneralStats(gs);
       setLastUpdatedAt(new Date().toISOString());
     } catch (e: unknown) {
@@ -61,5 +67,5 @@ export function useDashboard() {
     }
   }, []);
 
-  return { pastOffers, stats, pastOrderStats, generalStats, ohlcData, lastUpdatedAt, error, loading, load, extendOhlc };
+  return { pastOffers, stats, pastOrderStats, pastOrderStatsAll, generalStats, ohlcData, lastUpdatedAt, error, loading, load, extendOhlc };
 }

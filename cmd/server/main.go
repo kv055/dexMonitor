@@ -682,7 +682,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 		if isPaymentMethodExcluded(offerString(o, "payment_method"), excludedPaymentMethods) {
 			continue
 		}
-		addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier)
+		addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, 0)
 		filtered = append(filtered, o)
 	}
 
@@ -741,7 +741,10 @@ func fetchOfferLifecycle(ids []int64) map[int64][]LifecyclePoint {
 
 func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
 	excludedPaymentMethods := queryExcludedPaymentMethods(r)
+	excludedCEXes := queryExcludedCEXes(r)
 	requiredConfirmations := queryConfirmations(r)
+	feeTier := r.URL.Query().Get("fee_tier")
+	maxFiatLimitEUR := queryMaxFiatLimitEUR(r)
 	fiatCurrency := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("fiat")))
 	if fiatCurrency == "" {
 		fiatCurrency = "EUR"
@@ -765,16 +768,20 @@ func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
 
 	premiumOrders := make([]pastorders.PremiumOrder, 0, len(offers))
 	for _, o := range offers {
-		analysis := addPastOfferCostFields(o, requiredConfirmations)
+		analysis := addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
 		if !analysis.isPremium {
 			continue
 		}
 		premiumOrders = append(premiumOrders, pastorders.PremiumOrder{
-			PaymentMethod: offerString(o, "payment_method"),
-			LastSeen:      parseDBTime(offerString(o, "last_seen")),
-			BTCAmount:     analysis.btcSize,
-			NetProfitBTC:  analysis.estimatedProfitBTC,
-			NetProfitFiat: analysis.estimatedProfitBTC * analysis.refPrice,
+			PaymentMethod:       offerString(o, "payment_method"),
+			LastSeen:            parseDBTime(offerString(o, "last_seen")),
+			BTCAmount:           analysis.btcSize,
+			NetProfitBTC:        analysis.estimatedProfitBTC,
+			NetProfitFiat:       analysis.estimatedProfitBTC * analysis.refPrice,
+			BTCAmountCapped:     analysis.btcSizeCapped,
+			NetProfitBTCCapped:  analysis.estimatedProfitBTCCapped,
+			NetProfitFiatCapped: analysis.estimatedProfitBTCCapped * analysis.refPrice,
+			HasCap:              analysis.hasCap,
 		})
 	}
 
@@ -835,13 +842,17 @@ type pastOfferAnalysis struct {
 	btcSize            float64
 	refPrice           float64
 	estimatedProfitBTC float64
+	// optional capped results (set when maxFiatLimitEUR > 0 and btcSize exceeds cap)
+	btcSizeCapped            float64
+	estimatedProfitBTCCapped float64
+	hasCap                   bool
 }
 
 func addPastOfferCostFields(o map[string]any, requiredConfirmations int) pastOfferAnalysis {
-	return addPastOfferCostFieldsFull(o, requiredConfirmations, nil, "")
+	return addPastOfferCostFieldsFull(o, requiredConfirmations, nil, "", 0)
 }
 
-func addPastOfferCostFieldsFull(o map[string]any, requiredConfirmations int, excludedCEXes []string, feeTier string) pastOfferAnalysis {
+func addPastOfferCostFieldsFull(o map[string]any, requiredConfirmations int, excludedCEXes []string, feeTier string, maxFiatLimitEUR float64) pastOfferAnalysis {
 	dexExchange := offerString(o, "exchange")
 	direction := offerString(o, "direction")
 	price := offerFloat(o, "price")
@@ -867,11 +878,27 @@ func addPastOfferCostFieldsFull(o map[string]any, requiredConfirmations int, exc
 	o["net_premium_percent"] = netPremium
 	o["cost_breakdown"] = bd
 
+	var btcSizeCapped float64
+	var estimatedProfitBTCCapped float64
+	hasCap := false
+	if maxFiatLimitEUR > 0 && refPrice > 0 {
+		btcCap := maxFiatLimitEUR / refPrice
+		if btcSize > btcCap {
+			_, _, bdCapped := computeNetPremiumFieldsFull(priceDiff, btcCap, refPrice, dexExchange, direction, requiredConfirmations, excludedCEXes, feeTier, true)
+			btcSizeCapped = btcCap
+			estimatedProfitBTCCapped = bdCapped.EstimatedProfitBTC
+			hasCap = true
+		}
+	}
+
 	return pastOfferAnalysis{
-		isPremium:          priceDiff > 0,
-		btcSize:            btcSize,
-		refPrice:           refPrice,
-		estimatedProfitBTC: bd.EstimatedProfitBTC,
+		isPremium:                priceDiff > 0,
+		btcSize:                  btcSize,
+		refPrice:                 refPrice,
+		estimatedProfitBTC:       bd.EstimatedProfitBTC,
+		btcSizeCapped:            btcSizeCapped,
+		estimatedProfitBTCCapped: estimatedProfitBTCCapped,
+		hasCap:                   hasCap,
 	}
 }
 

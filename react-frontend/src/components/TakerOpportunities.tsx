@@ -1,9 +1,11 @@
 import { useMemo, useState } from 'react';
-import type { PastOrderStats } from '../types';
+import type { PastOrderTimeframeStats, PastOrderStats } from '../types';
 
 interface Props {
   stats: PastOrderStats | null;
+  statsAll: PastOrderStats | null;
   loading: boolean;
+  maxFiatLimit: number | null;
 }
 
 function fmtBTC(value: number | null | undefined): string {
@@ -27,17 +29,69 @@ function labelForTimeframe(timeframe: string): string {
   }
 }
 
-export function TakerOpportunities({ stats, loading }: Props) {
+function hasCappedData(row: PastOrderTimeframeStats): boolean {
+  return row.total_net_profit_btc_capped != null;
+}
+
+interface PillGroupProps {
+  label: string;
+  description: string;
+  options: { value: string; label: string }[];
+  selected: string;
+  onChange: (v: string) => void;
+}
+
+function PillGroup({ label, description, options, selected, onChange }: PillGroupProps) {
+  const base = 'rounded border px-2 py-0.5 text-[0.7rem] font-medium transition-colors';
+  const active = 'border-accent/60 bg-accent/10 text-accent';
+  const inactive = 'border-border bg-bg/40 text-muted hover:text-text';
+  return (
+    <div className="flex flex-col gap-0.5">
+      <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
+      <div className="flex items-center gap-1">
+        {options.map(o => (
+          <button
+            key={o.value}
+            type="button"
+            title={description}
+            onClick={() => onChange(o.value)}
+            className={`${base} ${selected === o.value ? active : inactive}`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function TakerOpportunities({ stats, statsAll, loading, maxFiatLimit }: Props) {
   const [selectedTimeframe, setSelectedTimeframe] = useState('24h');
-  const fiat = stats?.fiat_currency || 'EUR';
-  const excluded = stats?.excluded_payment_methods ?? [];
+  const [showCapped, setShowCapped] = useState(false);
+  const [showAllMethods, setShowAllMethods] = useState(false);
+
+  const hasExcluded = (stats?.excluded_payment_methods.length ?? 0) > 0;
+  const activeStats = showAllMethods && hasExcluded ? statsAll : stats;
+
+  const fiat = activeStats?.fiat_currency || 'EUR';
   const selected = useMemo(() => {
-    if (!stats) return null;
-    return stats.timeframes.find(row => row.timeframe === selectedTimeframe)
-      ?? stats.timeframes.find(row => row.timeframe === '24h')
-      ?? stats.timeframes[0]
+    if (!activeStats) return null;
+    return activeStats.timeframes.find(row => row.timeframe === selectedTimeframe)
+      ?? activeStats.timeframes.find(row => row.timeframe === '24h')
+      ?? activeStats.timeframes[0]
       ?? null;
-  }, [stats, selectedTimeframe]);
+  }, [activeStats, selectedTimeframe]);
+
+  const anyCapped = useMemo(() => activeStats?.timeframes.some(hasCappedData) ?? false, [activeStats]);
+  const cappedAvailable = selected != null && hasCappedData(selected);
+
+  const netBTC  = showCapped && cappedAvailable ? selected?.total_net_profit_btc_capped   : selected?.total_net_profit_btc;
+  const netFiat = showCapped && cappedAvailable ? selected?.total_net_profit_fiat_capped  : selected?.total_net_profit_fiat;
+  const avgBTC  = showCapped && cappedAvailable ? selected?.average_order_size_btc_capped : selected?.average_order_size_btc;
+
+  const cappedLabel = maxFiatLimit != null && maxFiatLimit > 0
+    ? `Capped €${maxFiatLimit.toLocaleString('de-DE', { maximumFractionDigits: 0 })}`
+    : 'Capped';
 
   if (loading && !stats) {
     return <div className="text-[0.8rem] text-muted">Loading taker opportunity statistics…</div>;
@@ -49,28 +103,43 @@ export function TakerOpportunities({ stats, loading }: Props) {
 
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-hidden">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="flex items-center gap-1">
-          {stats.timeframes.map(row => (
-            <button
-              key={row.timeframe}
-              type="button"
-              onClick={() => setSelectedTimeframe(row.timeframe)}
-              className={`rounded-md border px-2.5 py-1 text-[0.72rem] font-medium transition-colors ${
-                selected?.timeframe === row.timeframe
-                  ? 'border-accent bg-accent text-black'
-                  : 'border-border bg-bg/40 text-muted hover:text-text'
-              }`}
-            >
-              {labelForTimeframe(row.timeframe)}
-            </button>
-          ))}
-        </div>
-        <div className="text-[0.72rem] text-muted truncate">
-          {excluded.length > 0 ? `Excluding ${excluded.join(', ')}` : 'All payment methods'}
-        </div>
+
+      {/* Controls: all groups left-aligned in one row */}
+      <div className="flex flex-wrap items-end gap-3">
+        <PillGroup
+          label="Timeframe"
+          description="Show stats for orders closed within this window"
+          options={(activeStats ?? stats).timeframes.map(r => ({ value: r.timeframe, label: labelForTimeframe(r.timeframe) }))}
+          selected={selected?.timeframe ?? selectedTimeframe}
+          onChange={setSelectedTimeframe}
+        />
+        {hasExcluded && (
+          <PillGroup
+            label="Payment methods"
+            description="Selected: only your enabled methods. All: every payment method regardless of settings."
+            options={[
+              { value: 'selected', label: 'Selected' },
+              { value: 'all', label: 'All methods' },
+            ]}
+            selected={showAllMethods ? 'all' : 'selected'}
+            onChange={v => setShowAllMethods(v === 'all')}
+          />
+        )}
+        {anyCapped && (
+          <PillGroup
+            label="Position size"
+            description="Full size: order's max BTC volume. Capped: model profit at your max fiat position limit."
+            options={[
+              { value: 'full', label: 'Full size' },
+              { value: 'capped', label: cappedLabel },
+            ]}
+            selected={showCapped ? 'capped' : 'full'}
+            onChange={v => setShowCapped(v === 'capped')}
+          />
+        )}
       </div>
 
+      {/* Stats table */}
       <div className="overflow-auto rounded-lg border border-border">
         <table className="w-full text-[0.78rem]">
           <thead className="bg-surface text-muted">
@@ -88,9 +157,9 @@ export function TakerOpportunities({ stats, loading }: Props) {
             <tr className="border-t border-border">
               <td className="px-3 py-2 text-text font-medium">{labelForTimeframe(selected?.timeframe ?? selectedTimeframe)}</td>
               <td className="px-3 py-2 text-right text-text">{selected?.premium_order_count ?? 0}</td>
-              <td className="px-3 py-2 text-right text-green">{fmtBTC(selected?.total_net_profit_btc)}</td>
-              <td className="px-3 py-2 text-right text-text">{fmtFiat(selected?.total_net_profit_fiat, fiat)}</td>
-              <td className="px-3 py-2 text-right text-text">{fmtBTC(selected?.average_order_size_btc)}</td>
+              <td className="px-3 py-2 text-right text-green">{fmtBTC(netBTC)}</td>
+              <td className="px-3 py-2 text-right text-text">{fmtFiat(netFiat, fiat)}</td>
+              <td className="px-3 py-2 text-right text-text">{fmtBTC(avgBTC)}</td>
               <td className="px-3 py-2 text-right text-muted">{fmtBTC(selected?.smallest_order_size_btc)}</td>
               <td className="px-3 py-2 text-right text-muted">{fmtBTC(selected?.biggest_order_size_btc)}</td>
             </tr>
@@ -99,7 +168,8 @@ export function TakerOpportunities({ stats, loading }: Props) {
       </div>
 
       <p className="text-[0.7rem] text-muted">
-        Estimates sum the net profit of all premium closed orders in each window after trade costs.
+        Net profit of all premium closed orders in the selected window, after trade costs.
+        {showCapped && cappedAvailable && ' Capped view models each order at your max fiat position size.'}
       </p>
     </div>
   );

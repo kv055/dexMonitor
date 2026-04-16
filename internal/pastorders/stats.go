@@ -25,6 +25,11 @@ type PremiumOrder struct {
 	BTCAmount     float64
 	NetProfitBTC  float64
 	NetProfitFiat float64
+	// optional capped values (set when the order exceeded a max fiat limit)
+	BTCAmountCapped     float64
+	NetProfitBTCCapped  float64
+	NetProfitFiatCapped float64
+	HasCap              bool
 }
 
 type StatsResponse struct {
@@ -42,6 +47,10 @@ type TimeframeStats struct {
 	AverageOrderBTC   float64 `json:"average_order_size_btc"`
 	SmallestOrderBTC  float64 `json:"smallest_order_size_btc"`
 	BiggestOrderBTC   float64 `json:"biggest_order_size_btc"`
+	// set only when at least one order in the window was capped by a max fiat limit
+	TotalProfitBTCCapped  *float64 `json:"total_net_profit_btc_capped,omitempty"`
+	TotalProfitFiatCapped *float64 `json:"total_net_profit_fiat_capped,omitempty"`
+	AverageOrderBTCCapped *float64 `json:"average_order_size_btc_capped,omitempty"`
 }
 
 type Offer struct {
@@ -304,6 +313,8 @@ func buildTimeframeStats(orders []PremiumOrder, now time.Time, tf Timeframe, exc
 	var count int
 	var totalProfitBTC, totalProfitFiat, totalOrderBTC float64
 	var minOrderBTC, maxOrderBTC float64
+	var cappedTotalProfitBTC, cappedTotalProfitFiat, cappedTotalOrderBTC float64
+	cappedCount := 0
 
 	for _, order := range orders {
 		if order.LastSeen.Before(cutoff) {
@@ -324,6 +335,19 @@ func buildTimeframeStats(orders []PremiumOrder, now time.Time, tf Timeframe, exc
 		if order.BTCAmount > maxOrderBTC {
 			maxOrderBTC = order.BTCAmount
 		}
+
+		// accumulate capped sums: orders exceeding the cap use capped values,
+		// orders already under the cap contribute their full values unchanged
+		if order.HasCap {
+			cappedTotalProfitBTC += order.NetProfitBTCCapped
+			cappedTotalProfitFiat += order.NetProfitFiatCapped
+			cappedTotalOrderBTC += order.BTCAmountCapped
+			cappedCount++
+		} else {
+			cappedTotalProfitBTC += order.NetProfitBTC
+			cappedTotalProfitFiat += order.NetProfitFiat
+			cappedTotalOrderBTC += order.BTCAmount
+		}
 	}
 
 	avgOrderBTC := 0.0
@@ -331,7 +355,7 @@ func buildTimeframeStats(orders []PremiumOrder, now time.Time, tf Timeframe, exc
 		avgOrderBTC = totalOrderBTC / float64(count)
 	}
 
-	return TimeframeStats{
+	ts := TimeframeStats{
 		Timeframe:         tf.Label,
 		Hours:             tf.Hours,
 		PremiumOrderCount: count,
@@ -341,6 +365,22 @@ func buildTimeframeStats(orders []PremiumOrder, now time.Time, tf Timeframe, exc
 		SmallestOrderBTC:  round(minOrderBTC, 8),
 		BiggestOrderBTC:   round(maxOrderBTC, 8),
 	}
+
+	// only populate capped fields when at least one order was actually reduced
+	if cappedCount > 0 {
+		cappedAvg := 0.0
+		if count > 0 {
+			cappedAvg = cappedTotalOrderBTC / float64(count)
+		}
+		v1 := round(cappedTotalProfitBTC, 8)
+		v2 := round(cappedTotalProfitFiat, 2)
+		v3 := round(cappedAvg, 8)
+		ts.TotalProfitBTCCapped = &v1
+		ts.TotalProfitFiatCapped = &v2
+		ts.AverageOrderBTCCapped = &v3
+	}
+
+	return ts
 }
 
 func sortedCounts(counts map[string]int) []Count {

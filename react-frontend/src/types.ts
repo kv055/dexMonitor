@@ -146,6 +146,10 @@ export interface PastOrderTimeframeStats {
   average_order_size_btc: number;
   smallest_order_size_btc: number;
   biggest_order_size_btc: number;
+  // present only when max_fiat_limit was set and at least one order exceeded the cap
+  total_net_profit_btc_capped?: number | null;
+  total_net_profit_fiat_capped?: number | null;
+  average_order_size_btc_capped?: number | null;
 }
 
 export interface PastOrderStats {

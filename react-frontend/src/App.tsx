@@ -128,21 +128,23 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ theme, pastOrderStats, generalStats, loading, load, excludedPaymentMethods, excludedCEXes, feeTier }: {
+function InsightsView({ theme, pastOrderStats, pastOrderStatsAll, generalStats, loading, load, excludedPaymentMethods, excludedCEXes, feeTier, maxFiatLimit }: {
   theme: ThemeMode;
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
+  pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
   generalStats: ReturnType<typeof useDashboard>['generalStats'];
   loading: boolean;
-  load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string) => void;
+  load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, maxFiatLimit?: number | null) => void;
   excludedPaymentMethods: string[];
   excludedCEXes: string[];
   feeTier: string;
+  maxFiatLimit: number | null;
 }) {
   const { filters } = useFilters();
 
   useEffect(() => {
-    load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier);
-  }, [filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, load]);
+    load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, maxFiatLimit);
+  }, [filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, maxFiatLimit, load]);
 
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -154,7 +156,7 @@ function InsightsView({ theme, pastOrderStats, generalStats, loading, load, excl
       {/* Middle — bigger */}
       <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
         <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2">Taker Opportunities</span>
-        <TakerOpportunities stats={pastOrderStats} loading={loading} />
+        <TakerOpportunities stats={pastOrderStats} statsAll={pastOrderStatsAll} loading={loading} maxFiatLimit={maxFiatLimit} />
       </div>
       {/* Bottom — bigger */}
       <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
@@ -165,7 +167,7 @@ function InsightsView({ theme, pastOrderStats, generalStats, loading, load, excl
 }
 
 export default function App() {
-  const { pastOffers, stats, pastOrderStats, generalStats, ohlcData, lastUpdatedAt, error, loading, load, extendOhlc } = useDashboard();
+  const { pastOffers, stats, pastOrderStats, pastOrderStatsAll, generalStats, ohlcData, lastUpdatedAt, error, loading, load, extendOhlc } = useDashboard();
   const { liveOffers, refreshForCex } = useLiveOffers();
   const { groups } = usePaymentMethodGroups();
   const { config: tradeCostConfig } = useTradeCostConfig();
@@ -306,12 +308,14 @@ export default function App() {
           <InsightsView
             theme={theme}
             pastOrderStats={pastOrderStats}
+            pastOrderStatsAll={pastOrderStatsAll}
             generalStats={generalStats}
             loading={loading}
             load={load}
             excludedPaymentMethods={excludedPaymentMethods}
             excludedCEXes={excludedCEXes}
             feeTier={feeTier}
+            maxFiatLimit={maxFiatLimit}
           />
         )}
       </div>
