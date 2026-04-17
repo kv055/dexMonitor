@@ -192,10 +192,14 @@ export default function App() {
     return v ? Number(v) : null;
   });
 
-  const allOffers = useMemo(
-    () => [...liveOffers, ...pastOffers],
-    [liveOffers, pastOffers]
-  );
+  const allOffers = useMemo(() => {
+    const seen = new Set<number>();
+    return [...liveOffers, ...pastOffers].filter(o => {
+      if (seen.has(o.id)) return false;
+      seen.add(o.id);
+      return true;
+    });
+  }, [liveOffers, pastOffers]);
 
   const excludedPaymentMethods = excludedMethods;
 
