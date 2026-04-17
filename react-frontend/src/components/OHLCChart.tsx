@@ -187,11 +187,15 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
 
       if (o.lifecycle && o.lifecycle.length >= 2) {
         // Multi-point line: split into colored segments by premium state at each point.
-        const lcPoints = o.lifecycle.map((p) => ({
+        const lcPointsRaw = o.lifecycle.map((p) => ({
           time: toUtcSec(p.time) as UTCTimestamp,
           value: p.price,
           color: isSelected ? selectedLine : offerColor(o.direction, p.net_premium_pct),
         }));
+        // Deduplicate by timestamp (keep last), then sort ascending.
+        const lcByTime = new Map<number, typeof lcPointsRaw[0]>();
+        for (const pt of lcPointsRaw) lcByTime.set(pt.time, pt);
+        const lcPoints = Array.from(lcByTime.values()).sort((a, b) => a.time - b.time);
         if (isOpen) {
           const last = lcPoints[lcPoints.length - 1];
           lcPoints.push({ ...last, time: nowSec });
