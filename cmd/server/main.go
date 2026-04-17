@@ -19,11 +19,11 @@ import (
 	"dexmonitor/internal/paymentmethods"
 
 	gorillaws "github.com/gorilla/websocket"
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
 var (
-	dbPath              string
+	databaseURL         string
 	snapshotIntervalMin int
 	frontendDir         string
 	mmControllerAPIURL  string
@@ -62,7 +62,7 @@ func seedHubFromDB() {
 		rows, err := db.Query(`
 			SELECT id, exchange, direction, price, btc_min, btc_max,
 			       fiat_min, fiat_max, payment_method, offer_id, first_seen, last_seen, price_type
-			FROM offers WHERE is_live = 1
+			FROM offers WHERE is_live = TRUE
 		`)
 		if err != nil {
 			fmt.Printf("[Hub] seed error (attempt %d/%d): %v\n", attempt, maxAttempts, err)
@@ -122,9 +122,8 @@ func seedHubFromDB() {
 func coreTablesReady() bool {
 	var count int
 	if err := db.QueryRow(`
-		SELECT COUNT(*)
-		FROM sqlite_master
-		WHERE type = 'table' AND name IN ('offers', 'snapshot_log')
+		SELECT COUNT(*) FROM information_schema.tables
+		WHERE table_schema = 'public' AND table_name IN ('offers', 'snapshot_log')
 	`).Scan(&count); err != nil {
 		return false
 	}
@@ -333,9 +332,9 @@ func runCoinbaseFeed(ctx context.Context, cex string) error {
 // --- Init & Main ---
 
 func init() {
-	dbPath = os.Getenv("DB_PATH")
-	if dbPath == "" {
-		dbPath = filepath.Join("db", "orderbook.db")
+	databaseURL = os.Getenv("DATABASE_URL")
+	if databaseURL == "" {
+		databaseURL = "postgres://postgres:postgres@localhost:5432/dexarb?sslmode=disable"
 	}
 	interval := os.Getenv("SNAPSHOT_INTERVAL_MIN")
 	if interval == "" {
@@ -363,11 +362,7 @@ func init() {
 
 func main() {
 	var err error
-	if err := os.MkdirAll(filepath.Dir(dbPath), 0o755); err != nil {
-		fmt.Fprintf(os.Stderr, "failed to create database directory: %v\n", err)
-		os.Exit(1)
-	}
-	db, err = sql.Open("sqlite", dbPath)
+	db, err = sql.Open("pgx", databaseURL)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "failed to open database: %v\n", err)
 		os.Exit(1)
@@ -377,9 +372,6 @@ func main() {
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(2)
 
-	// Enable WAL mode for concurrent snapshot writes
-	db.Exec("PRAGMA journal_mode=WAL")
-
 	tradeCostEstimators = make(map[string]*TradeCostEstimator, len(supportedCEXes))
 	for _, c := range supportedCEXes {
 		tradeCostEstimators[c] = NewTradeCostEstimator(c)
@@ -387,148 +379,6 @@ func main() {
 			c, takerFeeFallbacks[c]*100, withdrawalFallbacks[c][MethodOnchain])
 	}
 	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
-
-	// Schema initialization (idempotent — safe to run on every startup)
-	for _, stmt := range []string{
-		`CREATE TABLE IF NOT EXISTS snapshots (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-			exchange TEXT NOT NULL,
-			fiat_currency TEXT NOT NULL,
-			direction TEXT NOT NULL,
-			btc_price REAL NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS offers (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			exchange TEXT NOT NULL,
-			direction TEXT NOT NULL,
-			price REAL NOT NULL,
-			price_diff_percent REAL,
-			btc_min REAL,
-			btc_max REAL,
-			fiat_min INTEGER,
-			fiat_max INTEGER,
-			payment_method TEXT,
-			offer_id TEXT,
-			first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
-			last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
-			is_live BOOLEAN NOT NULL DEFAULT 0,
-			duration INTEGER,
-			historical_analysis_status TEXT,
-			avg_ref_price REAL,
-			avg_premium_pct REAL,
-			avg_trade_cost_pct REAL,
-			avg_trade_cost_btc REAL,
-			cex_taker_fee_btc REAL,
-			cex_withdraw_fee_btc REAL,
-			network_fee_btc REAL,
-			dex_fee_btc REAL,
-			avg_net_premium_pct REAL,
-			avg_estimated_profit_btc REAL,
-			avg_estimated_profit_fiat REAL,
-			avg_btc_amount REAL,
-			price_type TEXT,
-			best_route_cex TEXT,
-			best_route_method TEXT
-		)`,
-		`CREATE TABLE IF NOT EXISTS order_lifecycle (
-			id               INTEGER PRIMARY KEY AUTOINCREMENT,
-			offer_db_id      INTEGER NOT NULL,
-			snapshot_time    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			price            REAL    NOT NULL,
-			ref_price        REAL    NOT NULL,
-			premium_pct      REAL    NOT NULL,
-			trade_cost_pct   REAL,
-			trade_cost_btc   REAL,
-			cex_taker_fee_btc REAL,
-			cex_withdraw_fee_btc REAL,
-			network_fee_btc  REAL,
-			dex_fee_btc      REAL,
-			net_premium_pct  REAL,
-			net_premium_btc  REAL,
-			btc_amount       REAL
-		)`,
-		`CREATE TABLE IF NOT EXISTS snapshot_log (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-			exchanges TEXT NOT NULL,
-			offers_count INTEGER NOT NULL
-		)`,
-		`CREATE TABLE IF NOT EXISTS kraken_ohlc (
-			time  DATETIME PRIMARY KEY,
-			open  REAL NOT NULL,
-			high  REAL NOT NULL,
-			low   REAL NOT NULL,
-			close REAL NOT NULL
-		)`,
-		`CREATE INDEX IF NOT EXISTS idx_snapshots_time ON snapshots(timestamp)`,
-		`CREATE INDEX IF NOT EXISTS idx_snapshots_exchange ON snapshots(exchange)`,
-		`CREATE INDEX IF NOT EXISTS idx_offers_exchange ON offers(exchange)`,
-		`CREATE INDEX IF NOT EXISTS idx_offers_direction ON offers(direction)`,
-		`CREATE INDEX IF NOT EXISTS idx_offers_last_seen ON offers(last_seen)`,
-		`CREATE INDEX IF NOT EXISTS idx_offers_fingerprint ON offers(exchange, direction, price, btc_min, btc_max, payment_method)`,
-		`CREATE UNIQUE INDEX IF NOT EXISTS idx_offers_offer_id ON offers(offer_id) WHERE offer_id IS NOT NULL`,
-		`CREATE INDEX IF NOT EXISTS idx_lifecycle_offer ON order_lifecycle(offer_db_id)`,
-		`CREATE INDEX IF NOT EXISTS idx_lifecycle_time  ON order_lifecycle(snapshot_time)`,
-	} {
-		if _, err := db.Exec(stmt); err != nil {
-			fmt.Fprintf(os.Stderr, "schema init error: %v\n", err)
-		}
-	}
-
-	// Migrations (for databases created before schema versioning)
-	db.Exec("ALTER TABLE offers ADD COLUMN is_live BOOLEAN NOT NULL DEFAULT 0")
-	db.Exec("ALTER TABLE offers ADD COLUMN duration INTEGER")
-	db.Exec("ALTER TABLE offers ADD COLUMN historical_analysis_status TEXT")
-	db.Exec("ALTER TABLE offers ADD COLUMN price_type TEXT")
-	db.Exec("ALTER TABLE offers ADD COLUMN best_route_cex TEXT")
-	db.Exec("ALTER TABLE offers ADD COLUMN best_route_method TEXT")
-	// Clean lifecycle-based analysis columns (replace _10m variants)
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_ref_price REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_premium_pct REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_pct REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_trade_cost_btc REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_hedge_fee_sum_btc REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN cex_taker_fee_btc REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN cex_withdraw_fee_btc REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN network_fee_btc REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN hedge_open_fee_btc REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN hedge_close_fee_btc REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN hedge_funding_fee_btc REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN hedge_fee_sum_btc REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN hedge_venue TEXT")
-	db.Exec("ALTER TABLE offers ADD COLUMN hedge_instrument TEXT")
-	db.Exec("ALTER TABLE offers ADD COLUMN hedge_transfer_minutes INTEGER")
-	db.Exec("ALTER TABLE offers ADD COLUMN dex_fee_btc REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_net_premium_pct REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_btc REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_estimated_profit_fiat REAL")
-	db.Exec("ALTER TABLE offers ADD COLUMN avg_btc_amount REAL")
-	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN cex_taker_fee_btc REAL")
-	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN cex_withdraw_fee_btc REAL")
-	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN network_fee_btc REAL")
-	db.Exec("ALTER TABLE order_lifecycle ADD COLUMN dex_fee_btc REAL")
-	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_open_fee_btc")
-	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_close_fee_btc")
-	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_funding_fee_btc")
-	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_fee_btc")
-	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_venue")
-	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_instrument")
-	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN hedge_transfer_minutes")
-	db.Exec("ALTER TABLE offers DROP COLUMN avg_cex_fee_btc")
-	db.Exec("ALTER TABLE offers DROP COLUMN avg_network_fee_btc")
-	db.Exec("ALTER TABLE order_lifecycle DROP COLUMN cex_fee_btc")
-	// Drop obsolete 10-minute-window columns (SQLite 3.35+ / modernc.org/sqlite v1.48)
-	db.Exec("ALTER TABLE offers DROP COLUMN avg_ref_price_10m")
-	db.Exec("ALTER TABLE offers DROP COLUMN avg_premium_10m_pct")
-	db.Exec("ALTER TABLE offers DROP COLUMN avg_trade_cost_pct_10m")
-	db.Exec("ALTER TABLE offers DROP COLUMN avg_trade_cost_btc_10m")
-	db.Exec("ALTER TABLE offers DROP COLUMN avg_net_premium_10m_pct")
-	db.Exec("ALTER TABLE offers DROP COLUMN avg_estimated_profit_btc_10m")
-	db.Exec("ALTER TABLE offers DROP COLUMN avg_estimated_profit_fiat_10m")
-	db.Exec("ALTER TABLE offers DROP COLUMN avg_btc_amount_10m")
-	db.Exec("ALTER TABLE offers DROP COLUMN best_route_cex_10m")
-	db.Exec("ALTER TABLE offers DROP COLUMN best_route_method_10m")
 
 	// Seed hub from DB in the background — computing trade costs makes outbound
 	// HTTP requests (mempool.space, exchange APIs) that must not block startup.
@@ -610,11 +460,11 @@ func serveFrontend(w http.ResponseWriter, r *http.Request) {
 func handleOffers(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 1000)
 	hours := queryInt(r, "hours", 24)
-	hoursArg := fmt.Sprintf("-%d hours", hours)
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
 	rows, err := db.Query(
-		"SELECT * FROM offers WHERE last_seen >= datetime('now', ?) ORDER BY last_seen DESC LIMIT ?",
-		hoursArg, limit,
+		rebind("SELECT * FROM offers WHERE last_seen >= ? ORDER BY last_seen DESC LIMIT ?"),
+		cutoff, limit,
 	)
 	if err != nil {
 		writeError(w, err)
@@ -655,15 +505,15 @@ func handleLiveOffersREST(w http.ResponseWriter, r *http.Request) {
 func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 1000)
 	hours := queryInt(r, "hours", 24)
-	hoursArg := fmt.Sprintf("-%d hours", hours)
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	excludedPaymentMethods := queryExcludedPaymentMethods(r)
 	requiredConfirmations := queryConfirmations(r)
 	excludedCEXes := queryExcludedCEXes(r)
 	feeTier := queryFeeTier(r)
 
 	rows, err := db.Query(
-		"SELECT * FROM offers WHERE is_live = 0 AND last_seen >= datetime('now', ?) ORDER BY last_seen DESC LIMIT ?",
-		hoursArg, limit,
+		rebind("SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? ORDER BY last_seen DESC LIMIT ?"),
+		cutoff, limit,
 	)
 	if err != nil {
 		writeError(w, err)
@@ -708,29 +558,29 @@ func fetchOfferLifecycle(ids []int64) map[int64][]LifecyclePoint {
 	if len(ids) == 0 {
 		return result
 	}
-	placeholders := strings.Repeat("?,", len(ids))
-	placeholders = placeholders[:len(placeholders)-1]
+	placeholders := make([]string, len(ids))
 	args := make([]any, len(ids))
 	for i, id := range ids {
+		placeholders[i] = "?"
 		args[i] = id
 	}
-	rows, err := db.Query(fmt.Sprintf(
+	rows, err := db.Query(rebind(fmt.Sprintf(
 		`SELECT offer_db_id, snapshot_time, price, net_premium_pct FROM order_lifecycle WHERE offer_db_id IN (%s) ORDER BY offer_db_id, snapshot_time`,
-		placeholders,
-	), args...)
+		strings.Join(placeholders, ","),
+	)), args...)
 	if err != nil {
 		return result
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var offerID int64
-		var snapTime string
+		var snapTime time.Time
 		var price float64
 		var netPremiumPct sql.NullFloat64
 		if err := rows.Scan(&offerID, &snapTime, &price, &netPremiumPct); err != nil {
 			continue
 		}
-		pt := LifecyclePoint{Time: snapTime, Price: price}
+		pt := LifecyclePoint{Time: snapTime.UTC().Format("2006-01-02T15:04:05Z"), Price: price}
 		if netPremiumPct.Valid {
 			pt.NetPremiumPct = &netPremiumPct.Float64
 		}
@@ -751,8 +601,8 @@ func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := db.Query(
-		"SELECT * FROM offers WHERE is_live = 0 AND last_seen >= datetime('now', ?) ORDER BY last_seen DESC",
-		"-168 hours",
+		rebind("SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? ORDER BY last_seen DESC"),
+		time.Now().Add(-168*time.Hour),
 	)
 	if err != nil {
 		writeError(w, err)
@@ -794,12 +644,12 @@ func handleGeneralStats(w http.ResponseWriter, r *http.Request) {
 	if historyHours < 168 {
 		historyHours = 168
 	}
-	hoursArg := fmt.Sprintf("-%d hours", historyHours)
+	cutoff := time.Now().Add(-time.Duration(historyHours) * time.Hour)
 	excludedPaymentMethods := queryExcludedPaymentMethods(r)
 
 	rows, err := db.Query(
-		"SELECT * FROM offers WHERE last_seen >= datetime('now', ?) ORDER BY last_seen DESC",
-		hoursArg,
+		rebind("SELECT * FROM offers WHERE last_seen >= ? ORDER BY last_seen DESC"),
+		cutoff,
 	)
 	if err != nil {
 		writeError(w, err)
@@ -914,13 +764,13 @@ func writeLifecycleEntries(offers []liveOutOffer) {
 		fmt.Printf("[Lifecycle] begin tx error: %v\n", err)
 		return
 	}
-	insStmt, err := tx.Prepare(`
+	insStmt, err := tx.Prepare(rebind(`
 		INSERT INTO order_lifecycle
 			(offer_db_id, price, ref_price, premium_pct,
 			 trade_cost_pct, trade_cost_btc, cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc, dex_fee_btc,
 			 net_premium_pct, net_premium_btc, btc_amount)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`)
+	`))
 	if err != nil {
 		tx.Rollback()
 		fmt.Printf("[Lifecycle] prepare insert error: %v\n", err)
@@ -928,7 +778,7 @@ func writeLifecycleEntries(offers []liveOutOffer) {
 	}
 	defer insStmt.Close()
 
-	updStmt, err := tx.Prepare(`
+	updStmt, err := tx.Prepare(rebind(`
 		UPDATE offers SET
 			best_route_cex = ?,
 			best_route_method = ?,
@@ -940,7 +790,7 @@ func writeLifecycleEntries(offers []liveOutOffer) {
 			hedge_instrument = ?,
 			hedge_transfer_minutes = ?
 		WHERE id = ?
-	`)
+	`))
 	if err != nil {
 		tx.Rollback()
 		fmt.Printf("[Lifecycle] prepare update error: %v\n", err)
@@ -1031,15 +881,15 @@ func handleInternalLiveOffers(w http.ResponseWriter, r *http.Request) {
 
 func handleStats(w http.ResponseWriter, r *http.Request) {
 	hours := queryInt(r, "hours", 24)
-	hoursArg := fmt.Sprintf("-%d hours", hours)
+	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 
-	priceRows, err := db.Query(`
+	priceRows, err := db.Query(rebind(`
 		SELECT exchange, COUNT(*) as snapshot_count,
 		       MIN(btc_price) as min_price, MAX(btc_price) as max_price, AVG(btc_price) as avg_price
 		FROM snapshots
-		WHERE timestamp >= datetime('now', ?)
+		WHERE timestamp >= ?
 		GROUP BY exchange
-	`, hoursArg)
+	`), cutoff)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -1064,12 +914,12 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	countRows, err := db.Query(`
+	countRows, err := db.Query(rebind(`
 		SELECT exchange, COUNT(*) as offer_count
 		FROM offers
-		WHERE last_seen >= datetime('now', ?)
+		WHERE last_seen >= ?
 		GROUP BY exchange
-	`, hoursArg)
+	`), cutoff)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -1113,10 +963,10 @@ func handleOHLC(w http.ResponseWriter, r *http.Request) {
 		candles = fetchKrakenOHLC(hours)
 	}
 
-	rows, err := db.Query(`
-		SELECT * FROM offers
-		WHERE last_seen >= datetime('now', ?)
-	`, fmt.Sprintf("-%d hours", hours))
+	rows, err := db.Query(
+		rebind("SELECT * FROM offers WHERE last_seen >= ?"),
+		time.Now().Add(-time.Duration(hours)*time.Hour),
+	)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -1209,7 +1059,7 @@ func handleSnapshotLog(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 50)
 
 	rows, err := db.Query(
-		"SELECT id, timestamp, exchanges, offers_count FROM snapshot_log ORDER BY timestamp DESC LIMIT ?",
+		rebind("SELECT id, timestamp, exchanges, offers_count FROM snapshot_log ORDER BY timestamp DESC LIMIT ?"),
 		limit,
 	)
 	if err != nil {
@@ -1221,13 +1071,14 @@ func handleSnapshotLog(w http.ResponseWriter, r *http.Request) {
 	result := make([]map[string]any, 0)
 	for rows.Next() {
 		var id, offersCount int
-		var ts, exchangesJSON string
+		var ts time.Time
+		var exchangesJSON []byte
 		if err := rows.Scan(&id, &ts, &exchangesJSON, &offersCount); err != nil {
 			writeError(w, err)
 			return
 		}
 		exchanges := map[string]any{}
-		json.Unmarshal([]byte(exchangesJSON), &exchanges)
+		json.Unmarshal(exchangesJSON, &exchanges)
 		result = append(result, map[string]any{
 			"id":           id,
 			"timestamp":    ts,
@@ -1497,6 +1348,33 @@ func fetchCoinbaseOHLC(hours int) []map[string]any {
 }
 
 // --- Helpers ---
+
+// rebind converts SQLite-style ? placeholders to PostgreSQL $1, $2, ... style.
+func rebind(query string) string {
+	var out strings.Builder
+	n := 1
+	inQuote := false
+	for i := 0; i < len(query); i++ {
+		ch := query[i]
+		if ch == '\'' {
+			out.WriteByte(ch)
+			if i+1 < len(query) && query[i+1] == '\'' {
+				out.WriteByte(query[i+1])
+				i++
+				continue
+			}
+			inQuote = !inQuote
+			continue
+		}
+		if ch == '?' && !inQuote {
+			fmt.Fprintf(&out, "$%d", n)
+			n++
+			continue
+		}
+		out.WriteByte(ch)
+	}
+	return out.String()
+}
 
 func parseDBTime(s string) time.Time {
 	for _, layout := range []string{"2006-01-02T15:04:05Z", "2006-01-02T15:04:05", "2006-01-02 15:04:05"} {
