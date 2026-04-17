@@ -1,10 +1,11 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ExchangeTag } from './ExchangeTag';
 import { formatNum, formatBtc, premiumClass, formatTime, formatDuration } from '../utils/formatters';
 import { useTimezone } from '../context/TimezoneContext';
 import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
 import type { CostBreakdown, BTCNetworkFeeDetail as BTCDetail } from '../types';
+import { buildOfferKeys } from '../utils/offerIdentity';
 
 const TH_BASE = "sticky top-0 z-10 bg-surface px-2 py-1 border-b border-border text-muted text-[0.65rem] uppercase text-left whitespace-nowrap";
 const TD = "px-2 py-1 whitespace-nowrap";
@@ -552,15 +553,16 @@ function useGroupLabel() {
 }
 
 export function OffersPreviewTable() {
-  const { filteredOffers: offers, selectedOfferId, setSelectedOfferId, loading } = useFilters();
+  const { filteredOffers: offers, selectedOfferKey, setSelectedOfferKey, loading } = useFilters();
   const groupLabel = useGroupLabel();
   const { timezone } = useTimezone();
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
   const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
   const [showCapped, setShowCapped] = useState(false);
+  const offerKeys = useMemo(() => buildOfferKeys(offers), [offers]);
 
   // Reset to full-size view whenever the selected offer changes.
-  useEffect(() => { setShowCapped(false); }, [selectedOfferId]);
+  useEffect(() => { setShowCapped(false); }, [selectedOfferKey]);
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 1023px)');
@@ -570,12 +572,13 @@ export function OffersPreviewTable() {
     return () => mq.removeEventListener('change', handler);
   }, []);
 
-  const selectedOffer = offers.find(o => o.id === selectedOfferId) ?? null;
+  const selectedOfferIndex = selectedOfferKey != null ? offerKeys.indexOf(selectedOfferKey) : -1;
+  const selectedOffer = selectedOfferIndex >= 0 ? offers[selectedOfferIndex] : null;
   const hasSelection = selectedOffer !== null;
 
   useEffect(() => {
     selectedRowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  }, [selectedOfferId]);
+  }, [selectedOfferKey]);
 
   // ── Mobile layout: vertical stack ─────────────────────────────────────────
   if (isMobile) {
@@ -598,13 +601,14 @@ export function OffersPreviewTable() {
             <tbody>
               {offers.length === 0 ? (
                 !loading && <tr><td colSpan={5} className="p-4 text-center text-muted">No offers</td></tr>
-              ) : offers.map((o) => {
-                const isSelected = o.id === selectedOfferId;
+              ) : offers.map((o, index) => {
+                const offerKey = offerKeys[index];
+                const isSelected = offerKey === selectedOfferKey;
                 return (
                   <tr
-                    key={o.id}
+                    key={offerKey}
                     ref={isSelected ? selectedRowRef : null}
-                    onClick={() => setSelectedOfferId(isSelected ? null : o.id)}
+                    onClick={() => setSelectedOfferKey(isSelected ? null : offerKey)}
                     className={`cursor-pointer transition-colors ${
                       isSelected ? 'offer-row-selected' : 'offer-row-hover'
                     }`}
@@ -642,7 +646,7 @@ export function OffersPreviewTable() {
           {selectedOffer && (
             <div className="relative pt-10 px-4 pb-4">
               <button
-                onClick={() => setSelectedOfferId(null)}
+                onClick={() => setSelectedOfferKey(null)}
                 className="absolute top-3 right-3 z-20 w-7 h-7 flex items-center justify-center text-red hover:text-red/70 bg-transparent border-none cursor-pointer text-xl leading-none rounded transition-colors"
                 title="Close"
               >
@@ -711,13 +715,14 @@ export function OffersPreviewTable() {
           <tbody>
             {offers.length === 0 ? (
               !loading && <tr><td colSpan={10} className="p-4 text-center text-muted">No offers</td></tr>
-            ) : offers.map((o) => {
-              const isSelected = o.id === selectedOfferId;
+            ) : offers.map((o, index) => {
+              const offerKey = offerKeys[index];
+              const isSelected = offerKey === selectedOfferKey;
               return (
                 <tr
-                  key={o.id}
+                  key={offerKey}
                   ref={isSelected ? selectedRowRef : null}
-                  onClick={() => setSelectedOfferId(isSelected ? null : o.id)}
+                  onClick={() => setSelectedOfferKey(isSelected ? null : offerKey)}
                   className={`cursor-pointer transition-colors ${
                     isSelected ? 'offer-row-selected' : 'offer-row-hover'
                   }`}
@@ -770,7 +775,7 @@ export function OffersPreviewTable() {
         {selectedOffer && (
           <div className="relative flex flex-col h-full overflow-hidden">
             <button
-              onClick={() => setSelectedOfferId(null)}
+              onClick={() => setSelectedOfferKey(null)}
               className="absolute top-1 right-2 z-20 w-5 h-5 flex items-center justify-center text-red hover:text-red/70 bg-transparent border-none cursor-pointer text-lg leading-none rounded transition-colors"
               title="Close"
             >

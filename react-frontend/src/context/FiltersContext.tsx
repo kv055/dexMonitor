@@ -39,8 +39,8 @@ interface FiltersContextValue {
   depthOffers: Offer[];           // all filters except direction (orderbook always shows both sides)
   paymentMethods: string[];
   groups: PaymentMethodGroup[];
-  selectedOfferId: number | null;
-  setSelectedOfferId: (id: number | null) => void;
+  selectedOfferKey: string | null;
+  setSelectedOfferKey: (key: string | null) => void;
   hoveredOhlcTime: number | null;
   setHoveredOhlcTime: (t: number | null) => void;
   loading: boolean;
@@ -61,7 +61,7 @@ interface Props {
 
 export function FiltersProvider({ offers, loading, groups, excludedMethods, children }: Props) {
   const [filters, dispatch] = useReducer(filtersReducer, DEFAULT_FILTERS);
-  const [selectedOfferId, setSelectedOfferId] = useState<number | null>(null);
+  const [selectedOfferKey, setSelectedOfferKey] = useState<string | null>(null);
   const [hoveredOhlcTime, setHoveredOhlcTime] = useState<number | null>(null);
 
   const setFilters = (partial: Partial<Filters>) => dispatch({ type: 'SET', payload: partial });
@@ -121,7 +121,7 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, chil
   }, [activeOffers, filters, paymentFilterFn]);
 
   return (
-    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, groups, selectedOfferId, setSelectedOfferId, hoveredOhlcTime, setHoveredOhlcTime, loading, refPrice }}>
+    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, groups, selectedOfferKey, setSelectedOfferKey, hoveredOhlcTime, setHoveredOhlcTime, loading, refPrice }}>
       {children}
     </FiltersContext.Provider>
   );

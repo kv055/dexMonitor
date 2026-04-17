@@ -13,6 +13,7 @@ import type { OHLCCandle, OHLCData } from '../types';
 import { useFilters } from '../context/FiltersContext';
 import { useTimezone } from '../context/TimezoneContext';
 import { LoadingSpinner } from './LoadingSpinner';
+import { buildOfferKeys } from '../utils/offerIdentity';
 
 interface Props {
   data: OHLCData | null;
@@ -73,7 +74,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
   const savedRangeRef = useRef<{ from: UTCTimestamp; to: UTCTimestamp } | null>(null);
   const fetchingMoreRef = useRef(false);
 
-  const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferId, setSelectedOfferId, setHoveredOhlcTime, loading } = useFilters();
+  const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferKey, setSelectedOfferKey, setHoveredOhlcTime, loading } = useFilters();
   const { timezone } = useTimezone();
 
   const sourceIntervalMin = data?.interval_min ?? 1;
@@ -101,6 +102,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
     () => shiftOhlcCandlesForTimezone(displayCandles, timezone),
     [displayCandles, timezone]
   );
+  const offerKeys = useMemo(() => buildOfferKeys(premiumOffers), [premiumOffers]);
 
   // Keep chart sized to container
   useEffect(() => {
@@ -175,11 +177,12 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
     const fromSec = (nowSec - Number(hours) * 3600) as UTCTimestamp;
 
     // --- Offer lines ---
-    const seriesInfo = new Map<ISeriesApi<'Line'>, { offerId: number; price: number }>();
+    const seriesInfo = new Map<ISeriesApi<'Line'>, { offerKey: string; price: number }>();
 
-    premiumOffers.forEach(o => {
+    premiumOffers.forEach((o, index) => {
+      const offerKey = offerKeys[index];
       const isOpen = o.is_live;
-      const isSelected = o.id === selectedOfferId;
+      const isSelected = offerKey === selectedOfferKey;
       const lineWidth = isSelected ? 3 : 2;
       const markerRadius = isSelected ? 5 : 3;
 
@@ -235,7 +238,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
           });
           series.setData(segPts);
           if (!clickTargetRegistered) {
-            seriesInfo.set(series, { offerId: o.id, price: representativePrice });
+            seriesInfo.set(series, { offerKey, price: representativePrice });
             clickTargetRegistered = true;
           }
         }
@@ -259,7 +262,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
           crosshairMarkerRadius: markerRadius,
         });
         series.setData(points);
-        seriesInfo.set(series, { offerId: o.id, price: o.price });
+        seriesInfo.set(series, { offerKey, price: o.price });
       }
     });
 
@@ -315,11 +318,11 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
     // Click handler
     chart.subscribeClick((param) => {
       if (!param.point) {
-        setSelectedOfferId(null);
+        setSelectedOfferKey(null);
         return;
       }
       const clickY = param.point.y;
-      let closestId: number | null = null;
+      let closestKey: string | null = null;
       let closestDist = Infinity;
 
       for (const [series, info] of seriesInfo) {
@@ -328,12 +331,12 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
         const dist = Math.abs(coord - clickY);
         if (dist < closestDist && dist < 12) {
           closestDist = dist;
-          closestId = info.offerId;
+          closestKey = info.offerKey;
         }
       }
 
-      setSelectedOfferId(closestId != null
-        ? (closestId === selectedOfferId ? null : closestId)
+      setSelectedOfferKey(closestKey != null
+        ? (closestKey === selectedOfferKey ? null : closestKey)
         : null
       );
     });
@@ -343,7 +346,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [shiftedDisplay, premiumOffers, hours, selectedOfferId, candleMin, loadedHours, onNeedMoreData]);
+  }, [shiftedDisplay, premiumOffers, offerKeys, hours, selectedOfferKey, candleMin, loadedHours, onNeedMoreData, setHoveredOhlcTime, setSelectedOfferKey]);
 
   return (
     <div className="relative h-full bg-bg flex flex-col">
