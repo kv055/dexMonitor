@@ -128,10 +128,12 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ theme, pastOrderStats, pastOrderStatsAll, generalStats, loading, load, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit }: {
+function InsightsView({ theme, pastOrderStats, pastOrderStatsAll, pastProfitableOrders, pastProfitableOrdersAll, generalStats, loading, load, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit }: {
   theme: ThemeMode;
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
+  pastProfitableOrders: ReturnType<typeof useDashboard>['pastProfitableOrders'];
+  pastProfitableOrdersAll: ReturnType<typeof useDashboard>['pastProfitableOrdersAll'];
   generalStats: ReturnType<typeof useDashboard>['generalStats'];
   loading: boolean;
   load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
@@ -157,7 +159,14 @@ function InsightsView({ theme, pastOrderStats, pastOrderStatsAll, generalStats, 
       {/* Middle — bigger */}
       <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
         <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2">Taker Opportunities</span>
-        <TakerOpportunities stats={pastOrderStats} statsAll={pastOrderStatsAll} loading={loading} maxFiatLimit={maxFiatLimit} />
+        <TakerOpportunities
+          stats={pastOrderStats}
+          statsAll={pastOrderStatsAll}
+          orders={pastProfitableOrders}
+          ordersAll={pastProfitableOrdersAll}
+          loading={loading}
+          maxFiatLimit={maxFiatLimit}
+        />
       </div>
       {/* Bottom — bigger */}
       <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
@@ -168,7 +177,21 @@ function InsightsView({ theme, pastOrderStats, pastOrderStatsAll, generalStats, 
 }
 
 export default function App() {
-  const { pastOffers, stats, pastOrderStats, pastOrderStatsAll, generalStats, ohlcData, lastUpdatedAt, error, loading, load, extendOhlc } = useDashboard();
+  const {
+    pastOffers,
+    stats,
+    pastOrderStats,
+    pastOrderStatsAll,
+    pastProfitableOrders,
+    pastProfitableOrdersAll,
+    generalStats,
+    ohlcData,
+    lastUpdatedAt,
+    error,
+    loading,
+    load,
+    extendOhlc,
+  } = useDashboard();
   const { liveOffers, refreshForCex } = useLiveOffers();
   const { groups } = usePaymentMethodGroups();
   const { config: tradeCostConfig } = useTradeCostConfig();
@@ -314,6 +337,8 @@ export default function App() {
             theme={theme}
             pastOrderStats={pastOrderStats}
             pastOrderStatsAll={pastOrderStatsAll}
+            pastProfitableOrders={pastProfitableOrders}
+            pastProfitableOrdersAll={pastProfitableOrdersAll}
             generalStats={generalStats}
             loading={loading}
             load={load}

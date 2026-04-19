@@ -410,6 +410,7 @@ func main() {
 	mux.HandleFunc("GET /api/past_offers", handlePastOffers)
 	mux.HandleFunc("GET /api/past_offers/{id}/lifecycle", handlePastOfferLifecycle)
 	mux.HandleFunc("GET /api/past_order_stats", handlePastOrderStats)
+	mux.HandleFunc("GET /api/past_profitable_orders", handlePastProfitableOrders)
 	mux.HandleFunc("GET /api/general_stats", handleGeneralStats)
 	mux.HandleFunc("GET /api/live_offers", handleLiveOffersREST)
 	mux.HandleFunc("GET /ws/live_offers", handleLiveOffersWS)
@@ -777,6 +778,75 @@ func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, pastorders.BuildStats(premiumOrders, time.Now(), fiatCurrency, excludedPaymentMethods))
+}
+
+type pastProfitableOrderSummary struct {
+	NetProfitBTC  float64  `json:"net_profit_btc"`
+	NetProfitFiat float64  `json:"net_profit_fiat"`
+	TradeSizeBTC  float64  `json:"trade_size_btc"`
+	TradeSizeFiat float64  `json:"trade_size_fiat"`
+	NetPercent    float64  `json:"net_percent"`
+	CapFiat       *float64 `json:"cap_fiat,omitempty"`
+}
+
+type pastProfitableOrderAPI struct {
+	ID            int64                      `json:"id"`
+	Exchange      string                     `json:"exchange"`
+	OfferID       *string                    `json:"offer_id"`
+	PaymentMethod *string                    `json:"payment_method"`
+	Direction     string                     `json:"direction"`
+	Status        pastOfferStatus            `json:"status"`
+	Pricing       pastOfferPricing           `json:"pricing"`
+	Summary       pastProfitableOrderSummary `json:"summary"`
+	Analysis      pastOfferAnalysisAPI       `json:"analysis"`
+	Offer         map[string]any             `json:"offer"`
+}
+
+func handlePastProfitableOrders(w http.ResponseWriter, r *http.Request) {
+	excludedPaymentMethods := queryExcludedPaymentMethods(r)
+	requiredConfirmations := queryConfirmations(r)
+	excludedCEXes := queryExcludedCEXes(r)
+	feeTier := queryFeeTier(r)
+	maxFiatLimitEUR := queryMaxFiatLimitEUR(r)
+
+	rows, err := db.Query(
+		rebind("SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? ORDER BY last_seen DESC"),
+		time.Now().Add(-168*time.Hour),
+	)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	defer rows.Close()
+
+	offers, err := scanOffers(rows)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+
+	filteredOffers := make([]map[string]any, 0, len(offers))
+	ids := make([]int64, 0, len(offers))
+	for _, o := range offers {
+		if isPaymentMethodExcluded(offerString(o, "payment_method"), excludedPaymentMethods) {
+			continue
+		}
+		filteredOffers = append(filteredOffers, o)
+		ids = append(ids, int64(offerFloat(o, "id")))
+	}
+
+	lifecycleAgg := fetchPastOfferLifecycleAggregates(ids)
+	result := make([]pastProfitableOrderAPI, 0, len(filteredOffers))
+	for _, o := range filteredOffers {
+		analysis := addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
+		if analysis.estimatedProfitBTC <= 0 {
+			continue
+		}
+		id := int64(offerFloat(o, "id"))
+		result = append(result, buildPastProfitableOrderAPI(o, lifecycleAgg[id], requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR))
+	}
+
+	writeJSON(w, result)
 }
 
 func handleGeneralStats(w http.ResponseWriter, r *http.Request) {
@@ -1432,6 +1502,14 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 			cappedRep := computeRepresentativePastBreakdown(cappedTradeSizeBTC, avgRefPrice, offerString(o, "exchange"), offerString(o, "direction"), requiredConfirmations, excludedCEXes, feeTier)
 			cappedAvgTradeCostPct, cappedAvgNetPct, cappedAvgProfitBTC, cappedAvgProfitFiat, cappedAvgTradeCostBTC, cappedAvgNetworkPct :=
 				recomputeCappedLifecycleAverages(agg.Samples, maxFiatLimitEUR, offerString(o, "exchange"), offerString(o, "direction"), requiredConfirmations, excludedCEXes, feeTier)
+			if cappedAvgProfitBTC == 0 && cappedRep.RouteCEX != "" {
+				cappedAvgTradeCostPct = round4(cappedRep.TotalCostPct)
+				cappedAvgNetPct = round4(cappedRep.EstimatedProfitPct)
+				cappedAvgProfitBTC = round8(cappedRep.EstimatedProfitBTC)
+				cappedAvgProfitFiat = round4(cappedRep.EstimatedProfitBTC * avgRefPrice)
+				cappedAvgTradeCostBTC = round8(cappedRep.TotalCostBTC)
+				cappedAvgNetworkPct = round4(cappedRep.NetworkFeePct)
+			}
 			capFiat := round4(maxFiatLimitEUR)
 			cappedScenario = &pastOfferScenario{
 				CapFiat:       &capFiat,
@@ -1484,6 +1562,41 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 			FullVolume:   fullScenario,
 			CappedVolume: cappedScenario,
 		},
+	}
+}
+
+func buildPastProfitableOrderAPI(o map[string]any, agg pastLifecycleAggregate, requiredConfirmations int, excludedCEXes []string, feeTier string, maxFiatLimitEUR float64) pastProfitableOrderAPI {
+	pastOffer := buildPastOfferAPI(o, agg, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
+	recomputed := addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
+	summary := pastProfitableOrderSummary{
+		NetProfitBTC:  recomputed.estimatedProfitBTC,
+		NetProfitFiat: round4(recomputed.estimatedProfitBTC * recomputed.refPrice),
+		TradeSizeBTC:  round8(recomputed.btcSize),
+		TradeSizeFiat: round4(recomputed.btcSize * recomputed.refPrice),
+		NetPercent:    pastOffer.Analysis.FullVolume.Premium.AvgNetPercent,
+	}
+	if pastOffer.Analysis.CappedVolume != nil && recomputed.estimatedProfitBTCCapped > 0 {
+		summary.NetProfitBTC = round8(recomputed.estimatedProfitBTCCapped)
+		summary.NetProfitFiat = round4(recomputed.estimatedProfitBTCCapped * recomputed.refPrice)
+		summary.TradeSizeBTC = round8(recomputed.btcSizeCapped)
+		summary.TradeSizeFiat = round4(recomputed.btcSizeCapped * recomputed.refPrice)
+		summary.NetPercent = pastOffer.Analysis.CappedVolume.Premium.AvgNetPercent
+	}
+	if pastOffer.Analysis.CappedVolume != nil {
+		summary.CapFiat = pastOffer.Analysis.CappedVolume.CapFiat
+	}
+
+	return pastProfitableOrderAPI{
+		ID:            pastOffer.ID,
+		Exchange:      pastOffer.Exchange,
+		OfferID:       pastOffer.OfferID,
+		PaymentMethod: pastOffer.PaymentMethod,
+		Direction:     pastOffer.Direction,
+		Status:        pastOffer.Status,
+		Pricing:       pastOffer.Pricing,
+		Summary:       summary,
+		Analysis:      pastOffer.Analysis,
+		Offer:         buildOfferTablePayload(o),
 	}
 }
 
@@ -2301,6 +2414,57 @@ func offerInt64Ptr(o map[string]any, key string) *int64 {
 		return &out
 	}
 	return nil
+}
+
+func buildOfferTablePayload(o map[string]any) map[string]any {
+	return map[string]any{
+		"id":                         int64(offerFloat(o, "id")),
+		"exchange":                   offerString(o, "exchange"),
+		"direction":                  offerString(o, "direction"),
+		"price":                      offerFloatPtr(o, "price"),
+		"price_diff_percent":         offerFloatPtr(o, "price_diff_percent"),
+		"btc_min":                    offerFloatPtr(o, "btc_min"),
+		"btc_max":                    offerFloatPtr(o, "btc_max"),
+		"fiat_min":                   offerInt64Ptr(o, "fiat_min"),
+		"fiat_max":                   offerInt64Ptr(o, "fiat_max"),
+		"payment_method":             offerStringPtr(o, "payment_method"),
+		"offer_id":                   offerStringPtr(o, "offer_id"),
+		"first_seen":                 nilIfEmpty(offerString(o, "first_seen")),
+		"last_seen":                  nilIfEmpty(offerString(o, "last_seen")),
+		"is_live":                    offerBool(o, "is_live"),
+		"duration":                   offerInt64Ptr(o, "duration"),
+		"historical_analysis_status": nilIfEmpty(offerString(o, "historical_analysis_status")),
+		"avg_ref_price":              offerFloatPtr(o, "avg_ref_price"),
+		"avg_premium_pct":            offerFloatPtr(o, "avg_premium_pct"),
+		"avg_trade_cost_pct":         offerFloatPtr(o, "avg_trade_cost_pct"),
+		"avg_trade_cost_btc":         offerFloatPtr(o, "avg_trade_cost_btc"),
+		"avg_hedge_fee_sum_btc":      offerFloatPtr(o, "avg_hedge_fee_sum_btc"),
+		"cex_taker_fee_btc":          offerFloatPtr(o, "cex_taker_fee_btc"),
+		"cex_withdraw_fee_btc":       offerFloatPtr(o, "cex_withdraw_fee_btc"),
+		"network_fee_btc":            offerFloatPtr(o, "network_fee_btc"),
+		"hedge_open_fee_btc":         offerFloatPtr(o, "hedge_open_fee_btc"),
+		"hedge_close_fee_btc":        offerFloatPtr(o, "hedge_close_fee_btc"),
+		"hedge_funding_fee_btc":      offerFloatPtr(o, "hedge_funding_fee_btc"),
+		"hedge_fee_sum_btc":          offerFloatPtr(o, "hedge_fee_sum_btc"),
+		"hedge_venue":                offerStringPtr(o, "hedge_venue"),
+		"hedge_instrument":           offerStringPtr(o, "hedge_instrument"),
+		"hedge_transfer_minutes":     offerInt64Ptr(o, "hedge_transfer_minutes"),
+		"dex_fee_btc":                offerFloatPtr(o, "dex_fee_btc"),
+		"avg_net_premium_pct":        offerFloatPtr(o, "avg_net_premium_pct"),
+		"avg_estimated_profit_btc":   offerFloatPtr(o, "avg_estimated_profit_btc"),
+		"avg_estimated_profit_fiat":  offerFloatPtr(o, "avg_estimated_profit_fiat"),
+		"avg_btc_amount":             offerFloatPtr(o, "avg_btc_amount"),
+		"price_type":                 nilIfEmpty(offerString(o, "price_type")),
+		"best_route_cex":             nilIfEmpty(offerString(o, "best_route_cex")),
+		"best_route_method":          nilIfEmpty(offerString(o, "best_route_method")),
+	}
+}
+
+func nilIfEmpty(value string) any {
+	if strings.TrimSpace(value) == "" {
+		return nil
+	}
+	return value
 }
 
 func offerFloatPtr(o map[string]any, key string) *float64 {

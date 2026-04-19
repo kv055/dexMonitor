@@ -266,6 +266,28 @@ export interface PastOrderStats {
   timeframes: PastOrderTimeframeStats[];
 }
 
+export interface PastProfitableOrderSummary {
+  net_profit_btc: number;
+  net_profit_fiat: number;
+  trade_size_btc: number;
+  trade_size_fiat: number;
+  net_percent: number;
+  cap_fiat?: number | null;
+}
+
+export interface PastProfitableOrder {
+  id: number;
+  exchange: string;
+  offer_id?: string | null;
+  payment_method?: string | null;
+  direction: string;
+  status: LiveOfferStatus;
+  pricing: LiveOfferPricing;
+  summary: PastProfitableOrderSummary;
+  analysis: LiveOfferAnalysis;
+  offer: Record<string, string | number | boolean | null>;
+}
+
 export interface NamedCount {
   name: string;
   count: number;

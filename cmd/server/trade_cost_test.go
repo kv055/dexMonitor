@@ -598,6 +598,70 @@ func TestPastOrderStatsAndPastOffersRespectExcludedPaymentMethods(t *testing.T) 
 	}
 }
 
+func TestPastProfitableOrdersReturnsClosedNetPositiveOrders(t *testing.T) {
+	withTempOrdersDB(t)
+
+	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
+	est.dexFees["hodlhodl"] = seededCachedFee(0.001)
+	est.dexFees["robosats"] = seededCachedFee(0.001)
+	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
+	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/past_profitable_orders?max_fiat_limit=5&exclude_payment_methods=Revolut", nil)
+	rec := httptest.NewRecorder()
+
+	handlePastProfitableOrders(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var orders []struct {
+		ID            int64   `json:"id"`
+		PaymentMethod *string `json:"payment_method"`
+		Status        struct {
+			IsLive bool `json:"is_live"`
+		} `json:"status"`
+		Summary struct {
+			NetProfitBTC  float64  `json:"net_profit_btc"`
+			NetProfitFiat float64  `json:"net_profit_fiat"`
+			TradeSizeBTC  float64  `json:"trade_size_btc"`
+			CapFiat       *float64 `json:"cap_fiat"`
+		} `json:"summary"`
+		Offer map[string]any `json:"offer"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &orders); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(orders) == 0 {
+		t.Fatal("expected profitable past orders, got none")
+	}
+
+	for _, order := range orders {
+		if order.Status.IsLive {
+			t.Fatalf("expected closed order, got live order %#v", order)
+		}
+		if order.PaymentMethod != nil && *order.PaymentMethod == "Revolut" {
+			t.Fatalf("response included excluded payment method: %#v", order)
+		}
+		if order.Summary.NetProfitBTC <= 0 || order.Summary.NetProfitFiat <= 0 {
+			t.Fatalf("expected positive profit summary, got %#v", order.Summary)
+		}
+		if order.Summary.TradeSizeBTC <= 0 {
+			t.Fatalf("expected positive trade size, got %#v", order.Summary)
+		}
+		if _, ok := order.Offer["avg_estimated_profit_btc"]; !ok {
+			t.Fatalf("offer payload missing avg_estimated_profit_btc: %#v", order.Offer)
+		}
+		if _, ok := order.Offer["is_live"]; !ok {
+			t.Fatalf("offer payload missing is_live: %#v", order.Offer)
+		}
+		if order.Summary.CapFiat == nil {
+			t.Fatalf("expected capped summary when max_fiat_limit is set, got %#v", order.Summary)
+		}
+	}
+}
+
 func TestHandlePastOfferLifecycleReturnsLifecyclePoints(t *testing.T) {
 	withTempOrdersDB(t)
 
@@ -800,40 +864,40 @@ func TestBuildPastPremiumStatsIgnoresNonPremiumOffers(t *testing.T) {
 	now := time.Now().UTC()
 	offers := []map[string]any{
 		{
-			"id":              1.0,
-			"exchange":        "robosats",
-			"payment_method":  "SEPA",
-			"direction":       "buy",
-			"last_seen":       now.Add(-2 * time.Hour).Format("2006-01-02 15:04:05"),
-			"is_live":         false,
-			"avg_premium_pct": 4.0,
+			"id":                  1.0,
+			"exchange":            "robosats",
+			"payment_method":      "SEPA",
+			"direction":           "buy",
+			"last_seen":           now.Add(-2 * time.Hour).Format("2006-01-02 15:04:05"),
+			"is_live":             false,
+			"avg_premium_pct":     4.0,
 			"avg_net_premium_pct": 3.0,
-			"avg_ref_price":   100.0,
-			"btc_max":         0.1,
+			"avg_ref_price":       100.0,
+			"btc_max":             0.1,
 		},
 		{
-			"id":              2.0,
-			"exchange":        "robosats",
-			"payment_method":  "SEPA",
-			"direction":       "buy",
-			"last_seen":       now.Add(-3 * time.Hour).Format("2006-01-02 15:04:05"),
-			"is_live":         false,
-			"avg_premium_pct": -4.0,
+			"id":                  2.0,
+			"exchange":            "robosats",
+			"payment_method":      "SEPA",
+			"direction":           "buy",
+			"last_seen":           now.Add(-3 * time.Hour).Format("2006-01-02 15:04:05"),
+			"is_live":             false,
+			"avg_premium_pct":     -4.0,
 			"avg_net_premium_pct": -3.0,
-			"avg_ref_price":   100.0,
-			"btc_max":         0.1,
+			"avg_ref_price":       100.0,
+			"btc_max":             0.1,
 		},
 		{
-			"id":              3.0,
-			"exchange":        "bisq",
-			"payment_method":  "SEPA",
-			"direction":       "sell",
-			"last_seen":       now.Add(-4 * time.Hour).Format("2006-01-02 15:04:05"),
-			"is_live":         false,
-			"avg_premium_pct": 6.0,
+			"id":                  3.0,
+			"exchange":            "bisq",
+			"payment_method":      "SEPA",
+			"direction":           "sell",
+			"last_seen":           now.Add(-4 * time.Hour).Format("2006-01-02 15:04:05"),
+			"is_live":             false,
+			"avg_premium_pct":     6.0,
 			"avg_net_premium_pct": 5.0,
-			"avg_ref_price":   100.0,
-			"btc_max":         0.1,
+			"avg_ref_price":       100.0,
+			"btc_max":             0.1,
 		},
 	}
 

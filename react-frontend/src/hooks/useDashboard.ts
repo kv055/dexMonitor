@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { apiFetch } from '../utils/api';
-import type { Offer, Stats, OHLCData, PastOrderStats, GeneralStatsData } from '../types';
+import type { Offer, Stats, OHLCData, PastOrderStats, GeneralStatsData, PastProfitableOrder } from '../types';
 
 function excludedPaymentQuery(excludedPaymentMethods: string[]): string {
   if (excludedPaymentMethods.length === 0) return '';
@@ -20,6 +20,8 @@ export function useDashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [pastOrderStats, setPastOrderStats] = useState<PastOrderStats | null>(null);
   const [pastOrderStatsAll, setPastOrderStatsAll] = useState<PastOrderStats | null>(null);
+  const [pastProfitableOrders, setPastProfitableOrders] = useState<PastProfitableOrder[]>([]);
+  const [pastProfitableOrdersAll, setPastProfitableOrdersAll] = useState<PastProfitableOrder[]>([]);
   const [generalStats, setGeneralStats] = useState<GeneralStatsData | null>(null);
   const [ohlcData, setOhlcData] = useState<OHLCData | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState('');
@@ -34,12 +36,16 @@ export function useDashboard() {
       const tcQuery = `${tradeCostQuery(excludedCEXes, feeTier, maxFiatLimit)}${!coupledHedge ? '&coupled_hedge=false' : ''}`;
       const posAllQuery = `/api/past_order_stats?fiat=EUR${tcQuery}`;
       const posFilteredQuery = `/api/past_order_stats?fiat=EUR${excludedQuery}${tcQuery}`;
-      const [s, o, ohlc, posAll, posFiltered, gs] = await Promise.all([
+      const profitableAllQuery = `/api/past_profitable_orders?fiat=EUR${tcQuery}`;
+      const profitableFilteredQuery = `/api/past_profitable_orders?fiat=EUR${excludedQuery}${tcQuery}`;
+      const [s, o, ohlc, posAll, posFiltered, profitableAll, profitableFiltered, gs] = await Promise.all([
         apiFetch<Stats>(`/api/stats?hours=${hours}`),
         apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&cex=${cex}${excludedQuery}${tcQuery}`),
         apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`),
         apiFetch<PastOrderStats>(posAllQuery),
         excludedQuery ? apiFetch<PastOrderStats>(posFilteredQuery) : Promise.resolve(null),
+        apiFetch<PastProfitableOrder[]>(profitableAllQuery),
+        excludedQuery ? apiFetch<PastProfitableOrder[]>(profitableFilteredQuery) : Promise.resolve(null),
         apiFetch<GeneralStatsData>(`/api/general_stats?hours=${hours}&cex=${cex}${excludedQuery}${tcQuery}`),
       ]);
       setStats(s);
@@ -47,6 +53,8 @@ export function useDashboard() {
       setOhlcData(ohlc);
       setPastOrderStatsAll(posAll);
       setPastOrderStats(posFiltered ?? posAll);
+      setPastProfitableOrdersAll(profitableAll);
+      setPastProfitableOrders(profitableFiltered ?? profitableAll);
       setGeneralStats(gs);
       setLastUpdatedAt(new Date().toISOString());
     } catch (e: unknown) {
@@ -67,5 +75,5 @@ export function useDashboard() {
     }
   }, []);
 
-  return { pastOffers, stats, pastOrderStats, pastOrderStatsAll, generalStats, ohlcData, lastUpdatedAt, error, loading, load, extendOhlc };
+  return { pastOffers, stats, pastOrderStats, pastOrderStatsAll, pastProfitableOrders, pastProfitableOrdersAll, generalStats, ohlcData, lastUpdatedAt, error, loading, load, extendOhlc };
 }
