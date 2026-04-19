@@ -12,6 +12,13 @@ GET {{baseUrl}}/api/live_offers
 
 ### Past Offers — last 24h, up to 1000
 # Default: limit=1000, hours=24
+# Returns the averaged past-offer schema:
+#   status
+#   pricing.avg_offer_price / avg_ref_price / avg_premium_percent
+#   volume_limits
+#   btc_network_fee
+#   analysis.full_volume
+#   analysis.capped_volume (when max_fiat_limit reduces trade size)
 # Lifecycle is now served separately per offer:
 #   GET /api/past_offers/{id}/lifecycle
 GET {{baseUrl}}/api/past_offers
@@ -21,6 +28,12 @@ GET {{baseUrl}}/api/past_offers
 ### Past Offers — custom window
 # Adjust limit and hours as needed
 GET {{baseUrl}}/api/past_offers?limit=100&hours=48
+
+###
+
+### Past Offers — capped analysis
+# Recomputes capped averages on every request using max_fiat_limit
+GET {{baseUrl}}/api/past_offers?limit=100&hours=48&max_fiat_limit=500
 
 ###
 

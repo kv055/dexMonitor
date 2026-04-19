@@ -46,7 +46,7 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, stats, 
   stats: ReturnType<typeof useDashboard>['stats'] | null;
   lastUpdatedAt: string;
   error: string | null;
-  load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, maxFiatLimit?: number | null) => void;
+  load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
   extendOhlc: (hours: number, cex?: string) => void;
   refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
   excludedPaymentMethods: string[];
@@ -59,8 +59,8 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, stats, 
 
   useEffect(() => {
     refreshForCex(filters.cex, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
-    load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, maxFiatLimit);
-    const interval = setInterval(() => load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, maxFiatLimit), 5 * 60 * 1000);
+    load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
+    const interval = setInterval(() => load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit), 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, load, refreshForCex]);
 
@@ -76,7 +76,7 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, stats, 
       <div className="lg:flex-2 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_3fr] gap-2 sm:gap-3">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
           <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Control Panel</h3>
-          <ControlPanel onRefresh={() => load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, maxFiatLimit)} lastUpdatedAt={lastUpdatedAt} stats={stats} />
+          <ControlPanel onRefresh={() => load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit)} lastUpdatedAt={lastUpdatedAt} stats={stats} />
         </div>
 
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
@@ -128,23 +128,24 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ theme, pastOrderStats, pastOrderStatsAll, generalStats, loading, load, excludedPaymentMethods, excludedCEXes, feeTier, maxFiatLimit }: {
+function InsightsView({ theme, pastOrderStats, pastOrderStatsAll, generalStats, loading, load, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit }: {
   theme: ThemeMode;
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
   generalStats: ReturnType<typeof useDashboard>['generalStats'];
   loading: boolean;
-  load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, maxFiatLimit?: number | null) => void;
+  load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
   excludedPaymentMethods: string[];
   excludedCEXes: string[];
   feeTier: string;
+  coupledHedge: boolean;
   maxFiatLimit: number | null;
 }) {
   const { filters } = useFilters();
 
   useEffect(() => {
-    load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, maxFiatLimit);
-  }, [filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, maxFiatLimit, load]);
+    load(filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
+  }, [filters.hours, filters.cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, load]);
 
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -319,6 +320,7 @@ export default function App() {
             excludedPaymentMethods={excludedPaymentMethods}
             excludedCEXes={excludedCEXes}
             feeTier={feeTier}
+            coupledHedge={coupledHedge}
             maxFiatLimit={maxFiatLimit}
           />
         )}

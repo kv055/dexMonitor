@@ -119,15 +119,44 @@ function ExchangesCard({ stats }: { stats: GeneralStatsData }) {
 }
 
 function LifetimeCard({ stats }: { stats: GeneralStatsData }) {
-  const byExchange = stats.avg_offer_lifetime_ms_by_exchange ?? [];
-  const overall = stats.avg_offer_lifetime_ms;
+  const [mode, setMode] = useState<'raw' | 'net_full' | 'net_capped'>('raw');
+  const selected = stats.premium_lifetimes?.[mode] ?? {
+    avg_offer_lifetime_ms: mode === 'raw' ? stats.avg_offer_lifetime_ms : null,
+    avg_offer_lifetime_ms_by_exchange: mode === 'raw' ? stats.avg_offer_lifetime_ms_by_exchange : [],
+  };
+  const byExchange = selected.avg_offer_lifetime_ms_by_exchange ?? [];
+  const overall = selected.avg_offer_lifetime_ms;
+  const modeLabel = mode === 'raw' ? 'Raw' : mode === 'net_full' ? 'Net Full' : 'Net Capped';
   return (
     <Card accent="bg-muted" bottomFill={overall != null ? Math.min(overall / (24 * 3_600_000), 1) : 0} bottomColor="bg-muted">
       <div className="flex items-baseline justify-between gap-2">
         <Label>Avg Offer Lifetime</Label>
-        <span className="text-sm font-bold tabular-nums mono-nums leading-none text-text">
-          {overall != null ? fmtDuration(overall) : '—'}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-bold tabular-nums mono-nums leading-none text-text">
+            {overall != null ? fmtDuration(overall) : '—'}
+          </span>
+          <span className="text-[0.68rem] font-bold tabular-nums mono-nums leading-none text-text">{modeLabel}</span>
+        </div>
+      </div>
+      <div className="flex items-center gap-1 flex-wrap">
+        {([
+          ['raw', 'Raw'],
+          ['net_full', 'Net Full'],
+          ['net_capped', 'Net Capped'],
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setMode(value)}
+            className={`rounded-md border px-2 py-0.5 text-[0.68rem] font-medium transition-colors ${
+              mode === value
+                ? 'border-accent bg-accent text-black'
+                : 'border-border bg-bg/40 text-muted hover:text-text'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
       </div>
       {byExchange.length > 0 && (
         <div className="flex items-center gap-2.5 flex-wrap">
@@ -144,32 +173,53 @@ function LifetimeCard({ stats }: { stats: GeneralStatsData }) {
 }
 
 function PremiumsCard({ stats }: { stats: GeneralStatsData }) {
-  const bestAsk = stats.best_ask_premium_pct;
-  const avgAsk = stats.avg_ask_premium_pct;
-  const bestBid = stats.best_bid_premium_pct;
-  const avgBid = stats.avg_bid_premium_pct;
-  const bestOverall = Math.max(bestAsk ?? -Infinity, bestBid ?? -Infinity);
-  const barValue = isFinite(bestOverall) ? bestOverall : 0;
+  const [mode, setMode] = useState<'raw' | 'net_full' | 'net_capped'>('raw');
+  const selected = stats.open_premiums?.[mode] ?? {
+    avg_ask_premium_pct: mode === 'raw' ? stats.avg_ask_premium_pct : null,
+    avg_bid_premium_pct: mode === 'raw' ? stats.avg_bid_premium_pct : null,
+  };
+  const avgAsk = selected.avg_ask_premium_pct;
+  const avgBid = selected.avg_bid_premium_pct;
+  const strongest = Math.max(Math.abs(avgAsk ?? 0), Math.abs(avgBid ?? 0));
+  const barValue = isFinite(strongest) ? strongest : 0;
   const barColor = barValue >= 3 ? 'bg-green' : barValue > 0 ? 'bg-accent' : 'bg-red';
   const accent = barValue > 0 ? barColor : 'bg-border';
+  const modeLabel = mode === 'raw' ? 'Raw' : mode === 'net_full' ? 'Net Full' : 'Net Capped';
 
   return (
     <Card accent={accent} bottomFill={barValue > 0 ? Math.min(barValue / 10, 1) : 0} bottomColor={barColor}>
-      <Label>Open Premiums</Label>
+      <div className="flex items-baseline justify-between gap-2">
+        <Label>Open Premiums</Label>
+        <span className="text-sm font-bold tabular-nums mono-nums leading-none text-text">{modeLabel}</span>
+      </div>
+      <div className="flex items-center gap-1 flex-wrap">
+        {([
+          ['raw', 'Raw'],
+          ['net_full', 'Net Full'],
+          ['net_capped', 'Net Capped'],
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setMode(value)}
+            className={`rounded-md border px-2 py-0.5 text-[0.68rem] font-medium transition-colors ${
+              mode === value
+                ? 'border-accent bg-accent text-black'
+                : 'border-border bg-bg/40 text-muted hover:text-text'
+            }`}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-1.5">
           <span className="text-[0.68rem] font-bold text-accent leading-none">Asks</span>
-          <span className="text-[0.65rem] text-muted">best</span>
-          <span className={`text-[0.8rem] font-bold tabular-nums mono-nums leading-none ${premiumColor(bestAsk)}`}>{fmtPct(bestAsk)}</span>
-          <span className="text-[0.65rem] text-muted">avg</span>
           <span className={`text-[0.8rem] font-bold tabular-nums mono-nums leading-none ${premiumColor(avgAsk)}`}>{fmtPct(avgAsk)}</span>
         </div>
         <div className="w-px h-3 bg-border/60 shrink-0" />
         <div className="flex items-center gap-1.5">
           <span className="text-[0.68rem] font-bold text-blue leading-none">Bids</span>
-          <span className="text-[0.65rem] text-muted">best</span>
-          <span className={`text-[0.8rem] font-bold tabular-nums mono-nums leading-none ${premiumColor(bestBid)}`}>{fmtPct(bestBid)}</span>
-          <span className="text-[0.65rem] text-muted">avg</span>
           <span className={`text-[0.8rem] font-bold tabular-nums mono-nums leading-none ${premiumColor(avgBid)}`}>{fmtPct(avgBid)}</span>
         </div>
       </div>
@@ -179,6 +229,7 @@ function PremiumsCard({ stats }: { stats: GeneralStatsData }) {
 
 function PastPremiumsCard({ stats }: { stats: GeneralStatsData }) {
   const frames = stats.past_premiums ?? [];
+  const [mode, setMode] = useState<'raw' | 'net_full' | 'net_capped'>('raw');
   const [selectedTimeframe, setSelectedTimeframe] = useState('24h');
   const selected = useMemo(() => (
     frames.find(frame => frame.timeframe === selectedTimeframe)
@@ -186,21 +237,25 @@ function PastPremiumsCard({ stats }: { stats: GeneralStatsData }) {
       ?? frames[0]
       ?? null
   ), [frames, selectedTimeframe]);
-  const entries = selected?.avg_premium_by_exchange ?? [];
+  const entries = selected?.modes?.[mode] ?? selected?.avg_premium_by_exchange ?? [];
   const top = entries.slice(0, 3);
   const rest = entries.length - top.length;
   const topValue = top.reduce((best, entry) => Math.max(best, entry.avg_premium_pct), -Infinity);
   const barValue = isFinite(topValue) ? topValue : 0;
   const barColor = barValue >= 3 ? 'bg-green' : barValue > 0 ? 'bg-accent' : 'bg-red';
   const accent = barValue > 0 ? barColor : 'bg-border';
+  const modeLabel = mode === 'raw' ? 'Raw' : mode === 'net_full' ? 'Net Full' : 'Net Capped';
 
   return (
     <Card accent={accent} bottomFill={barValue > 0 ? Math.min(barValue / 10, 1) : 0} bottomColor={barColor}>
       <div className="flex items-baseline justify-between gap-2">
         <Label>Past Premiums</Label>
-        <span className="text-sm font-bold tabular-nums mono-nums leading-none text-text">
-          {selected ? labelForTimeframe(selected.timeframe) : '—'}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className="text-sm font-bold tabular-nums mono-nums leading-none text-text">
+            {selected ? labelForTimeframe(selected.timeframe) : '—'}
+          </span>
+          <span className="text-[0.68rem] font-bold tabular-nums mono-nums leading-none text-text">{modeLabel}</span>
+        </div>
       </div>
       <div className="flex items-center gap-1 flex-wrap">
         {frames.map(frame => (
@@ -215,6 +270,26 @@ function PastPremiumsCard({ stats }: { stats: GeneralStatsData }) {
             }`}
           >
             {labelForTimeframe(frame.timeframe)}
+          </button>
+        ))}
+      </div>
+      <div className="flex items-center gap-1 flex-wrap">
+        {([
+          ['raw', 'Raw'],
+          ['net_full', 'Net Full'],
+          ['net_capped', 'Net Capped'],
+        ] as const).map(([value, label]) => (
+          <button
+            key={value}
+            type="button"
+            onClick={() => setMode(value)}
+            className={`rounded-md border px-2 py-0.5 text-[0.68rem] font-medium transition-colors ${
+              mode === value
+                ? 'border-accent bg-accent text-black'
+                : 'border-border bg-bg/40 text-muted hover:text-text'
+            }`}
+          >
+            {label}
           </button>
         ))}
       </div>

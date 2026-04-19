@@ -85,14 +85,22 @@ export interface LiveOfferStatus {
   is_live: boolean;
   first_seen: string | null;
   last_seen: string | null;
+  duration?: {
+    hours: number;
+    minutes: number;
+    display: string;
+  } | null;
 }
 
 export interface LiveOfferPricing {
   price_type: string | null;
   fiat_currency: string;
-  offer_price: number;
-  ref_price: number | null;
-  raw_premium_percent: number | null;
+  offer_price?: number;
+  ref_price?: number | null;
+  raw_premium_percent?: number | null;
+  avg_offer_price?: number;
+  avg_ref_price?: number | null;
+  avg_premium_percent?: number | null;
 }
 
 export interface LiveOfferVolumeLimits {
@@ -119,25 +127,31 @@ export interface LiveOfferRoute {
 }
 
 export interface LiveOfferPremium {
-  trade_cost_percent: number | null;
-  net_percent: number | null;
+  trade_cost_percent?: number | null;
+  net_percent?: number | null;
+  avg_trade_cost_percent?: number | null;
+  avg_net_percent?: number | null;
 }
 
 export interface LiveOfferProfit {
-  btc: number | null;
-  fiat: number | null;
+  btc?: number | null;
+  fiat?: number | null;
+  avg_btc?: number | null;
+  avg_fiat?: number | null;
 }
 
 export interface LiveOfferCostComponent {
-  pct: number;
-  btc: number;
+  pct?: number;
+  btc?: number;
+  avg_pct?: number;
+  avg_btc?: number;
 }
 
 export interface LiveOfferScenarioCosts {
   cex_taker: LiveOfferCostComponent;
   withdrawal: LiveOfferCostComponent;
   dex_fee: LiveOfferCostComponent;
-  network: { pct: number };
+  network: LiveOfferCostComponent;
   hedge: HedgeBreakdown;
   total: LiveOfferCostComponent;
 }
@@ -266,6 +280,11 @@ export interface PastPremiumTimeframeStats {
   timeframe: string;
   hours: number;
   avg_premium_by_exchange: NamedPremium[];
+  modes?: {
+    raw: NamedPremium[];
+    net_full: NamedPremium[];
+    net_capped: NamedPremium[];
+  };
 }
 
 export interface GeneralStatsData {
@@ -277,6 +296,16 @@ export interface GeneralStatsData {
   avg_ask_premium_pct: number | null;
   best_bid_premium_pct: number | null;
   avg_bid_premium_pct: number | null;
+  open_premiums?: {
+    raw: { avg_ask_premium_pct: number | null; avg_bid_premium_pct: number | null };
+    net_full: { avg_ask_premium_pct: number | null; avg_bid_premium_pct: number | null };
+    net_capped: { avg_ask_premium_pct: number | null; avg_bid_premium_pct: number | null };
+  };
+  premium_lifetimes?: {
+    raw: { avg_offer_lifetime_ms: number | null; avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[] };
+    net_full: { avg_offer_lifetime_ms: number | null; avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[] };
+    net_capped: { avg_offer_lifetime_ms: number | null; avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[] };
+  };
   avg_offer_lifetime_ms: number | null;
   avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[];
   payment_method_counts: NamedCount[];

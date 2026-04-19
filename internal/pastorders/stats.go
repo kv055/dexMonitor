@@ -72,10 +72,34 @@ type GeneralStatsResponse struct {
 	AvgAskPremiumPct             *float64                    `json:"avg_ask_premium_pct"`
 	BestBidPremiumPct            *float64                    `json:"best_bid_premium_pct"`
 	AvgBidPremiumPct             *float64                    `json:"avg_bid_premium_pct"`
+	OpenPremiums                 OpenPremiumStats            `json:"open_premiums"`
 	AvgOfferLifetimeMs           *int64                      `json:"avg_offer_lifetime_ms"`
 	AvgOfferLifetimeMsByExchange []NamedDuration             `json:"avg_offer_lifetime_ms_by_exchange"`
+	PremiumLifetimes             PremiumLifetimeModes        `json:"premium_lifetimes"`
 	PaymentMethodCounts          []Count                     `json:"payment_method_counts"`
 	PastPremiums                 []PastPremiumTimeframeStats `json:"past_premiums"`
+}
+
+type OpenPremiumModeStats struct {
+	AvgAskPremiumPct *float64 `json:"avg_ask_premium_pct"`
+	AvgBidPremiumPct *float64 `json:"avg_bid_premium_pct"`
+}
+
+type OpenPremiumStats struct {
+	Raw       OpenPremiumModeStats `json:"raw"`
+	NetFull   OpenPremiumModeStats `json:"net_full"`
+	NetCapped OpenPremiumModeStats `json:"net_capped"`
+}
+
+type PremiumLifetimeStats struct {
+	AvgOfferLifetimeMs           *int64          `json:"avg_offer_lifetime_ms"`
+	AvgOfferLifetimeMsByExchange []NamedDuration `json:"avg_offer_lifetime_ms_by_exchange"`
+}
+
+type PremiumLifetimeModes struct {
+	Raw       PremiumLifetimeStats `json:"raw"`
+	NetFull   PremiumLifetimeStats `json:"net_full"`
+	NetCapped PremiumLifetimeStats `json:"net_capped"`
 }
 
 type NamedDuration struct {
@@ -89,9 +113,16 @@ type NamedPremium struct {
 }
 
 type PastPremiumTimeframeStats struct {
-	Timeframe            string         `json:"timeframe"`
-	Hours                int            `json:"hours"`
-	AvgPremiumByExchange []NamedPremium `json:"avg_premium_by_exchange"`
+	Timeframe            string           `json:"timeframe"`
+	Hours                int              `json:"hours"`
+	AvgPremiumByExchange []NamedPremium   `json:"avg_premium_by_exchange,omitempty"`
+	Modes                PastPremiumModes `json:"modes"`
+}
+
+type PastPremiumModes struct {
+	Raw       []NamedPremium `json:"raw"`
+	NetFull   []NamedPremium `json:"net_full"`
+	NetCapped []NamedPremium `json:"net_capped"`
 }
 
 type Count struct {
@@ -302,6 +333,9 @@ func buildPastPremiumTimeframes(offers []Offer, now time.Time) []PastPremiumTime
 			Timeframe:            tf.Label,
 			Hours:                tf.Hours,
 			AvgPremiumByExchange: avgByExchange,
+			Modes: PastPremiumModes{
+				Raw: avgByExchange,
+			},
 		})
 	}
 	return stats

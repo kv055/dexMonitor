@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"dexmonitor/internal/pastorders"
 	"encoding/json"
 	"errors"
 	"math"
@@ -72,6 +73,8 @@ func assertFloat(t *testing.T, got, want float64) {
 		t.Fatalf("got %.12f, want %.12f", got, want)
 	}
 }
+
+func strPtr(v string) *string { return &v }
 
 func TestTradeCostEstimatorCostPctUsesAllComponents(t *testing.T) {
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
@@ -412,23 +415,49 @@ func TestPastOffersRESTComputesCostsForClosedOrdersDump(t *testing.T) {
 
 	computedCosts := 0
 	for i, offer := range offers {
-		if _, ok := offer["price_diff_percent"].(float64); !ok {
-			t.Fatalf("offer %d missing numeric price_diff_percent: %#v", i, offer["price_diff_percent"])
+		status, ok := offer["status"].(map[string]any)
+		if !ok {
+			t.Fatalf("offer %d missing status object: %#v", i, offer["status"])
 		}
-		if _, ok := offer["trade_cost_percent"].(float64); !ok {
-			t.Fatalf("offer %d missing numeric trade_cost_percent: %#v", i, offer["trade_cost_percent"])
+		if status["is_live"] != false {
+			t.Fatalf("offer %d status.is_live = %#v, want false", i, status["is_live"])
 		}
-		if _, ok := offer["net_premium_percent"].(float64); !ok {
-			t.Fatalf("offer %d missing numeric net_premium_percent: %#v", i, offer["net_premium_percent"])
+		pricing, ok := offer["pricing"].(map[string]any)
+		if !ok {
+			t.Fatalf("offer %d missing pricing object: %#v", i, offer["pricing"])
 		}
-		if _, ok := offer["cost_breakdown"].(map[string]any); !ok {
-			t.Fatalf("offer %d missing cost_breakdown object: %#v", i, offer["cost_breakdown"])
+		if _, ok := pricing["avg_offer_price"].(float64); !ok {
+			t.Fatalf("offer %d missing numeric pricing.avg_offer_price: %#v", i, pricing["avg_offer_price"])
+		}
+		if _, ok := pricing["avg_ref_price"].(float64); !ok {
+			t.Fatalf("offer %d missing numeric pricing.avg_ref_price: %#v", i, pricing["avg_ref_price"])
+		}
+		if _, ok := pricing["avg_premium_percent"].(float64); !ok {
+			t.Fatalf("offer %d missing numeric pricing.avg_premium_percent: %#v", i, pricing["avg_premium_percent"])
+		}
+		analysis, ok := offer["analysis"].(map[string]any)
+		if !ok {
+			t.Fatalf("offer %d missing analysis object: %#v", i, offer["analysis"])
+		}
+		full, ok := analysis["full_volume"].(map[string]any)
+		if !ok {
+			t.Fatalf("offer %d missing analysis.full_volume: %#v", i, analysis["full_volume"])
+		}
+		premium, ok := full["premium"].(map[string]any)
+		if !ok {
+			t.Fatalf("offer %d missing analysis.full_volume.premium: %#v", i, full["premium"])
+		}
+		if _, ok := premium["avg_trade_cost_percent"].(float64); !ok {
+			t.Fatalf("offer %d missing avg_trade_cost_percent: %#v", i, premium["avg_trade_cost_percent"])
+		}
+		if _, ok := premium["avg_net_percent"].(float64); !ok {
+			t.Fatalf("offer %d missing avg_net_percent: %#v", i, premium["avg_net_percent"])
 		}
 		if _, ok := offer["lifecycle"]; ok {
 			t.Fatalf("offer %d unexpectedly included inline lifecycle after route split", i)
 		}
 
-		if offer["trade_cost_percent"].(float64) > 0 {
+		if premium["avg_trade_cost_percent"].(float64) > 0 {
 			computedCosts++
 			break
 		}
@@ -479,6 +508,47 @@ func TestPastOrderStatsRESTAggregatesPremiumOrdersByTimeframe(t *testing.T) {
 	assertFloat(t, sixHour.BiggestOrderBTC, 0.4)
 }
 
+func TestPastOffersRESTIncludesCappedAnalysisWhenRequested(t *testing.T) {
+	withTempOrdersDB(t)
+
+	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
+	est.dexFees["hodlhodl"] = seededCachedFee(0.001)
+	est.dexFees["robosats"] = seededCachedFee(0.001)
+	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
+	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/past_offers?hours=100000&limit=1000&max_fiat_limit=5", nil)
+	rec := httptest.NewRecorder()
+
+	handlePastOffers(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var offers []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &offers); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	foundCapped := false
+	for _, offer := range offers {
+		analysis, ok := offer["analysis"].(map[string]any)
+		if !ok {
+			continue
+		}
+		if capped, ok := analysis["capped_volume"].(map[string]any); ok {
+			if _, ok := capped["trade_size_btc"].(float64); !ok {
+				t.Fatalf("capped_volume missing trade_size_btc: %#v", capped)
+			}
+			foundCapped = true
+			break
+		}
+	}
+	if !foundCapped {
+		t.Fatal("expected at least one past offer with capped_volume")
+	}
+}
+
 func TestPastOrderStatsAndPastOffersRespectExcludedPaymentMethods(t *testing.T) {
 	withTempOrdersDB(t)
 
@@ -519,6 +589,11 @@ func TestPastOrderStatsAndPastOffersRespectExcludedPaymentMethods(t *testing.T) 
 	for _, offer := range offers {
 		if offer["payment_method"] == "Revolut" {
 			t.Fatalf("past_offers response included excluded Revolut offer: %#v", offer)
+		}
+		if status, ok := offer["status"].(map[string]any); ok {
+			if status["is_live"] != false {
+				t.Fatalf("past_offers response returned non-closed offer: %#v", offer)
+			}
 		}
 	}
 }
@@ -645,11 +720,12 @@ func TestGeneralStatsRESTIncludesPastPremiumsForFixedWindows(t *testing.T) {
 	withTempOrdersDB(t)
 
 	if _, err := db.Exec(`
-		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, first_seen, last_seen, is_live)
+		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, avg_premium_pct, avg_net_premium_pct, first_seen, last_seen, is_live)
 		VALUES
-			('robosats', 'buy', 104, 0.1, 0.1, 'SEPA', 'robo-10h', 100, datetime('now', '-10 hours'), datetime('now', '-10 hours'), 0),
-			('robosats', 'sell', 94, 0.1, 0.1, 'SEPA', 'robo-5d', 100, datetime('now', '-5 days'), datetime('now', '-5 days'), 0),
-			('bisq', 'buy', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
+			('robosats', 'buy', 104, 0.1, 0.1, 'SEPA', 'robo-10h', 100, 4, 3, datetime('now', '-10 hours'), datetime('now', '-10 hours'), 0),
+			('robosats', 'sell', 94, 0.1, 0.1, 'SEPA', 'robo-5d', 100, 6, 4, datetime('now', '-5 days'), datetime('now', '-5 days'), 0),
+			('robosats', 'buy', 96, 0.1, 0.1, 'SEPA', 'robo-negative', 100, -4, -3, datetime('now', '-8 hours'), datetime('now', '-8 hours'), 0),
+			('bisq', 'buy', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
 	`); err != nil {
 		t.Fatalf("insert extra offers: %v", err)
 	}
@@ -666,34 +742,377 @@ func TestGeneralStatsRESTIncludesPastPremiumsForFixedWindows(t *testing.T) {
 	var stats struct {
 		TotalOffers  int `json:"total_offers"`
 		PastPremiums []struct {
-			Timeframe            string `json:"timeframe"`
-			AvgPremiumByExchange []struct {
-				Name          string  `json:"name"`
-				AvgPremiumPct float64 `json:"avg_premium_pct"`
-			} `json:"avg_premium_by_exchange"`
+			Timeframe string `json:"timeframe"`
+			Modes     struct {
+				Raw []struct {
+					Name          string  `json:"name"`
+					AvgPremiumPct float64 `json:"avg_premium_pct"`
+				} `json:"raw"`
+				NetFull []struct {
+					Name          string  `json:"name"`
+					AvgPremiumPct float64 `json:"avg_premium_pct"`
+				} `json:"net_full"`
+				NetCapped []struct {
+					Name          string  `json:"name"`
+					AvgPremiumPct float64 `json:"avg_premium_pct"`
+				} `json:"net_capped"`
+			} `json:"modes"`
 		} `json:"past_premiums"`
 	}
 	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if stats.TotalOffers != 5 {
-		t.Fatalf("total offers = %d, want 5", stats.TotalOffers)
+	if stats.TotalOffers != 6 {
+		t.Fatalf("total offers = %d, want 6", stats.TotalOffers)
 	}
 
 	twentyFourHour := findPastPremiumFrame(t, stats.PastPremiums, "24h")
-	if len(twentyFourHour.AvgPremiumByExchange) != 2 {
-		t.Fatalf("24h past premiums len = %d, want 2", len(twentyFourHour.AvgPremiumByExchange))
+	if len(twentyFourHour.Modes.Raw) == 0 {
+		t.Fatal("24h raw past premiums unexpectedly empty")
 	}
-	assertFloat(t, twentyFourHour.AvgPremiumByExchange[0].AvgPremiumPct, 5)
-	assertFloat(t, twentyFourHour.AvgPremiumByExchange[1].AvgPremiumPct, 4)
+	if got := findNamedPremiumValue(t, twentyFourHour.Modes.Raw, "robosats"); got <= 0 {
+		t.Fatalf("24h raw robosats avg = %v, want > 0", got)
+	}
+	if got := findNamedPremiumValue(t, twentyFourHour.Modes.NetFull, "robosats"); got <= 0 {
+		t.Fatalf("24h net full robosats avg = %v, want > 0", got)
+	}
+	if got := findNamedPremiumValue(t, twentyFourHour.Modes.NetCapped, "robosats"); got <= 0 {
+		t.Fatalf("24h net capped robosats avg = %v, want > 0", got)
+	}
 
 	sevenDay := findPastPremiumFrame(t, stats.PastPremiums, "7d")
-	if len(sevenDay.AvgPremiumByExchange) != 2 {
-		t.Fatalf("7d past premiums len = %d, want 2", len(sevenDay.AvgPremiumByExchange))
+	if len(sevenDay.Modes.Raw) == 0 {
+		t.Fatal("7d raw past premiums unexpectedly empty")
 	}
-	assertFloat(t, sevenDay.AvgPremiumByExchange[0].AvgPremiumPct, 5)
-	assertFloat(t, sevenDay.AvgPremiumByExchange[1].AvgPremiumPct, 5)
+	if got := findNamedPremiumValue(t, sevenDay.Modes.Raw, "robosats"); got <= 0 {
+		t.Fatalf("7d raw robosats avg = %v, want > 0", got)
+	}
+	if got := findNamedPremiumValue(t, sevenDay.Modes.NetFull, "robosats"); got <= 0 {
+		t.Fatalf("7d net full robosats avg = %v, want > 0", got)
+	}
+	if got := findNamedPremiumValue(t, sevenDay.Modes.NetCapped, "robosats"); got <= 0 {
+		t.Fatalf("7d net capped robosats avg = %v, want > 0", got)
+	}
+}
+
+func TestBuildPastPremiumStatsIgnoresNonPremiumOffers(t *testing.T) {
+	now := time.Now().UTC()
+	offers := []map[string]any{
+		{
+			"id":              1.0,
+			"exchange":        "robosats",
+			"payment_method":  "SEPA",
+			"direction":       "buy",
+			"last_seen":       now.Add(-2 * time.Hour).Format("2006-01-02 15:04:05"),
+			"is_live":         false,
+			"avg_premium_pct": 4.0,
+			"avg_net_premium_pct": 3.0,
+			"avg_ref_price":   100.0,
+			"btc_max":         0.1,
+		},
+		{
+			"id":              2.0,
+			"exchange":        "robosats",
+			"payment_method":  "SEPA",
+			"direction":       "buy",
+			"last_seen":       now.Add(-3 * time.Hour).Format("2006-01-02 15:04:05"),
+			"is_live":         false,
+			"avg_premium_pct": -4.0,
+			"avg_net_premium_pct": -3.0,
+			"avg_ref_price":   100.0,
+			"btc_max":         0.1,
+		},
+		{
+			"id":              3.0,
+			"exchange":        "bisq",
+			"payment_method":  "SEPA",
+			"direction":       "sell",
+			"last_seen":       now.Add(-4 * time.Hour).Format("2006-01-02 15:04:05"),
+			"is_live":         false,
+			"avg_premium_pct": 6.0,
+			"avg_net_premium_pct": 5.0,
+			"avg_ref_price":   100.0,
+			"btc_max":         0.1,
+		},
+	}
+
+	stats := buildPastPremiumStats(offers, map[int64]pastLifecycleAggregate{}, now, nil, 0, 0, nil, "")
+	frame := stats[0] // 6h
+	if len(frame.Modes.Raw) != 2 {
+		t.Fatalf("6h raw len = %d, want 2", len(frame.Modes.Raw))
+	}
+	assertFloat(t, findNamedPremiumValueTyped(t, frame.Modes.Raw, "robosats"), 4)
+	assertFloat(t, findNamedPremiumValueTyped(t, frame.Modes.Raw, "bisq"), 6)
+	assertFloat(t, findNamedPremiumValueTyped(t, frame.Modes.NetFull, "robosats"), 3)
+	assertFloat(t, findNamedPremiumValueTyped(t, frame.Modes.NetFull, "bisq"), 5)
+	assertFloat(t, findNamedPremiumValueTyped(t, frame.Modes.NetCapped, "robosats"), 3)
+	assertFloat(t, findNamedPremiumValueTyped(t, frame.Modes.NetCapped, "bisq"), 5)
+}
+
+func TestBuildPremiumLifetimeStatsIgnoresNonPremiumOffers(t *testing.T) {
+	now := time.Now().UTC()
+	offers := []map[string]any{
+		{
+			"id":                  1.0,
+			"exchange":            "robosats",
+			"payment_method":      "SEPA",
+			"direction":           "buy",
+			"first_seen":          now.Add(-3 * time.Hour).Format("2006-01-02 15:04:05"),
+			"last_seen":           now.Format("2006-01-02 15:04:05"),
+			"is_live":             false,
+			"avg_premium_pct":     4.0,
+			"avg_net_premium_pct": 3.0,
+			"avg_ref_price":       100.0,
+			"btc_max":             0.1,
+		},
+		{
+			"id":                  2.0,
+			"exchange":            "robosats",
+			"payment_method":      "SEPA",
+			"direction":           "buy",
+			"first_seen":          now.Add(-6 * time.Hour).Format("2006-01-02 15:04:05"),
+			"last_seen":           now.Add(-4 * time.Hour).Format("2006-01-02 15:04:05"),
+			"is_live":             false,
+			"avg_premium_pct":     -4.0,
+			"avg_net_premium_pct": -3.0,
+			"avg_ref_price":       100.0,
+			"btc_max":             0.1,
+		},
+		{
+			"id":                  3.0,
+			"exchange":            "bisq",
+			"payment_method":      "SEPA",
+			"direction":           "sell",
+			"first_seen":          now.Add(-7 * time.Hour).Format("2006-01-02 15:04:05"),
+			"last_seen":           now.Add(-3 * time.Hour).Format("2006-01-02 15:04:05"),
+			"is_live":             false,
+			"avg_premium_pct":     6.0,
+			"avg_net_premium_pct": 5.0,
+			"avg_ref_price":       100.0,
+			"btc_max":             0.1,
+		},
+	}
+
+	stats := buildPremiumLifetimeStats(offers, map[int64]pastLifecycleAggregate{}, now, nil, 0, 0, nil, "")
+	if stats.Raw.AvgOfferLifetimeMs == nil {
+		t.Fatal("raw lifetime avg is nil")
+	}
+	if stats.NetFull.AvgOfferLifetimeMs == nil {
+		t.Fatal("net full lifetime avg is nil")
+	}
+	if stats.NetCapped.AvgOfferLifetimeMs == nil {
+		t.Fatal("net capped lifetime avg is nil")
+	}
+	assertFloat(t, float64(*stats.Raw.AvgOfferLifetimeMs), float64(int64((3*time.Hour+4*time.Hour)/2/time.Millisecond)))
+	assertFloat(t, float64(*stats.NetFull.AvgOfferLifetimeMs), float64(int64((3*time.Hour+4*time.Hour)/2/time.Millisecond)))
+	assertFloat(t, float64(*stats.NetCapped.AvgOfferLifetimeMs), float64(int64((3*time.Hour+4*time.Hour)/2/time.Millisecond)))
+	if len(stats.Raw.AvgOfferLifetimeMsByExchange) != 2 {
+		t.Fatalf("raw lifetime exchanges = %d, want 2", len(stats.Raw.AvgOfferLifetimeMsByExchange))
+	}
+}
+
+func TestGeneralStatsRESTIncludesOpenPremiumModesFromLiveEngine(t *testing.T) {
+	withTempOrdersDB(t)
+
+	oldHub := hub
+	oldPrices := cexPrices
+	oldOptimizer := tradeRouteOptimizer
+	oldEstimators := tradeCostEstimators
+	defer func() {
+		hub = oldHub
+		cexPrices = oldPrices
+		tradeRouteOptimizer = oldOptimizer
+		tradeCostEstimators = oldEstimators
+	}()
+
+	hub = &LiveHub{subscribers: map[chan []byte]liveSubscription{}}
+	cexPrices = map[string]float64{"kraken": 100}
+	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
+	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
+	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+
+	btcMin := 0.02
+	btcMax := 0.1
+	hub.offers = []LiveOffer{
+		{
+			ID:            101,
+			Exchange:      "bisq",
+			Direction:     "buy",
+			Price:         102.5,
+			BTCMin:        &btcMin,
+			BTCMax:        &btcMax,
+			PaymentMethod: strPtr("SEPA"),
+			FirstSeen:     "2026-04-01 12:00:00",
+			LastSeen:      "2026-04-01 12:00:00",
+		},
+		{
+			ID:            102,
+			Exchange:      "bisq",
+			Direction:     "sell",
+			Price:         97.5,
+			BTCMin:        &btcMin,
+			BTCMax:        &btcMax,
+			PaymentMethod: strPtr("SEPA"),
+			FirstSeen:     "2026-04-01 12:00:00",
+			LastSeen:      "2026-04-01 12:00:00",
+		},
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/general_stats?hours=48&cex=kraken&max_fiat_limit=5", nil)
+	rec := httptest.NewRecorder()
+
+	handleGeneralStats(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var stats struct {
+		OpenPremiums struct {
+			Raw struct {
+				AvgAskPremiumPct *float64 `json:"avg_ask_premium_pct"`
+				AvgBidPremiumPct *float64 `json:"avg_bid_premium_pct"`
+			} `json:"raw"`
+			NetFull struct {
+				AvgAskPremiumPct *float64 `json:"avg_ask_premium_pct"`
+				AvgBidPremiumPct *float64 `json:"avg_bid_premium_pct"`
+			} `json:"net_full"`
+			NetCapped struct {
+				AvgAskPremiumPct *float64 `json:"avg_ask_premium_pct"`
+				AvgBidPremiumPct *float64 `json:"avg_bid_premium_pct"`
+			} `json:"net_capped"`
+		} `json:"open_premiums"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if stats.OpenPremiums.Raw.AvgBidPremiumPct == nil || *stats.OpenPremiums.Raw.AvgBidPremiumPct != 2.5 {
+		t.Fatalf("raw bid avg = %#v, want 2.5", stats.OpenPremiums.Raw.AvgBidPremiumPct)
+	}
+	if stats.OpenPremiums.Raw.AvgAskPremiumPct == nil || *stats.OpenPremiums.Raw.AvgAskPremiumPct != 2.5 {
+		t.Fatalf("raw ask avg = %#v, want 2.5", stats.OpenPremiums.Raw.AvgAskPremiumPct)
+	}
+	if stats.OpenPremiums.NetFull.AvgBidPremiumPct == nil || *stats.OpenPremiums.NetFull.AvgBidPremiumPct != 1.9 {
+		t.Fatalf("net full bid avg = %#v, want 1.9", stats.OpenPremiums.NetFull.AvgBidPremiumPct)
+	}
+	if stats.OpenPremiums.NetCapped.AvgBidPremiumPct == nil || *stats.OpenPremiums.NetCapped.AvgBidPremiumPct != 1.65 {
+		t.Fatalf("net capped bid avg = %#v, want 1.65", stats.OpenPremiums.NetCapped.AvgBidPremiumPct)
+	}
+}
+
+func TestBuildOpenPremiumStatsIgnoresNonPremiumOffers(t *testing.T) {
+	oldHub := hub
+	oldPrices := cexPrices
+	oldOptimizer := tradeRouteOptimizer
+	oldEstimators := tradeCostEstimators
+	defer func() {
+		hub = oldHub
+		cexPrices = oldPrices
+		tradeRouteOptimizer = oldOptimizer
+		tradeCostEstimators = oldEstimators
+	}()
+
+	hub = &LiveHub{subscribers: map[chan []byte]liveSubscription{}}
+	cexPrices = map[string]float64{"kraken": 100}
+	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
+	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
+	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+
+	btcMin := 0.02
+	btcMax := 0.1
+	hub.offers = []LiveOffer{
+		{
+			ID:            201,
+			Exchange:      "bisq",
+			Direction:     "buy",
+			Price:         102.5,
+			BTCMin:        &btcMin,
+			BTCMax:        &btcMax,
+			PaymentMethod: strPtr("SEPA"),
+			FirstSeen:     "2026-04-01 12:00:00",
+			LastSeen:      "2026-04-01 12:00:00",
+		},
+		{
+			ID:            202,
+			Exchange:      "bisq",
+			Direction:     "buy",
+			Price:         90,
+			BTCMin:        &btcMin,
+			BTCMax:        &btcMax,
+			PaymentMethod: strPtr("SEPA"),
+			FirstSeen:     "2026-04-01 12:00:00",
+			LastSeen:      "2026-04-01 12:00:00",
+		},
+		{
+			ID:            203,
+			Exchange:      "bisq",
+			Direction:     "sell",
+			Price:         97.5,
+			BTCMin:        &btcMin,
+			BTCMax:        &btcMax,
+			PaymentMethod: strPtr("SEPA"),
+			FirstSeen:     "2026-04-01 12:00:00",
+			LastSeen:      "2026-04-01 12:00:00",
+		},
+		{
+			ID:            204,
+			Exchange:      "bisq",
+			Direction:     "sell",
+			Price:         110,
+			BTCMin:        &btcMin,
+			BTCMax:        &btcMax,
+			PaymentMethod: strPtr("SEPA"),
+			FirstSeen:     "2026-04-01 12:00:00",
+			LastSeen:      "2026-04-01 12:00:00",
+		},
+	}
+
+	sub := liveSubscription{cex: "kraken", maxFiatLimitEUR: 5}
+	enriched := hub.computeOutOffers(getCexPrice("kraken"), sub)
+	var expectedRawBid, expectedRawAsk float64
+	var expectedNetFullBid, expectedNetFullAsk float64
+	var expectedNetCappedBid, expectedNetCappedAsk float64
+	for _, offer := range enriched {
+		switch offer.ID {
+		case 201:
+			expectedRawBid = offer.PriceDiffPct
+			expectedNetFullBid = offer.NetPremiumPct
+			if offer.NetPremiumPctCapped == nil {
+				t.Fatal("expected capped bid premium")
+			}
+			expectedNetCappedBid = *offer.NetPremiumPctCapped
+		case 203:
+			expectedRawAsk = offer.PriceDiffPct
+			expectedNetFullAsk = offer.NetPremiumPct
+			if offer.NetPremiumPctCapped == nil {
+				t.Fatal("expected capped ask premium")
+			}
+			expectedNetCappedAsk = *offer.NetPremiumPctCapped
+		}
+	}
+
+	stats := buildOpenPremiumStats(sub, nil)
+
+	if stats.Raw.AvgBidPremiumPct == nil || *stats.Raw.AvgBidPremiumPct != expectedRawBid {
+		t.Fatalf("raw bid avg = %#v, want %v", stats.Raw.AvgBidPremiumPct, expectedRawBid)
+	}
+	if stats.Raw.AvgAskPremiumPct == nil || *stats.Raw.AvgAskPremiumPct != expectedRawAsk {
+		t.Fatalf("raw ask avg = %#v, want %v", stats.Raw.AvgAskPremiumPct, expectedRawAsk)
+	}
+	if stats.NetFull.AvgBidPremiumPct == nil || *stats.NetFull.AvgBidPremiumPct != expectedNetFullBid {
+		t.Fatalf("net full bid avg = %#v, want %v", stats.NetFull.AvgBidPremiumPct, expectedNetFullBid)
+	}
+	if stats.NetFull.AvgAskPremiumPct == nil || *stats.NetFull.AvgAskPremiumPct != expectedNetFullAsk {
+		t.Fatalf("net full ask avg = %#v, want %v", stats.NetFull.AvgAskPremiumPct, expectedNetFullAsk)
+	}
+	if stats.NetCapped.AvgBidPremiumPct == nil || *stats.NetCapped.AvgBidPremiumPct != expectedNetCappedBid {
+		t.Fatalf("net capped bid avg = %#v, want %v", stats.NetCapped.AvgBidPremiumPct, expectedNetCappedBid)
+	}
+	if stats.NetCapped.AvgAskPremiumPct == nil || *stats.NetCapped.AvgAskPremiumPct != expectedNetCappedAsk {
+		t.Fatalf("net capped ask avg = %#v, want %v", stats.NetCapped.AvgAskPremiumPct, expectedNetCappedAsk)
+	}
 }
 
 func withTempOrdersDB(t *testing.T) {
@@ -771,17 +1190,37 @@ func findStatsTimeframe(t *testing.T, timeframes []pastOrderStatsTestTimeframe, 
 }
 
 func findPastPremiumFrame(t *testing.T, timeframes []struct {
-	Timeframe            string `json:"timeframe"`
-	AvgPremiumByExchange []struct {
-		Name          string  `json:"name"`
-		AvgPremiumPct float64 `json:"avg_premium_pct"`
-	} `json:"avg_premium_by_exchange"`
+	Timeframe string `json:"timeframe"`
+	Modes     struct {
+		Raw []struct {
+			Name          string  `json:"name"`
+			AvgPremiumPct float64 `json:"avg_premium_pct"`
+		} `json:"raw"`
+		NetFull []struct {
+			Name          string  `json:"name"`
+			AvgPremiumPct float64 `json:"avg_premium_pct"`
+		} `json:"net_full"`
+		NetCapped []struct {
+			Name          string  `json:"name"`
+			AvgPremiumPct float64 `json:"avg_premium_pct"`
+		} `json:"net_capped"`
+	} `json:"modes"`
 }, label string) struct {
-	Timeframe            string `json:"timeframe"`
-	AvgPremiumByExchange []struct {
-		Name          string  `json:"name"`
-		AvgPremiumPct float64 `json:"avg_premium_pct"`
-	} `json:"avg_premium_by_exchange"`
+	Timeframe string `json:"timeframe"`
+	Modes     struct {
+		Raw []struct {
+			Name          string  `json:"name"`
+			AvgPremiumPct float64 `json:"avg_premium_pct"`
+		} `json:"raw"`
+		NetFull []struct {
+			Name          string  `json:"name"`
+			AvgPremiumPct float64 `json:"avg_premium_pct"`
+		} `json:"net_full"`
+		NetCapped []struct {
+			Name          string  `json:"name"`
+			AvgPremiumPct float64 `json:"avg_premium_pct"`
+		} `json:"net_capped"`
+	} `json:"modes"`
 } {
 	t.Helper()
 	for _, timeframe := range timeframes {
@@ -791,10 +1230,45 @@ func findPastPremiumFrame(t *testing.T, timeframes []struct {
 	}
 	t.Fatalf("past premiums timeframe %q not found in %#v", label, timeframes)
 	return struct {
-		Timeframe            string `json:"timeframe"`
-		AvgPremiumByExchange []struct {
-			Name          string  `json:"name"`
-			AvgPremiumPct float64 `json:"avg_premium_pct"`
-		} `json:"avg_premium_by_exchange"`
+		Timeframe string `json:"timeframe"`
+		Modes     struct {
+			Raw []struct {
+				Name          string  `json:"name"`
+				AvgPremiumPct float64 `json:"avg_premium_pct"`
+			} `json:"raw"`
+			NetFull []struct {
+				Name          string  `json:"name"`
+				AvgPremiumPct float64 `json:"avg_premium_pct"`
+			} `json:"net_full"`
+			NetCapped []struct {
+				Name          string  `json:"name"`
+				AvgPremiumPct float64 `json:"avg_premium_pct"`
+			} `json:"net_capped"`
+		} `json:"modes"`
 	}{}
+}
+
+func findNamedPremiumValue(t *testing.T, entries []struct {
+	Name          string  `json:"name"`
+	AvgPremiumPct float64 `json:"avg_premium_pct"`
+}, name string) float64 {
+	t.Helper()
+	for _, entry := range entries {
+		if entry.Name == name {
+			return entry.AvgPremiumPct
+		}
+	}
+	t.Fatalf("premium entry %q not found in %#v", name, entries)
+	return 0
+}
+
+func findNamedPremiumValueTyped(t *testing.T, entries []pastorders.NamedPremium, name string) float64 {
+	t.Helper()
+	for _, entry := range entries {
+		if entry.Name == name {
+			return entry.AvgPremiumPct
+		}
+	}
+	t.Fatalf("premium entry %q not found in %#v", name, entries)
+	return 0
 }

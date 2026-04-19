@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -511,6 +512,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	requiredConfirmations := queryConfirmations(r)
 	excludedCEXes := queryExcludedCEXes(r)
 	feeTier := queryFeeTier(r)
+	maxFiatLimitEUR := queryMaxFiatLimitEUR(r)
 
 	rows, err := db.Query(
 		rebind("SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? ORDER BY last_seen DESC LIMIT ?"),
@@ -528,16 +530,24 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	filtered := make([]map[string]any, 0, len(offers))
+	filteredOffers := make([]map[string]any, 0, len(offers))
+	ids := make([]int64, 0, len(offers))
 	for _, o := range offers {
 		if isPaymentMethodExcluded(offerString(o, "payment_method"), excludedPaymentMethods) {
 			continue
 		}
-		addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, 0)
-		filtered = append(filtered, o)
+		filteredOffers = append(filteredOffers, o)
+		ids = append(ids, int64(offerFloat(o, "id")))
 	}
 
-	writeJSON(w, filtered)
+	lifecycleAgg := fetchPastOfferLifecycleAggregates(ids)
+	result := make([]pastOfferAPI, 0, len(filteredOffers))
+	for _, o := range filteredOffers {
+		id := int64(offerFloat(o, "id"))
+		result = append(result, buildPastOfferAPI(o, lifecycleAgg[id], requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR))
+	}
+
+	writeJSON(w, result)
 }
 
 func handlePastOfferLifecycle(w http.ResponseWriter, r *http.Request) {
@@ -589,6 +599,133 @@ func fetchOfferLifecycle(ids []int64) map[int64][]LifecyclePoint {
 			pt.NetPremiumPct = &netPremiumPct.Float64
 		}
 		result[offerID] = append(result[offerID], pt)
+	}
+	return result
+}
+
+func fetchPastOfferLifecycleAggregates(ids []int64) map[int64]pastLifecycleAggregate {
+	result := make(map[int64]pastLifecycleAggregate, len(ids))
+	if len(ids) == 0 {
+		return result
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	rows, err := db.Query(rebind(fmt.Sprintf(
+		`SELECT offer_db_id, price, ref_price, premium_pct, trade_cost_pct, trade_cost_btc,
+		        network_fee_btc, net_premium_pct, net_premium_btc, btc_amount
+		   FROM order_lifecycle
+		  WHERE offer_db_id IN (%s)
+		  ORDER BY offer_db_id, snapshot_time`,
+		strings.Join(placeholders, ","),
+	)), args...)
+	if err != nil {
+		return result
+	}
+	defer rows.Close()
+
+	type accum struct {
+		count             int
+		sumPrice          float64
+		sumRefPrice       float64
+		sumPremium        float64
+		sumTradeCostPct   float64
+		countTradeCost    int
+		sumTradeCostBTC   float64
+		countTradeCostBTC int
+		sumNetPct         float64
+		countNetPct       int
+		sumProfitBTC      float64
+		countProfitBTC    int
+		sumProfitFiat     float64
+		countProfitFiat   int
+		sumBTCAmount      float64
+		countBTCAmount    int
+		sumNetworkPct     float64
+		countNetworkPct   int
+		samples           []pastLifecycleSample
+	}
+
+	accs := make(map[int64]*accum, len(ids))
+	for rows.Next() {
+		var offerID int64
+		var price, refPrice, premiumPct float64
+		var tradeCostPct, tradeCostBTC, networkFeeBTC, netPremiumPct, netPremiumBTC, btcAmount sql.NullFloat64
+		if err := rows.Scan(&offerID, &price, &refPrice, &premiumPct, &tradeCostPct, &tradeCostBTC, &networkFeeBTC, &netPremiumPct, &netPremiumBTC, &btcAmount); err != nil {
+			continue
+		}
+		ac := accs[offerID]
+		if ac == nil {
+			ac = &accum{}
+			accs[offerID] = ac
+		}
+		ac.count++
+		ac.sumPrice += price
+		ac.sumRefPrice += refPrice
+		ac.sumPremium += premiumPct
+		ac.samples = append(ac.samples, pastLifecycleSample{RefPrice: refPrice, PremiumPct: premiumPct})
+		if tradeCostPct.Valid {
+			ac.sumTradeCostPct += tradeCostPct.Float64
+			ac.countTradeCost++
+		}
+		if tradeCostBTC.Valid {
+			ac.sumTradeCostBTC += tradeCostBTC.Float64
+			ac.countTradeCostBTC++
+		}
+		if netPremiumPct.Valid {
+			ac.sumNetPct += netPremiumPct.Float64
+			ac.countNetPct++
+		}
+		if netPremiumBTC.Valid {
+			ac.sumProfitBTC += netPremiumBTC.Float64
+			ac.countProfitBTC++
+			ac.sumProfitFiat += netPremiumBTC.Float64 * refPrice
+			ac.countProfitFiat++
+		}
+		if btcAmount.Valid {
+			ac.sumBTCAmount += btcAmount.Float64
+			ac.countBTCAmount++
+			if networkFeeBTC.Valid && btcAmount.Float64 > 0 {
+				ac.sumNetworkPct += (networkFeeBTC.Float64 / btcAmount.Float64) * 100
+				ac.countNetworkPct++
+			}
+		}
+	}
+
+	for id, ac := range accs {
+		agg := pastLifecycleAggregate{}
+		if ac.count > 0 {
+			agg.Count = ac.count
+			agg.AvgOfferPrice = round4(ac.sumPrice / float64(ac.count))
+			agg.AvgRefPrice = round4(ac.sumRefPrice / float64(ac.count))
+			agg.AvgPremiumPercent = round4(ac.sumPremium / float64(ac.count))
+		}
+		if ac.countTradeCost > 0 {
+			agg.AvgTradeCostPct = round4(ac.sumTradeCostPct / float64(ac.countTradeCost))
+		}
+		if ac.countTradeCostBTC > 0 {
+			agg.AvgTradeCostBTC = round8(ac.sumTradeCostBTC / float64(ac.countTradeCostBTC))
+		}
+		if ac.countNetPct > 0 {
+			agg.AvgNetPercent = round4(ac.sumNetPct / float64(ac.countNetPct))
+		}
+		if ac.countProfitBTC > 0 {
+			agg.AvgProfitBTC = round8(ac.sumProfitBTC / float64(ac.countProfitBTC))
+		}
+		if ac.countProfitFiat > 0 {
+			agg.AvgProfitFiat = round4(ac.sumProfitFiat / float64(ac.countProfitFiat))
+		}
+		if ac.countBTCAmount > 0 {
+			agg.AvgBTCAmount = round8(ac.sumBTCAmount / float64(ac.countBTCAmount))
+		}
+		if ac.countNetworkPct > 0 {
+			agg.AvgNetworkPct = round4(ac.sumNetworkPct / float64(ac.countNetworkPct))
+		}
+		agg.Samples = ac.samples
+		result[id] = agg
 	}
 	return result
 }
@@ -650,6 +787,14 @@ func handleGeneralStats(w http.ResponseWriter, r *http.Request) {
 	}
 	cutoff := time.Now().Add(-time.Duration(historyHours) * time.Hour)
 	excludedPaymentMethods := queryExcludedPaymentMethods(r)
+	sub := liveSubscription{
+		cex:                   queryCex(r),
+		requiredConfirmations: queryConfirmations(r),
+		excludedCEXes:         strings.Join(queryExcludedCEXes(r), ","),
+		feeTier:               queryFeeTier(r),
+		coupledHedge:          queryCoupledHedge(r),
+		maxFiatLimitEUR:       queryMaxFiatLimitEUR(r),
+	}
 
 	rows, err := db.Query(
 		rebind("SELECT * FROM offers WHERE last_seen >= ? ORDER BY last_seen DESC"),
@@ -668,6 +813,7 @@ func handleGeneralStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	generalOffers := make([]pastorders.Offer, 0, len(offers))
+	closedOfferIDs := make([]int64, 0, len(offers))
 	for _, o := range offers {
 		direction := offerString(o, "direction")
 		price := offerFloat(o, "price")
@@ -686,9 +832,321 @@ func handleGeneralStats(w http.ResponseWriter, r *http.Request) {
 			LastSeen:         parseDBTime(offerString(o, "last_seen")),
 			IsLive:           offerBool(o, "is_live"),
 		})
+		if !offerBool(o, "is_live") {
+			closedOfferIDs = append(closedOfferIDs, int64(offerFloat(o, "id")))
+		}
 	}
 
-	writeJSON(w, pastorders.BuildGeneralStats(generalOffers, time.Now(), hours, excludedPaymentMethods))
+	lifecycleAgg := fetchPastOfferLifecycleAggregates(closedOfferIDs)
+	stats := pastorders.BuildGeneralStats(generalOffers, time.Now(), hours, excludedPaymentMethods)
+	stats.OpenPremiums = buildOpenPremiumStats(sub, excludedPaymentMethods)
+	stats.PastPremiums = buildPastPremiumStats(offers, lifecycleAgg, time.Now(), excludedPaymentMethods, queryMaxFiatLimitEUR(r), queryConfirmations(r), queryExcludedCEXes(r), queryFeeTier(r))
+	stats.PremiumLifetimes = buildPremiumLifetimeStats(offers, lifecycleAgg, time.Now(), excludedPaymentMethods, queryMaxFiatLimitEUR(r), queryConfirmations(r), queryExcludedCEXes(r), queryFeeTier(r))
+	stats.AvgOfferLifetimeMs = stats.PremiumLifetimes.Raw.AvgOfferLifetimeMs
+	stats.AvgOfferLifetimeMsByExchange = stats.PremiumLifetimes.Raw.AvgOfferLifetimeMsByExchange
+	writeJSON(w, stats)
+}
+
+func buildOpenPremiumStats(sub liveSubscription, excludedPaymentMethods []string) pastorders.OpenPremiumStats {
+	price := getCexPrice(sub.cex)
+	offers := hub.computeOutOffers(price, sub)
+	excluded := make(map[string]struct{}, len(excludedPaymentMethods))
+	for _, method := range excludedPaymentMethods {
+		excluded[method] = struct{}{}
+	}
+
+	type acc struct {
+		sumAsk float64
+		cntAsk int
+		sumBid float64
+		cntBid int
+	}
+	rawAcc := acc{}
+	netFullAcc := acc{}
+	netCappedAcc := acc{}
+
+	addPositive := func(a *acc, direction string, value float64) {
+		if value <= 0 {
+			return
+		}
+		if direction == "sell" {
+			a.sumAsk += value
+			a.cntAsk++
+			return
+		}
+		if direction == "buy" {
+			a.sumBid += value
+			a.cntBid++
+		}
+	}
+
+	for _, offer := range offers {
+		if offer.PaymentMethod != nil {
+			if _, skip := excluded[*offer.PaymentMethod]; skip {
+				continue
+			}
+		}
+		addPositive(&rawAcc, offer.Direction, offer.PriceDiffPct)
+		addPositive(&netFullAcc, offer.Direction, offer.NetPremiumPct)
+		capped := offer.NetPremiumPct
+		if offer.NetPremiumPctCapped != nil {
+			capped = *offer.NetPremiumPctCapped
+		}
+		addPositive(&netCappedAcc, offer.Direction, capped)
+	}
+
+	toMode := func(a acc) pastorders.OpenPremiumModeStats {
+		var askPtr *float64
+		var bidPtr *float64
+		if a.cntAsk > 0 {
+			v := round4(a.sumAsk / float64(a.cntAsk))
+			askPtr = &v
+		}
+		if a.cntBid > 0 {
+			v := round4(a.sumBid / float64(a.cntBid))
+			bidPtr = &v
+		}
+		return pastorders.OpenPremiumModeStats{
+			AvgAskPremiumPct: askPtr,
+			AvgBidPremiumPct: bidPtr,
+		}
+	}
+
+	return pastorders.OpenPremiumStats{
+		Raw:       toMode(rawAcc),
+		NetFull:   toMode(netFullAcc),
+		NetCapped: toMode(netCappedAcc),
+	}
+}
+
+func buildPastPremiumStats(offers []map[string]any, lifecycleAgg map[int64]pastLifecycleAggregate, now time.Time, excludedPaymentMethods []string, maxFiatLimitEUR float64, requiredConfirmations int, excludedCEXes []string, feeTier string) []pastorders.PastPremiumTimeframeStats {
+	excluded := make(map[string]struct{}, len(excludedPaymentMethods))
+	for _, method := range excludedPaymentMethods {
+		excluded[method] = struct{}{}
+	}
+
+	buildNamed := func(sumByExchange map[string]float64, countByExchange map[string]int) []pastorders.NamedPremium {
+		out := make([]pastorders.NamedPremium, 0, len(countByExchange))
+		for exchange, count := range countByExchange {
+			if count <= 0 {
+				continue
+			}
+			avg := round4(sumByExchange[exchange] / float64(count))
+			out = append(out, pastorders.NamedPremium{Name: exchange, AvgPremiumPct: avg})
+		}
+		sort.Slice(out, func(i, j int) bool {
+			return out[i].Name < out[j].Name
+		})
+		return out
+	}
+
+	positiveOrZero := func(v float64) (float64, bool) {
+		if v > 0 {
+			return v, true
+		}
+		return 0, false
+	}
+
+	stats := make([]pastorders.PastPremiumTimeframeStats, 0, len(pastorders.PastPremiumTimeframes))
+	for _, tf := range pastorders.PastPremiumTimeframes {
+		cutoff := now.Add(-time.Duration(tf.Hours) * time.Hour)
+		rawSum := map[string]float64{}
+		rawCount := map[string]int{}
+		netSum := map[string]float64{}
+		netCount := map[string]int{}
+		cappedSum := map[string]float64{}
+		cappedCount := map[string]int{}
+
+		for _, offer := range offers {
+			if offerBool(offer, "is_live") {
+				continue
+			}
+			exchange := offerString(offer, "exchange")
+			if exchange == "" {
+				continue
+			}
+			if isPaymentMethodExcluded(offerString(offer, "payment_method"), excludedPaymentMethods) {
+				continue
+			}
+			lastSeen := parseDBTime(offerString(offer, "last_seen"))
+			if lastSeen.IsZero() || lastSeen.Before(cutoff) {
+				continue
+			}
+
+			id := int64(offerFloat(offer, "id"))
+			agg := lifecycleAgg[id]
+			direction := offerString(offer, "direction")
+
+			rawPremium := agg.AvgPremiumPercent
+			if rawPremium == 0 {
+				rawPremium = round4(offerFloat(offer, "avg_premium_pct"))
+			}
+			if raw, ok := positiveOrZero(rawPremium); ok {
+				rawSum[exchange] += raw
+				rawCount[exchange]++
+			}
+
+			netPremium := agg.AvgNetPercent
+			if netPremium == 0 {
+				netPremium = round4(offerFloat(offer, "avg_net_premium_pct"))
+			}
+			if net, ok := positiveOrZero(netPremium); ok {
+				netSum[exchange] += net
+				netCount[exchange]++
+			}
+
+			cappedPremium := netPremium
+			if maxFiatLimitEUR > 0 {
+				avgRefPrice := agg.AvgRefPrice
+				if avgRefPrice <= 0 {
+					avgRefPrice = offerRefPrice(offer)
+				}
+				fullTradeSizeBTC := selectBTCTradeSize(offerFloatPtr(offer, "btc_max"), offerFloatPtr(offer, "btc_min"))
+				if avgRefPrice > 0 && fullTradeSizeBTC > 0 {
+					btcCap := maxFiatLimitEUR / avgRefPrice
+					if btcCap > 0 && fullTradeSizeBTC > btcCap {
+						_, cappedNet, _, _, _, _ := recomputeCappedLifecycleAverages(agg.Samples, maxFiatLimitEUR, exchange, direction, requiredConfirmations, excludedCEXes, feeTier)
+						cappedPremium = cappedNet
+					}
+				}
+			}
+			if capped, ok := positiveOrZero(cappedPremium); ok {
+				cappedSum[exchange] += capped
+				cappedCount[exchange]++
+			}
+		}
+
+		raw := buildNamed(rawSum, rawCount)
+		stats = append(stats, pastorders.PastPremiumTimeframeStats{
+			Timeframe:            tf.Label,
+			Hours:                tf.Hours,
+			AvgPremiumByExchange: raw,
+			Modes: pastorders.PastPremiumModes{
+				Raw:       raw,
+				NetFull:   buildNamed(netSum, netCount),
+				NetCapped: buildNamed(cappedSum, cappedCount),
+			},
+		})
+	}
+	return stats
+}
+
+func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]pastLifecycleAggregate, now time.Time, excludedPaymentMethods []string, maxFiatLimitEUR float64, requiredConfirmations int, excludedCEXes []string, feeTier string) pastorders.PremiumLifetimeModes {
+	excluded := make(map[string]struct{}, len(excludedPaymentMethods))
+	for _, method := range excludedPaymentMethods {
+		excluded[method] = struct{}{}
+	}
+
+	type acc struct {
+		sum           time.Duration
+		count         int
+		sumByExchange map[string]time.Duration
+		cntByExchange map[string]int
+	}
+
+	makeAcc := func() acc {
+		return acc{
+			sumByExchange: map[string]time.Duration{},
+			cntByExchange: map[string]int{},
+		}
+	}
+	rawAcc := makeAcc()
+	netAcc := makeAcc()
+	cappedAcc := makeAcc()
+
+	add := func(a *acc, exchange string, lifetime time.Duration) {
+		if lifetime <= 0 {
+			return
+		}
+		a.sum += lifetime
+		a.count++
+		if strings.TrimSpace(exchange) != "" {
+			a.sumByExchange[exchange] += lifetime
+			a.cntByExchange[exchange]++
+		}
+	}
+
+	for _, offer := range offers {
+		if offerBool(offer, "is_live") {
+			continue
+		}
+		if isPaymentMethodExcluded(offerString(offer, "payment_method"), excludedPaymentMethods) {
+			continue
+		}
+		firstSeen := parseDBTime(offerString(offer, "first_seen"))
+		lastSeen := parseDBTime(offerString(offer, "last_seen"))
+		if firstSeen.IsZero() || lastSeen.IsZero() || lastSeen.Before(firstSeen) {
+			continue
+		}
+		lifetime := lastSeen.Sub(firstSeen)
+		exchange := offerString(offer, "exchange")
+		id := int64(offerFloat(offer, "id"))
+		agg := lifecycleAgg[id]
+
+		rawPremium := agg.AvgPremiumPercent
+		if rawPremium == 0 {
+			rawPremium = round4(offerFloat(offer, "avg_premium_pct"))
+		}
+		if rawPremium > 0 {
+			add(&rawAcc, exchange, lifetime)
+		}
+
+		netPremium := agg.AvgNetPercent
+		if netPremium == 0 {
+			netPremium = round4(offerFloat(offer, "avg_net_premium_pct"))
+		}
+		if netPremium > 0 {
+			add(&netAcc, exchange, lifetime)
+		}
+
+		cappedPremium := netPremium
+		if maxFiatLimitEUR > 0 {
+			avgRefPrice := agg.AvgRefPrice
+			if avgRefPrice <= 0 {
+				avgRefPrice = offerRefPrice(offer)
+			}
+			fullTradeSizeBTC := selectBTCTradeSize(offerFloatPtr(offer, "btc_max"), offerFloatPtr(offer, "btc_min"))
+			if avgRefPrice > 0 && fullTradeSizeBTC > 0 {
+				btcCap := maxFiatLimitEUR / avgRefPrice
+				if btcCap > 0 && fullTradeSizeBTC > btcCap {
+					_, cappedNet, _, _, _, _ := recomputeCappedLifecycleAverages(agg.Samples, maxFiatLimitEUR, exchange, offerString(offer, "direction"), requiredConfirmations, excludedCEXes, feeTier)
+					cappedPremium = cappedNet
+				}
+			}
+		}
+		if cappedPremium > 0 {
+			add(&cappedAcc, exchange, lifetime)
+		}
+	}
+
+	toStats := func(a acc) pastorders.PremiumLifetimeStats {
+		var avgPtr *int64
+		if a.count > 0 {
+			v := int64(a.sum / time.Duration(a.count) / time.Millisecond)
+			avgPtr = &v
+		}
+		byExchange := make([]pastorders.NamedDuration, 0, len(a.cntByExchange))
+		for exchange, count := range a.cntByExchange {
+			if count <= 0 {
+				continue
+			}
+			ms := int64(a.sumByExchange[exchange] / time.Duration(count) / time.Millisecond)
+			byExchange = append(byExchange, pastorders.NamedDuration{Name: exchange, Ms: ms})
+		}
+		sort.Slice(byExchange, func(i, j int) bool {
+			return byExchange[i].Name < byExchange[j].Name
+		})
+		return pastorders.PremiumLifetimeStats{
+			AvgOfferLifetimeMs:           avgPtr,
+			AvgOfferLifetimeMsByExchange: byExchange,
+		}
+	}
+
+	return pastorders.PremiumLifetimeModes{
+		Raw:       toStats(rawAcc),
+		NetFull:   toStats(netAcc),
+		NetCapped: toStats(cappedAcc),
+	}
 }
 
 type pastOfferAnalysis struct {
@@ -700,6 +1158,139 @@ type pastOfferAnalysis struct {
 	btcSizeCapped            float64
 	estimatedProfitBTCCapped float64
 	hasCap                   bool
+}
+
+type pastOfferDuration struct {
+	Hours   int    `json:"hours"`
+	Minutes int    `json:"minutes"`
+	Display string `json:"display"`
+}
+
+type pastOfferStatus struct {
+	IsLive    bool              `json:"is_live"`
+	FirstSeen string            `json:"first_seen"`
+	LastSeen  string            `json:"last_seen"`
+	Duration  pastOfferDuration `json:"duration"`
+}
+
+type pastOfferPricing struct {
+	PriceType         string  `json:"price_type"`
+	FiatCurrency      string  `json:"fiat_currency"`
+	AvgOfferPrice     float64 `json:"avg_offer_price"`
+	AvgRefPrice       float64 `json:"avg_ref_price"`
+	AvgPremiumPercent float64 `json:"avg_premium_percent"`
+}
+
+type pastOfferVolumeLimits struct {
+	BTCMin  *float64 `json:"btc_min"`
+	BTCMax  *float64 `json:"btc_max"`
+	FiatMin *int64   `json:"fiat_min"`
+	FiatMax *int64   `json:"fiat_max"`
+}
+
+type pastOfferBTCNetworkFee struct {
+	BTC                     float64              `json:"btc"`
+	Method                  string               `json:"method"`
+	Tier                    string               `json:"tier"`
+	Confidence              float64              `json:"confidence"`
+	NumTxs                  int                  `json:"num_txs"`
+	RequiredConfirmations   int                  `json:"required_confirmations"`
+	EstimatedArrivalMinutes int                  `json:"estimated_arrival_minutes"`
+	Detail                  *BTCNetworkFeeDetail `json:"detail"`
+}
+
+type pastOfferRoute struct {
+	CEX        string `json:"cex"`
+	Settlement string `json:"settlement"`
+}
+
+type pastOfferPremium struct {
+	AvgTradeCostPercent float64 `json:"avg_trade_cost_percent"`
+	AvgNetPercent       float64 `json:"avg_net_percent"`
+}
+
+type pastOfferProfit struct {
+	AvgBTC  float64 `json:"avg_btc"`
+	AvgFiat float64 `json:"avg_fiat"`
+}
+
+type pastOfferCostValue struct {
+	Pct    float64 `json:"pct,omitempty"`
+	BTC    float64 `json:"btc,omitempty"`
+	AvgPct float64 `json:"avg_pct,omitempty"`
+	AvgBTC float64 `json:"avg_btc,omitempty"`
+}
+
+type pastOfferHedgeCosts struct {
+	OpenFeePct      float64              `json:"open_fee_pct"`
+	OpenFeeBTC      float64              `json:"open_fee_btc"`
+	CloseFeePct     float64              `json:"close_fee_pct"`
+	CloseFeeBTC     float64              `json:"close_fee_btc"`
+	FundingFeePct   float64              `json:"funding_fee_pct"`
+	FundingFeeBTC   float64              `json:"funding_fee_btc"`
+	FeeSumPct       float64              `json:"fee_sum_pct"`
+	FeeSumBTC       float64              `json:"fee_sum_btc"`
+	Venue           string               `json:"venue"`
+	Instrument      string               `json:"instrument"`
+	TransferMinutes int                  `json:"transfer_minutes"`
+	Position        *HedgePositionDetail `json:"position,omitempty"`
+}
+
+type pastOfferScenarioCosts struct {
+	CexTaker   pastOfferCostValue  `json:"cex_taker"`
+	Withdrawal pastOfferCostValue  `json:"withdrawal"`
+	DexFee     pastOfferCostValue  `json:"dex_fee"`
+	Network    pastOfferCostValue  `json:"network"`
+	Hedge      pastOfferHedgeCosts `json:"hedge"`
+	Total      pastOfferCostValue  `json:"total"`
+}
+
+type pastOfferScenario struct {
+	CapFiat       *float64               `json:"cap_fiat,omitempty"`
+	TradeSizeBTC  float64                `json:"trade_size_btc"`
+	TradeSizeFiat float64                `json:"trade_size_fiat"`
+	Route         pastOfferRoute         `json:"route"`
+	Premium       pastOfferPremium       `json:"premium"`
+	Profit        pastOfferProfit        `json:"profit"`
+	Costs         pastOfferScenarioCosts `json:"costs"`
+}
+
+type pastOfferAnalysisAPI struct {
+	FullVolume   pastOfferScenario  `json:"full_volume"`
+	CappedVolume *pastOfferScenario `json:"capped_volume,omitempty"`
+}
+
+type pastOfferAPI struct {
+	ID            int64                  `json:"id"`
+	Exchange      string                 `json:"exchange"`
+	OfferID       *string                `json:"offer_id"`
+	PaymentMethod *string                `json:"payment_method"`
+	Direction     string                 `json:"direction"`
+	Status        pastOfferStatus        `json:"status"`
+	Pricing       pastOfferPricing       `json:"pricing"`
+	VolumeLimits  pastOfferVolumeLimits  `json:"volume_limits"`
+	BTCNetworkFee pastOfferBTCNetworkFee `json:"btc_network_fee"`
+	Analysis      pastOfferAnalysisAPI   `json:"analysis"`
+}
+
+type pastLifecycleSample struct {
+	RefPrice   float64
+	PremiumPct float64
+}
+
+type pastLifecycleAggregate struct {
+	Count             int
+	AvgOfferPrice     float64
+	AvgRefPrice       float64
+	AvgPremiumPercent float64
+	AvgTradeCostPct   float64
+	AvgTradeCostBTC   float64
+	AvgNetPercent     float64
+	AvgProfitBTC      float64
+	AvgProfitFiat     float64
+	AvgBTCAmount      float64
+	AvgNetworkPct     float64
+	Samples           []pastLifecycleSample
 }
 
 func addPastOfferCostFields(o map[string]any, requiredConfirmations int) pastOfferAnalysis {
@@ -753,6 +1344,282 @@ func addPastOfferCostFieldsFull(o map[string]any, requiredConfirmations int, exc
 		btcSizeCapped:            btcSizeCapped,
 		estimatedProfitBTCCapped: estimatedProfitBTCCapped,
 		hasCap:                   hasCap,
+	}
+}
+
+func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredConfirmations int, excludedCEXes []string, feeTier string, maxFiatLimitEUR float64) pastOfferAPI {
+	id := int64(offerFloat(o, "id"))
+	firstSeen := offerString(o, "first_seen")
+	lastSeen := offerString(o, "last_seen")
+	firstTime := parseDBTime(firstSeen)
+	lastTime := parseDBTime(lastSeen)
+	duration := buildPastOfferDuration(firstTime, lastTime)
+
+	avgOfferPrice := agg.AvgOfferPrice
+	if avgOfferPrice <= 0 {
+		avgOfferPrice = round4(offerFloat(o, "price"))
+	}
+	avgRefPrice := agg.AvgRefPrice
+	if avgRefPrice <= 0 {
+		avgRefPrice = round4(offerRefPrice(o))
+	}
+	avgPremiumPercent := agg.AvgPremiumPercent
+	if avgPremiumPercent == 0 {
+		avgPremiumPercent = round4(offerFloat(o, "avg_premium_pct"))
+	}
+	avgTradeCostPct := agg.AvgTradeCostPct
+	if avgTradeCostPct == 0 {
+		avgTradeCostPct = round4(offerFloat(o, "avg_trade_cost_pct"))
+	}
+	avgTradeCostBTC := agg.AvgTradeCostBTC
+	if avgTradeCostBTC == 0 {
+		avgTradeCostBTC = round8(offerFloat(o, "avg_trade_cost_btc"))
+	}
+	avgNetPercent := agg.AvgNetPercent
+	if avgNetPercent == 0 {
+		avgNetPercent = round4(offerFloat(o, "avg_net_premium_pct"))
+	}
+	avgProfitBTC := agg.AvgProfitBTC
+	if avgProfitBTC == 0 {
+		avgProfitBTC = round8(offerFloat(o, "avg_estimated_profit_btc"))
+	}
+	avgProfitFiat := agg.AvgProfitFiat
+	if avgProfitFiat == 0 {
+		avgProfitFiat = round4(offerFloat(o, "avg_estimated_profit_fiat"))
+	}
+	avgNetworkPct := agg.AvgNetworkPct
+	avgBTCAmount := agg.AvgBTCAmount
+	if avgBTCAmount == 0 {
+		avgBTCAmount = round8(offerFloat(o, "avg_btc_amount"))
+	}
+
+	var btcMinPtr, btcMaxPtr *float64
+	if v := offerFloat(o, "btc_min"); v > 0 {
+		btcMinPtr = &v
+	}
+	if v := offerFloat(o, "btc_max"); v > 0 {
+		btcMaxPtr = &v
+	}
+	fullTradeSizeBTC := selectBTCTradeSize(btcMaxPtr, btcMinPtr)
+	if btcMaxPtr != nil && *btcMaxPtr > 0 {
+		fullTradeSizeBTC = *btcMaxPtr
+	}
+	fullRep := computeRepresentativePastBreakdown(fullTradeSizeBTC, avgRefPrice, offerString(o, "exchange"), offerString(o, "direction"), requiredConfirmations, excludedCEXes, feeTier)
+	fullTradeSizeFiat := round4(fullTradeSizeBTC * avgRefPrice)
+
+	fullScenario := pastOfferScenario{
+		TradeSizeBTC:  round8(fullTradeSizeBTC),
+		TradeSizeFiat: fullTradeSizeFiat,
+		Route: pastOfferRoute{
+			CEX:        nonEmptyOr(fullRep.RouteCEX, offerString(o, "best_route_cex")),
+			Settlement: nonEmptyOr(fullRep.RouteMethod, offerString(o, "best_route_method")),
+		},
+		Premium: pastOfferPremium{
+			AvgTradeCostPercent: avgTradeCostPct,
+			AvgNetPercent:       avgNetPercent,
+		},
+		Profit: pastOfferProfit{
+			AvgBTC:  avgProfitBTC,
+			AvgFiat: avgProfitFiat,
+		},
+		Costs: buildPastScenarioCosts(fullRep, avgNetworkPct, avgTradeCostPct, avgTradeCostBTC),
+	}
+
+	var cappedScenario *pastOfferScenario
+	if maxFiatLimitEUR > 0 && avgRefPrice > 0 {
+		cappedTradeSizeBTC := round8(maxFiatLimitEUR / avgRefPrice)
+		if cappedTradeSizeBTC > 0 && fullTradeSizeBTC > cappedTradeSizeBTC {
+			cappedRep := computeRepresentativePastBreakdown(cappedTradeSizeBTC, avgRefPrice, offerString(o, "exchange"), offerString(o, "direction"), requiredConfirmations, excludedCEXes, feeTier)
+			cappedAvgTradeCostPct, cappedAvgNetPct, cappedAvgProfitBTC, cappedAvgProfitFiat, cappedAvgTradeCostBTC, cappedAvgNetworkPct :=
+				recomputeCappedLifecycleAverages(agg.Samples, maxFiatLimitEUR, offerString(o, "exchange"), offerString(o, "direction"), requiredConfirmations, excludedCEXes, feeTier)
+			capFiat := round4(maxFiatLimitEUR)
+			cappedScenario = &pastOfferScenario{
+				CapFiat:       &capFiat,
+				TradeSizeBTC:  cappedTradeSizeBTC,
+				TradeSizeFiat: round4(cappedTradeSizeBTC * avgRefPrice),
+				Route: pastOfferRoute{
+					CEX:        nonEmptyOr(cappedRep.RouteCEX, offerString(o, "best_route_cex")),
+					Settlement: nonEmptyOr(cappedRep.RouteMethod, offerString(o, "best_route_method")),
+				},
+				Premium: pastOfferPremium{
+					AvgTradeCostPercent: cappedAvgTradeCostPct,
+					AvgNetPercent:       cappedAvgNetPct,
+				},
+				Profit: pastOfferProfit{
+					AvgBTC:  cappedAvgProfitBTC,
+					AvgFiat: cappedAvgProfitFiat,
+				},
+				Costs: buildPastScenarioCosts(cappedRep, cappedAvgNetworkPct, cappedAvgTradeCostPct, cappedAvgTradeCostBTC),
+			}
+		}
+	}
+
+	return pastOfferAPI{
+		ID:            id,
+		Exchange:      offerString(o, "exchange"),
+		OfferID:       offerStringPtr(o, "offer_id"),
+		PaymentMethod: offerStringPtr(o, "payment_method"),
+		Direction:     offerString(o, "direction"),
+		Status: pastOfferStatus{
+			IsLive:    false,
+			FirstSeen: firstSeen,
+			LastSeen:  lastSeen,
+			Duration:  duration,
+		},
+		Pricing: pastOfferPricing{
+			PriceType:         normalizePastPriceType(offerString(o, "price_type")),
+			FiatCurrency:      "EUR",
+			AvgOfferPrice:     avgOfferPrice,
+			AvgRefPrice:       avgRefPrice,
+			AvgPremiumPercent: avgPremiumPercent,
+		},
+		VolumeLimits: pastOfferVolumeLimits{
+			BTCMin:  btcMinPtr,
+			BTCMax:  btcMaxPtr,
+			FiatMin: offerInt64Ptr(o, "fiat_min"),
+			FiatMax: offerInt64Ptr(o, "fiat_max"),
+		},
+		BTCNetworkFee: buildPastBTCNetworkFee(fullRep, requiredConfirmations),
+		Analysis: pastOfferAnalysisAPI{
+			FullVolume:   fullScenario,
+			CappedVolume: cappedScenario,
+		},
+	}
+}
+
+func buildPastOfferDuration(firstSeen, lastSeen time.Time) pastOfferDuration {
+	if firstSeen.IsZero() || lastSeen.IsZero() || lastSeen.Before(firstSeen) {
+		return pastOfferDuration{Display: "0h 0m"}
+	}
+	totalMinutes := int(lastSeen.Sub(firstSeen).Minutes())
+	hours := totalMinutes / 60
+	minutes := totalMinutes % 60
+	return pastOfferDuration{
+		Hours:   hours,
+		Minutes: minutes,
+		Display: fmt.Sprintf("%dh %dm", hours, minutes),
+	}
+}
+
+func normalizePastPriceType(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "fixed":
+		return "fixed"
+	case "floating":
+		return "floating"
+	default:
+		return "unknown"
+	}
+}
+
+func computeRepresentativePastBreakdown(btcSize, refPrice float64, dexExchange, direction string, requiredConfirmations int, excludedCEXes []string, feeTier string) CostBreakdown {
+	if tradeRouteOptimizer == nil || btcSize <= 0 || refPrice <= 0 {
+		return CostBreakdown{}
+	}
+	requiredConfirmations = resolveRequiredConfirmations(direction, requiredConfirmations)
+	return tradeRouteOptimizer.BestBreakdownFull(btcSize, refPrice, dexExchange, direction, requiredConfirmations, excludedCEXes, feeTier, true)
+}
+
+func recomputeCappedLifecycleAverages(samples []pastLifecycleSample, maxFiatLimitEUR float64, dexExchange, direction string, requiredConfirmations int, excludedCEXes []string, feeTier string) (float64, float64, float64, float64, float64, float64) {
+	if len(samples) == 0 || maxFiatLimitEUR <= 0 {
+		return 0, 0, 0, 0, 0, 0
+	}
+	var count int
+	var sumTradeCostPct, sumNetPct, sumProfitBTC, sumProfitFiat, sumTradeCostBTC, sumNetworkPct float64
+	for _, sample := range samples {
+		if sample.RefPrice <= 0 {
+			continue
+		}
+		btcCap := maxFiatLimitEUR / sample.RefPrice
+		if btcCap <= 0 {
+			continue
+		}
+		tradeCostPct, netPct, bd := computeNetPremiumFieldsFull(sample.PremiumPct, btcCap, sample.RefPrice, dexExchange, direction, requiredConfirmations, excludedCEXes, feeTier, true)
+		if bd.RouteCEX == "" {
+			continue
+		}
+		count++
+		sumTradeCostPct += tradeCostPct
+		sumNetPct += netPct
+		sumProfitBTC += bd.EstimatedProfitBTC
+		sumProfitFiat += bd.EstimatedProfitBTC * sample.RefPrice
+		sumTradeCostBTC += bd.TotalCostBTC
+		sumNetworkPct += bd.NetworkFeePct
+	}
+	if count == 0 {
+		return 0, 0, 0, 0, 0, 0
+	}
+	return round4(sumTradeCostPct / float64(count)),
+		round4(sumNetPct / float64(count)),
+		round8(sumProfitBTC / float64(count)),
+		round4(sumProfitFiat / float64(count)),
+		round8(sumTradeCostBTC / float64(count)),
+		round4(sumNetworkPct / float64(count))
+}
+
+func buildPastScenarioCosts(rep CostBreakdown, avgNetworkPct, avgTradeCostPct, avgTradeCostBTC float64) pastOfferScenarioCosts {
+	return pastOfferScenarioCosts{
+		CexTaker: pastOfferCostValue{
+			Pct: rep.CexTakerFeePct,
+			BTC: rep.CexTakerFeeBTC,
+		},
+		Withdrawal: pastOfferCostValue{
+			Pct: rep.WithdrawalFeePct,
+			BTC: rep.WithdrawalFeeBTC,
+		},
+		DexFee: pastOfferCostValue{
+			Pct: rep.DexFeePct,
+			BTC: rep.DexFeeBTC,
+		},
+		Network: pastOfferCostValue{
+			Pct:    rep.NetworkFeePct,
+			BTC:    rep.NetworkFeeBTC,
+			AvgPct: avgNetworkPct,
+		},
+		Hedge: pastOfferHedgeCosts{
+			OpenFeePct:      rep.Hedge.OpenFeePct,
+			OpenFeeBTC:      rep.Hedge.OpenFeeBTC,
+			CloseFeePct:     rep.Hedge.CloseFeePct,
+			CloseFeeBTC:     rep.Hedge.CloseFeeBTC,
+			FundingFeePct:   rep.Hedge.FundingFeePct,
+			FundingFeeBTC:   rep.Hedge.FundingFeeBTC,
+			FeeSumPct:       rep.Hedge.FeeSumPct,
+			FeeSumBTC:       rep.Hedge.FeeSumBTC,
+			Venue:           rep.Hedge.Venue,
+			Instrument:      rep.Hedge.Instrument,
+			TransferMinutes: rep.Hedge.TransferMinutes,
+			Position:        rep.Hedge.Position,
+		},
+		Total: pastOfferCostValue{
+			Pct:    rep.TotalCostPct,
+			BTC:    rep.TotalCostBTC,
+			AvgPct: avgTradeCostPct,
+			AvgBTC: avgTradeCostBTC,
+		},
+	}
+}
+
+func buildPastBTCNetworkFee(rep CostBreakdown, requiredConfirmations int) pastOfferBTCNetworkFee {
+	arrival := 0
+	numTxs := rep.NumNetworkTxs
+	if rep.NetworkFeeDetail != nil {
+		arrival = rep.NetworkFeeDetail.SelectedFullConfirmationMinutes
+		if numTxs <= 0 {
+			numTxs = rep.NetworkFeeDetail.NumTxs
+		}
+		if requiredConfirmations <= 0 {
+			requiredConfirmations = rep.NetworkFeeDetail.RequiredConfirmations
+		}
+	}
+	return pastOfferBTCNetworkFee{
+		BTC:                     rep.NetworkFeeBTC,
+		Method:                  rep.NetworkFeeMethod,
+		Tier:                    rep.NetworkFeeTier,
+		Confidence:              rep.NetworkFeeConfidence,
+		NumTxs:                  numTxs,
+		RequiredConfirmations:   requiredConfirmations,
+		EstimatedArrivalMinutes: arrival,
+		Detail:                  rep.NetworkFeeDetail,
 	}
 }
 
@@ -1419,6 +2286,36 @@ func offerRefPrice(o map[string]any) float64 {
 		return v
 	}
 	return offerFloat(o, "avg_ref_price")
+}
+
+func offerStringPtr(o map[string]any, key string) *string {
+	if v := offerString(o, key); v != "" {
+		return &v
+	}
+	return nil
+}
+
+func offerInt64Ptr(o map[string]any, key string) *int64 {
+	if v := offerFloat(o, key); v != 0 {
+		out := int64(v)
+		return &out
+	}
+	return nil
+}
+
+func offerFloatPtr(o map[string]any, key string) *float64 {
+	if v := offerFloat(o, key); v != 0 {
+		out := v
+		return &out
+	}
+	return nil
+}
+
+func nonEmptyOr(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
+		return value
+	}
+	return fallback
 }
 
 // queryCex reads the ?cex= query param and validates it against supportedCEXes.

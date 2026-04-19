@@ -1,11 +1,11 @@
 import type { CostBreakdown, Offer, PremiumFilterMode } from '../types';
 
 export function getOfferPrice(offer: Offer): number {
-  return offer.pricing?.offer_price ?? offer.price ?? 0;
+  return offer.pricing?.offer_price ?? offer.pricing?.avg_offer_price ?? offer.price ?? 0;
 }
 
 export function getRawPremiumPercent(offer: Offer): number | null {
-  return offer.pricing?.raw_premium_percent ?? offer.raw_premium_percent ?? offer.price_diff_percent ?? null;
+  return offer.pricing?.raw_premium_percent ?? offer.pricing?.avg_premium_percent ?? offer.raw_premium_percent ?? offer.price_diff_percent ?? null;
 }
 
 export function getPremiumMetricValue(offer: Offer, mode: PremiumFilterMode): number | null {
@@ -21,7 +21,7 @@ export function getPremiumMetricValue(offer: Offer, mode: PremiumFilterMode): nu
 }
 
 export function getRefPrice(offer: Offer): number | null {
-  return offer.pricing?.ref_price ?? offer.ref_price ?? null;
+  return offer.pricing?.ref_price ?? offer.pricing?.avg_ref_price ?? offer.ref_price ?? null;
 }
 
 export function getPriceType(offer: Offer): string | null {
@@ -59,7 +59,7 @@ export function isOfferLive(offer: Offer): boolean {
 export function getNetPremiumPercent(offer: Offer, capped = false): number | null {
   if (offer.analysis) {
     const scenario = capped ? offer.analysis.capped_volume : offer.analysis.full_volume;
-    return scenario?.premium.net_percent ?? null;
+    return scenario?.premium.net_percent ?? scenario?.premium.avg_net_percent ?? null;
   }
   return capped ? offer.net_premium_percent_capped ?? null : offer.net_premium_percent ?? null;
 }
@@ -67,7 +67,7 @@ export function getNetPremiumPercent(offer: Offer, capped = false): number | nul
 export function getTradeCostPercent(offer: Offer, capped = false): number | null {
   if (offer.analysis) {
     const scenario = capped ? offer.analysis.capped_volume : offer.analysis.full_volume;
-    return scenario?.premium.trade_cost_percent ?? null;
+    return scenario?.premium.trade_cost_percent ?? scenario?.premium.avg_trade_cost_percent ?? null;
   }
   return capped ? offer.trade_cost_percent_capped ?? null : offer.trade_cost_percent ?? null;
 }
@@ -75,7 +75,7 @@ export function getTradeCostPercent(offer: Offer, capped = false): number | null
 export function getEstimatedProfitBtc(offer: Offer, capped = false): number | null {
   if (offer.analysis) {
     const scenario = capped ? offer.analysis.capped_volume : offer.analysis.full_volume;
-    return scenario?.profit.btc ?? null;
+    return scenario?.profit.btc ?? scenario?.profit.avg_btc ?? null;
   }
   return capped ? offer.estimated_profit_btc_capped ?? null : offer.estimated_profit_btc ?? null;
 }
@@ -83,7 +83,7 @@ export function getEstimatedProfitBtc(offer: Offer, capped = false): number | nu
 export function getEstimatedProfitFiat(offer: Offer, capped = false): number | null {
   if (offer.analysis) {
     const scenario = capped ? offer.analysis.capped_volume : offer.analysis.full_volume;
-    return scenario?.profit.fiat ?? null;
+    return scenario?.profit.fiat ?? scenario?.profit.avg_fiat ?? null;
   }
   return capped ? offer.estimated_profit_fiat_capped ?? null : offer.estimated_profit_fiat ?? null;
 }
@@ -106,7 +106,20 @@ export function getDisplayCostBreakdown(offer: Offer, capped = false): CostBreak
   const networkFee = offer.btc_network_fee;
   const estimatedProfitPct = scenario.profit.btc != null && scenario.trade_size_btc > 0
     ? (scenario.profit.btc / scenario.trade_size_btc) * 100
-    : scenario.premium.net_percent ?? null;
+    : scenario.profit.avg_btc != null && scenario.trade_size_btc > 0
+      ? (scenario.profit.avg_btc / scenario.trade_size_btc) * 100
+      : scenario.premium.net_percent ?? scenario.premium.avg_net_percent ?? null;
+
+  const cexTakerBTC = scenario.costs.cex_taker.btc ?? scenario.costs.cex_taker.avg_btc ?? 0;
+  const cexTakerPct = scenario.costs.cex_taker.pct ?? scenario.costs.cex_taker.avg_pct ?? (scenario.trade_size_btc > 0 ? (cexTakerBTC / scenario.trade_size_btc) * 100 : 0);
+  const withdrawalBTC = scenario.costs.withdrawal.btc ?? scenario.costs.withdrawal.avg_btc ?? 0;
+  const withdrawalPct = scenario.costs.withdrawal.pct ?? scenario.costs.withdrawal.avg_pct ?? (scenario.trade_size_btc > 0 ? (withdrawalBTC / scenario.trade_size_btc) * 100 : 0);
+  const dexFeeBTC = scenario.costs.dex_fee.btc ?? scenario.costs.dex_fee.avg_btc ?? 0;
+  const dexFeePct = scenario.costs.dex_fee.pct ?? scenario.costs.dex_fee.avg_pct ?? (scenario.trade_size_btc > 0 ? (dexFeeBTC / scenario.trade_size_btc) * 100 : 0);
+  const networkBTC = networkFee?.btc ?? scenario.costs.network.btc ?? scenario.costs.network.avg_btc ?? 0;
+  const networkPct = scenario.costs.network.pct ?? scenario.costs.network.avg_pct ?? (scenario.trade_size_btc > 0 ? (networkBTC / scenario.trade_size_btc) * 100 : 0);
+  const totalBTC = scenario.costs.total.btc ?? scenario.costs.total.avg_btc ?? 0;
+  const totalPct = scenario.costs.total.pct ?? scenario.costs.total.avg_pct ?? (scenario.trade_size_btc > 0 ? (totalBTC / scenario.trade_size_btc) * 100 : 0);
 
   return {
     btc_amount: scenario.trade_size_btc,
@@ -116,21 +129,21 @@ export function getDisplayCostBreakdown(offer: Offer, capped = false): CostBreak
     trade_direction: offer.direction === 'sell' ? 'ask' : 'bid',
     num_network_txs: networkFee?.num_txs ?? networkFee?.detail?.num_txs ?? 0,
     estimated_profit_pct: estimatedProfitPct ?? 0,
-    estimated_profit_btc: scenario.profit.btc ?? 0,
-    cex_taker_fee_pct: scenario.costs.cex_taker.pct,
-    cex_taker_fee_btc: scenario.costs.cex_taker.btc,
-    withdrawal_fee_pct: scenario.costs.withdrawal.pct,
-    withdrawal_fee_btc: scenario.costs.withdrawal.btc,
-    network_fee_pct: scenario.costs.network.pct,
-    network_fee_btc: networkFee?.btc ?? 0,
+    estimated_profit_btc: scenario.profit.btc ?? scenario.profit.avg_btc ?? 0,
+    cex_taker_fee_pct: cexTakerPct,
+    cex_taker_fee_btc: cexTakerBTC,
+    withdrawal_fee_pct: withdrawalPct,
+    withdrawal_fee_btc: withdrawalBTC,
+    network_fee_pct: networkPct,
+    network_fee_btc: networkBTC,
     network_fee_method: networkFee?.method ?? scenario.route.settlement,
     network_fee_tier: networkFee?.tier ?? '',
     network_fee_confidence: networkFee?.confidence ?? 0,
     network_fee_detail: networkFee?.detail ?? null,
     hedge: scenario.costs.hedge,
-    dex_fee_pct: scenario.costs.dex_fee.pct,
-    dex_fee_btc: scenario.costs.dex_fee.btc,
-    total_cost_pct: scenario.costs.total.pct,
-    total_cost_btc: scenario.costs.total.btc,
+    dex_fee_pct: dexFeePct,
+    dex_fee_btc: dexFeeBTC,
+    total_cost_pct: totalPct,
+    total_cost_btc: totalBTC,
   };
 }

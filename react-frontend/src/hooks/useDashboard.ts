@@ -26,12 +26,12 @@ export function useDashboard() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', maxFiatLimit: number | null = null) => {
+  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {
     setLoading(true);
     setError(null);
     try {
       const excludedQuery = excludedPaymentQuery(excludedPaymentMethods);
-      const tcQuery = tradeCostQuery(excludedCEXes, feeTier, maxFiatLimit);
+      const tcQuery = `${tradeCostQuery(excludedCEXes, feeTier, maxFiatLimit)}${!coupledHedge ? '&coupled_hedge=false' : ''}`;
       const posAllQuery = `/api/past_order_stats?fiat=EUR${tcQuery}`;
       const posFilteredQuery = `/api/past_order_stats?fiat=EUR${excludedQuery}${tcQuery}`;
       const [s, o, ohlc, posAll, posFiltered, gs] = await Promise.all([
@@ -40,7 +40,7 @@ export function useDashboard() {
         apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`),
         apiFetch<PastOrderStats>(posAllQuery),
         excludedQuery ? apiFetch<PastOrderStats>(posFilteredQuery) : Promise.resolve(null),
-        apiFetch<GeneralStatsData>(`/api/general_stats?hours=${hours}${excludedQuery}`),
+        apiFetch<GeneralStatsData>(`/api/general_stats?hours=${hours}&cex=${cex}${excludedQuery}${tcQuery}`),
       ]);
       setStats(s);
       setPastOffers(o);
