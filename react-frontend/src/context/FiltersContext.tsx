@@ -1,5 +1,6 @@
 import { createContext, useContext, useReducer, useState, useMemo, type ReactNode } from 'react';
 import type { Filters, Offer, PaymentMethodGroup } from '../types';
+import { getPremiumMetricValue, getRefPrice, isOfferLive } from '../utils/offerAccess';
 
 // ── State ──────────────────────────────────────────────────────────────────
 
@@ -10,7 +11,7 @@ export const DEFAULT_FILTERS: Filters = {
   status: 'open',
   premiumMin: '',
   premiumMax: '',
-  premiumOnly: true,
+  premiumMode: 'raw',
   hours: '24',
   cex: 'kraken',
 };
@@ -67,10 +68,10 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, chil
   const setFilters = (partial: Partial<Filters>) => dispatch({ type: 'SET', payload: partial });
   const resetFilters = () => dispatch({ type: 'RESET' });
 
-  const refPrice = useMemo(
-    () => offers.find(o => o.is_live && o.ref_price != null)?.ref_price ?? null,
-    [offers]
-  );
+  const refPrice = useMemo(() => {
+    const liveOffer = offers.find(o => isOfferLive(o) && getRefPrice(o) != null);
+    return liveOffer ? getRefPrice(liveOffer) : null;
+  }, [offers]);
 
   // Pre-filter: remove offers whose payment method is excluded in settings.
   const activeOffers = useMemo(() => {
@@ -100,14 +101,14 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, chil
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
     if (paymentFilterFn)   f = f.filter(paymentFilterFn);
-    if (filters.status === 'open')   f = f.filter(o => o.is_live);
-    if (filters.status === 'closed') f = f.filter(o => !o.is_live);
+    if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
+    if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
-    if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
-    if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
-    return f.sort((a, b) => (a.price_diff_percent || 0) - (b.price_diff_percent || 0));
+    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
+    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
+    f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
+    return f.sort((a, b) => (getPremiumMetricValue(a, filters.premiumMode) || 0) - (getPremiumMetricValue(b, filters.premiumMode) || 0));
   }, [activeOffers, filters, paymentFilterFn]);
 
   // Depth chart: all filters except direction — orderbook always shows both sides
@@ -115,8 +116,8 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, chil
     let f = activeOffers;
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
     if (paymentFilterFn)   f = f.filter(paymentFilterFn);
-    if (filters.status === 'open')   f = f.filter(o => o.is_live);
-    if (filters.status === 'closed') f = f.filter(o => !o.is_live);
+    if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
+    if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
     return f;
   }, [activeOffers, filters, paymentFilterFn]);
 

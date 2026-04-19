@@ -3,6 +3,7 @@ import type { Offer, Filters, PaymentMethodGroup } from '../types';
 import { ExchangeTag } from './ExchangeTag';
 import { useTimezone } from '../context/TimezoneContext';
 import { formatNum, formatBtc, formatTime, formatDuration, durationMinutes, premiumClass } from '../utils/formatters';
+import { getBtcMax, getBtcMin, getFirstSeen, getLastSeen, getOfferPrice, getPremiumMetricValue, getRawPremiumPercent } from '../utils/offerAccess';
 
 interface Props {
   offers: Offer[];
@@ -24,7 +25,8 @@ export function OffersTable({ offers, filters, groups = [] }: Props) {
   const lastSeen = useMemo(() => {
     const map: Record<string, string> = {};
     offers.forEach(o => {
-      if (!map[o.exchange] || o.last_seen! > map[o.exchange]) map[o.exchange] = o.last_seen!;
+      const last = getLastSeen(o);
+      if (last && (!map[o.exchange] || last > map[o.exchange])) map[o.exchange] = last;
     });
     return map;
   }, [offers]);
@@ -34,22 +36,40 @@ export function OffersTable({ offers, filters, groups = [] }: Props) {
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.exchange) f = f.filter(o => o.exchange === filters.exchange);
     if (filters.payment) f = f.filter(o => o.payment_method === filters.payment);
-    if (filters.status === 'open') f = f.filter(o => o.last_seen === lastSeen[o.exchange]);
-    if (filters.status === 'closed') f = f.filter(o => o.last_seen !== lastSeen[o.exchange]);
+    if (filters.status === 'open') f = f.filter(o => getLastSeen(o) === lastSeen[o.exchange]);
+    if (filters.status === 'closed') f = f.filter(o => getLastSeen(o) !== lastSeen[o.exchange]);
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
-    if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
-    if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
+    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
+    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
+    f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
     return [...f].sort((a, b) => {
       let va: string | number | null | undefined;
       let vb: string | number | null | undefined;
       if (sortCol === 'duration') {
-        va = durationMinutes(a.first_seen, a.last_seen);
-        vb = durationMinutes(b.first_seen, b.last_seen);
+        va = durationMinutes(getFirstSeen(a), getLastSeen(a));
+        vb = durationMinutes(getFirstSeen(b), getLastSeen(b));
       } else {
-        va = (a as unknown as Record<string, unknown>)[sortCol] as string | number | null | undefined;
-        vb = (b as unknown as Record<string, unknown>)[sortCol] as string | number | null | undefined;
+        const resolveSortValue = (offer: Offer, col: SortCol): string | number | null | undefined => {
+          switch (col) {
+            case 'price':
+              return getOfferPrice(offer);
+            case 'price_diff_percent':
+              return getRawPremiumPercent(offer);
+            case 'btc_min':
+              return getBtcMin(offer);
+            case 'btc_max':
+              return getBtcMax(offer);
+            case 'first_seen':
+              return getFirstSeen(offer);
+            case 'last_seen':
+              return getLastSeen(offer);
+            default:
+              return (offer as unknown as Record<string, unknown>)[col] as string | number | null | undefined;
+          }
+        };
+        va = resolveSortValue(a, sortCol);
+        vb = resolveSortValue(b, sortCol);
       }
       if (typeof va === 'string') va = va.toLowerCase();
       if (typeof vb === 'string') vb = vb.toLowerCase();
@@ -100,16 +120,16 @@ export function OffersTable({ offers, filters, groups = [] }: Props) {
               <td className={`px-2.5 py-1.5 border-b border-border ${o.direction === 'buy' ? 'text-green' : 'text-red'}`}>
                 {o.direction === 'buy' ? 'Bid' : 'Ask'}
               </td>
-              <td className="px-2.5 py-1.5 border-b border-border">€{formatNum(o.price)}</td>
-              <td className={`px-2.5 py-1.5 border-b border-border ${premiumClass(o.price_diff_percent)}`}>
-                {o.price_diff_percent != null ? o.price_diff_percent.toFixed(1) + '%' : '—'}
+              <td className="px-2.5 py-1.5 border-b border-border">€{formatNum(getOfferPrice(o))}</td>
+              <td className={`px-2.5 py-1.5 border-b border-border ${premiumClass(getRawPremiumPercent(o))}`}>
+                {getRawPremiumPercent(o) != null ? getRawPremiumPercent(o)!.toFixed(1) + '%' : '—'}
               </td>
-              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border">{formatBtc(o.btc_min)}</td>
-              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border">{formatBtc(o.btc_max)}</td>
+              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border">{formatBtc(getBtcMin(o))}</td>
+              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border">{formatBtc(getBtcMax(o))}</td>
               <td className="px-2.5 py-1.5 border-b border-border">{groupLabel(o.payment_method)}</td>
-              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.first_seen, timezone)}</td>
-              <td className="hidden sm:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(o.last_seen, timezone)}</td>
-              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatDuration(o.first_seen, o.last_seen)}</td>
+              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(getFirstSeen(o), timezone)}</td>
+              <td className="hidden sm:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatTime(getLastSeen(o), timezone)}</td>
+              <td className="hidden md:table-cell px-2.5 py-1.5 border-b border-border whitespace-nowrap">{formatDuration(getFirstSeen(o), getLastSeen(o))}</td>
             </tr>
           ))}
         </tbody>

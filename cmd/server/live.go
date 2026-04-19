@@ -42,29 +42,34 @@ type LifecyclePoint struct {
 
 // liveOutOffer is the shape sent to clients — includes computed premium fields.
 type liveOutOffer struct {
-	ID            int64            `json:"id"`
-	Exchange      string           `json:"exchange"`
-	Direction     string           `json:"direction"`
-	Price         float64          `json:"price"`
-	PriceDiffPct  float64          `json:"price_diff_percent"`
-	RefPrice      float64          `json:"ref_price"`
-	TradeCostPct  float64          `json:"trade_cost_percent"`  // estimated CEX→DEX arbitrage cost as % of trade value
-	NetPremiumPct float64          `json:"net_premium_percent"` // PriceDiffPct minus TradeCostPct
-	CostBreakdown       CostBreakdown  `json:"cost_breakdown"`               // per-component cost detail (full size)
-	CostBreakdownCapped *CostBreakdown `json:"cost_breakdown_capped,omitempty"` // capped to max fiat limit (only set when limit < offer size)
-	TradeCostPctCapped  *float64       `json:"trade_cost_percent_capped,omitempty"`
-	NetPremiumPctCapped *float64       `json:"net_premium_percent_capped,omitempty"`
-	BTCMin        *float64         `json:"btc_min"`
-	BTCMax        *float64         `json:"btc_max"`
-	FiatMin       *int64           `json:"fiat_min"`
-	FiatMax       *int64           `json:"fiat_max"`
-	PaymentMethod *string          `json:"payment_method"`
-	OfferID       *string          `json:"offer_id"`
-	FirstSeen     string           `json:"first_seen"`
-	LastSeen      string           `json:"last_seen"`
-	IsLive        bool             `json:"is_live"`
-	PriceType     *string          `json:"price_type"`
-	Lifecycle     []LifecyclePoint `json:"lifecycle,omitempty"`
+	ID                        int64            `json:"id"`
+	Exchange                  string           `json:"exchange"`
+	Direction                 string           `json:"direction"`
+	Price                     float64          `json:"price"`
+	RawPremiumPct             float64          `json:"raw_premium_percent"` // explicit alias for PriceDiffPct
+	PriceDiffPct              float64          `json:"price_diff_percent"`
+	RefPrice                  float64          `json:"ref_price"`
+	TradeCostPct              float64          `json:"trade_cost_percent"`              // estimated CEX→DEX arbitrage cost as % of trade value
+	NetPremiumPct             float64          `json:"net_premium_percent"`             // PriceDiffPct minus TradeCostPct
+	EstimatedProfitBTC        float64          `json:"estimated_profit_btc"`            // estimated BTC profit for the offer's full trade size
+	EstimatedProfitFiat       float64          `json:"estimated_profit_fiat"`           // estimated fiat profit for the offer's full trade size
+	CostBreakdown             CostBreakdown    `json:"cost_breakdown"`                  // per-component cost detail (full size)
+	CostBreakdownCapped       *CostBreakdown   `json:"cost_breakdown_capped,omitempty"` // capped to max fiat limit (only set when limit < offer size)
+	TradeCostPctCapped        *float64         `json:"trade_cost_percent_capped,omitempty"`
+	NetPremiumPctCapped       *float64         `json:"net_premium_percent_capped,omitempty"`
+	EstimatedProfitBTCCapped  *float64         `json:"estimated_profit_btc_capped,omitempty"`  // estimated BTC profit at the max fiat cap
+	EstimatedProfitFiatCapped *float64         `json:"estimated_profit_fiat_capped,omitempty"` // estimated fiat profit at the max fiat cap
+	BTCMin                    *float64         `json:"btc_min"`
+	BTCMax                    *float64         `json:"btc_max"`
+	FiatMin                   *int64           `json:"fiat_min"`
+	FiatMax                   *int64           `json:"fiat_max"`
+	PaymentMethod             *string          `json:"payment_method"`
+	OfferID                   *string          `json:"offer_id"`
+	FirstSeen                 string           `json:"first_seen"`
+	LastSeen                  string           `json:"last_seen"`
+	IsLive                    bool             `json:"is_live"`
+	PriceType                 *string          `json:"price_type"`
+	Lifecycle                 []LifecyclePoint `json:"lifecycle,omitempty"`
 }
 
 func computePriceDiffPct(offerPrice, refPrice float64) float64 {
@@ -269,6 +274,7 @@ func (h *LiveHub) computeOutOffers(price float64, sub liveSubscription) []liveOu
 		// breakdown capped to that fiat amount so the frontend can show both side by side.
 		var bdCapped *CostBreakdown
 		var tcCapped, npCapped *float64
+		var profitBTCCapped, profitFiatCapped *float64
 		if sub.maxFiatLimitEUR > 0 && price > 0 {
 			btcCap := sub.maxFiatLimitEUR / price
 			if btcSize > btcCap {
@@ -276,33 +282,42 @@ func (h *LiveHub) computeOutOffers(price float64, sub liveSubscription) []liveOu
 				bdCapped = &bd2
 				tcCapped = &tc2
 				npCapped = &np2
+				profitBTC := bd2.EstimatedProfitBTC
+				profitFiat := round2(profitBTC * price)
+				profitBTCCapped = &profitBTC
+				profitFiatCapped = &profitFiat
 			}
 		}
 
 		result = append(result, liveOutOffer{
-			ID:                  o.ID,
-			Exchange:            o.Exchange,
-			Direction:           o.Direction,
-			Price:               o.Price,
-			PriceDiffPct:        pct,
-			RefPrice:            price,
-			TradeCostPct:        tradeCostPct,
-			NetPremiumPct:       netPremium,
-			CostBreakdown:       bd,
-			CostBreakdownCapped: bdCapped,
-			TradeCostPctCapped:  tcCapped,
-			NetPremiumPctCapped: npCapped,
-			BTCMin:              o.BTCMin,
-			BTCMax:        o.BTCMax,
-			FiatMin:       o.FiatMin,
-			FiatMax:       o.FiatMax,
-			PaymentMethod: o.PaymentMethod,
-			OfferID:       o.OfferID,
-			FirstSeen:     o.FirstSeen,
-			LastSeen:      o.LastSeen,
-			IsLive:        true,
-			PriceType:     o.PriceType,
-			Lifecycle:     lc[o.ID],
+			ID:                        o.ID,
+			Exchange:                  o.Exchange,
+			Direction:                 o.Direction,
+			Price:                     o.Price,
+			RawPremiumPct:             pct,
+			PriceDiffPct:              pct,
+			RefPrice:                  price,
+			TradeCostPct:              tradeCostPct,
+			NetPremiumPct:             netPremium,
+			EstimatedProfitBTC:        bd.EstimatedProfitBTC,
+			EstimatedProfitFiat:       round2(bd.EstimatedProfitBTC * price),
+			CostBreakdown:             bd,
+			CostBreakdownCapped:       bdCapped,
+			TradeCostPctCapped:        tcCapped,
+			NetPremiumPctCapped:       npCapped,
+			EstimatedProfitBTCCapped:  profitBTCCapped,
+			EstimatedProfitFiatCapped: profitFiatCapped,
+			BTCMin:                    o.BTCMin,
+			BTCMax:                    o.BTCMax,
+			FiatMin:                   o.FiatMin,
+			FiatMax:                   o.FiatMax,
+			PaymentMethod:             o.PaymentMethod,
+			OfferID:                   o.OfferID,
+			FirstSeen:                 o.FirstSeen,
+			LastSeen:                  o.LastSeen,
+			IsLive:                    true,
+			PriceType:                 o.PriceType,
+			Lifecycle:                 lc[o.ID],
 		})
 	}
 	return result

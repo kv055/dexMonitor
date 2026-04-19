@@ -3,6 +3,7 @@ import { useFilters } from '../context/FiltersContext';
 import { useTimezone } from '../context/TimezoneContext';
 import { LoadingSpinner } from './LoadingSpinner';
 import { formatDateTimeLabel, toUtcSec } from '../utils/formatters';
+import { getBtcMax, getFirstSeen, getLastSeen, getOfferPrice, getRefPrice, isOfferLive } from '../utils/offerAccess';
 
 function niceStep(range: number, targetSteps: number): number {
   const rough = range / targetSteps;
@@ -54,8 +55,8 @@ function DepthChartInner() {
     return allOffers.filter(o => {
       if (filters.exchange && o.exchange !== filters.exchange) return false;
       if (filters.payment && o.payment_method !== filters.payment) return false;
-      const fs = toUtcSec(o.first_seen || '');
-      const ls = toUtcSec(o.last_seen || '');
+      const fs = toUtcSec(getFirstSeen(o) || '');
+      const ls = toUtcSec(getLastSeen(o) || '');
       return fs <= hoveredOhlcTime && ls >= hoveredOhlcTime;
     });
   }, [hoveredOhlcTime, depthOffers, allOffers, filters.exchange, filters.payment]);
@@ -65,16 +66,17 @@ function DepthChartInner() {
     if (!displayOffers.length) return null;
 
     // In historical mode use all matched offers; in live mode filter to is_live only
-    const open = hoveredOhlcTime !== null ? displayOffers : displayOffers.filter(o => o.is_live);
+    const open = hoveredOhlcTime !== null ? displayOffers : displayOffers.filter(o => isOfferLive(o));
     if (!open.length) return null;
 
-    const midPrice = open.reduce((s, o) => s + (o.ref_price || 0), 0) / open.length;
+    const midPrice = open.reduce((s, o) => s + (getRefPrice(o) || 0), 0) / open.length;
 
     const bidMap: Record<number, number> = {};
     const askMap: Record<number, number> = {};
     open.forEach(o => {
       const map = o.direction === 'buy' ? bidMap : askMap;
-      map[o.price] = (map[o.price] || 0) + (o.btc_max || 0);
+      const price = getOfferPrice(o);
+      map[price] = (map[price] || 0) + (getBtcMax(o) || 0);
     });
 
     const rawBids = Object.entries(bidMap).map(([p, b]) => ({ price: +p, btc: b })).sort((a, b) => b.price - a.price);

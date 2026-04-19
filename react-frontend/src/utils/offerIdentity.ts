@@ -1,4 +1,5 @@
 import type { Offer } from '../types';
+import { getBtcMax, getBtcMin, getFirstSeen, getLastSeen, getPriceType, isOfferLive } from './offerAccess';
 
 function baseOfferKey(offer: Offer): string {
   return [
@@ -6,13 +7,13 @@ function baseOfferKey(offer: Offer): string {
     offer.offer_id ?? `id:${offer.id}`,
     offer.direction,
     offer.payment_method ?? 'no-payment',
-    offer.first_seen ?? 'no-first-seen',
-    offer.last_seen ?? (offer.is_live ? 'live' : 'no-last-seen'),
-    offer.price,
-    offer.btc_min ?? 'no-btc-min',
-    offer.btc_max ?? 'no-btc-max',
-    offer.price_type ?? 'no-price-type',
-    offer.is_live ? 'live' : 'closed',
+    getFirstSeen(offer) ?? 'no-first-seen',
+    getLastSeen(offer) ?? (isOfferLive(offer) ? 'live' : 'no-last-seen'),
+    offer.pricing?.offer_price ?? offer.price ?? 0,
+    getBtcMin(offer) ?? 'no-btc-min',
+    getBtcMax(offer) ?? 'no-btc-max',
+    getPriceType(offer) ?? 'no-price-type',
+    isOfferLive(offer) ? 'live' : 'closed',
   ].join('|');
 }
 

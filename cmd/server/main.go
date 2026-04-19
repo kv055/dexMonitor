@@ -407,6 +407,7 @@ func main() {
 
 	// API
 	mux.HandleFunc("GET /api/past_offers", handlePastOffers)
+	mux.HandleFunc("GET /api/past_offers/{id}/lifecycle", handlePastOfferLifecycle)
 	mux.HandleFunc("GET /api/past_order_stats", handlePastOrderStats)
 	mux.HandleFunc("GET /api/general_stats", handleGeneralStats)
 	mux.HandleFunc("GET /api/live_offers", handleLiveOffersREST)
@@ -536,20 +537,23 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 		filtered = append(filtered, o)
 	}
 
-	// Embed lifecycle price history for chart visualization.
-	ids := make([]int64, 0, len(filtered))
-	for _, o := range filtered {
-		ids = append(ids, int64(offerFloat(o, "id")))
-	}
-	lifecycle := fetchOfferLifecycle(ids)
-	for _, o := range filtered {
-		id := int64(offerFloat(o, "id"))
-		if pts, ok := lifecycle[id]; ok {
-			o["lifecycle"] = pts
-		}
+	writeJSON(w, filtered)
+}
+
+func handlePastOfferLifecycle(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		http.Error(w, "invalid offer id", http.StatusBadRequest)
+		return
 	}
 
-	writeJSON(w, filtered)
+	lifecycle := fetchOfferLifecycle([]int64{id})
+	points := lifecycle[id]
+	if points == nil {
+		points = []LifecyclePoint{}
+	}
+	writeJSON(w, points)
 }
 
 // fetchOfferLifecycle returns lifecycle (snapshot_time, price) points grouped by offer_db_id.

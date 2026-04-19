@@ -9,11 +9,13 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import type { OHLCCandle, OHLCData } from '../types';
+import type { LifecyclePoint, OHLCCandle, OHLCData } from '../types';
 import { useFilters } from '../context/FiltersContext';
+import { getFirstSeen, getLastSeen, getNetPremiumPercent, getOfferPrice, isOfferLive } from '../utils/offerAccess';
 import { useTimezone } from '../context/TimezoneContext';
 import { LoadingSpinner } from './LoadingSpinner';
 import { buildOfferKeys } from '../utils/offerIdentity';
+import { apiFetch } from '../utils/api';
 
 interface Props {
   data: OHLCData | null;
@@ -76,6 +78,8 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
 
   const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferKey, setSelectedOfferKey, setHoveredOhlcTime, loading } = useFilters();
   const { timezone } = useTimezone();
+  const [lifecycleCache, setLifecycleCache] = useState<Record<number, LifecyclePoint[]>>({});
+  const lifecycleLoadingRef = useRef<Set<number>>(new Set());
 
   const sourceIntervalMin = data?.interval_min ?? 1;
 
@@ -103,6 +107,51 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
     [displayCandles, timezone]
   );
   const offerKeys = useMemo(() => buildOfferKeys(premiumOffers), [premiumOffers]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    async function loadMissingLifecycles() {
+      const needed = premiumOffers.filter((offer) =>
+        !isOfferLive(offer) &&
+        !offer.lifecycle &&
+        lifecycleCache[offer.id] == null &&
+        !lifecycleLoadingRef.current.has(offer.id)
+      );
+
+      if (needed.length === 0) return;
+
+      const toFetch = needed.slice(0, 12);
+      toFetch.forEach((offer) => lifecycleLoadingRef.current.add(offer.id));
+
+      const results = await Promise.allSettled(
+        toFetch.map(async (offer) => ({
+          id: offer.id,
+          points: await apiFetch<LifecyclePoint[]>(`/api/past_offers/${offer.id}/lifecycle`),
+        }))
+      );
+
+      if (cancelled) return;
+
+      setLifecycleCache((prev) => {
+        const next = { ...prev };
+        for (const result of results) {
+          if (result.status === 'fulfilled') {
+            next[result.value.id] = result.value.points;
+          }
+        }
+        return next;
+      });
+
+      toFetch.forEach((offer) => lifecycleLoadingRef.current.delete(offer.id));
+    }
+
+    void loadMissingLifecycles();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [premiumOffers, lifecycleCache]);
 
   // Keep chart sized to container
   useEffect(() => {
@@ -181,16 +230,17 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
 
     premiumOffers.forEach((o, index) => {
       const offerKey = offerKeys[index];
-      const isOpen = o.is_live;
+      const isOpen = isOfferLive(o);
       const isSelected = offerKey === selectedOfferKey;
       const lineWidth = isSelected ? 3 : 2;
       const markerRadius = isSelected ? 5 : 3;
+      const lifecycle = o.lifecycle ?? lifecycleCache[o.id];
 
       type TimeValue = { time: UTCTimestamp; value: number };
 
-      if (o.lifecycle && o.lifecycle.length >= 2) {
+      if (lifecycle && lifecycle.length >= 2) {
         // Multi-point line: split into colored segments by premium state at each point.
-        const lcPointsRaw = o.lifecycle.map((p) => ({
+        const lcPointsRaw = lifecycle.map((p) => ({
           time: toUtcSec(p.time) as UTCTimestamp,
           value: p.price,
           color: isSelected ? selectedLine : offerColor(o.direction, p.net_premium_pct),
@@ -244,15 +294,15 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
         }
       } else {
         // No lifecycle — flat line, colored by current premium state.
-        const anchorRaw = isOpen ? nowSec : toUtcSec(o.last_seen ?? o.first_seen ?? '');
+        const anchorRaw = isOpen ? nowSec : toUtcSec(getLastSeen(o) ?? getFirstSeen(o) ?? '');
         if (!anchorRaw) return;
         const anchor = anchorRaw as UTCTimestamp;
         const candleWidthSec = candleMin * 60;
         const points: TimeValue[] = [
-          { time: (anchor - candleWidthSec) as UTCTimestamp, value: o.price },
-          { time: anchor, value: o.price },
+          { time: (anchor - candleWidthSec) as UTCTimestamp, value: getOfferPrice(o) },
+          { time: anchor, value: getOfferPrice(o) },
         ];
-        const color = isSelected ? selectedLine : offerColor(o.direction, o.net_premium_percent);
+        const color = isSelected ? selectedLine : offerColor(o.direction, getNetPremiumPercent(o));
         const series = chart.addLineSeries({
           color,
           lineWidth,
@@ -262,7 +312,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
           crosshairMarkerRadius: markerRadius,
         });
         series.setData(points);
-        seriesInfo.set(series, { offerKey, price: o.price });
+        seriesInfo.set(series, { offerKey, price: getOfferPrice(o) });
       }
     });
 

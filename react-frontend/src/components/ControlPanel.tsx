@@ -1,13 +1,20 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useFilters } from '../context/FiltersContext';
 import { useTimezone } from '../context/TimezoneContext';
-import type { Stats } from '../types';
+import type { PremiumFilterMode, Stats } from '../types';
 import { ExchangeTag } from './ExchangeTag';
 import { formatTimeOnly } from '../utils/formatters';
+import { getLastSeen, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
 
 const PAYMENT_PALETTE = [
   '#f7931a', '#3fb950', '#bc8cff', '#58a6ff', '#f85149',
   '#d29922', '#39d353', '#db61a2', '#79c0ff', '#e3b341', '#4a4f58',
+];
+
+const PREMIUM_FILTER_OPTIONS: { value: PremiumFilterMode; label: string }[] = [
+  { value: 'raw', label: 'Raw Premium' },
+  { value: 'net_full', label: 'Net Premium Full' },
+  { value: 'net_capped', label: 'Net Premium Capped' },
 ];
 
 interface Props {
@@ -51,13 +58,13 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
-    if (filters.status === 'open')   f = f.filter(o => o.is_live);
-    if (filters.status === 'closed') f = f.filter(o => !o.is_live);
+    if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
+    if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
-    if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
-    if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
+    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
+    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
+    f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
     const counts: Record<string, number> = {};
     f.forEach(o => {
@@ -214,6 +221,53 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
   );
 }
 
+interface PremiumModeDropdownProps {
+  value: PremiumFilterMode;
+  onChange: (v: PremiumFilterMode) => void;
+  inputCls: string;
+}
+
+function PremiumModeDropdown({ value, onChange, inputCls }: PremiumModeDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const selected = PREMIUM_FILTER_OPTIONS.find(opt => opt.value === value) ?? PREMIUM_FILTER_OPTIONS[0];
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        onClick={() => setOpen(o => !o)}
+        className={`${inputCls} flex items-center gap-1.5 w-full`}
+      >
+        <span className="text-[0.8rem]">{selected.label}</span>
+        <span className="ml-auto text-muted text-[0.65rem]">▾</span>
+      </button>
+
+      {open && (
+        <div className="absolute top-full left-0 mt-1 z-50 bg-surface border border-border rounded-md overflow-hidden min-w-full shadow-lg">
+          {PREMIUM_FILTER_OPTIONS.map(opt => (
+            <button
+              key={opt.value}
+              onClick={() => { onChange(opt.value); setOpen(false); }}
+              className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors ${value === opt.value ? 'text-accent bg-bg' : 'text-text'}`}
+            >
+              <span className="text-[0.8rem]">{opt.label}</span>
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface DirectionDropdownProps {
   value: string;
   onChange: (v: string) => void;
@@ -237,13 +291,13 @@ function DirectionDropdown({ value, onChange, inputCls }: DirectionDropdownProps
     let f = offers;
     if (filters.exchange) f = f.filter(o => o.exchange === filters.exchange);
     if (filters.payment)  f = f.filter(o => o.payment_method === filters.payment);
-    if (filters.status === 'open')   f = f.filter(o => o.is_live);
-    if (filters.status === 'closed') f = f.filter(o => !o.is_live);
+    if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
+    if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
-    if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
-    if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
+    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
+    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
+    f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
     return {
       all:  f.length,
@@ -314,14 +368,14 @@ function StatusDropdown({ value, onChange, inputCls }: StatusDropdownProps) {
     if (filters.payment)   f = f.filter(o => o.payment_method === filters.payment);
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
-    if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
-    if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
+    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
+    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
+    f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
     return {
       all:    f.length,
-      open:   f.filter(o => o.is_live).length,
-      closed: f.filter(o => !o.is_live).length,
+      open:   f.filter(o => isOfferLive(o)).length,
+      closed: f.filter(o => !isOfferLive(o)).length,
     };
   }, [offers, filters]);
 
@@ -385,13 +439,13 @@ function ExchangeDropdown({ value, onChange, stats, inputCls }: ExchangeDropdown
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.payment)   f = f.filter(o => o.payment_method === filters.payment);
-    if (filters.status === 'open')   f = f.filter(o => o.is_live);
-    if (filters.status === 'closed') f = f.filter(o => !o.is_live);
+    if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
+    if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
-    if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
-    if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
+    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
+    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
+    f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
     const map: Record<string, number> = {};
     f.forEach(o => { map[o.exchange] = (map[o.exchange] || 0) + 1; });
@@ -475,13 +529,13 @@ function TimeframeDropdown({ value, onChange, inputCls }: TimeframeDropdownProps
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
     if (filters.payment)   f = f.filter(o => o.payment_method === filters.payment);
-    if (filters.status === 'open')   f = f.filter(o => o.is_live);
-    if (filters.status === 'closed') f = f.filter(o => !o.is_live);
+    if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
+    if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
-    if (!isNaN(pMin)) f = f.filter(o => (o.price_diff_percent || 0) >= pMin);
-    if (!isNaN(pMax)) f = f.filter(o => (o.price_diff_percent || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => (o.price_diff_percent ?? 0) > 0);
+    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
+    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
+    f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
     const now = Date.now();
     const result: Record<string, number> = {};
@@ -490,7 +544,7 @@ function TimeframeDropdown({ value, onChange, inputCls }: TimeframeDropdownProps
       // comparison works correctly — DB uses space, not T.
       const cutoff = new Date(now - parseInt(opt.value) * 3600 * 1000)
         .toISOString().replace('T', ' ').slice(0, 19);
-      result[opt.value] = f.filter(o => o.last_seen != null && o.last_seen >= cutoff).length;
+      result[opt.value] = f.filter(o => getLastSeen(o) != null && getLastSeen(o)! >= cutoff).length;
     }
     return result;
   }, [offers, filters]);
@@ -619,6 +673,14 @@ export function ControlPanel({ onRefresh, lastUpdatedAt, stats }: Props) {
           />
         </div>
         <div className="flex flex-col gap-0.5">
+          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Premium Type</span>
+          <PremiumModeDropdown
+            value={filters.premiumMode}
+            onChange={v => setFilters({ premiumMode: v })}
+            inputCls={inputCls}
+          />
+        </div>
+        <div className="flex flex-col gap-0.5">
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Premium %</span>
           <div className="flex gap-1 items-center">
             <input type="number" className={`${inputCls} w-14`} placeholder="Min" step="0.1"
@@ -627,18 +689,6 @@ export function ControlPanel({ onRefresh, lastUpdatedAt, stats }: Props) {
             <input type="number" className={`${inputCls} w-14`} placeholder="Max" step="0.1"
               value={filters.premiumMax} onChange={e => setFilters({ premiumMax: e.target.value })} />
           </div>
-        </div>
-        <div className="flex flex-col gap-0.5 justify-end">
-          <button
-            onClick={() => setFilters({ premiumOnly: !filters.premiumOnly })}
-            className={`inline-flex items-center gap-1.5 border rounded-full px-2.5 py-0.5 text-[0.75rem] cursor-pointer whitespace-nowrap transition-all before:content-[''] before:w-1.5 before:h-1.5 before:rounded-full before:transition-colors
-              ${filters.premiumOnly
-                ? 'bg-[rgba(247,147,26,0.1)] text-accent border-accent before:bg-accent'
-                : 'bg-bg text-muted border-border before:bg-border'
-              }`}
-          >
-            Premium Only
-          </button>
         </div>
       </div>
     </div>

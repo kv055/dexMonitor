@@ -81,30 +81,124 @@ export interface HedgePositionDetail {
   btc_price_eur: number;
 }
 
+export interface LiveOfferStatus {
+  is_live: boolean;
+  first_seen: string | null;
+  last_seen: string | null;
+}
+
+export interface LiveOfferPricing {
+  price_type: string | null;
+  fiat_currency: string;
+  offer_price: number;
+  ref_price: number | null;
+  raw_premium_percent: number | null;
+}
+
+export interface LiveOfferVolumeLimits {
+  btc_min: number | null;
+  btc_max: number | null;
+  fiat_min: number | null;
+  fiat_max: number | null;
+}
+
+export interface LiveOfferBTCNetworkFee {
+  btc: number;
+  method: string;
+  tier: string;
+  confidence: number;
+  num_txs: number;
+  required_confirmations: number;
+  estimated_arrival_minutes: number;
+  detail: BTCNetworkFeeDetail | null;
+}
+
+export interface LiveOfferRoute {
+  cex: string;
+  settlement: string;
+}
+
+export interface LiveOfferPremium {
+  trade_cost_percent: number | null;
+  net_percent: number | null;
+}
+
+export interface LiveOfferProfit {
+  btc: number | null;
+  fiat: number | null;
+}
+
+export interface LiveOfferCostComponent {
+  pct: number;
+  btc: number;
+}
+
+export interface LiveOfferScenarioCosts {
+  cex_taker: LiveOfferCostComponent;
+  withdrawal: LiveOfferCostComponent;
+  dex_fee: LiveOfferCostComponent;
+  network: { pct: number };
+  hedge: HedgeBreakdown;
+  total: LiveOfferCostComponent;
+}
+
+export interface LiveOfferScenario {
+  cap_fiat?: number | null;
+  trade_size_btc: number;
+  trade_size_fiat: number;
+  route: LiveOfferRoute;
+  premium: LiveOfferPremium;
+  profit: LiveOfferProfit;
+  costs: LiveOfferScenarioCosts;
+}
+
+export interface LiveOfferAnalysis {
+  full_volume: LiveOfferScenario;
+  capped_volume?: LiveOfferScenario | null;
+}
+
+export interface LifecyclePoint {
+  time: string;
+  price: number;
+  net_premium_pct?: number | null;
+}
+
 export interface Offer {
   id: number;
   exchange: string;
   direction: string;
-  price: number;
-  price_diff_percent: number | null;
-  trade_cost_percent: number | null;
-  net_premium_percent: number | null;
-  cost_breakdown: CostBreakdown | null;
+  price?: number;
+  pricing?: LiveOfferPricing;
+  raw_premium_percent?: number | null;
+  price_diff_percent?: number | null;
+  trade_cost_percent?: number | null;
+  net_premium_percent?: number | null;
+  estimated_profit_btc?: number | null;
+  estimated_profit_fiat?: number | null;
+  cost_breakdown?: CostBreakdown | null;
   cost_breakdown_capped?: CostBreakdown | null;
   trade_cost_percent_capped?: number | null;
   net_premium_percent_capped?: number | null;
-  btc_min: number | null;
-  btc_max: number | null;
+  estimated_profit_btc_capped?: number | null;
+  estimated_profit_fiat_capped?: number | null;
+  volume_limits?: LiveOfferVolumeLimits;
+  btc_min?: number | null;
+  btc_max?: number | null;
+  fiat_min?: number | null;
+  fiat_max?: number | null;
   payment_method: string | null;
   offer_id: string | null;
-  first_seen: string | null;
-  last_seen: string | null;
-  is_live: boolean;
-  ref_price: number | null;
+  status?: LiveOfferStatus;
+  first_seen?: string | null;
+  last_seen?: string | null;
+  is_live?: boolean;
+  ref_price?: number | null;
   price_type?: string | null;
+  btc_network_fee?: LiveOfferBTCNetworkFee | null;
+  analysis?: LiveOfferAnalysis | null;
   premium?: number | null;
   time?: string;
-  lifecycle?: { time: string; price: number; net_premium_pct?: number | null }[];
+  lifecycle?: LifecyclePoint[];
 }
 
 export interface ExchangeStat {
@@ -211,6 +305,8 @@ export interface TradeCostConfig {
   fee_tiers: FeeTierOption[];
 }
 
+export type PremiumFilterMode = 'raw' | 'net_full' | 'net_capped';
+
 export interface Filters {
   direction: string;
   exchange: string;
@@ -218,7 +314,7 @@ export interface Filters {
   status: string;
   premiumMin: string;
   premiumMax: string;
-  premiumOnly: boolean;
+  premiumMode: PremiumFilterMode;
   hours: string;
   cex: string;
 }

@@ -269,13 +269,82 @@ func TestLiveOffersRESTReturnsComputedCostFields(t *testing.T) {
 	}
 
 	offer := offers[0]
+	assertFloat(t, offer.RawPremiumPct, 2.5)
 	assertFloat(t, offer.PriceDiffPct, 2.5)
 	assertFloat(t, offer.TradeCostPct, 0.6)
 	assertFloat(t, offer.NetPremiumPct, 1.9)
+	assertFloat(t, offer.EstimatedProfitBTC, 0.0019)
+	assertFloat(t, offer.EstimatedProfitFiat, 0.19)
 	assertFloat(t, offer.CostBreakdown.BTCAmount, 0.1)
 	assertFloat(t, offer.CostBreakdown.TotalCostPct, 0.6)
 	assertFloat(t, offer.CostBreakdown.TotalCostBTC, 0.0006)
 	assertFloat(t, offer.CostBreakdown.EstimatedProfitBTC, 0.0019)
+}
+
+func TestHandleLiveOffersRESTIncludesCappedProfitFields(t *testing.T) {
+	oldOptimizer := tradeRouteOptimizer
+	oldEstimators := tradeCostEstimators
+	oldHubOffers := hub.getOffers()
+	oldKrakenPrice := getCexPrice("kraken")
+	defer func() {
+		tradeRouteOptimizer = oldOptimizer
+		tradeCostEstimators = oldEstimators
+		setCexPrice("kraken", oldKrakenPrice)
+		hub.setOffers(oldHubOffers)
+	}()
+
+	setCexPrice("kraken", 100)
+
+	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
+	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
+	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+
+	btcMin := 0.02
+	btcMax := 0.1
+	hub.setOffers([]LiveOffer{{
+		ID:        1,
+		Exchange:  "bisq",
+		Direction: "buy",
+		Price:     102.5,
+		BTCMin:    &btcMin,
+		BTCMax:    &btcMax,
+		FirstSeen: "2026-04-01 12:00:00",
+		LastSeen:  "2026-04-01 12:00:00",
+	}})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/live_offers?cex=kraken&max_fiat_limit=5", nil)
+	rec := httptest.NewRecorder()
+
+	handleLiveOffersREST(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+	}
+
+	var offers []liveOutOffer
+	if err := json.Unmarshal(rec.Body.Bytes(), &offers); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(offers) != 1 {
+		t.Fatalf("offer count = %d, want 1", len(offers))
+	}
+
+	offer := offers[0]
+	if offer.CostBreakdownCapped == nil {
+		t.Fatal("expected capped cost breakdown")
+	}
+	if offer.TradeCostPctCapped == nil || offer.NetPremiumPctCapped == nil {
+		t.Fatal("expected capped percentage fields")
+	}
+	if offer.EstimatedProfitBTCCapped == nil || offer.EstimatedProfitFiatCapped == nil {
+		t.Fatal("expected capped profit fields")
+	}
+	assertFloat(t, *offer.TradeCostPctCapped, 0.85)
+	assertFloat(t, *offer.NetPremiumPctCapped, 1.65)
+	assertFloat(t, *offer.EstimatedProfitBTCCapped, 0.000825)
+	assertFloat(t, *offer.EstimatedProfitFiatCapped, 0.08)
+	assertFloat(t, offer.CostBreakdownCapped.BTCAmount, 0.05)
+	assertFloat(t, offer.CostBreakdownCapped.EstimatedProfitBTC, 0.000825)
 }
 
 func TestPastOffersRESTComputesCostsForClosedOrdersDump(t *testing.T) {
@@ -354,6 +423,9 @@ func TestPastOffersRESTComputesCostsForClosedOrdersDump(t *testing.T) {
 		}
 		if _, ok := offer["cost_breakdown"].(map[string]any); !ok {
 			t.Fatalf("offer %d missing cost_breakdown object: %#v", i, offer["cost_breakdown"])
+		}
+		if _, ok := offer["lifecycle"]; ok {
+			t.Fatalf("offer %d unexpectedly included inline lifecycle after route split", i)
 		}
 
 		if offer["trade_cost_percent"].(float64) > 0 {
@@ -448,6 +520,38 @@ func TestPastOrderStatsAndPastOffersRespectExcludedPaymentMethods(t *testing.T) 
 		if offer["payment_method"] == "Revolut" {
 			t.Fatalf("past_offers response included excluded Revolut offer: %#v", offer)
 		}
+	}
+}
+
+func TestHandlePastOfferLifecycleReturnsLifecyclePoints(t *testing.T) {
+	withTempOrdersDB(t)
+
+	if _, err := db.Exec(`
+		INSERT INTO order_lifecycle (offer_db_id, snapshot_time, price, ref_price, premium_pct, net_premium_pct)
+		VALUES (1, CURRENT_TIMESTAMP, 64000, 63200, 1.27, 1.25)
+	`); err != nil {
+		t.Fatalf("insert lifecycle row: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/past_offers/1/lifecycle", nil)
+	req.SetPathValue("id", "1")
+	rec := httptest.NewRecorder()
+
+	handlePastOfferLifecycle(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var points []LifecyclePoint
+	if err := json.Unmarshal(rec.Body.Bytes(), &points); err != nil {
+		t.Fatalf("decode lifecycle response: %v", err)
+	}
+	if len(points) == 0 {
+		t.Fatal("expected lifecycle points, got none")
+	}
+	if points[0].Time == "" {
+		t.Fatalf("expected lifecycle time, got %#v", points[0])
 	}
 }
 

@@ -6,6 +6,23 @@ import { useFilters } from '../context/FiltersContext';
 import { LoadingSpinner } from './LoadingSpinner';
 import type { CostBreakdown, BTCNetworkFeeDetail as BTCDetail } from '../types';
 import { buildOfferKeys } from '../utils/offerIdentity';
+import {
+  getBtcMax,
+  getBtcMin,
+  getCappedTradeSizeBtc,
+  getDisplayCostBreakdown,
+  getFirstSeen,
+  getFiatMax,
+  getFiatMin,
+  getLastSeen,
+  getNetPremiumPercent,
+  getOfferPrice,
+  getPriceType,
+  getRawPremiumPercent,
+  getRefPrice,
+  hasCappedScenario,
+  isOfferLive,
+} from '../utils/offerAccess';
 
 const TH_BASE = "sticky top-0 z-10 bg-surface px-2 py-1 border-b border-border text-muted text-[0.65rem] uppercase text-left whitespace-nowrap";
 const TD = "px-2 py-1 whitespace-nowrap";
@@ -604,6 +621,7 @@ export function OffersPreviewTable() {
               ) : offers.map((o, index) => {
                 const offerKey = offerKeys[index];
                 const isSelected = offerKey === selectedOfferKey;
+                const rawPremium = getRawPremiumPercent(o);
                 return (
                   <tr
                     key={offerKey}
@@ -619,10 +637,10 @@ export function OffersPreviewTable() {
                     <td className={`${TD} ${o.direction === 'buy' ? 'text-green' : 'text-red'}`}>
                       {o.direction === 'buy' ? 'Bid' : 'Ask'}
                     </td>
-                    <td className={`${TD} text-right ${premiumClass(o.price_diff_percent)}`}>
-                      {o.price_diff_percent != null ? o.price_diff_percent.toFixed(1) + '%' : '—'}
+                    <td className={`${TD} text-right ${premiumClass(rawPremium)}`}>
+                      {rawPremium != null ? rawPremium.toFixed(1) + '%' : '—'}
                     </td>
-                    <td className={`${TD} text-right`}>€{formatNum(o.price)}</td>
+                    <td className={`${TD} text-right`}>€{formatNum(getOfferPrice(o))}</td>
                     <td className={`${TD} overflow-hidden max-w-32`}>
                       <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
                         {groupLabel(o.payment_method)}
@@ -652,28 +670,28 @@ export function OffersPreviewTable() {
               >
                 ×
               </button>
-              <OfferTimeMeta firstSeen={selectedOffer.first_seen} lastSeen={selectedOffer.last_seen} isLive={selectedOffer.is_live} timezone={timezone} priceType={selectedOffer.price_type} />
+              <OfferTimeMeta firstSeen={getFirstSeen(selectedOffer)} lastSeen={getLastSeen(selectedOffer)} isLive={isOfferLive(selectedOffer)} timezone={timezone} priceType={getPriceType(selectedOffer)} />
               {selectedOffer.payment_method && (
                 <div className="mt-1 mb-2 text-[0.68rem] text-muted">
                   <span className="uppercase tracking-wide text-[0.6rem] mr-1">Payment</span>
                   <span className="text-text">{selectedOffer.payment_method}</span>
                 </div>
               )}
-              {selectedOffer.cost_breakdown ? (
+              {getDisplayCostBreakdown(selectedOffer) ? (
                 <div className="flex flex-col gap-3">
-                  {selectedOffer.cost_breakdown_capped && (
+                  {hasCappedScenario(selectedOffer) && (
                     <SizeToggle
                       showCapped={showCapped}
                       onToggle={setShowCapped}
-                      cappedBtc={selectedOffer.cost_breakdown_capped.btc_amount}
-                      refPrice={selectedOffer.ref_price}
+                      cappedBtc={getCappedTradeSizeBtc(selectedOffer)}
+                      refPrice={getRefPrice(selectedOffer)}
                     />
                   )}
                   <CostBreakdownPanel
-                    bd={showCapped && selectedOffer.cost_breakdown_capped ? selectedOffer.cost_breakdown_capped : selectedOffer.cost_breakdown}
-                    priceDiffPct={selectedOffer.price_diff_percent}
-                    netPremiumPct={showCapped ? (selectedOffer.net_premium_percent_capped ?? null) : selectedOffer.net_premium_percent}
-                    refPrice={selectedOffer.ref_price}
+                    bd={getDisplayCostBreakdown(selectedOffer, showCapped) ?? getDisplayCostBreakdown(selectedOffer)!}
+                    priceDiffPct={getRawPremiumPercent(selectedOffer)}
+                    netPremiumPct={getNetPremiumPercent(selectedOffer, showCapped)}
+                    refPrice={getRefPrice(selectedOffer)}
                   />
                 </div>
               ) : (
@@ -718,6 +736,7 @@ export function OffersPreviewTable() {
             ) : offers.map((o, index) => {
               const offerKey = offerKeys[index];
               const isSelected = offerKey === selectedOfferKey;
+              const rawPremium = getRawPremiumPercent(o);
               return (
                 <tr
                   key={offerKey}
@@ -733,20 +752,20 @@ export function OffersPreviewTable() {
                   <td className={`${TD} ${o.direction === 'buy' ? 'text-green' : 'text-red'}`}>
                     {o.direction === 'buy' ? 'Bid' : 'Ask'}
                   </td>
-                  <td className={`${TD} text-right ${premiumClass(o.price_diff_percent)}`}>
-                    {o.price_diff_percent != null ? o.price_diff_percent.toFixed(1) + '%' : '—'}
+                  <td className={`${TD} text-right ${premiumClass(rawPremium)}`}>
+                    {rawPremium != null ? rawPremium.toFixed(1) + '%' : '—'}
                   </td>
-                  <td className={`${TD} text-right`}>€{formatNum(o.price)}</td>
-                  <td className={`${TD} text-right`}>{formatBtc(o.btc_min)}</td>
-                  <td className={`${TD} text-right`}>{formatBtc(o.btc_max)}</td>
+                  <td className={`${TD} text-right`}>€{formatNum(getOfferPrice(o))}</td>
+                  <td className={`${TD} text-right`}>{formatBtc(getBtcMin(o))}</td>
+                  <td className={`${TD} text-right`}>{formatBtc(getBtcMax(o))}</td>
                   <td className={`${TD} text-right`}>
-                    {o.btc_min != null ? `€${formatNum(o.btc_min * o.price)}` : '—'}
+                    {getFiatMin(o) != null ? `€${formatNum(getFiatMin(o))}` : '—'}
                   </td>
                   <td className={`${TD} text-right`}>
-                    {o.btc_max != null ? `€${formatNum(o.btc_max * o.price)}` : '—'}
+                    {getFiatMax(o) != null ? `€${formatNum(getFiatMax(o))}` : '—'}
                   </td>
                   <td className={TD}>
-                    {o.is_live
+                    {isOfferLive(o)
                       ? <span className="text-green">live</span>
                       : <span className="text-muted">closed</span>
                     }
@@ -782,7 +801,7 @@ export function OffersPreviewTable() {
               ×
             </button>
             <div className="px-4 pt-1.5 pb-1 pr-8 shrink-0">
-              <OfferTimeMeta firstSeen={selectedOffer.first_seen} lastSeen={selectedOffer.last_seen} isLive={selectedOffer.is_live} timezone={timezone} priceType={selectedOffer.price_type} />
+              <OfferTimeMeta firstSeen={getFirstSeen(selectedOffer)} lastSeen={getLastSeen(selectedOffer)} isLive={isOfferLive(selectedOffer)} timezone={timezone} priceType={getPriceType(selectedOffer)} />
               {selectedOffer.payment_method && (
                 <div className="mt-1 text-[0.68rem] text-muted">
                   <span className="uppercase tracking-wide text-[0.6rem] mr-1">Payment</span>
@@ -791,21 +810,21 @@ export function OffersPreviewTable() {
               )}
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
-            {selectedOffer.cost_breakdown ? (
+            {getDisplayCostBreakdown(selectedOffer) ? (
               <div className="flex flex-col gap-3">
-                {selectedOffer.cost_breakdown_capped && (
+                {hasCappedScenario(selectedOffer) && (
                   <SizeToggle
                     showCapped={showCapped}
                     onToggle={setShowCapped}
-                    cappedBtc={selectedOffer.cost_breakdown_capped.btc_amount}
-                    refPrice={selectedOffer.ref_price}
+                    cappedBtc={getCappedTradeSizeBtc(selectedOffer)}
+                    refPrice={getRefPrice(selectedOffer)}
                   />
                 )}
                 <CostBreakdownPanel
-                  bd={showCapped && selectedOffer.cost_breakdown_capped ? selectedOffer.cost_breakdown_capped : selectedOffer.cost_breakdown}
-                  priceDiffPct={selectedOffer.price_diff_percent}
-                  netPremiumPct={showCapped ? (selectedOffer.net_premium_percent_capped ?? null) : selectedOffer.net_premium_percent}
-                  refPrice={selectedOffer.ref_price}
+                  bd={getDisplayCostBreakdown(selectedOffer, showCapped) ?? getDisplayCostBreakdown(selectedOffer)!}
+                  priceDiffPct={getRawPremiumPercent(selectedOffer)}
+                  netPremiumPct={getNetPremiumPercent(selectedOffer, showCapped)}
+                  refPrice={getRefPrice(selectedOffer)}
                 />
               </div>
             ) : (
