@@ -1,13 +1,17 @@
 import { useMemo, useState } from 'react';
-import type { PastOrderTimeframeStats, PastOrderStats, PastProfitableOrder } from '../types';
+import type { PastOrderStats, PastProfitableOrder, TakerOpportunityMode } from '../types';
 import { useTimezone } from '../context/TimezoneContext';
 import { formatDateTimeLabel, parseUtcTimestamp } from '../utils/formatters';
 
 interface Props {
   stats: PastOrderStats | null;
   statsAll: PastOrderStats | null;
+  statsNetCapped: PastOrderStats | null;
+  statsAllNetCapped: PastOrderStats | null;
   orders: PastProfitableOrder[];
   ordersAll: PastProfitableOrder[];
+  ordersNetCapped: PastProfitableOrder[];
+  ordersAllNetCapped: PastProfitableOrder[];
   loading: boolean;
   maxFiatLimit: number | null;
 }
@@ -39,10 +43,6 @@ function labelForTimeframe(timeframe: string): string {
   }
 }
 
-function hasCappedData(row: PastOrderTimeframeStats): boolean {
-  return row.total_net_profit_btc_capped != null;
-}
-
 function timeframeHours(timeframe: string): number {
   switch (timeframe) {
     case '1h': return 1;
@@ -62,8 +62,8 @@ function sortOfferEntries(offer: Record<string, string | number | boolean | null
   return Object.entries(offer).sort(([a], [b]) => a.localeCompare(b));
 }
 
-function pickScenario(order: PastProfitableOrder, showCapped: boolean) {
-  if (showCapped && order.analysis.capped_volume && (order.analysis.capped_volume.profit.avg_btc ?? 0) > 0) {
+function pickScenario(order: PastProfitableOrder, mode: TakerOpportunityMode) {
+  if (mode === 'net_capped' && order.analysis.capped_volume && (order.analysis.capped_volume.profit.avg_btc ?? 0) > 0) {
     return order.analysis.capped_volume;
   }
   return order.analysis.full_volume;
@@ -112,16 +112,22 @@ function PillGroup({ label, description, options, selected, onChange }: PillGrou
   );
 }
 
-export function TakerOpportunities({ stats, statsAll, orders, ordersAll, loading, maxFiatLimit }: Props) {
+export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNetCapped, orders, ordersAll, ordersNetCapped, ordersAllNetCapped, loading, maxFiatLimit }: Props) {
   const { timezone } = useTimezone();
   const [selectedTimeframe, setSelectedTimeframe] = useState('24h');
-  const [showCapped, setShowCapped] = useState(false);
+  const [mode, setMode] = useState<TakerOpportunityMode>('net_full');
   const [showAllMethods, setShowAllMethods] = useState(false);
   const [expandedId, setExpandedId] = useState<number | null>(null);
 
   const hasExcluded = (stats?.excluded_payment_methods.length ?? 0) > 0;
-  const activeStats = showAllMethods && hasExcluded ? statsAll : stats;
-  const activeOrders = showAllMethods && hasExcluded ? ordersAll : orders;
+  const statsByMode = mode === 'net_capped'
+    ? { filtered: statsNetCapped, all: statsAllNetCapped }
+    : { filtered: stats, all: statsAll };
+  const ordersByMode = mode === 'net_capped'
+    ? { filtered: ordersNetCapped, all: ordersAllNetCapped }
+    : { filtered: orders, all: ordersAll };
+  const activeStats = showAllMethods && hasExcluded ? statsByMode.all : statsByMode.filtered;
+  const activeOrders = showAllMethods && hasExcluded ? ordersByMode.all : ordersByMode.filtered;
 
   const fiat = activeStats?.fiat_currency || 'EUR';
   const selected = useMemo(() => {
@@ -131,17 +137,6 @@ export function TakerOpportunities({ stats, statsAll, orders, ordersAll, loading
       ?? activeStats.timeframes[0]
       ?? null;
   }, [activeStats, selectedTimeframe]);
-
-  const anyCapped = useMemo(() => activeStats?.timeframes.some(hasCappedData) ?? false, [activeStats]);
-  const cappedAvailable = selected != null && hasCappedData(selected);
-
-  const netBTC  = showCapped && cappedAvailable ? selected?.total_net_profit_btc_capped   : selected?.total_net_profit_btc;
-  const netFiat = showCapped && cappedAvailable ? selected?.total_net_profit_fiat_capped  : selected?.total_net_profit_fiat;
-  const avgBTC  = showCapped && cappedAvailable ? selected?.average_order_size_btc_capped : selected?.average_order_size_btc;
-
-  const cappedLabel = maxFiatLimit != null && maxFiatLimit > 0
-    ? `Capped €${maxFiatLimit.toLocaleString('de-DE', { maximumFractionDigits: 0 })}`
-    : 'Capped';
 
   const visibleOrders = useMemo(() => {
     const cutoffMs = Date.now() - timeframeHours(selected?.timeframe ?? selectedTimeframe) * 60 * 60 * 1000;
@@ -181,18 +176,16 @@ export function TakerOpportunities({ stats, statsAll, orders, ordersAll, loading
             onChange={v => setShowAllMethods(v === 'all')}
           />
         )}
-        {anyCapped && (
-          <PillGroup
-            label="Position size"
-            description="Full size: order's max BTC volume. Capped: model profit at your max fiat position limit."
-            options={[
-              { value: 'full', label: 'Full size' },
-              { value: 'capped', label: cappedLabel },
-            ]}
-            selected={showCapped ? 'capped' : 'full'}
-            onChange={v => setShowCapped(v === 'capped')}
-          />
-        )}
+        <PillGroup
+          label="Premium mode"
+          description="Net full uses full order size. Net capped applies your max fiat position limit where needed."
+          options={[
+            { value: 'net_full', label: 'Net Full' },
+            { value: 'net_capped', label: maxFiatLimit != null && maxFiatLimit > 0 ? `Net Capped €${maxFiatLimit.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : 'Net Capped' },
+          ]}
+          selected={mode}
+          onChange={v => setMode(v as TakerOpportunityMode)}
+        />
       </div>
 
       <div className="overflow-auto rounded-lg border border-border">
@@ -212,9 +205,9 @@ export function TakerOpportunities({ stats, statsAll, orders, ordersAll, loading
             <tr className="border-t border-border">
               <td className="px-3 py-2 text-text font-medium">{labelForTimeframe(selected?.timeframe ?? selectedTimeframe)}</td>
               <td className="px-3 py-2 text-right text-text">{selected?.premium_order_count ?? 0}</td>
-              <td className="px-3 py-2 text-right text-green">{fmtBTC(netBTC)}</td>
-              <td className="px-3 py-2 text-right text-text">{fmtFiat(netFiat, fiat)}</td>
-              <td className="px-3 py-2 text-right text-text">{fmtBTC(avgBTC)}</td>
+              <td className="px-3 py-2 text-right text-green">{fmtBTC(selected?.total_net_profit_btc)}</td>
+              <td className="px-3 py-2 text-right text-text">{fmtFiat(selected?.total_net_profit_fiat, fiat)}</td>
+              <td className="px-3 py-2 text-right text-text">{fmtBTC(selected?.average_order_size_btc)}</td>
               <td className="px-3 py-2 text-right text-muted">{fmtBTC(selected?.smallest_order_size_btc)}</td>
               <td className="px-3 py-2 text-right text-muted">{fmtBTC(selected?.biggest_order_size_btc)}</td>
             </tr>
@@ -229,11 +222,11 @@ export function TakerOpportunities({ stats, statsAll, orders, ordersAll, loading
         </div>
         <div className="h-full overflow-y-auto">
           {visibleOrders.length === 0 ? (
-            <div className="px-3 py-4 text-[0.75rem] text-muted">No net-profitable closed trades in this window.</div>
+            <div className="px-3 py-4 text-[0.75rem] text-muted">No profitable closed trades in this window for the selected net mode.</div>
           ) : (
             visibleOrders.map(order => {
               const isOpen = expandedId === order.id;
-              const activeScenario = pickScenario(order, showCapped);
+              const activeScenario = pickScenario(order, mode);
               const seenLabel = formatDateTimeLabel(order.status.last_seen ?? '', timezone);
               const firstSeenLabel = formatDateTimeLabel(order.status.first_seen ?? '', timezone);
 
@@ -277,7 +270,7 @@ export function TakerOpportunities({ stats, statsAll, orders, ordersAll, loading
                           <span className="text-text">{fmtPct(activeScenario.premium.avg_trade_cost_percent)}</span>
                           <span className="text-muted">Route</span>
                           <span className="text-text">{activeScenario.route.cex} via {activeScenario.route.settlement}</span>
-                          {showCapped && order.analysis.capped_volume?.cap_fiat != null && (
+                          {mode === 'net_capped' && order.analysis.capped_volume?.cap_fiat != null && (
                             <>
                               <span className="text-muted">Cap</span>
                               <span className="text-text">{fmtFiat(order.analysis.capped_volume.cap_fiat, fiat)}</span>
@@ -303,6 +296,10 @@ export function TakerOpportunities({ stats, statsAll, orders, ordersAll, loading
         </div>
       </div>
 
+      <p className="text-[0.7rem] text-muted">
+        Net profit of closed orders that remain profitable under the selected net-premium mode.
+        {mode === 'net_capped' && ' Capped mode models each oversized order at your max fiat position size.'}
+      </p>
     </div>
   );
 }

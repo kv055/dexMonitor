@@ -288,6 +288,8 @@ export interface PastProfitableOrder {
   offer: Record<string, string | number | boolean | null>;
 }
 
+export type TakerOpportunityMode = 'net_full' | 'net_capped';
+
 export interface NamedCount {
   name: string;
   count: number;

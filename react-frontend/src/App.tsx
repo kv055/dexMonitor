@@ -128,12 +128,16 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ theme, pastOrderStats, pastOrderStatsAll, pastProfitableOrders, pastProfitableOrdersAll, generalStats, loading, load, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit }: {
+function InsightsView({ theme, pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastProfitableOrders, pastProfitableOrdersAll, pastProfitableOrdersNetCapped, pastProfitableOrdersAllNetCapped, generalStats, loading, load, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit }: {
   theme: ThemeMode;
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
+  pastOrderStatsNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsNetCapped'];
+  pastOrderStatsAllNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsAllNetCapped'];
   pastProfitableOrders: ReturnType<typeof useDashboard>['pastProfitableOrders'];
   pastProfitableOrdersAll: ReturnType<typeof useDashboard>['pastProfitableOrdersAll'];
+  pastProfitableOrdersNetCapped: ReturnType<typeof useDashboard>['pastProfitableOrdersNetCapped'];
+  pastProfitableOrdersAllNetCapped: ReturnType<typeof useDashboard>['pastProfitableOrdersAllNetCapped'];
   generalStats: ReturnType<typeof useDashboard>['generalStats'];
   loading: boolean;
   load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
@@ -162,8 +166,12 @@ function InsightsView({ theme, pastOrderStats, pastOrderStatsAll, pastProfitable
         <TakerOpportunities
           stats={pastOrderStats}
           statsAll={pastOrderStatsAll}
+          statsNetCapped={pastOrderStatsNetCapped}
+          statsAllNetCapped={pastOrderStatsAllNetCapped}
           orders={pastProfitableOrders}
           ordersAll={pastProfitableOrdersAll}
+          ordersNetCapped={pastProfitableOrdersNetCapped}
+          ordersAllNetCapped={pastProfitableOrdersAllNetCapped}
           loading={loading}
           maxFiatLimit={maxFiatLimit}
         />
@@ -182,8 +190,12 @@ export default function App() {
     stats,
     pastOrderStats,
     pastOrderStatsAll,
+    pastOrderStatsNetCapped,
+    pastOrderStatsAllNetCapped,
     pastProfitableOrders,
     pastProfitableOrdersAll,
+    pastProfitableOrdersNetCapped,
+    pastProfitableOrdersAllNetCapped,
     generalStats,
     ohlcData,
     lastUpdatedAt,
@@ -337,8 +349,12 @@ export default function App() {
             theme={theme}
             pastOrderStats={pastOrderStats}
             pastOrderStatsAll={pastOrderStatsAll}
+            pastOrderStatsNetCapped={pastOrderStatsNetCapped}
+            pastOrderStatsAllNetCapped={pastOrderStatsAllNetCapped}
             pastProfitableOrders={pastProfitableOrders}
             pastProfitableOrdersAll={pastProfitableOrdersAll}
+            pastProfitableOrdersNetCapped={pastProfitableOrdersNetCapped}
+            pastProfitableOrdersAllNetCapped={pastProfitableOrdersAllNetCapped}
             generalStats={generalStats}
             loading={loading}
             load={load}

@@ -737,6 +737,7 @@ func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
 	requiredConfirmations := queryConfirmations(r)
 	feeTier := r.URL.Query().Get("fee_tier")
 	maxFiatLimitEUR := queryMaxFiatLimitEUR(r)
+	premiumMode := queryTakerOpportunityMode(r)
 	fiatCurrency := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("fiat")))
 	if fiatCurrency == "" {
 		fiatCurrency = "EUR"
@@ -758,26 +759,27 @@ func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	premiumOrders := make([]pastorders.PremiumOrder, 0, len(offers))
+	profitableOrders := make([]pastorders.PremiumOrder, 0, len(offers))
 	for _, o := range offers {
 		analysis := addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
-		if !analysis.isPremium {
+		if !analysis.profitableInMode(premiumMode) {
 			continue
 		}
-		premiumOrders = append(premiumOrders, pastorders.PremiumOrder{
+		btcAmount, netProfitBTC := analysis.valuesForMode(premiumMode)
+		profitableOrders = append(profitableOrders, pastorders.PremiumOrder{
 			PaymentMethod:       offerString(o, "payment_method"),
 			LastSeen:            parseDBTime(offerString(o, "last_seen")),
-			BTCAmount:           analysis.btcSize,
-			NetProfitBTC:        analysis.estimatedProfitBTC,
-			NetProfitFiat:       analysis.estimatedProfitBTC * analysis.refPrice,
+			BTCAmount:           btcAmount,
+			NetProfitBTC:        netProfitBTC,
+			NetProfitFiat:       netProfitBTC * analysis.refPrice,
 			BTCAmountCapped:     analysis.btcSizeCapped,
 			NetProfitBTCCapped:  analysis.estimatedProfitBTCCapped,
 			NetProfitFiatCapped: analysis.estimatedProfitBTCCapped * analysis.refPrice,
-			HasCap:              analysis.hasCap,
+			HasCap:              premiumMode == takerOpportunityModeNetCapped && analysis.hasCap,
 		})
 	}
 
-	writeJSON(w, pastorders.BuildStats(premiumOrders, time.Now(), fiatCurrency, excludedPaymentMethods))
+	writeJSON(w, pastorders.BuildStats(profitableOrders, time.Now(), fiatCurrency, excludedPaymentMethods))
 }
 
 type pastProfitableOrderSummary struct {
@@ -808,6 +810,7 @@ func handlePastProfitableOrders(w http.ResponseWriter, r *http.Request) {
 	excludedCEXes := queryExcludedCEXes(r)
 	feeTier := queryFeeTier(r)
 	maxFiatLimitEUR := queryMaxFiatLimitEUR(r)
+	premiumMode := queryTakerOpportunityMode(r)
 
 	rows, err := db.Query(
 		rebind("SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? ORDER BY last_seen DESC"),
@@ -839,11 +842,11 @@ func handlePastProfitableOrders(w http.ResponseWriter, r *http.Request) {
 	result := make([]pastProfitableOrderAPI, 0, len(filteredOffers))
 	for _, o := range filteredOffers {
 		analysis := addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
-		if analysis.estimatedProfitBTC <= 0 {
+		if !analysis.profitableInMode(premiumMode) {
 			continue
 		}
 		id := int64(offerFloat(o, "id"))
-		result = append(result, buildPastProfitableOrderAPI(o, lifecycleAgg[id], requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR))
+		result = append(result, buildPastProfitableOrderAPI(o, lifecycleAgg[id], requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR, premiumMode))
 	}
 
 	writeJSON(w, result)
@@ -1220,14 +1223,33 @@ func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]p
 }
 
 type pastOfferAnalysis struct {
-	isPremium          bool
-	btcSize            float64
-	refPrice           float64
-	estimatedProfitBTC float64
+	hasPositiveRawSpread bool
+	btcSize              float64
+	refPrice             float64
+	estimatedProfitBTC   float64
 	// optional capped results (set when maxFiatLimitEUR > 0 and btcSize exceeds cap)
 	btcSizeCapped            float64
 	estimatedProfitBTCCapped float64
 	hasCap                   bool
+}
+
+type takerOpportunityMode string
+
+const (
+	takerOpportunityModeNetFull   takerOpportunityMode = "net_full"
+	takerOpportunityModeNetCapped takerOpportunityMode = "net_capped"
+)
+
+func (a pastOfferAnalysis) valuesForMode(mode takerOpportunityMode) (float64, float64) {
+	if mode == takerOpportunityModeNetCapped && a.hasCap {
+		return a.btcSizeCapped, a.estimatedProfitBTCCapped
+	}
+	return a.btcSize, a.estimatedProfitBTC
+}
+
+func (a pastOfferAnalysis) profitableInMode(mode takerOpportunityMode) bool {
+	_, profit := a.valuesForMode(mode)
+	return profit > 0
 }
 
 type pastOfferDuration struct {
@@ -1407,7 +1429,7 @@ func addPastOfferCostFieldsFull(o map[string]any, requiredConfirmations int, exc
 	}
 
 	return pastOfferAnalysis{
-		isPremium:                priceDiff > 0,
+		hasPositiveRawSpread:     priceDiff > 0,
 		btcSize:                  btcSize,
 		refPrice:                 refPrice,
 		estimatedProfitBTC:       bd.EstimatedProfitBTC,
@@ -1565,21 +1587,18 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 	}
 }
 
-func buildPastProfitableOrderAPI(o map[string]any, agg pastLifecycleAggregate, requiredConfirmations int, excludedCEXes []string, feeTier string, maxFiatLimitEUR float64) pastProfitableOrderAPI {
+func buildPastProfitableOrderAPI(o map[string]any, agg pastLifecycleAggregate, requiredConfirmations int, excludedCEXes []string, feeTier string, maxFiatLimitEUR float64, mode takerOpportunityMode) pastProfitableOrderAPI {
 	pastOffer := buildPastOfferAPI(o, agg, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
 	recomputed := addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
+	tradeSizeBTC, netProfitBTC := recomputed.valuesForMode(mode)
 	summary := pastProfitableOrderSummary{
-		NetProfitBTC:  recomputed.estimatedProfitBTC,
-		NetProfitFiat: round4(recomputed.estimatedProfitBTC * recomputed.refPrice),
-		TradeSizeBTC:  round8(recomputed.btcSize),
-		TradeSizeFiat: round4(recomputed.btcSize * recomputed.refPrice),
+		NetProfitBTC:  round8(netProfitBTC),
+		NetProfitFiat: round4(netProfitBTC * recomputed.refPrice),
+		TradeSizeBTC:  round8(tradeSizeBTC),
+		TradeSizeFiat: round4(tradeSizeBTC * recomputed.refPrice),
 		NetPercent:    pastOffer.Analysis.FullVolume.Premium.AvgNetPercent,
 	}
-	if pastOffer.Analysis.CappedVolume != nil && recomputed.estimatedProfitBTCCapped > 0 {
-		summary.NetProfitBTC = round8(recomputed.estimatedProfitBTCCapped)
-		summary.NetProfitFiat = round4(recomputed.estimatedProfitBTCCapped * recomputed.refPrice)
-		summary.TradeSizeBTC = round8(recomputed.btcSizeCapped)
-		summary.TradeSizeFiat = round4(recomputed.btcSizeCapped * recomputed.refPrice)
+	if mode == takerOpportunityModeNetCapped && pastOffer.Analysis.CappedVolume != nil {
 		summary.NetPercent = pastOffer.Analysis.CappedVolume.Premium.AvgNetPercent
 	}
 	if pastOffer.Analysis.CappedVolume != nil {
@@ -2571,6 +2590,15 @@ func queryMaxFiatLimitEUR(r *http.Request) float64 {
 		return 0
 	}
 	return f
+}
+
+func queryTakerOpportunityMode(r *http.Request) takerOpportunityMode {
+	switch strings.TrimSpace(r.URL.Query().Get("premium_mode")) {
+	case string(takerOpportunityModeNetCapped):
+		return takerOpportunityModeNetCapped
+	default:
+		return takerOpportunityModeNetFull
+	}
 }
 
 func queryExcludedPaymentMethods(r *http.Request) []string {

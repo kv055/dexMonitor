@@ -1,6 +1,6 @@
 import { useState, useCallback } from 'react';
 import { apiFetch } from '../utils/api';
-import type { Offer, Stats, OHLCData, PastOrderStats, GeneralStatsData, PastProfitableOrder } from '../types';
+import type { Offer, Stats, OHLCData, PastOrderStats, GeneralStatsData, PastProfitableOrder, TakerOpportunityMode } from '../types';
 
 function excludedPaymentQuery(excludedPaymentMethods: string[]): string {
   if (excludedPaymentMethods.length === 0) return '';
@@ -20,8 +20,12 @@ export function useDashboard() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [pastOrderStats, setPastOrderStats] = useState<PastOrderStats | null>(null);
   const [pastOrderStatsAll, setPastOrderStatsAll] = useState<PastOrderStats | null>(null);
+  const [pastOrderStatsNetCapped, setPastOrderStatsNetCapped] = useState<PastOrderStats | null>(null);
+  const [pastOrderStatsAllNetCapped, setPastOrderStatsAllNetCapped] = useState<PastOrderStats | null>(null);
   const [pastProfitableOrders, setPastProfitableOrders] = useState<PastProfitableOrder[]>([]);
   const [pastProfitableOrdersAll, setPastProfitableOrdersAll] = useState<PastProfitableOrder[]>([]);
+  const [pastProfitableOrdersNetCapped, setPastProfitableOrdersNetCapped] = useState<PastProfitableOrder[]>([]);
+  const [pastProfitableOrdersAllNetCapped, setPastProfitableOrdersAllNetCapped] = useState<PastProfitableOrder[]>([]);
   const [generalStats, setGeneralStats] = useState<GeneralStatsData | null>(null);
   const [ohlcData, setOhlcData] = useState<OHLCData | null>(null);
   const [lastUpdatedAt, setLastUpdatedAt] = useState('');
@@ -34,18 +38,20 @@ export function useDashboard() {
     try {
       const excludedQuery = excludedPaymentQuery(excludedPaymentMethods);
       const tcQuery = `${tradeCostQuery(excludedCEXes, feeTier, maxFiatLimit)}${!coupledHedge ? '&coupled_hedge=false' : ''}`;
-      const posAllQuery = `/api/past_order_stats?fiat=EUR${tcQuery}`;
-      const posFilteredQuery = `/api/past_order_stats?fiat=EUR${excludedQuery}${tcQuery}`;
-      const profitableAllQuery = `/api/past_profitable_orders?fiat=EUR${tcQuery}`;
-      const profitableFilteredQuery = `/api/past_profitable_orders?fiat=EUR${excludedQuery}${tcQuery}`;
-      const [s, o, ohlc, posAll, posFiltered, profitableAll, profitableFiltered, gs] = await Promise.all([
+      const takerQuery = (path: string, mode: TakerOpportunityMode, filtered: boolean) =>
+        `${path}?fiat=EUR&premium_mode=${mode}${filtered ? excludedQuery : ''}${tcQuery}`;
+      const [s, o, ohlc, posAll, posFiltered, posAllNetCapped, posFilteredNetCapped, profitableAll, profitableFiltered, profitableAllNetCapped, profitableFilteredNetCapped, gs] = await Promise.all([
         apiFetch<Stats>(`/api/stats?hours=${hours}`),
         apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&cex=${cex}${excludedQuery}${tcQuery}`),
         apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`),
-        apiFetch<PastOrderStats>(posAllQuery),
-        excludedQuery ? apiFetch<PastOrderStats>(posFilteredQuery) : Promise.resolve(null),
-        apiFetch<PastProfitableOrder[]>(profitableAllQuery),
-        excludedQuery ? apiFetch<PastProfitableOrder[]>(profitableFilteredQuery) : Promise.resolve(null),
+        apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_full', false)),
+        excludedQuery ? apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_full', true)) : Promise.resolve(null),
+        apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_capped', false)),
+        excludedQuery ? apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_capped', true)) : Promise.resolve(null),
+        apiFetch<PastProfitableOrder[]>(takerQuery('/api/past_profitable_orders', 'net_full', false)),
+        excludedQuery ? apiFetch<PastProfitableOrder[]>(takerQuery('/api/past_profitable_orders', 'net_full', true)) : Promise.resolve(null),
+        apiFetch<PastProfitableOrder[]>(takerQuery('/api/past_profitable_orders', 'net_capped', false)),
+        excludedQuery ? apiFetch<PastProfitableOrder[]>(takerQuery('/api/past_profitable_orders', 'net_capped', true)) : Promise.resolve(null),
         apiFetch<GeneralStatsData>(`/api/general_stats?hours=${hours}&cex=${cex}${excludedQuery}${tcQuery}`),
       ]);
       setStats(s);
@@ -53,8 +59,12 @@ export function useDashboard() {
       setOhlcData(ohlc);
       setPastOrderStatsAll(posAll);
       setPastOrderStats(posFiltered ?? posAll);
+      setPastOrderStatsAllNetCapped(posAllNetCapped);
+      setPastOrderStatsNetCapped(posFilteredNetCapped ?? posAllNetCapped);
       setPastProfitableOrdersAll(profitableAll);
       setPastProfitableOrders(profitableFiltered ?? profitableAll);
+      setPastProfitableOrdersAllNetCapped(profitableAllNetCapped);
+      setPastProfitableOrdersNetCapped(profitableFilteredNetCapped ?? profitableAllNetCapped);
       setGeneralStats(gs);
       setLastUpdatedAt(new Date().toISOString());
     } catch (e: unknown) {
@@ -75,5 +85,23 @@ export function useDashboard() {
     }
   }, []);
 
-  return { pastOffers, stats, pastOrderStats, pastOrderStatsAll, pastProfitableOrders, pastProfitableOrdersAll, generalStats, ohlcData, lastUpdatedAt, error, loading, load, extendOhlc };
+  return {
+    pastOffers,
+    stats,
+    pastOrderStats,
+    pastOrderStatsAll,
+    pastOrderStatsNetCapped,
+    pastOrderStatsAllNetCapped,
+    pastProfitableOrders,
+    pastProfitableOrdersAll,
+    pastProfitableOrdersNetCapped,
+    pastProfitableOrdersAllNetCapped,
+    generalStats,
+    ohlcData,
+    lastUpdatedAt,
+    error,
+    loading,
+    load,
+    extendOhlc,
+  };
 }

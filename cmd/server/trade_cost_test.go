@@ -470,7 +470,7 @@ func TestPastOffersRESTComputesCostsForClosedOrdersDump(t *testing.T) {
 func TestPastOrderStatsRESTAggregatesPremiumOrdersByTimeframe(t *testing.T) {
 	withTempOrdersDB(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/past_order_stats?fiat=eur", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/past_order_stats?fiat=eur&premium_mode=net_full", nil)
 	rec := httptest.NewRecorder()
 
 	handlePastOrderStats(rec, req)
@@ -552,7 +552,7 @@ func TestPastOffersRESTIncludesCappedAnalysisWhenRequested(t *testing.T) {
 func TestPastOrderStatsAndPastOffersRespectExcludedPaymentMethods(t *testing.T) {
 	withTempOrdersDB(t)
 
-	statsReq := httptest.NewRequest(http.MethodGet, "/api/past_order_stats?exclude_payment_methods=Revolut", nil)
+	statsReq := httptest.NewRequest(http.MethodGet, "/api/past_order_stats?exclude_payment_methods=Revolut&premium_mode=net_full", nil)
 	statsRec := httptest.NewRecorder()
 	handlePastOrderStats(statsRec, statsReq)
 
@@ -607,7 +607,7 @@ func TestPastProfitableOrdersReturnsClosedNetPositiveOrders(t *testing.T) {
 	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
 	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/past_profitable_orders?max_fiat_limit=5&exclude_payment_methods=Revolut", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/past_profitable_orders?premium_mode=net_capped&max_fiat_limit=5&exclude_payment_methods=Revolut", nil)
 	rec := httptest.NewRecorder()
 
 	handlePastProfitableOrders(rec, req)
@@ -659,6 +659,32 @@ func TestPastProfitableOrdersReturnsClosedNetPositiveOrders(t *testing.T) {
 		if order.Summary.CapFiat == nil {
 			t.Fatalf("expected capped summary when max_fiat_limit is set, got %#v", order.Summary)
 		}
+	}
+}
+
+func TestPastOrderStatsNetCappedModeUsesCappedProfitableSet(t *testing.T) {
+	withTempOrdersDB(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/past_order_stats?fiat=eur&premium_mode=net_capped&max_fiat_limit=5", nil)
+	rec := httptest.NewRecorder()
+
+	handlePastOrderStats(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var stats pastOrderStatsTestResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	oneHour := findStatsTimeframe(t, stats.Timeframes, "1h")
+	if oneHour.PremiumOrderCount != 2 {
+		t.Fatalf("1h premium count = %d, want 2", oneHour.PremiumOrderCount)
+	}
+	if oneHour.TotalProfitBTC <= 0 || oneHour.TotalProfitFiat <= 0 {
+		t.Fatalf("expected positive capped profits, got %#v", oneHour)
 	}
 }
 
