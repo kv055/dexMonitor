@@ -1,6 +1,8 @@
 # dexMonitor
 
-Monitors P2P Bitcoin exchange orderbooks (Bisq, HodlHodl, Robosats), stores snapshots in SQLite, and serves a React dashboard with a REST API.
+`dexMonitor` now serves the monitor dashboard and its REST/WebSocket API on top of the shared Postgres database populated by the unified stack.
+
+It no longer owns the Bisq node, snapshot worker, or Tor container. Those runtime responsibilities now live under `dexUnifiedApi`.
 
 ## Quick Start
 
@@ -8,252 +10,51 @@ Monitors P2P Bitcoin exchange orderbooks (Bisq, HodlHodl, Robosats), stores snap
 docker compose up --build -d
 ```
 
-Dashboard and API available at http://localhost:5000
+Dashboard and API are available at `http://localhost:5000`.
 
-## Architecture
+## Current Role
 
-```
-┌──────────────────────────────────────────────────────────────────┐
-│                           Data Flow                               │
-├──────────────────────────────────────────────────────────────────┤
-│                                                                    │
-│  Bisq node ──gRPC──────────────────┐                             │
-│  HodlHodl API ──REST──────────────►│ snapshot (Go) ──► SQLite    │
-│  Robosats API ──Tor onion──────────┘        ▲                    │
-│                                             │                     │
-│  Tor ──SOCKS5 proxy──────────────────────── ┘                    │
-│                                                                    │
-│  SQLite ──────────────────────────► server (Go) ──► React UI     │
-│                                                                    │
-└──────────────────────────────────────────────────────────────────┘
-```
+- Serve the React dashboard
+- Expose monitor endpoints like `/api/past_offers`, `/api/live_offers`, `/api/ohlc`, and `/api/snapshot-log`
+- Compute trade-cost overlays and hedge estimates for the dashboard
+- Optionally provide the standalone `bisqstats` helper for later use
 
-### Services
+## Environment Variables
 
-| Service | Description |
-|---------|-------------|
-| **tor** | Tor daemon — SOCKS5 proxy on port 9050 for Robosats and price feeds |
-| **bisq** | Bisq desktop node — exposes gRPC API on port 9998 |
-| **snapshot** | Go binary — fetches offers every `SNAPSHOT_INTERVAL_MIN` minutes, upserts into SQLite |
-| **app** | Go binary — serves REST API + React frontend on port 5000 |
-
-## Docker Compose
-
-```bash
-# Build and start all services
-docker compose up --build -d
-
-# View logs
-docker compose logs -f
-
-# Stop
-docker compose down
-```
-
-### Environment Variables
-
-**app / snapshot (shared):**
+### App
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DB_PATH` | `/app/data/orderbook.db` | SQLite database path |
-| `SNAPSHOT_INTERVAL_MIN` | `15` | Snapshot interval (minutes); also sets Kraken OHLC candle width |
+| `DATABASE_URL` | `postgres://dex_monitor:dex_monitor@localhost:5432/dexarb?sslmode=disable` | Postgres connection for the monitor app |
+| `SNAPSHOT_INTERVAL_MIN` | `1` | Used by the monitor server for OHLC interval sizing |
+| `FRONTEND_DIR` | `./react-frontend/dist` | Path to built React assets |
+| `MM_CONTROLLER_API_URL` | `http://localhost:5001` | Upstream MM controller API |
+| `TOR_PROXY_ADDR` | `127.0.0.1:9050` | SOCKS5 proxy used for Robosats and fee/network lookups |
 
-**snapshot only:**
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `BISQ_GRPC_HOST` | `localhost:9998` | Bisq gRPC endpoint |
-| `PRICE_PROVIDER` | `bisq_tor` | BTC reference price source (`bisq_tor`, `kraken`, `coingecko`) |
-| `SERVER_INTERNAL_URL` | `http://localhost:5000` | App server URL for pushing live offers |
-
-**app only:**
+### Optional `bisqstats` Helper
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `FRONTEND_DIR` | `<exe dir>/react-frontend/dist` | Path to built React assets |
+| `STATS_API_ADDR` | `:9997` | Listen address for the standalone `bisqstats` helper |
+| `BISQ_APP_DATA_DIR` | `/home/appuser/.local/share/Bisq` | Bisq app data directory to read closed trade stats from |
 
-### Ports
+## Main Files
 
-| Port | Service |
-|------|---------|
-| `5000` | REST API + React dashboard |
-| `9050` | Tor SOCKS5 proxy |
-| `9998` | Bisq gRPC |
-
-### Resource Limits
-
-| Service | Memory | CPU |
-|---------|--------|-----|
-| tor | 256M | 0.5 |
-| bisq | 3072M | 1.5 |
-| app | 64M | 0.25 |
-| snapshot | 64M | 0.25 |
-
-## API
-
-### Endpoints
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/` | React dashboard |
-| GET | `/api/live_offers` | Currently live offers with cost breakdown |
-| GET | `/api/past_offers` | Historical offers, ordered by `last_seen` |
-| WS | `/ws/live_offers` | WebSocket — pushes full offer array on connect, then on every price tick |
-| GET | `/api/stats` | Price stats and offer counts per exchange |
-| GET | `/api/ohlc` | Kraken OHLC candles + offer overlay data |
-| GET | `/api/snapshot-log` | Recent snapshot run history |
-| GET | `/health` | Health check |
-| POST | `/internal/live_offers` | Internal — snapshot tool pushes live offers to the server hub |
-
-### Query Parameters
-
-| Parameter | Endpoints | Description |
-|-----------|-----------|-------------|
-| `limit` | past_offers, snapshot-log | Max results (default: 1000 / 50) |
-| `hours` | past_offers, stats, ohlc | Lookback window in hours (default: 24 / 24 / 24) |
-
-### Example Requests
-
-```bash
-# Currently live offers
-curl http://localhost:5000/api/live_offers
-
-# Past offers from the last 6 hours
-curl "http://localhost:5000/api/past_offers?hours=6"
-
-# Price stats for last 24 hours
-curl http://localhost:5000/api/stats
-
-# OHLC candles + offer overlay
-curl "http://localhost:5000/api/ohlc?hours=48"
-
-# Last 10 snapshot runs
-curl "http://localhost:5000/api/snapshot-log?limit=10"
-
-# WebSocket (requires wscat or similar)
-wscat -c ws://127.0.0.1:5000/ws/live_offers
+```text
+dexMonitor/
+├── cmd/server/             # Monitor HTTP/WebSocket server
+├── cmd/bisqstats/          # Optional Bisq closed-trades stats helper
+├── internal/bitcoin/       # Fee prediction and network analysis
+├── internal/hedge/         # Hedge optimizer and venue inputs
+├── internal/pastorders/    # Historical order aggregation
+├── internal/paymentmethods/# Payment method grouping
+├── react-frontend/         # React + Vite dashboard
+├── Dockerfile              # Monitor app container
+├── api-collection/         # REST client examples
+└── .env.example
 ```
 
-## Database Schema
+## Notes
 
-### snapshots
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER | Primary key |
-| timestamp | DATETIME | When the snapshot was taken |
-| exchange | TEXT | Exchange name |
-| fiat_currency | TEXT | Fiat currency (EUR, USD, etc.) |
-| direction | TEXT | `buy` or `sell` |
-| btc_price | REAL | Reference BTC price in fiat |
-
-### offers
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER | Primary key |
-| exchange | TEXT | Exchange name |
-| direction | TEXT | `buy` or `sell` |
-| price | REAL | Price per BTC in fiat |
-| price_diff_percent | REAL | Deviation from reference price (%) |
-| btc_min / btc_max | REAL | BTC trade size range |
-| fiat_min / fiat_max | INTEGER | Fiat trade size range |
-| payment_method | TEXT | Payment method (SEPA, Revolut, etc.) |
-| offer_id | TEXT | Exchange-specific offer ID (unique) |
-| ref_price | REAL | Reference BTC price at time of snapshot |
-| first_seen | DATETIME | When offer was first observed |
-| last_seen | DATETIME | When offer was last seen (updated on each snapshot) |
-| is_live | BOOLEAN | Whether the offer is currently live |
-| duration | INTEGER | How long the offer has been active (seconds) |
-
-### snapshot_log
-
-| Column | Type | Description |
-|--------|------|-------------|
-| id | INTEGER | Primary key |
-| timestamp | DATETIME | When the snapshot ran |
-| exchanges | TEXT | JSON object with per-exchange offer counts |
-| offers_count | INTEGER | Total offers upserted |
-
-### kraken_ohlc
-
-| Column | Type | Description |
-|--------|------|-------------|
-| time | DATETIME | Candle timestamp (primary key) |
-| open | REAL | Open price |
-| high | REAL | High price |
-| low | REAL | Low price |
-| close | REAL | Close price |
-
-## E2E Tests
-
-The frontend has a Playwright E2E test suite that runs against mocked API data (no backend needed).
-
-```bash
-cd react-frontend
-
-# Install Playwright browsers (first time only)
-npx playwright install --with-deps chromium
-
-# Run all tests
-npm run test:e2e
-
-# Interactive UI mode
-npm run test:e2e:ui
-
-# Update visual regression baselines after intentional UI changes
-npm run test:e2e:update
-```
-
-Tests cover all 4 dashboard panels (ControlPanel, OffersTable, OHLCChart, DepthChart) plus cross-component filter integration. Visual regression screenshots for canvas-based charts are committed under `e2e/tests/*.spec.ts-snapshots/`.
-
-## Local Git Hooks (Lefthook)
-
-The repository is configured for local-only CI checks via `lefthook`.
-
-### Hook behavior
-
-- `pre-commit` runs fast checks: backend compile + frontend build
-- `pre-push` runs the full suite: fast checks + frontend E2E tests
-
-### Setup
-
-```bash
-# Install lefthook (one time; choose your preferred package manager)
-# https://github.com/evilmartians/lefthook
-
-lefthook install
-```
-
-### Manual runs
-
-```bash
-./scripts/ci/quick.sh
-./scripts/ci/full.sh
-```
-
-## Project Structure
-
-```
-.
-├── cmd/
-│   ├── server/main.go       # REST API + WebSocket server
-│   └── snapshot/main.go     # Snapshot fetcher
-├── bisq_grpc/
-│   ├── go/                  # Generated gRPC stubs
-│   └── grpc.proto           # Bisq gRPC source definitions
-├── api-collection/          # REST Client API collection (.http files)
-├── db/schema.sql            # SQLite schema
-├── react-frontend/          # React + Vite dashboard
-│   └── e2e/                 # Playwright E2E tests
-├── Dockerfile               # app container (Node + Go multi-stage)
-├── Dockerfile.snapshot      # snapshot container (Go multi-stage)
-├── Dockerfile.bisq          # Bisq node container
-├── Dockerfile.tor           # Tor daemon container
-└── docker-compose.yml
-```
-
-## License
-
-MIT
+- Historical snapshot ingestion and schema ownership live in `dexUnifiedApi`
+- `bisqstats` is intentionally still kept in this repository for later use
