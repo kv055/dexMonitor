@@ -421,6 +421,22 @@ func main() {
 	mux.HandleFunc("GET /api/trade_cost_config", handleTradeCostConfig)
 	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
 	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
+	mux.HandleFunc("GET /api/trading/accounts", handleTradingAccounts)
+	mux.HandleFunc("POST /api/trading/accounts", handleTradingAccounts)
+	mux.HandleFunc("PUT /api/trading/accounts/{id}", handleTradingAccountByID)
+	mux.HandleFunc("DELETE /api/trading/accounts/{id}", handleTradingAccountByID)
+	mux.HandleFunc("POST /api/trading/accounts/{id}/totp_secrets", handleTradingAccountTOTPSecrets)
+	mux.HandleFunc("POST /api/trading/accounts/{id}/passkey_credentials", handleTradingAccountPasskeys)
+	mux.HandleFunc("POST /api/trading/accounts/{id}/seeds", handleTradingAccountSeeds)
+	mux.HandleFunc("POST /api/trading/accounts/{id}/api_keys", handleTradingAccountAPIKeys)
+	mux.HandleFunc("PUT /api/trading/totp_secrets/{id}", handleTradingTOTPSecretByID)
+	mux.HandleFunc("DELETE /api/trading/totp_secrets/{id}", handleTradingTOTPSecretByID)
+	mux.HandleFunc("PUT /api/trading/passkey_credentials/{id}", handleTradingPasskeyByID)
+	mux.HandleFunc("DELETE /api/trading/passkey_credentials/{id}", handleTradingPasskeyByID)
+	mux.HandleFunc("PUT /api/trading/seeds/{id}", handleTradingSeedByID)
+	mux.HandleFunc("DELETE /api/trading/seeds/{id}", handleTradingSeedByID)
+	mux.HandleFunc("PUT /api/trading/api_keys/{id}", handleTradingAPIKeyByID)
+	mux.HandleFunc("DELETE /api/trading/api_keys/{id}", handleTradingAPIKeyByID)
 	mux.HandleFunc("GET /health", handleHealth)
 
 	// Internal: snapshot tool pushes live offer data after each run
@@ -440,7 +456,7 @@ func main() {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
@@ -2120,6 +2136,755 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 		"status":    "ok",
 		"timestamp": time.Now().UTC().Format("2006-01-02T15:04:05"),
 	})
+}
+
+type tradingAccount struct {
+	ID                 int64                    `json:"id"`
+	Provider           string                   `json:"provider"`
+	Email              *string                  `json:"email"`
+	Password           *string                  `json:"password"`
+	CreatedAt          string                   `json:"created_at"`
+	UpdatedAt          string                   `json:"updated_at"`
+	TOTPSecrets        []tradingTOTPSecret      `json:"totp_secrets"`
+	PasskeyCredentials []tradingPasskey         `json:"passkey_credentials"`
+	Seeds              []tradingSeed            `json:"seeds"`
+	APIKeys            []tradingAPIKey          `json:"api_keys"`
+}
+
+type tradingTOTPSecret struct {
+	ID        int64   `json:"id"`
+	AccountID int64   `json:"account_id"`
+	Secret    string  `json:"secret"`
+	IsActive  bool    `json:"is_active"`
+	CreatedAt string  `json:"created_at"`
+	RotatedAt *string `json:"rotated_at"`
+}
+
+type tradingPasskey struct {
+	ID              int64   `json:"id"`
+	AccountID       int64   `json:"account_id"`
+	CredentialID    string  `json:"credential_id"`
+	RPID            string  `json:"rp_id"`
+	PrivateKeyPKCS8 string  `json:"private_key_pkcs8"`
+	UserHandle      string  `json:"user_handle"`
+	SignCount       int64   `json:"sign_count"`
+	IsActive        bool    `json:"is_active"`
+	CreatedAt       string  `json:"created_at"`
+	LastUsedAt      *string `json:"last_used_at"`
+}
+
+type tradingSeed struct {
+	ID              int64   `json:"id"`
+	AccountID       int64   `json:"account_id"`
+	SeedPhrase      string  `json:"seed_phrase"`
+	WalletCreatedAt *string `json:"wallet_created_at"`
+	CreatedAt       string  `json:"created_at"`
+}
+
+type tradingAPIKey struct {
+	ID        int64   `json:"id"`
+	AccountID int64   `json:"account_id"`
+	Name      string  `json:"name"`
+	APIKey    string  `json:"api_key"`
+	APISecret *string `json:"api_secret"`
+	Passphrase *string `json:"passphrase"`
+	IsActive  bool    `json:"is_active"`
+	CreatedAt string  `json:"created_at"`
+	UpdatedAt string  `json:"updated_at"`
+}
+
+type tradingAccountPayload struct {
+	Provider string `json:"provider"`
+	Email    string `json:"email"`
+	Password string `json:"password"`
+}
+
+type tradingTOTPSecretPayload struct {
+	Secret   string `json:"secret"`
+	IsActive bool   `json:"is_active"`
+}
+
+type tradingPasskeyPayload struct {
+	CredentialID    string  `json:"credential_id"`
+	RPID            string  `json:"rp_id"`
+	PrivateKeyPKCS8 string  `json:"private_key_pkcs8"`
+	UserHandle      string  `json:"user_handle"`
+	SignCount       int64   `json:"sign_count"`
+	IsActive        bool    `json:"is_active"`
+	LastUsedAt      *string `json:"last_used_at"`
+}
+
+type tradingSeedPayload struct {
+	SeedPhrase      string  `json:"seed_phrase"`
+	WalletCreatedAt *string `json:"wallet_created_at"`
+}
+
+type tradingAPIKeyPayload struct {
+	Name       string  `json:"name"`
+	APIKey     string  `json:"api_key"`
+	APISecret  *string `json:"api_secret"`
+	Passphrase *string `json:"passphrase"`
+	IsActive   bool    `json:"is_active"`
+}
+
+func handleTradingAccounts(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case http.MethodGet:
+		accounts, err := loadTradingAccounts(r.Context())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, accounts)
+	case http.MethodPost:
+		var payload tradingAccountPayload
+		if err := decodeJSON(r, &payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		id, err := createTradingAccount(r.Context(), payload)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		account, err := loadTradingAccountByID(r.Context(), id)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, account)
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func handleTradingAccountByID(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var payload tradingAccountPayload
+		if err := decodeJSON(r, &payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := updateTradingAccount(r.Context(), id, payload); err != nil {
+			writeError(w, err)
+			return
+		}
+		account, err := loadTradingAccountByID(r.Context(), id)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, account)
+	case http.MethodDelete:
+		if _, err := db.ExecContext(r.Context(), `DELETE FROM accounts WHERE id = $1`, id); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func handleTradingAccountTOTPSecrets(w http.ResponseWriter, r *http.Request) {
+	accountID, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var payload tradingTOTPSecretPayload
+	if err := decodeJSON(r, &payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var id int64
+	if err := db.QueryRowContext(r.Context(), `
+		INSERT INTO totp_secrets (account_id, secret, is_active)
+		VALUES ($1, $2, $3)
+		RETURNING id
+	`, accountID, strings.TrimSpace(payload.Secret), payload.IsActive).Scan(&id); err != nil {
+		writeError(w, err)
+		return
+	}
+	row, err := loadTradingTOTPSecretByID(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, row)
+}
+
+func handleTradingTOTPSecretByID(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var payload tradingTOTPSecretPayload
+		if err := decodeJSON(r, &payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, err := db.ExecContext(r.Context(), `
+			UPDATE totp_secrets
+			SET secret = $2, is_active = $3
+			WHERE id = $1
+		`, id, strings.TrimSpace(payload.Secret), payload.IsActive); err != nil {
+			writeError(w, err)
+			return
+		}
+		row, err := loadTradingTOTPSecretByID(r.Context(), id)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, row)
+	case http.MethodDelete:
+		if _, err := db.ExecContext(r.Context(), `DELETE FROM totp_secrets WHERE id = $1`, id); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func handleTradingAccountPasskeys(w http.ResponseWriter, r *http.Request) {
+	accountID, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var payload tradingPasskeyPayload
+	if err := decodeJSON(r, &payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var id int64
+	if err := db.QueryRowContext(r.Context(), `
+		INSERT INTO passkey_credentials (
+			account_id, credential_id, rp_id, private_key_pkcs8, user_handle, sign_count, is_active, last_used_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::timestamptz)
+		RETURNING id
+	`, accountID, payload.CredentialID, payload.RPID, payload.PrivateKeyPKCS8, payload.UserHandle, payload.SignCount, payload.IsActive, stringOrEmpty(payload.LastUsedAt)).Scan(&id); err != nil {
+		writeError(w, err)
+		return
+	}
+	row, err := loadTradingPasskeyByID(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, row)
+}
+
+func handleTradingPasskeyByID(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var payload tradingPasskeyPayload
+		if err := decodeJSON(r, &payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, err := db.ExecContext(r.Context(), `
+			UPDATE passkey_credentials
+			SET credential_id = $2,
+			    rp_id = $3,
+			    private_key_pkcs8 = $4,
+			    user_handle = $5,
+			    sign_count = $6,
+			    is_active = $7,
+			    last_used_at = NULLIF($8, '')::timestamptz
+			WHERE id = $1
+		`, id, payload.CredentialID, payload.RPID, payload.PrivateKeyPKCS8, payload.UserHandle, payload.SignCount, payload.IsActive, stringOrEmpty(payload.LastUsedAt)); err != nil {
+			writeError(w, err)
+			return
+		}
+		row, err := loadTradingPasskeyByID(r.Context(), id)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, row)
+	case http.MethodDelete:
+		if _, err := db.ExecContext(r.Context(), `DELETE FROM passkey_credentials WHERE id = $1`, id); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func handleTradingAccountSeeds(w http.ResponseWriter, r *http.Request) {
+	accountID, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var payload tradingSeedPayload
+	if err := decodeJSON(r, &payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var id int64
+	if err := db.QueryRowContext(r.Context(), `
+		INSERT INTO seeds (account_id, seed_phrase, wallet_created_at)
+		VALUES ($1, $2, NULLIF($3, '')::timestamptz)
+		RETURNING id
+	`, accountID, payload.SeedPhrase, stringOrEmpty(payload.WalletCreatedAt)).Scan(&id); err != nil {
+		writeError(w, err)
+		return
+	}
+	row, err := loadTradingSeedByID(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, row)
+}
+
+func handleTradingSeedByID(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var payload tradingSeedPayload
+		if err := decodeJSON(r, &payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, err := db.ExecContext(r.Context(), `
+			UPDATE seeds
+			SET seed_phrase = $2,
+			    wallet_created_at = NULLIF($3, '')::timestamptz
+			WHERE id = $1
+		`, id, payload.SeedPhrase, stringOrEmpty(payload.WalletCreatedAt)); err != nil {
+			writeError(w, err)
+			return
+		}
+		row, err := loadTradingSeedByID(r.Context(), id)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, row)
+	case http.MethodDelete:
+		if _, err := db.ExecContext(r.Context(), `DELETE FROM seeds WHERE id = $1`, id); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func handleTradingAccountAPIKeys(w http.ResponseWriter, r *http.Request) {
+	accountID, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var payload tradingAPIKeyPayload
+	if err := decodeJSON(r, &payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var id int64
+	if err := db.QueryRowContext(r.Context(), `
+		INSERT INTO api_keys (account_id, name, api_key, api_secret, passphrase, is_active)
+		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6)
+		RETURNING id
+	`, accountID, payload.Name, payload.APIKey, stringOrEmpty(payload.APISecret), stringOrEmpty(payload.Passphrase), payload.IsActive).Scan(&id); err != nil {
+		writeError(w, err)
+		return
+	}
+	row, err := loadTradingAPIKeyByID(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, row)
+}
+
+func handleTradingAPIKeyByID(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var payload tradingAPIKeyPayload
+		if err := decodeJSON(r, &payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if _, err := db.ExecContext(r.Context(), `
+			UPDATE api_keys
+			SET name = $2,
+			    api_key = $3,
+			    api_secret = NULLIF($4, ''),
+			    passphrase = NULLIF($5, ''),
+			    is_active = $6,
+			    updated_at = CURRENT_TIMESTAMP
+			WHERE id = $1
+		`, id, payload.Name, payload.APIKey, stringOrEmpty(payload.APISecret), stringOrEmpty(payload.Passphrase), payload.IsActive); err != nil {
+			writeError(w, err)
+			return
+		}
+		row, err := loadTradingAPIKeyByID(r.Context(), id)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, row)
+	case http.MethodDelete:
+		if _, err := db.ExecContext(r.Context(), `DELETE FROM api_keys WHERE id = $1`, id); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func loadTradingAccounts(ctx context.Context) ([]tradingAccount, error) {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, provider, email, password, created_at, updated_at
+		FROM accounts
+		ORDER BY provider, id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	accounts := make([]tradingAccount, 0)
+	accountIDs := make([]int64, 0)
+	accountMap := make(map[int64]*tradingAccount)
+	for rows.Next() {
+		var account tradingAccount
+		var email, password sql.NullString
+		var createdAt, updatedAt time.Time
+		if err := rows.Scan(&account.ID, &account.Provider, &email, &password, &createdAt, &updatedAt); err != nil {
+			return nil, err
+		}
+		account.Email = nullStringPtr(email)
+		account.Password = nullStringPtr(password)
+		account.CreatedAt = formatTime(createdAt)
+		account.UpdatedAt = formatTime(updatedAt)
+		account.TOTPSecrets = []tradingTOTPSecret{}
+		account.PasskeyCredentials = []tradingPasskey{}
+		account.Seeds = []tradingSeed{}
+		account.APIKeys = []tradingAPIKey{}
+		accounts = append(accounts, account)
+		accountIDs = append(accountIDs, account.ID)
+		accountMap[account.ID] = &accounts[len(accounts)-1]
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(accountIDs) == 0 {
+		return accounts, nil
+	}
+
+	if err := appendTradingTOTPSecrets(ctx, accountMap, accountIDs); err != nil {
+		return nil, err
+	}
+	if err := appendTradingPasskeys(ctx, accountMap, accountIDs); err != nil {
+		return nil, err
+	}
+	if err := appendTradingSeeds(ctx, accountMap, accountIDs); err != nil {
+		return nil, err
+	}
+	if err := appendTradingAPIKeys(ctx, accountMap, accountIDs); err != nil {
+		return nil, err
+	}
+
+	return accounts, nil
+}
+
+func loadTradingAccountByID(ctx context.Context, id int64) (*tradingAccount, error) {
+	accounts, err := loadTradingAccounts(ctx)
+	if err != nil {
+		return nil, err
+	}
+	for i := range accounts {
+		if accounts[i].ID == id {
+			return &accounts[i], nil
+		}
+	}
+	return nil, sql.ErrNoRows
+}
+
+func appendTradingTOTPSecrets(ctx context.Context, accountMap map[int64]*tradingAccount, accountIDs []int64) error {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, account_id, secret, is_active, created_at, rotated_at
+		FROM totp_secrets
+		WHERE account_id = ANY($1)
+		ORDER BY created_at DESC, id DESC
+	`, accountIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item tradingTOTPSecret
+		var createdAt time.Time
+		var rotatedAt sql.NullTime
+		if err := rows.Scan(&item.ID, &item.AccountID, &item.Secret, &item.IsActive, &createdAt, &rotatedAt); err != nil {
+			return err
+		}
+		item.CreatedAt = formatTime(createdAt)
+		item.RotatedAt = nullTimePtr(rotatedAt)
+		if account := accountMap[item.AccountID]; account != nil {
+			account.TOTPSecrets = append(account.TOTPSecrets, item)
+		}
+	}
+	return rows.Err()
+}
+
+func appendTradingPasskeys(ctx context.Context, accountMap map[int64]*tradingAccount, accountIDs []int64) error {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, account_id, credential_id, rp_id, private_key_pkcs8, user_handle, sign_count, is_active, created_at, last_used_at
+		FROM passkey_credentials
+		WHERE account_id = ANY($1)
+		ORDER BY created_at DESC, id DESC
+	`, accountIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item tradingPasskey
+		var createdAt time.Time
+		var lastUsedAt sql.NullTime
+		if err := rows.Scan(&item.ID, &item.AccountID, &item.CredentialID, &item.RPID, &item.PrivateKeyPKCS8, &item.UserHandle, &item.SignCount, &item.IsActive, &createdAt, &lastUsedAt); err != nil {
+			return err
+		}
+		item.CreatedAt = formatTime(createdAt)
+		item.LastUsedAt = nullTimePtr(lastUsedAt)
+		if account := accountMap[item.AccountID]; account != nil {
+			account.PasskeyCredentials = append(account.PasskeyCredentials, item)
+		}
+	}
+	return rows.Err()
+}
+
+func appendTradingSeeds(ctx context.Context, accountMap map[int64]*tradingAccount, accountIDs []int64) error {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, account_id, seed_phrase, wallet_created_at, created_at
+		FROM seeds
+		WHERE account_id = ANY($1)
+		ORDER BY created_at DESC, id DESC
+	`, accountIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item tradingSeed
+		var walletCreatedAt sql.NullTime
+		var createdAt time.Time
+		if err := rows.Scan(&item.ID, &item.AccountID, &item.SeedPhrase, &walletCreatedAt, &createdAt); err != nil {
+			return err
+		}
+		item.WalletCreatedAt = nullTimePtr(walletCreatedAt)
+		item.CreatedAt = formatTime(createdAt)
+		if account := accountMap[item.AccountID]; account != nil {
+			account.Seeds = append(account.Seeds, item)
+		}
+	}
+	return rows.Err()
+}
+
+func appendTradingAPIKeys(ctx context.Context, accountMap map[int64]*tradingAccount, accountIDs []int64) error {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, created_at, updated_at
+		FROM api_keys
+		WHERE account_id = ANY($1)
+		ORDER BY updated_at DESC, id DESC
+	`, accountIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item tradingAPIKey
+		var apiSecret, passphrase sql.NullString
+		var createdAt, updatedAt time.Time
+		if err := rows.Scan(&item.ID, &item.AccountID, &item.Name, &item.APIKey, &apiSecret, &passphrase, &item.IsActive, &createdAt, &updatedAt); err != nil {
+			return err
+		}
+		item.APISecret = nullStringPtr(apiSecret)
+		item.Passphrase = nullStringPtr(passphrase)
+		item.CreatedAt = formatTime(createdAt)
+		item.UpdatedAt = formatTime(updatedAt)
+		if account := accountMap[item.AccountID]; account != nil {
+			account.APIKeys = append(account.APIKeys, item)
+		}
+	}
+	return rows.Err()
+}
+
+func createTradingAccount(ctx context.Context, payload tradingAccountPayload) (int64, error) {
+	provider := normalizeProvider(payload.Provider)
+	var id int64
+	err := db.QueryRowContext(ctx, `
+		INSERT INTO accounts (provider, email, password)
+		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
+		RETURNING id
+	`, provider, strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password)).Scan(&id)
+	return id, err
+}
+
+func updateTradingAccount(ctx context.Context, id int64, payload tradingAccountPayload) error {
+	_, err := db.ExecContext(ctx, `
+		UPDATE accounts
+		SET provider = $2,
+		    email = NULLIF($3, ''),
+		    password = NULLIF($4, ''),
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1
+	`, id, normalizeProvider(payload.Provider), strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password))
+	return err
+}
+
+func loadTradingTOTPSecretByID(ctx context.Context, id int64) (*tradingTOTPSecret, error) {
+	var item tradingTOTPSecret
+	var createdAt time.Time
+	var rotatedAt sql.NullTime
+	err := db.QueryRowContext(ctx, `
+		SELECT id, account_id, secret, is_active, created_at, rotated_at
+		FROM totp_secrets
+		WHERE id = $1
+	`, id).Scan(&item.ID, &item.AccountID, &item.Secret, &item.IsActive, &createdAt, &rotatedAt)
+	if err != nil {
+		return nil, err
+	}
+	item.CreatedAt = formatTime(createdAt)
+	item.RotatedAt = nullTimePtr(rotatedAt)
+	return &item, nil
+}
+
+func loadTradingPasskeyByID(ctx context.Context, id int64) (*tradingPasskey, error) {
+	var item tradingPasskey
+	var createdAt time.Time
+	var lastUsedAt sql.NullTime
+	err := db.QueryRowContext(ctx, `
+		SELECT id, account_id, credential_id, rp_id, private_key_pkcs8, user_handle, sign_count, is_active, created_at, last_used_at
+		FROM passkey_credentials
+		WHERE id = $1
+	`, id).Scan(&item.ID, &item.AccountID, &item.CredentialID, &item.RPID, &item.PrivateKeyPKCS8, &item.UserHandle, &item.SignCount, &item.IsActive, &createdAt, &lastUsedAt)
+	if err != nil {
+		return nil, err
+	}
+	item.CreatedAt = formatTime(createdAt)
+	item.LastUsedAt = nullTimePtr(lastUsedAt)
+	return &item, nil
+}
+
+func loadTradingSeedByID(ctx context.Context, id int64) (*tradingSeed, error) {
+	var item tradingSeed
+	var walletCreatedAt sql.NullTime
+	var createdAt time.Time
+	err := db.QueryRowContext(ctx, `
+		SELECT id, account_id, seed_phrase, wallet_created_at, created_at
+		FROM seeds
+		WHERE id = $1
+	`, id).Scan(&item.ID, &item.AccountID, &item.SeedPhrase, &walletCreatedAt, &createdAt)
+	if err != nil {
+		return nil, err
+	}
+	item.WalletCreatedAt = nullTimePtr(walletCreatedAt)
+	item.CreatedAt = formatTime(createdAt)
+	return &item, nil
+}
+
+func loadTradingAPIKeyByID(ctx context.Context, id int64) (*tradingAPIKey, error) {
+	var item tradingAPIKey
+	var apiSecret, passphrase sql.NullString
+	var createdAt, updatedAt time.Time
+	err := db.QueryRowContext(ctx, `
+		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, created_at, updated_at
+		FROM api_keys
+		WHERE id = $1
+	`, id).Scan(&item.ID, &item.AccountID, &item.Name, &item.APIKey, &apiSecret, &passphrase, &item.IsActive, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	item.APISecret = nullStringPtr(apiSecret)
+	item.Passphrase = nullStringPtr(passphrase)
+	item.CreatedAt = formatTime(createdAt)
+	item.UpdatedAt = formatTime(updatedAt)
+	return &item, nil
+}
+
+func decodeJSON(r *http.Request, dest any) error {
+	defer r.Body.Close()
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+	return decoder.Decode(dest)
+}
+
+func pathID(r *http.Request, name string) (int64, error) {
+	id, err := strconv.ParseInt(strings.TrimSpace(r.PathValue(name)), 10, 64)
+	if err != nil || id <= 0 {
+		return 0, fmt.Errorf("invalid id")
+	}
+	return id, nil
+}
+
+func normalizeProvider(value string) string {
+	return strings.ToLower(strings.TrimSpace(value))
+}
+
+func nullStringPtr(value sql.NullString) *string {
+	if !value.Valid {
+		return nil
+	}
+	v := value.String
+	return &v
+}
+
+func nullTimePtr(value sql.NullTime) *string {
+	if !value.Valid {
+		return nil
+	}
+	v := formatTime(value.Time)
+	return &v
+}
+
+func formatTime(value time.Time) string {
+	return value.UTC().Format(time.RFC3339)
+}
+
+func stringOrEmpty(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return strings.TrimSpace(*value)
 }
 
 // --- Kraken OHLC (REST, for chart) ---

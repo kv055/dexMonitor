@@ -16,6 +16,7 @@ import { GeneralStats } from './components/GeneralStats';
 import { SnapshotLog } from './components/SnapshotLog';
 import { MmTransactionsLog } from './components/MmTransactionsLog';
 import { TakerOpportunities } from './components/TakerOpportunities';
+import { TradingAccountsPanel } from './components/TradingAccountsPanel';
 
 type ThemeMode = 'dark' | 'light';
 
@@ -182,6 +183,10 @@ function InsightsView({ theme, pastOrderStats, pastOrderStatsAll, pastOrderStats
       </div>
     </div>
   );
+}
+
+function TradingView() {
+  return <TradingAccountsPanel />;
 }
 
 export default function App() {
@@ -364,6 +369,10 @@ export default function App() {
             coupledHedge={coupledHedge}
             maxFiatLimit={maxFiatLimit}
           />
+        )}
+
+        {activeTab === 'trading' && (
+          <TradingView />
         )}
       </div>
       </FiltersProvider>

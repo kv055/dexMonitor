@@ -245,6 +245,61 @@ export interface OHLCData {
   interval_min?: number;
 }
 
+export interface TradingTOTPSecret {
+  id: number;
+  account_id: number;
+  secret: string;
+  is_active: boolean;
+  created_at: string;
+  rotated_at: string | null;
+}
+
+export interface TradingPasskey {
+  id: number;
+  account_id: number;
+  credential_id: string;
+  rp_id: string;
+  private_key_pkcs8: string;
+  user_handle: string;
+  sign_count: number;
+  is_active: boolean;
+  created_at: string;
+  last_used_at: string | null;
+}
+
+export interface TradingSeed {
+  id: number;
+  account_id: number;
+  seed_phrase: string;
+  wallet_created_at: string | null;
+  created_at: string;
+}
+
+export interface TradingAPIKey {
+  id: number;
+  account_id: number;
+  name: string;
+  api_key: string;
+  api_secret: string | null;
+  passphrase: string | null;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TradingAccount {
+  id: number;
+  provider: string;
+  email: string | null;
+  password: string | null;
+  created_at: string;
+  updated_at: string;
+  totp_secrets: TradingTOTPSecret[];
+  passkey_credentials: TradingPasskey[];
+  seeds: TradingSeed[];
+  api_keys: TradingAPIKey[];
+}
+
 export interface PastOrderTimeframeStats {
   timeframe: string;
   hours: number;

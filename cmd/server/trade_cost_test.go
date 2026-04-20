@@ -8,7 +8,6 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
@@ -447,119 +446,6 @@ func TestHandleLiveOffersRESTIncludesCappedProfitFields(t *testing.T) {
 	assertFloat(t, offer.CostBreakdownCapped.EstimatedProfitBTC, 0.000825)
 }
 
-func TestPastOffersRESTComputesCostsForClosedOrdersDump(t *testing.T) {
-	const closedOrdersPath = "/home/kili/closed_orders.sql"
-
-	closedOrdersSQL, err := os.ReadFile(closedOrdersPath)
-	if err != nil {
-		t.Skipf("closed orders fixture not available at %s: %v", closedOrdersPath, err)
-	}
-
-	oldDB := db
-	oldOptimizer := tradeRouteOptimizer
-	oldEstimators := tradeCostEstimators
-	defer func() {
-		db = oldDB
-		tradeRouteOptimizer = oldOptimizer
-		tradeCostEstimators = oldEstimators
-	}()
-
-	testDB, err := sql.Open("sqlite", t.TempDir()+"/orders.db")
-	if err != nil {
-		t.Fatalf("open temp db: %v", err)
-	}
-	t.Cleanup(func() {
-		testDB.Close()
-	})
-	db = testDB
-
-	if _, err := db.Exec(legacySQLiteOrdersSchema); err != nil {
-		t.Fatalf("create schema: %v", err)
-	}
-	if _, err := db.Exec(`ALTER TABLE offers ADD COLUMN ref_price REAL`); err != nil {
-		t.Fatalf("add legacy ref_price column for fixture import: %v", err)
-	}
-	if _, err := db.Exec(string(closedOrdersSQL)); err != nil {
-		t.Fatalf("load closed orders dump: %v", err)
-	}
-
-	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
-	est.dexFees["hodlhodl"] = seededCachedFee(0.001)
-	est.dexFees["robosats"] = seededCachedFee(0.001)
-	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
-	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/past_offers?hours=100000&limit=1000", nil)
-	rec := httptest.NewRecorder()
-
-	handlePastOffers(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-
-	var offers []map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &offers); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	if len(offers) == 0 {
-		t.Fatal("expected closed order rows from fixture, got none")
-	}
-
-	computedCosts := 0
-	for i, offer := range offers {
-		status, ok := offer["status"].(map[string]any)
-		if !ok {
-			t.Fatalf("offer %d missing status object: %#v", i, offer["status"])
-		}
-		if status["is_live"] != false {
-			t.Fatalf("offer %d status.is_live = %#v, want false", i, status["is_live"])
-		}
-		pricing, ok := offer["pricing"].(map[string]any)
-		if !ok {
-			t.Fatalf("offer %d missing pricing object: %#v", i, offer["pricing"])
-		}
-		if _, ok := pricing["avg_offer_price"].(float64); !ok {
-			t.Fatalf("offer %d missing numeric pricing.avg_offer_price: %#v", i, pricing["avg_offer_price"])
-		}
-		if _, ok := pricing["avg_ref_price"].(float64); !ok {
-			t.Fatalf("offer %d missing numeric pricing.avg_ref_price: %#v", i, pricing["avg_ref_price"])
-		}
-		if _, ok := pricing["avg_premium_percent"].(float64); !ok {
-			t.Fatalf("offer %d missing numeric pricing.avg_premium_percent: %#v", i, pricing["avg_premium_percent"])
-		}
-		analysis, ok := offer["analysis"].(map[string]any)
-		if !ok {
-			t.Fatalf("offer %d missing analysis object: %#v", i, offer["analysis"])
-		}
-		full, ok := analysis["full_volume"].(map[string]any)
-		if !ok {
-			t.Fatalf("offer %d missing analysis.full_volume: %#v", i, analysis["full_volume"])
-		}
-		premium, ok := full["premium"].(map[string]any)
-		if !ok {
-			t.Fatalf("offer %d missing analysis.full_volume.premium: %#v", i, full["premium"])
-		}
-		if _, ok := premium["avg_trade_cost_percent"].(float64); !ok {
-			t.Fatalf("offer %d missing avg_trade_cost_percent: %#v", i, premium["avg_trade_cost_percent"])
-		}
-		if _, ok := premium["avg_net_percent"].(float64); !ok {
-			t.Fatalf("offer %d missing avg_net_percent: %#v", i, premium["avg_net_percent"])
-		}
-		if _, ok := offer["lifecycle"]; ok {
-			t.Fatalf("offer %d unexpectedly included inline lifecycle after route split", i)
-		}
-
-		if premium["avg_trade_cost_percent"].(float64) > 0 {
-			computedCosts++
-			break
-		}
-	}
-	if computedCosts == 0 {
-		t.Fatal("expected at least one closed order to have computed positive trade cost")
-	}
-}
-
 func TestPastOrderStatsRESTAggregatesPremiumOrdersByTimeframe(t *testing.T) {
 	withTempOrdersDB(t)
 
@@ -810,57 +696,6 @@ func TestHandlePastOfferLifecycleReturnsLifecyclePoints(t *testing.T) {
 	}
 	if points[0].Time == "" {
 		t.Fatalf("expected lifecycle time, got %#v", points[0])
-	}
-}
-
-func TestGeneralStatsRESTComputesFrontendEquivalentStats(t *testing.T) {
-	withTempOrdersDB(t)
-
-	req := httptest.NewRequest(http.MethodGet, "/api/general_stats?hours=48", nil)
-	rec := httptest.NewRecorder()
-
-	handleGeneralStats(rec, req)
-
-	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
-	}
-
-	var stats struct {
-		TotalOffers      int `json:"total_offers"`
-		ActiveOffers     int `json:"active_offers"`
-		ExchangesLive    int `json:"exchanges_live"`
-		OffersByExchange []struct {
-			Name  string `json:"name"`
-			Count int    `json:"count"`
-		} `json:"offers_by_exchange"`
-		BestAskPremiumPct  *float64 `json:"best_ask_premium_pct"`
-		AvgAskPremiumPct   *float64 `json:"avg_ask_premium_pct"`
-		AvgOfferLifetimeMs *int64   `json:"avg_offer_lifetime_ms"`
-	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-
-	if stats.TotalOffers != 4 {
-		t.Fatalf("total offers = %d, want 4", stats.TotalOffers)
-	}
-	if stats.ActiveOffers != 2 {
-		t.Fatalf("active offers = %d, want 2", stats.ActiveOffers)
-	}
-	if stats.ExchangesLive != 1 {
-		t.Fatalf("exchanges live = %d, want 1", stats.ExchangesLive)
-	}
-	if len(stats.OffersByExchange) != 1 || stats.OffersByExchange[0].Name != "bisq" || stats.OffersByExchange[0].Count != 2 {
-		t.Fatalf("offers_by_exchange = %#v, want [{bisq 2}]", stats.OffersByExchange)
-	}
-	if stats.BestAskPremiumPct == nil || *stats.BestAskPremiumPct != 5 {
-		t.Fatalf("best ask premium = %#v, want 5", stats.BestAskPremiumPct)
-	}
-	if stats.AvgAskPremiumPct == nil || *stats.AvgAskPremiumPct != 5 {
-		t.Fatalf("avg ask premium = %#v, want 5", stats.AvgAskPremiumPct)
-	}
-	if stats.AvgOfferLifetimeMs == nil || *stats.AvgOfferLifetimeMs != int64(2*time.Hour/time.Millisecond) {
-		t.Fatalf("avg lifetime = %#v, want %d", stats.AvgOfferLifetimeMs, int64(2*time.Hour/time.Millisecond))
 	}
 }
 

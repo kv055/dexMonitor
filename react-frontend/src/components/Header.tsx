@@ -13,7 +13,7 @@ const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
   { id: 'monitor', label: 'dex Monitor', color: 'text-accent', disabled: false },
   { id: 'insights', label: 'dex Insights', color: 'text-blue', disabled: false },
   { id: 'mmcontroller', label: 'dex Mm Controller', color: 'text-green', disabled: false },
-  { id: 'trading', label: 'dex Trading', color: 'text-purple', disabled: true },
+  { id: 'trading', label: 'dex Trading', color: 'text-purple', disabled: false },
 ];
 
 export function Header({ activeTab, onTabChange, theme, onToggleTheme, onOpenSettings }: Props) {
