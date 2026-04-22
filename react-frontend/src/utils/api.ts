@@ -26,14 +26,14 @@ export function fetchTradingAccounts() {
   return request<TradingAccount[]>('/api/trading/accounts');
 }
 
-export function createAccount(payload: { provider: string; email: string; password: string }) {
+export function createAccount(payload: { provider: string; email: string; password: string; phone: string }) {
   return request<TradingAccount>('/api/trading/accounts', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-export function updateAccount(id: number, payload: { provider: string; email: string; password: string }) {
+export function updateAccount(id: number, payload: { provider: string; email: string; password: string; phone: string }) {
   return request<TradingAccount>(`/api/trading/accounts/${id}`, {
     method: 'PUT',
     body: JSON.stringify(payload),

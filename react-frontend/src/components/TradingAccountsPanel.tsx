@@ -70,6 +70,7 @@ interface AccountFormState {
   provider: string;
   email: string;
   password: string;
+  phone: string;
 }
 
 interface TOTPFormState {
@@ -101,7 +102,7 @@ interface APIKeyFormState {
 }
 
 function emptyAccountForm(): AccountFormState {
-  return { provider: '', email: '', password: '' };
+  return { provider: '', email: '', password: '', phone: '' };
 }
 
 function AccountEditor({
@@ -118,7 +119,7 @@ function AccountEditor({
   const options = useMemo(() => providerOptionsForValue(value.provider), [value.provider]);
 
   return (
-    <div className="grid gap-3 md:grid-cols-3">
+    <div className="grid gap-3 md:grid-cols-4">
       <label className="grid gap-1 text-sm text-muted">
         <span>Provider</span>
         <select
@@ -152,7 +153,16 @@ function AccountEditor({
           placeholder="Optional"
         />
       </label>
-      <div className="md:col-span-3 flex justify-end">
+      <label className="grid gap-1 text-sm text-muted">
+        <span>Phone</span>
+        <input
+          className={inputCls}
+          value={value.phone}
+          onChange={e => onChange({ ...value, phone: e.target.value })}
+          placeholder="Optional"
+        />
+      </label>
+      <div className="md:col-span-4 flex justify-end">
         <button type="button" className={primaryButtonCls} onClick={onSubmit}>
           {submitLabel}
         </button>
@@ -237,6 +247,7 @@ export function TradingAccountsPanel() {
       provider: account.provider,
       email: account.email ?? '',
       password: account.password ?? '',
+      phone: account.phone ?? '',
     });
   };
 
@@ -817,10 +828,11 @@ export function TradingAccountsPanel() {
                         }
                       />
                     ) : (
-                      <div className="grid gap-2 text-sm text-muted md:grid-cols-3">
+                      <div className="grid gap-2 text-sm text-muted md:grid-cols-4">
                         <div><span className="text-text">Provider:</span> {providerLabel(account.provider)}</div>
                         <div><span className="text-text">Email:</span> {account.email || '—'}</div>
                         <div><span className="text-text">Password:</span> {account.password ? '••••••••' : '—'}</div>
+                        <div><span className="text-text">Phone:</span> {account.phone || '—'}</div>
                       </div>
                     )}
                   </div>

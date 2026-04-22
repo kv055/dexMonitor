@@ -2139,16 +2139,17 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 type tradingAccount struct {
-	ID                 int64                    `json:"id"`
-	Provider           string                   `json:"provider"`
-	Email              *string                  `json:"email"`
-	Password           *string                  `json:"password"`
-	CreatedAt          string                   `json:"created_at"`
-	UpdatedAt          string                   `json:"updated_at"`
-	TOTPSecrets        []tradingTOTPSecret      `json:"totp_secrets"`
-	PasskeyCredentials []tradingPasskey         `json:"passkey_credentials"`
-	Seeds              []tradingSeed            `json:"seeds"`
-	APIKeys            []tradingAPIKey          `json:"api_keys"`
+	ID                 int64               `json:"id"`
+	Provider           string              `json:"provider"`
+	Email              *string             `json:"email"`
+	Password           *string             `json:"password"`
+	Phone              *string             `json:"phone"`
+	CreatedAt          string              `json:"created_at"`
+	UpdatedAt          string              `json:"updated_at"`
+	TOTPSecrets        []tradingTOTPSecret `json:"totp_secrets"`
+	PasskeyCredentials []tradingPasskey    `json:"passkey_credentials"`
+	Seeds              []tradingSeed       `json:"seeds"`
+	APIKeys            []tradingAPIKey     `json:"api_keys"`
 }
 
 type tradingTOTPSecret struct {
@@ -2182,21 +2183,22 @@ type tradingSeed struct {
 }
 
 type tradingAPIKey struct {
-	ID        int64   `json:"id"`
-	AccountID int64   `json:"account_id"`
-	Name      string  `json:"name"`
-	APIKey    string  `json:"api_key"`
-	APISecret *string `json:"api_secret"`
+	ID         int64   `json:"id"`
+	AccountID  int64   `json:"account_id"`
+	Name       string  `json:"name"`
+	APIKey     string  `json:"api_key"`
+	APISecret  *string `json:"api_secret"`
 	Passphrase *string `json:"passphrase"`
-	IsActive  bool    `json:"is_active"`
-	CreatedAt string  `json:"created_at"`
-	UpdatedAt string  `json:"updated_at"`
+	IsActive   bool    `json:"is_active"`
+	CreatedAt  string  `json:"created_at"`
+	UpdatedAt  string  `json:"updated_at"`
 }
 
 type tradingAccountPayload struct {
 	Provider string `json:"provider"`
 	Email    string `json:"email"`
 	Password string `json:"password"`
+	Phone    string `json:"phone"`
 }
 
 type tradingTOTPSecretPayload struct {
@@ -2571,7 +2573,7 @@ func handleTradingAPIKeyByID(w http.ResponseWriter, r *http.Request) {
 
 func loadTradingAccounts(ctx context.Context) ([]tradingAccount, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, provider, email, password, created_at, updated_at
+		SELECT id, provider, email, password, phone, created_at, updated_at
 		FROM accounts
 		ORDER BY provider, id
 	`)
@@ -2585,13 +2587,14 @@ func loadTradingAccounts(ctx context.Context) ([]tradingAccount, error) {
 	accountMap := make(map[int64]*tradingAccount)
 	for rows.Next() {
 		var account tradingAccount
-		var email, password sql.NullString
+		var email, password, phone sql.NullString
 		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&account.ID, &account.Provider, &email, &password, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&account.ID, &account.Provider, &email, &password, &phone, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		account.Email = nullStringPtr(email)
 		account.Password = nullStringPtr(password)
+		account.Phone = nullStringPtr(phone)
 		account.CreatedAt = formatTime(createdAt)
 		account.UpdatedAt = formatTime(updatedAt)
 		account.TOTPSecrets = []tradingTOTPSecret{}
@@ -2752,10 +2755,10 @@ func createTradingAccount(ctx context.Context, payload tradingAccountPayload) (i
 	provider := normalizeProvider(payload.Provider)
 	var id int64
 	err := db.QueryRowContext(ctx, `
-		INSERT INTO accounts (provider, email, password)
-		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''))
+		INSERT INTO accounts (provider, email, password, phone)
+		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''))
 		RETURNING id
-	`, provider, strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password)).Scan(&id)
+	`, provider, strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone)).Scan(&id)
 	return id, err
 }
 
@@ -2765,9 +2768,10 @@ func updateTradingAccount(ctx context.Context, id int64, payload tradingAccountP
 		SET provider = $2,
 		    email = NULLIF($3, ''),
 		    password = NULLIF($4, ''),
+		    phone = NULLIF($5, ''),
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
-	`, id, normalizeProvider(payload.Provider), strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password))
+	`, id, normalizeProvider(payload.Provider), strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone))
 	return err
 }
 

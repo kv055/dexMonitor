@@ -292,6 +292,7 @@ export interface TradingAccount {
   provider: string;
   email: string | null;
   password: string | null;
+  phone: string | null;
   created_at: string;
   updated_at: string;
   totp_secrets: TradingTOTPSecret[];
