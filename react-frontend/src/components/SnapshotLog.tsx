@@ -5,7 +5,7 @@ import { formatDateTimeParts } from '../utils/formatters';
 
 interface ExchangeData {
   count: number;
-  ids: string[];
+  ids?: string[];
 }
 
 interface LogEntry {
@@ -31,6 +31,7 @@ export function SnapshotLog() {
   const [expanded, setExpanded] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [detailLoading, setDetailLoading] = useState<number | null>(null);
   // key: `${entryId}:${exchange}`
   const [expandedExchange, setExpandedExchange] = useState<string | null>(null);
 
@@ -38,12 +39,27 @@ export function SnapshotLog() {
     setExpandedExchange(prev => prev === key ? null : key);
   }
 
+  async function ensureDetail(entry: LogEntry) {
+    if (Object.values(entry.exchanges ?? {}).some(ex => ex.ids)) return;
+    setDetailLoading(entry.id);
+    try {
+      const detail = await apiFetch<LogEntry>(`/api/snapshot-log/${entry.id}`);
+      setEntries(prev => prev.map(item => item.id === detail.id ? detail : item));
+      setError(null);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load snapshot detail';
+      setError(message);
+    } finally {
+      setDetailLoading(prev => prev === entry.id ? null : prev);
+    }
+  }
+
   useEffect(() => {
     let active = true;
 
     const load = async () => {
       try {
-        const data = await apiFetch<LogEntry[]>('/api/snapshot-log?limit=20');
+        const data = await apiFetch<LogEntry[]>('/api/snapshot-log?limit=20&compact=true');
         if (!active) return;
         setEntries(data);
         setError(null);
@@ -83,7 +99,11 @@ export function SnapshotLog() {
         return (
           <div key={e.id} className="border-b border-border last:border-0">
             <button
-              onClick={() => setExpanded(isOpen ? null : e.id)}
+              onClick={() => {
+                const nextOpen = !isOpen;
+                setExpanded(nextOpen ? e.id : null);
+                if (nextOpen) void ensureDetail(e);
+              }}
               className="w-full flex items-center gap-2 text-[0.75rem] py-1 bg-transparent border-none cursor-pointer text-left hover:bg-white/5 rounded px-1 transition-colors"
             >
               <span className="text-muted shrink-0 w-26">{dateStr} {timeStr}</span>
@@ -103,10 +123,13 @@ export function SnapshotLog() {
 
             {isOpen && (
               <div className="flex flex-col gap-0.5 px-1 pb-2 pt-0.5">
+                {detailLoading === e.id && (
+                  <div className="px-1 py-1 text-[0.7rem] text-muted">Loading IDs…</div>
+                )}
                 {exchangeNames.map(ex => {
                   const exKey = `${e.id}:${ex}`;
                   const exOpen = expandedExchange === exKey;
-                  const ids = e.exchanges[ex].ids;
+                  const ids = e.exchanges[ex].ids ?? [];
                   return (
                     <div key={ex}>
                       <button
@@ -121,7 +144,7 @@ export function SnapshotLog() {
                         <span className="text-text">{e.exchanges[ex].count} offers</span>
                         <span className="ml-auto text-muted">{exOpen ? '▲' : '▼'}</span>
                       </button>
-                      {exOpen && (
+                      {exOpen && ids.length > 0 && (
                         <div className="flex flex-wrap gap-x-2 gap-y-0.5 px-4 pb-1.5 pt-0.5">
                           {ids.map(id => (
                             <span key={id} className="text-[0.65rem] text-muted font-mono">{id}</span>

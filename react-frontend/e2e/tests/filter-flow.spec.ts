@@ -84,7 +84,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
     const cp = controlPanel(page);
     const panel = offersPanel(page);
 
-    await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'All Payments' }), 'SEPA');
+    await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'All Payments' }), 'SEPA Instant');
     await page.waitForTimeout(200);
 
     const paymentCells = panel.locator('table tbody td:last-child');
@@ -93,7 +93,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
 
     for (let i = 0; i < count; i++) {
       const text = await paymentCells.nth(i).textContent();
-      expect(text?.trim()).toBe('SEPA');
+      expect(text?.trim()).toBe('SEPA Instant');
     }
   });
 

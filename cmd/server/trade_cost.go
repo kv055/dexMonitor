@@ -82,6 +82,7 @@ type cachedFee struct {
 	value     float64
 	fetchedAt time.Time
 	ttl       time.Duration
+	inflight  chan struct{}
 }
 
 func newCachedFee(ttl time.Duration) *cachedFee { return &cachedFee{ttl: ttl} }
@@ -95,7 +96,35 @@ func (c *cachedFee) get(fallback float64, refresh func() (float64, error), label
 		c.mu.RUnlock()
 		return v
 	}
+	if c.inflight != nil {
+		ch := c.inflight
+		c.mu.RUnlock()
+		<-ch
+		c.mu.RLock()
+		v := c.value
+		c.mu.RUnlock()
+		return v
+	}
 	c.mu.RUnlock()
+
+	c.mu.Lock()
+	if !c.fetchedAt.IsZero() && time.Since(c.fetchedAt) < c.ttl {
+		v := c.value
+		c.mu.Unlock()
+		return v
+	}
+	if c.inflight != nil {
+		ch := c.inflight
+		c.mu.Unlock()
+		<-ch
+		c.mu.RLock()
+		v := c.value
+		c.mu.RUnlock()
+		return v
+	}
+	ch := make(chan struct{})
+	c.inflight = ch
+	c.mu.Unlock()
 
 	v, err := refresh()
 	c.mu.Lock()
@@ -114,6 +143,8 @@ func (c *cachedFee) get(fallback float64, refresh func() (float64, error), label
 		c.fetchedAt = time.Now()
 	}
 	result := c.value
+	close(ch)
+	c.inflight = nil
 	c.mu.Unlock()
 	return result
 }
@@ -624,6 +655,63 @@ type TradeCostEstimator struct {
 	hedgeCostOverride  func(btcAmount float64, refPriceEUR float64, transferMinutes float64) hedgeCostDetails
 }
 
+type cachedHedgeInput struct {
+	mu       sync.Mutex
+	values   map[hedge.Venue]hedge.LivePerpInputs
+	fetched  map[hedge.Venue]time.Time
+	inflight map[hedge.Venue]chan struct{}
+	ttl      time.Duration
+}
+
+func newCachedHedgeInput(ttl time.Duration) *cachedHedgeInput {
+	return &cachedHedgeInput{
+		values:   map[hedge.Venue]hedge.LivePerpInputs{},
+		fetched:  map[hedge.Venue]time.Time{},
+		inflight: map[hedge.Venue]chan struct{}{},
+		ttl:      ttl,
+	}
+}
+
+func (c *cachedHedgeInput) get(venue hedge.Venue) (hedge.LivePerpInputs, error) {
+	c.mu.Lock()
+	if fetchedAt, ok := c.fetched[venue]; ok && time.Since(fetchedAt) < c.ttl {
+		value := c.values[venue]
+		c.mu.Unlock()
+		return value, nil
+	}
+	if ch, ok := c.inflight[venue]; ok {
+		c.mu.Unlock()
+		<-ch
+		c.mu.Lock()
+		value, ok := c.values[venue]
+		c.mu.Unlock()
+		if ok {
+			return value, nil
+		}
+		return hedge.LivePerpInputs{}, fmt.Errorf("hedge inputs unavailable for %s", venue)
+	}
+	ch := make(chan struct{})
+	c.inflight[venue] = ch
+	c.mu.Unlock()
+
+	inputs, err := hedge.FetchDefaultVenueInputs(venue)
+	if err != nil {
+		inputs, err = hedge.FallbackVenueInputs(venue)
+	}
+
+	c.mu.Lock()
+	if err == nil {
+		c.values[venue] = inputs
+		c.fetched[venue] = time.Now()
+	}
+	close(ch)
+	delete(c.inflight, venue)
+	c.mu.Unlock()
+	return inputs, err
+}
+
+var hedgeInputCache = newCachedHedgeInput(feeTTL)
+
 func NewTradeCostEstimator(exchange string) *TradeCostEstimator {
 	torClient, err := newTorHTTPClient()
 	if err != nil {
@@ -1071,12 +1159,9 @@ func (e *TradeCostEstimator) estimateBestHedgeCost(btcAmount float64, refPriceEU
 			continue
 		}
 
-		inputs, err := hedge.FetchDefaultVenueInputs(venue)
+		inputs, err := hedgeInputCache.get(venue)
 		if err != nil {
-			inputs, err = hedge.FallbackVenueInputs(venue)
-			if err != nil {
-				continue
-			}
+			continue
 		}
 
 		cfg := hedge.Config{TransferMinutes: transferMinutes}

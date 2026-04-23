@@ -5,6 +5,9 @@ import {
   MOCK_LIVE_OFFERS,
   MOCK_PAST_OFFERS,
   MOCK_OHLC_DATA,
+  MOCK_PAYMENT_METHOD_GROUPS,
+  MOCK_PAST_ORDER_STATS,
+  MOCK_GENERAL_STATS,
 } from './mock-data';
 
 type Fixtures = {
@@ -32,9 +35,20 @@ export const test = base.extend<Fixtures>({
       globalThis.Date.prototype = _OrigDate.prototype;
     }`);
 
+    await page.routeWebSocket('**/ws/live_offers*', ws => {
+      ws.close();
+    });
+
+    await page.routeWebSocket('**/ws.kraken.com/**', ws => {
+      ws.close();
+    });
+
     // Mock REST API endpoints
     await page.route('**/api/stats*', route =>
       route.fulfill({ json: MOCK_STATS }),
+    );
+    await page.route('**/api/past_offers/*/lifecycle', route =>
+      route.fulfill({ json: [] }),
     );
     await page.route('**/api/past_offers*', route =>
       route.fulfill({ json: MOCK_PAST_OFFERS }),
@@ -42,12 +56,21 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/ohlc*', route =>
       route.fulfill({ json: MOCK_OHLC_DATA }),
     );
-    await page.route('**/api/live_offers', route =>
+    await page.route('**/api/live_offers*', route =>
       route.fulfill({ json: MOCK_LIVE_OFFERS }),
     );
-
-    // Block external Kraken WebSocket
-    await page.route('**/ws.kraken.com/**', route => route.abort());
+    await page.route('**/api/payment_method_groups', route =>
+      route.fulfill({ json: MOCK_PAYMENT_METHOD_GROUPS }),
+    );
+    await page.route('**/api/past_order_stats*', route =>
+      route.fulfill({ json: MOCK_PAST_ORDER_STATS }),
+    );
+    await page.route('**/api/past_profitable_orders*', route =>
+      route.fulfill({ json: [] }),
+    );
+    await page.route('**/api/general_stats*', route =>
+      route.fulfill({ json: MOCK_GENERAL_STATS }),
+    );
 
     await use();
   }, { auto: true }],
@@ -74,11 +97,12 @@ export async function waitForChartReady(container: Locator, page: Page) {
  * Navigate to the app and wait for initial data to load.
  */
 export async function gotoAndWaitForData(page: Page) {
-  await page.goto('/');
-  // Wait for offers table to populate (REST polling fallback)
-  await page.waitForResponse(resp =>
+  const liveOffersResponse = page.waitForResponse(resp =>
     resp.url().includes('/api/live_offers') && resp.status() === 200,
   );
+  await page.goto('/');
+  // Wait for offers table to populate (REST polling fallback)
+  await liveOffersResponse;
   // Small delay for React to process state updates
   await page.waitForTimeout(300);
 }

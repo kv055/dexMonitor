@@ -9,6 +9,7 @@ test.describe('OHLCChart', () => {
   test('renders chart canvas', async ({ page }) => {
     const panel = ohlcPanel(page);
     await expect(panel.locator('text=DEX Premium Offer Overlay')).toBeVisible();
+    await waitForChartReady(panel, page);
 
     // lightweight-charts creates multiple canvas elements
     const canvas = panel.locator('canvas').first();
@@ -22,8 +23,7 @@ test.describe('OHLCChart', () => {
 
   test('shows BTC/EUR label', async ({ page }) => {
     const panel = ohlcPanel(page);
-    // The span with exact text "BTC/EUR" (not the <option> which says "BTC/EUR — Kraken")
-    await expect(panel.getByText('BTC/EUR', { exact: true })).toBeVisible();
+    await expect(panel.getByText('BTC/EUR — Kraken', { exact: true })).toBeVisible();
   });
 
   test('visual regression: OHLC chart renders correctly', async ({ page }) => {

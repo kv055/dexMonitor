@@ -140,6 +140,21 @@ function SelectGroup({ label, description, options, selected, onChange }: Select
   );
 }
 
+interface TradeRowMetricProps {
+  label: string;
+  value: string;
+  valueClassName?: string;
+}
+
+function TradeRowMetric({ label, value, valueClassName = 'text-text' }: TradeRowMetricProps) {
+  return (
+    <span className="min-w-0 whitespace-nowrap text-right text-muted">
+      <span className="mr-1">{label}</span>
+      <span className={`mono-nums tabular-nums ${valueClassName}`}>{value}</span>
+    </span>
+  );
+}
+
 export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNetCapped, orders, ordersAll, ordersNetCapped, ordersAllNetCapped, loading, maxFiatLimit }: Props) {
   const { timezone } = useTimezone();
   const [referenceNowMs] = useState(() => Date.now());
@@ -239,12 +254,12 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
           </div>
         </aside>
 
-        <div className="min-h-0 flex-1 rounded-lg border border-border overflow-hidden">
+        <div className="min-h-0 flex-1 rounded-lg border border-border overflow-hidden flex flex-col">
           <div className="flex items-center justify-between gap-2 border-b border-border bg-surface/70 px-3 py-2 text-[0.72rem]">
             <span className="text-text font-medium">Profitable trades</span>
             <span className="text-muted">{visibleOrders.length} in {labelForTimeframe(selected?.timeframe ?? selectedTimeframe).toLowerCase()}</span>
           </div>
-          <div className="h-full overflow-y-auto">
+          <div className="min-h-0 flex-1 overflow-auto">
             {visibleOrders.length === 0 ? (
               <div className="px-3 py-4 text-[0.75rem] text-muted">No profitable closed trades in this window for the selected net mode.</div>
             ) : (
@@ -259,20 +274,22 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
                     <button
                       type="button"
                       onClick={() => setExpandedId(isOpen ? null : order.id)}
-                      className="w-full bg-transparent border-none px-3 py-2 text-left transition-colors hover:bg-white/5"
+                      className={`w-max min-w-full bg-transparent border-none px-3 py-2 text-left transition-colors ${isOpen ? 'bg-bg/40' : 'hover:bg-white/5'}`}
                     >
-                      <div className="flex items-center gap-2 text-[0.72rem]">
-                        <span className="min-w-18 text-text font-medium">{order.exchange}</span>
-                        <span className="min-w-14 text-muted uppercase">{order.direction}</span>
-                        <span className="truncate text-text">{order.payment_method || 'Unknown method'}</span>
-                        <span className="ml-auto text-muted">{isOpen ? '▲' : '▼'}</span>
-                      </div>
-                      <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[0.7rem] sm:grid-cols-5">
-                        <span className="text-muted">Last seen <span className="text-text">{seenLabel}</span></span>
-                        <span className="text-muted">Duration <span className="text-text">{order.status.duration?.display || '—'}</span></span>
-                        <span className="text-muted">Size <span className="text-text">{fmtBTC(activeScenario.trade_size_btc)}</span></span>
-                        <span className="text-muted">Net BTC <span className="text-green">{fmtBTC(activeScenario.profit.avg_btc)}</span></span>
-                        <span className="text-muted">Net {fiat} <span className="text-text">{fmtFiat(activeScenario.profit.avg_fiat, fiat)}</span></span>
+                      <div className="grid min-w-[52rem] grid-cols-[minmax(12rem,1.35fr)_minmax(8.5rem,0.85fr)_minmax(6.5rem,0.65fr)_minmax(7.5rem,0.75fr)_minmax(8.5rem,0.85fr)_minmax(8rem,0.8fr)_1.5rem] items-center gap-3 text-[0.72rem]">
+                        <div className="flex min-w-0 items-center gap-2">
+                          <span className="shrink-0 rounded border border-border bg-bg/50 px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase text-text">{order.exchange}</span>
+                          <span className="shrink-0 rounded border border-border/70 px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase text-muted">{order.direction}</span>
+                          <span className="min-w-0 truncate font-medium text-text" title={order.payment_method || 'Unknown method'}>
+                            {order.payment_method || 'Unknown method'}
+                          </span>
+                        </div>
+                        <TradeRowMetric label="Last seen" value={seenLabel} />
+                        <TradeRowMetric label="Duration" value={order.status.duration?.display || '—'} />
+                        <TradeRowMetric label="Size" value={fmtBTC(activeScenario.trade_size_btc)} />
+                        <TradeRowMetric label="Net BTC" value={fmtBTC(activeScenario.profit.avg_btc)} valueClassName="text-green" />
+                        <TradeRowMetric label={`Net ${fiat}`} value={fmtFiat(activeScenario.profit.avg_fiat, fiat)} />
+                        <span className="text-right text-muted">{isOpen ? '▲' : '▼'}</span>
                       </div>
                     </button>
 

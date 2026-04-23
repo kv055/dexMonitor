@@ -417,6 +417,7 @@ func main() {
 	mux.HandleFunc("GET /api/stats", handleStats)
 	mux.HandleFunc("GET /api/ohlc", handleOHLC)
 	mux.HandleFunc("GET /api/snapshot-log", handleSnapshotLog)
+	mux.HandleFunc("GET /api/snapshot-log/{id}", handleSnapshotLogDetail)
 	mux.HandleFunc("GET /api/payment_method_groups", handlePaymentMethodGroups)
 	mux.HandleFunc("GET /api/trade_cost_config", handleTradeCostConfig)
 	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
@@ -556,6 +557,15 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 		}
 		filteredOffers = append(filteredOffers, o)
 		ids = append(ids, int64(offerFloat(o, "id")))
+	}
+
+	if queryBool(r, "compact") {
+		result := make([]pastOfferCompactAPI, 0, len(filteredOffers))
+		for _, o := range filteredOffers {
+			result = append(result, buildPastOfferCompactAPI(o))
+		}
+		writeJSON(w, result)
+		return
 	}
 
 	lifecycleAgg := fetchPastOfferLifecycleAggregates(ids)
@@ -1382,6 +1392,17 @@ type pastOfferAPI struct {
 	Analysis      pastOfferAnalysisAPI   `json:"analysis"`
 }
 
+type pastOfferCompactAPI struct {
+	ID            int64                 `json:"id"`
+	Exchange      string                `json:"exchange"`
+	OfferID       *string               `json:"offer_id"`
+	PaymentMethod *string               `json:"payment_method"`
+	Direction     string                `json:"direction"`
+	Status        pastOfferStatus       `json:"status"`
+	Pricing       pastOfferPricing      `json:"pricing"`
+	VolumeLimits  pastOfferVolumeLimits `json:"volume_limits"`
+}
+
 type pastLifecycleSample struct {
 	RefPrice   float64
 	PremiumPct float64
@@ -1600,6 +1621,48 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 		Analysis: pastOfferAnalysisAPI{
 			FullVolume:   fullScenario,
 			CappedVolume: cappedScenario,
+		},
+	}
+}
+
+func buildPastOfferCompactAPI(o map[string]any) pastOfferCompactAPI {
+	firstSeen := offerString(o, "first_seen")
+	lastSeen := offerString(o, "last_seen")
+	firstTime := parseDBTime(firstSeen)
+	lastTime := parseDBTime(lastSeen)
+
+	var btcMinPtr, btcMaxPtr *float64
+	if v := offerFloat(o, "btc_min"); v > 0 {
+		btcMinPtr = &v
+	}
+	if v := offerFloat(o, "btc_max"); v > 0 {
+		btcMaxPtr = &v
+	}
+
+	return pastOfferCompactAPI{
+		ID:            int64(offerFloat(o, "id")),
+		Exchange:      offerString(o, "exchange"),
+		OfferID:       offerStringPtr(o, "offer_id"),
+		PaymentMethod: offerStringPtr(o, "payment_method"),
+		Direction:     offerString(o, "direction"),
+		Status: pastOfferStatus{
+			IsLive:    false,
+			FirstSeen: firstSeen,
+			LastSeen:  lastSeen,
+			Duration:  buildPastOfferDuration(firstTime, lastTime),
+		},
+		Pricing: pastOfferPricing{
+			PriceType:         normalizePastPriceType(offerString(o, "price_type")),
+			FiatCurrency:      "EUR",
+			AvgOfferPrice:     round4(offerFloat(o, "price")),
+			AvgRefPrice:       round4(offerRefPrice(o)),
+			AvgPremiumPercent: round4(nonZeroFloat(offerFloat(o, "avg_premium_pct"), offerFloat(o, "price_diff_percent"))),
+		},
+		VolumeLimits: pastOfferVolumeLimits{
+			BTCMin:  btcMinPtr,
+			BTCMax:  btcMaxPtr,
+			FiatMin: offerInt64Ptr(o, "fiat_min"),
+			FiatMax: offerInt64Ptr(o, "fiat_max"),
 		},
 	}
 }
@@ -1894,7 +1957,7 @@ func handleInternalLiveOffers(w http.ResponseWriter, r *http.Request) {
 	hub.setOffers(offers)
 	price := getCexPrice(defaultCEX)
 	outOffers := hub.computeOutOffers(price, liveSubscription{cex: defaultCEX})
-	go writeLifecycleEntries(outOffers)
+	writeLifecycleEntries(outOffers)
 	fmt.Printf("[LiveHub] updated with %d live offers from snapshot\n", len(offers))
 	w.WriteHeader(http.StatusNoContent)
 }
@@ -2099,6 +2162,9 @@ func handleSnapshotLog(w http.ResponseWriter, r *http.Request) {
 		}
 		exchanges := map[string]any{}
 		json.Unmarshal(exchangesJSON, &exchanges)
+		if queryBool(r, "compact") {
+			exchanges = compactSnapshotExchanges(exchanges)
+		}
 		result = append(result, map[string]any{
 			"id":           id,
 			"timestamp":    ts,
@@ -2108,6 +2174,53 @@ func handleSnapshotLog(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, result)
+}
+
+func handleSnapshotLogDetail(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var ts time.Time
+	var exchangesJSON []byte
+	var offersCount int
+	if err := db.QueryRow(
+		rebind("SELECT timestamp, exchanges, offers_count FROM snapshot_log WHERE id = ?"),
+		id,
+	).Scan(&ts, &exchangesJSON, &offersCount); err != nil {
+		writeError(w, err)
+		return
+	}
+
+	exchanges := map[string]any{}
+	json.Unmarshal(exchangesJSON, &exchanges)
+	writeJSON(w, map[string]any{
+		"id":           id,
+		"timestamp":    ts,
+		"exchanges":    exchanges,
+		"offers_count": offersCount,
+	})
+}
+
+func compactSnapshotExchanges(exchanges map[string]any) map[string]any {
+	out := make(map[string]any, len(exchanges))
+	for name, raw := range exchanges {
+		count := 0
+		if data, ok := raw.(map[string]any); ok {
+			if v, ok := data["count"].(float64); ok {
+				count = int(v)
+			}
+			if count == 0 {
+				if ids, ok := data["ids"].([]any); ok {
+					count = len(ids)
+				}
+			}
+		}
+		out[name] = map[string]any{"count": count}
+	}
+	return out
 }
 
 func handleMmControllerTransactions(w http.ResponseWriter, r *http.Request) {
@@ -3360,6 +3473,13 @@ func nonEmptyOr(value, fallback string) string {
 	return fallback
 }
 
+func nonZeroFloat(value, fallback float64) float64 {
+	if value != 0 {
+		return value
+	}
+	return fallback
+}
+
 // queryCex reads the ?cex= query param and validates it against supportedCEXes.
 // Falls back to defaultCEX if missing or unrecognised.
 func queryCex(r *http.Request) string {
@@ -3380,6 +3500,15 @@ func queryInt(r *http.Request, key string, defaultVal int) int {
 		return defaultVal
 	}
 	return v
+}
+
+func queryBool(r *http.Request, key string) bool {
+	switch strings.ToLower(strings.TrimSpace(r.URL.Query().Get(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func queryConfirmations(r *http.Request) int {

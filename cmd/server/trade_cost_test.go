@@ -8,6 +8,9 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -318,6 +321,33 @@ func TestCachedFeeUsesFallbackThenKeepsCachedValueOnFailure(t *testing.T) {
 	assertFloat(t, got, 0.456)
 }
 
+func TestCachedFeeSharesConcurrentRefresh(t *testing.T) {
+	cache := newCachedFee(time.Hour)
+	start := make(chan struct{})
+	var calls int32
+	var wg sync.WaitGroup
+
+	for i := 0; i < 8; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			got := cache.get(0.123, func() (float64, error) {
+				atomic.AddInt32(&calls, 1)
+				time.Sleep(20 * time.Millisecond)
+				return 0.789, nil
+			}, "test fee")
+			assertFloat(t, got, 0.789)
+		}()
+	}
+
+	close(start)
+	wg.Wait()
+	if calls != 1 {
+		t.Fatalf("refresh calls = %d, want 1", calls)
+	}
+}
+
 func TestLiveOffersRESTReturnsComputedCostFields(t *testing.T) {
 	oldHub := hub
 	oldPrices := cexPrices
@@ -528,6 +558,36 @@ func TestPastOffersRESTIncludesCappedAnalysisWhenRequested(t *testing.T) {
 	}
 }
 
+func TestPastOffersCompactOmitsHeavyAnalysis(t *testing.T) {
+	withTempOrdersDB(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/past_offers?hours=100000&limit=100&compact=true", nil)
+	rec := httptest.NewRecorder()
+
+	handlePastOffers(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var offers []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &offers); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(offers) == 0 {
+		t.Fatal("compact past_offers returned no offers")
+	}
+	if _, ok := offers[0]["analysis"]; ok {
+		t.Fatalf("compact offer unexpectedly included analysis: %#v", offers[0])
+	}
+	if _, ok := offers[0]["pricing"]; !ok {
+		t.Fatalf("compact offer missing pricing: %#v", offers[0])
+	}
+	if _, ok := offers[0]["volume_limits"]; !ok {
+		t.Fatalf("compact offer missing volume_limits: %#v", offers[0])
+	}
+}
+
 func TestPastOrderStatsAndPastOffersRespectExcludedPaymentMethods(t *testing.T) {
 	withTempOrdersDB(t)
 
@@ -696,6 +756,54 @@ func TestHandlePastOfferLifecycleReturnsLifecyclePoints(t *testing.T) {
 	}
 	if points[0].Time == "" {
 		t.Fatalf("expected lifecycle time, got %#v", points[0])
+	}
+}
+
+func TestSnapshotLogCompactAndDetail(t *testing.T) {
+	withTempOrdersDB(t)
+
+	if _, err := db.Exec(`
+		INSERT INTO snapshot_log (timestamp, exchanges, offers_count)
+		VALUES (datetime('now'), '{"bisq":{"count":2,"ids":["a","b"]},"robosats":{"count":1,"ids":["c"]}}', 3)
+	`); err != nil {
+		t.Fatalf("insert snapshot log: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/snapshot-log?limit=1&compact=true", nil)
+	rec := httptest.NewRecorder()
+	handleSnapshotLog(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("compact status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var compact []map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &compact); err != nil {
+		t.Fatalf("decode compact response: %v", err)
+	}
+	bisq := compact[0]["exchanges"].(map[string]any)["bisq"].(map[string]any)
+	if bisq["count"].(float64) != 2 {
+		t.Fatalf("compact bisq count = %#v, want 2", bisq["count"])
+	}
+	if _, ok := bisq["ids"]; ok {
+		t.Fatalf("compact response included ids: %#v", bisq)
+	}
+
+	id := int64(compact[0]["id"].(float64))
+	detailReq := httptest.NewRequest(http.MethodGet, "/api/snapshot-log/1", nil)
+	detailReq.SetPathValue("id", strconv.FormatInt(id, 10))
+	detailRec := httptest.NewRecorder()
+	handleSnapshotLogDetail(detailRec, detailReq)
+
+	if detailRec.Code != http.StatusOK {
+		t.Fatalf("detail status = %d, want %d; body=%s", detailRec.Code, http.StatusOK, detailRec.Body.String())
+	}
+	var detail map[string]any
+	if err := json.Unmarshal(detailRec.Body.Bytes(), &detail); err != nil {
+		t.Fatalf("decode detail response: %v", err)
+	}
+	detailBisq := detail["exchanges"].(map[string]any)["bisq"].(map[string]any)
+	if ids, ok := detailBisq["ids"].([]any); !ok || len(ids) != 2 {
+		t.Fatalf("detail bisq ids = %#v, want 2 ids", detailBisq["ids"])
 	}
 }
 

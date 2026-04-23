@@ -39,12 +39,28 @@ function offer(
     net_premium_percent: netPremium,
     cost_breakdown: {
       btc_amount: btcAmount,
+      route_cex: 'kraken',
+      route_dex: exchange,
+      route_method: 'onchain',
+      trade_direction: direction === 'sell' ? 'ask' : 'bid',
+      num_network_txs: direction === 'sell' ? 1 : 2,
+      estimated_profit_pct: netPremium,
+      estimated_profit_btc: btcAmount * (netPremium / 100),
       cex_taker_fee_pct: 0.25,
       cex_taker_fee_btc: btcAmount * 0.0025,
       withdrawal_fee_pct: 0.15,
       withdrawal_fee_btc: btcAmount * 0.0015,
       network_fee_pct: 0.10,
       network_fee_btc: btcAmount * 0.001,
+      network_fee_method: 'onchain',
+      network_fee_tier: 'standard',
+      network_fee_confidence: 0.9,
+      network_fee_detail: null,
+      hedge: {
+        fee_sum_btc: 0,
+        fee_sum_pct: 0,
+        legs: [],
+      },
       dex_fee_pct: 0.35,
       dex_fee_btc: btcAmount * 0.0035,
       total_cost_pct: tradeCost,
@@ -99,6 +115,21 @@ export const MOCK_PAST_OFFERS = [
   offer(105, 'hodlhodl', 'buy', 85000, 3.7, { isLive: false, firstSeenHoursAgo: 40, lastSeenHoursAgo: 34, payment: 'SEPA' }),
 ];
 
+export const MOCK_PAYMENT_METHOD_GROUPS = {
+  groups: [
+    {
+      name: 'sepa_instant',
+      display_name: 'SEPA Instant',
+      methods: ['SEPA', 'Instant Bank Transfer'],
+    },
+    {
+      name: 'wallets',
+      display_name: 'Wallets',
+      methods: ['Revolut', 'Wise', 'PayPal', 'Cash App'],
+    },
+  ],
+};
+
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 export const MOCK_STATS = {
@@ -112,6 +143,50 @@ export const MOCK_STATS = {
     { exchange: 'hodlhodl', avg_price: 84705, min_price: 80360, max_price: 88150 },
     { exchange: 'robosats', avg_price: 84665, min_price: 81590, max_price: 87330 },
   ],
+};
+
+export const MOCK_PAST_ORDER_STATS = {
+  fiat_currency: 'EUR',
+  excluded_payment_methods: [],
+  timeframes: [
+    {
+      timeframe: '24h',
+      hours: 24,
+      premium_order_count: 3,
+      total_net_profit_btc: 0.0012,
+      total_net_profit_fiat: 98.4,
+      average_order_size_btc: 0.05,
+      smallest_order_size_btc: 0.02,
+      biggest_order_size_btc: 0.1,
+    },
+  ],
+};
+
+export const MOCK_GENERAL_STATS = {
+  total_offers: 15,
+  active_offers: 13,
+  exchanges_live: 3,
+  offers_by_exchange: [
+    { name: 'bisq', count: 6 },
+    { name: 'hodlhodl', count: 4 },
+    { name: 'robosats', count: 5 },
+  ],
+  best_ask_premium_pct: -2.0,
+  avg_ask_premium_pct: -1.25,
+  best_bid_premium_pct: 5.5,
+  avg_bid_premium_pct: 2.75,
+  avg_offer_lifetime_ms: 3_600_000,
+  avg_offer_lifetime_ms_by_exchange: [
+    { name: 'bisq', ms: 3_600_000 },
+    { name: 'hodlhodl', ms: 5_400_000 },
+    { name: 'robosats', ms: 2_700_000 },
+  ],
+  payment_method_counts: [
+    { name: 'SEPA', count: 5 },
+    { name: 'Revolut', count: 4 },
+    { name: 'Wise', count: 3 },
+  ],
+  past_premiums: [],
 };
 
 // ── OHLC ──────────────────────────────────────────────────────────────────────

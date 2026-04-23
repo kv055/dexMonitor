@@ -200,6 +200,7 @@ function AppShell() {
     lastUpdatedAt,
     error,
     loading,
+    analyticsLoading,
     load,
     extendOhlc,
   } = useDashboard();
@@ -260,7 +261,7 @@ function AppShell() {
             pastProfitableOrdersNetCapped={pastProfitableOrdersNetCapped}
             pastProfitableOrdersAllNetCapped={pastProfitableOrdersAllNetCapped}
             generalStats={generalStats}
-            loading={loading}
+            loading={analyticsLoading}
             load={load}
           />
         )}

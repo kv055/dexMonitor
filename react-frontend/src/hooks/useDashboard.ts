@@ -30,13 +30,31 @@ interface DashboardState {
   ohlcData: OHLCData | null;
   lastUpdatedAt: string;
   error: string | null;
+  analyticsError: string | null;
   loading: boolean;
+  analyticsLoading: boolean;
 }
 
+type CorePayload = Pick<DashboardState, 'stats' | 'pastOffers' | 'ohlcData' | 'lastUpdatedAt'>;
+type AnalyticsPayload = Pick<DashboardState,
+  | 'pastOrderStats'
+  | 'pastOrderStatsAll'
+  | 'pastOrderStatsNetCapped'
+  | 'pastOrderStatsAllNetCapped'
+  | 'pastProfitableOrders'
+  | 'pastProfitableOrdersAll'
+  | 'pastProfitableOrdersNetCapped'
+  | 'pastProfitableOrdersAllNetCapped'
+  | 'generalStats'
+>;
+
 type DashboardAction =
-  | { type: 'LOAD_START' }
-  | { type: 'LOAD_SUCCESS'; payload: Omit<DashboardState, 'error' | 'loading'> }
-  | { type: 'LOAD_ERROR'; error: string }
+  | { type: 'CORE_LOAD_START' }
+  | { type: 'CORE_LOAD_SUCCESS'; payload: CorePayload }
+  | { type: 'CORE_LOAD_ERROR'; error: string }
+  | { type: 'ANALYTICS_LOAD_START' }
+  | { type: 'ANALYTICS_LOAD_SUCCESS'; payload: AnalyticsPayload }
+  | { type: 'ANALYTICS_LOAD_ERROR'; error: string }
   | { type: 'EXTEND_OHLC_SUCCESS'; ohlcData: OHLCData };
 
 const initialDashboardState: DashboardState = {
@@ -54,17 +72,29 @@ const initialDashboardState: DashboardState = {
   ohlcData: null,
   lastUpdatedAt: '',
   error: null,
+  analyticsError: null,
   loading: true,
+  analyticsLoading: false,
 };
+
+function hasCoreData(state: DashboardState): boolean {
+  return state.stats !== null || state.ohlcData !== null || state.pastOffers.length > 0;
+}
 
 function dashboardReducer(state: DashboardState, action: DashboardAction): DashboardState {
   switch (action.type) {
-    case 'LOAD_START':
-      return { ...state, loading: true, error: null };
-    case 'LOAD_SUCCESS':
-      return { ...action.payload, loading: false, error: null };
-    case 'LOAD_ERROR':
+    case 'CORE_LOAD_START':
+      return { ...state, loading: !hasCoreData(state), error: null };
+    case 'CORE_LOAD_SUCCESS':
+      return { ...state, ...action.payload, loading: false, error: null };
+    case 'CORE_LOAD_ERROR':
       return { ...state, loading: false, error: action.error };
+    case 'ANALYTICS_LOAD_START':
+      return { ...state, analyticsLoading: true, analyticsError: null };
+    case 'ANALYTICS_LOAD_SUCCESS':
+      return { ...state, ...action.payload, analyticsLoading: false, analyticsError: null };
+    case 'ANALYTICS_LOAD_ERROR':
+      return { ...state, analyticsLoading: false, analyticsError: action.error };
     case 'EXTEND_OHLC_SUCCESS':
       return { ...state, ohlcData: action.ohlcData };
   }
@@ -74,16 +104,36 @@ export function useDashboard() {
   const [state, dispatch] = useReducer(dashboardReducer, initialDashboardState);
 
   const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {
-    dispatch({ type: 'LOAD_START' });
+    dispatch({ type: 'CORE_LOAD_START' });
+
+    const excludedQuery = excludedPaymentQuery(excludedPaymentMethods);
+    const tcQuery = `${tradeCostQuery(excludedCEXes, feeTier, maxFiatLimit)}${!coupledHedge ? '&coupled_hedge=false' : ''}`;
+    const takerQuery = (path: string, mode: TakerOpportunityMode, filtered: boolean) =>
+      `${path}?fiat=EUR&premium_mode=${mode}${filtered ? excludedQuery : ''}${tcQuery}`;
+
     try {
-      const excludedQuery = excludedPaymentQuery(excludedPaymentMethods);
-      const tcQuery = `${tradeCostQuery(excludedCEXes, feeTier, maxFiatLimit)}${!coupledHedge ? '&coupled_hedge=false' : ''}`;
-      const takerQuery = (path: string, mode: TakerOpportunityMode, filtered: boolean) =>
-        `${path}?fiat=EUR&premium_mode=${mode}${filtered ? excludedQuery : ''}${tcQuery}`;
-      const [s, o, ohlc, posAll, posFiltered, posAllNetCapped, posFilteredNetCapped, profitableAll, profitableFiltered, profitableAllNetCapped, profitableFilteredNetCapped, gs] = await Promise.all([
+      const [s, o, ohlc] = await Promise.all([
         apiFetch<Stats>(`/api/stats?hours=${hours}`),
-        apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&cex=${cex}${excludedQuery}${tcQuery}`),
+        apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&compact=true&cex=${cex}${excludedQuery}${tcQuery}`),
         apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`),
+      ]);
+      dispatch({
+        type: 'CORE_LOAD_SUCCESS',
+        payload: {
+          stats: s,
+          pastOffers: o,
+          ohlcData: ohlc,
+          lastUpdatedAt: new Date().toISOString(),
+        },
+      });
+    } catch (e: unknown) {
+      const message = e instanceof Error ? e.message : String(e);
+      dispatch({ type: 'CORE_LOAD_ERROR', error: `Failed to load dashboard data: ${message}` });
+    }
+
+    dispatch({ type: 'ANALYTICS_LOAD_START' });
+    try {
+      const [posAll, posFiltered, posAllNetCapped, posFilteredNetCapped, profitableAll, profitableFiltered, profitableAllNetCapped, profitableFilteredNetCapped, gs] = await Promise.all([
         apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_full', false)),
         excludedQuery ? apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_full', true)) : Promise.resolve(null),
         apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_capped', false)),
@@ -95,11 +145,8 @@ export function useDashboard() {
         apiFetch<GeneralStatsData>(`/api/general_stats?hours=${hours}&cex=${cex}${excludedQuery}${tcQuery}`),
       ]);
       dispatch({
-        type: 'LOAD_SUCCESS',
+        type: 'ANALYTICS_LOAD_SUCCESS',
         payload: {
-          stats: s,
-          pastOffers: o,
-          ohlcData: ohlc,
           pastOrderStatsAll: posAll,
           pastOrderStats: posFiltered ?? posAll,
           pastOrderStatsAllNetCapped: posAllNetCapped,
@@ -109,16 +156,14 @@ export function useDashboard() {
           pastProfitableOrdersAllNetCapped: profitableAllNetCapped,
           pastProfitableOrdersNetCapped: profitableFilteredNetCapped ?? profitableAllNetCapped,
           generalStats: gs,
-          lastUpdatedAt: new Date().toISOString(),
         },
       });
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
-      dispatch({ type: 'LOAD_ERROR', error: `Failed to load data: ${message}` });
+      dispatch({ type: 'ANALYTICS_LOAD_ERROR', error: `Failed to load analytics: ${message}` });
     }
   }, []);
 
-  // Silently extend the OHLC window without touching other data or the global loading state.
   const extendOhlc = useCallback(async (hours: number, cex: string = 'kraken') => {
     try {
       const ohlc = await apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`);
@@ -130,6 +175,7 @@ export function useDashboard() {
 
   return {
     ...state,
+    error: state.error ?? state.analyticsError,
     load,
     extendOhlc,
   };

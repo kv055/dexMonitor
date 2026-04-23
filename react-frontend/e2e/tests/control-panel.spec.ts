@@ -72,13 +72,13 @@ test.describe('ControlPanel', () => {
     const cp = controlPanel(page);
     await jsClick(cp.locator('button').filter({ hasText: 'All Payments' }));
 
-    // Wait for dropdown menu to render
-    const sepaOption = page.locator('.absolute button').filter({ hasText: 'SEPA' }).first();
+    // Wait for dropdown menu to render and choose the grouped payment option.
+    const sepaOption = page.locator('.absolute button').filter({ hasText: 'SEPA Instant' }).first();
     await sepaOption.waitFor({ state: 'visible' });
     await expect(page.locator('.absolute button').filter({ hasText: 'Revolut' }).first()).toBeVisible();
 
     await sepaOption.click();
-    await expect(cp.locator('button').filter({ hasText: 'SEPA' })).toBeVisible();
+    await expect(cp.locator('button').filter({ hasText: 'SEPA Instant' })).toBeVisible();
   });
 
   test('status dropdown shows All Orders/Open/Closed', async ({ page }) => {
