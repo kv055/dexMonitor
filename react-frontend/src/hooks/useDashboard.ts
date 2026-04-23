@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useCallback, useReducer } from 'react';
 import { apiFetch } from '../utils/api';
 import type { Offer, Stats, OHLCData, PastOrderStats, GeneralStatsData, PastProfitableOrder, TakerOpportunityMode } from '../types';
 
@@ -15,26 +15,66 @@ function tradeCostQuery(excludedCEXes: string[], feeTier: string, maxFiatLimit: 
   return q;
 }
 
+interface DashboardState {
+  pastOffers: Offer[];
+  stats: Stats | null;
+  pastOrderStats: PastOrderStats | null;
+  pastOrderStatsAll: PastOrderStats | null;
+  pastOrderStatsNetCapped: PastOrderStats | null;
+  pastOrderStatsAllNetCapped: PastOrderStats | null;
+  pastProfitableOrders: PastProfitableOrder[];
+  pastProfitableOrdersAll: PastProfitableOrder[];
+  pastProfitableOrdersNetCapped: PastProfitableOrder[];
+  pastProfitableOrdersAllNetCapped: PastProfitableOrder[];
+  generalStats: GeneralStatsData | null;
+  ohlcData: OHLCData | null;
+  lastUpdatedAt: string;
+  error: string | null;
+  loading: boolean;
+}
+
+type DashboardAction =
+  | { type: 'LOAD_START' }
+  | { type: 'LOAD_SUCCESS'; payload: Omit<DashboardState, 'error' | 'loading'> }
+  | { type: 'LOAD_ERROR'; error: string }
+  | { type: 'EXTEND_OHLC_SUCCESS'; ohlcData: OHLCData };
+
+const initialDashboardState: DashboardState = {
+  pastOffers: [],
+  stats: null,
+  pastOrderStats: null,
+  pastOrderStatsAll: null,
+  pastOrderStatsNetCapped: null,
+  pastOrderStatsAllNetCapped: null,
+  pastProfitableOrders: [],
+  pastProfitableOrdersAll: [],
+  pastProfitableOrdersNetCapped: [],
+  pastProfitableOrdersAllNetCapped: [],
+  generalStats: null,
+  ohlcData: null,
+  lastUpdatedAt: '',
+  error: null,
+  loading: true,
+};
+
+function dashboardReducer(state: DashboardState, action: DashboardAction): DashboardState {
+  switch (action.type) {
+    case 'LOAD_START':
+      return { ...state, loading: true, error: null };
+    case 'LOAD_SUCCESS':
+      return { ...action.payload, loading: false, error: null };
+    case 'LOAD_ERROR':
+      return { ...state, loading: false, error: action.error };
+    case 'EXTEND_OHLC_SUCCESS':
+      return { ...state, ohlcData: action.ohlcData };
+  }
+}
+
 export function useDashboard() {
-  const [pastOffers, setPastOffers] = useState<Offer[]>([]);
-  const [stats, setStats] = useState<Stats | null>(null);
-  const [pastOrderStats, setPastOrderStats] = useState<PastOrderStats | null>(null);
-  const [pastOrderStatsAll, setPastOrderStatsAll] = useState<PastOrderStats | null>(null);
-  const [pastOrderStatsNetCapped, setPastOrderStatsNetCapped] = useState<PastOrderStats | null>(null);
-  const [pastOrderStatsAllNetCapped, setPastOrderStatsAllNetCapped] = useState<PastOrderStats | null>(null);
-  const [pastProfitableOrders, setPastProfitableOrders] = useState<PastProfitableOrder[]>([]);
-  const [pastProfitableOrdersAll, setPastProfitableOrdersAll] = useState<PastProfitableOrder[]>([]);
-  const [pastProfitableOrdersNetCapped, setPastProfitableOrdersNetCapped] = useState<PastProfitableOrder[]>([]);
-  const [pastProfitableOrdersAllNetCapped, setPastProfitableOrdersAllNetCapped] = useState<PastProfitableOrder[]>([]);
-  const [generalStats, setGeneralStats] = useState<GeneralStatsData | null>(null);
-  const [ohlcData, setOhlcData] = useState<OHLCData | null>(null);
-  const [lastUpdatedAt, setLastUpdatedAt] = useState('');
-  const [error, setError] = useState<string | null>(null);
-  const [loading, setLoading] = useState(true);
+  const [state, dispatch] = useReducer(dashboardReducer, initialDashboardState);
 
   const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {
-    setLoading(true);
-    setError(null);
+    dispatch({ type: 'LOAD_START' });
     try {
       const excludedQuery = excludedPaymentQuery(excludedPaymentMethods);
       const tcQuery = `${tradeCostQuery(excludedCEXes, feeTier, maxFiatLimit)}${!coupledHedge ? '&coupled_hedge=false' : ''}`;
@@ -54,24 +94,27 @@ export function useDashboard() {
         excludedQuery ? apiFetch<PastProfitableOrder[]>(takerQuery('/api/past_profitable_orders', 'net_capped', true)) : Promise.resolve(null),
         apiFetch<GeneralStatsData>(`/api/general_stats?hours=${hours}&cex=${cex}${excludedQuery}${tcQuery}`),
       ]);
-      setStats(s);
-      setPastOffers(o);
-      setOhlcData(ohlc);
-      setPastOrderStatsAll(posAll);
-      setPastOrderStats(posFiltered ?? posAll);
-      setPastOrderStatsAllNetCapped(posAllNetCapped);
-      setPastOrderStatsNetCapped(posFilteredNetCapped ?? posAllNetCapped);
-      setPastProfitableOrdersAll(profitableAll);
-      setPastProfitableOrders(profitableFiltered ?? profitableAll);
-      setPastProfitableOrdersAllNetCapped(profitableAllNetCapped);
-      setPastProfitableOrdersNetCapped(profitableFilteredNetCapped ?? profitableAllNetCapped);
-      setGeneralStats(gs);
-      setLastUpdatedAt(new Date().toISOString());
+      dispatch({
+        type: 'LOAD_SUCCESS',
+        payload: {
+          stats: s,
+          pastOffers: o,
+          ohlcData: ohlc,
+          pastOrderStatsAll: posAll,
+          pastOrderStats: posFiltered ?? posAll,
+          pastOrderStatsAllNetCapped: posAllNetCapped,
+          pastOrderStatsNetCapped: posFilteredNetCapped ?? posAllNetCapped,
+          pastProfitableOrdersAll: profitableAll,
+          pastProfitableOrders: profitableFiltered ?? profitableAll,
+          pastProfitableOrdersAllNetCapped: profitableAllNetCapped,
+          pastProfitableOrdersNetCapped: profitableFilteredNetCapped ?? profitableAllNetCapped,
+          generalStats: gs,
+          lastUpdatedAt: new Date().toISOString(),
+        },
+      });
     } catch (e: unknown) {
       const message = e instanceof Error ? e.message : String(e);
-      setError(`Failed to load data: ${message}`);
-    } finally {
-      setLoading(false);
+      dispatch({ type: 'LOAD_ERROR', error: `Failed to load data: ${message}` });
     }
   }, []);
 
@@ -79,28 +122,14 @@ export function useDashboard() {
   const extendOhlc = useCallback(async (hours: number, cex: string = 'kraken') => {
     try {
       const ohlc = await apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`);
-      setOhlcData(ohlc);
+      dispatch({ type: 'EXTEND_OHLC_SUCCESS', ohlcData: ohlc });
     } catch {
       // Fail silently — the existing candles remain intact
     }
   }, []);
 
   return {
-    pastOffers,
-    stats,
-    pastOrderStats,
-    pastOrderStatsAll,
-    pastOrderStatsNetCapped,
-    pastOrderStatsAllNetCapped,
-    pastProfitableOrders,
-    pastProfitableOrdersAll,
-    pastProfitableOrdersNetCapped,
-    pastProfitableOrdersAllNetCapped,
-    generalStats,
-    ohlcData,
-    lastUpdatedAt,
-    error,
-    loading,
+    ...state,
     load,
     extendOhlc,
   };

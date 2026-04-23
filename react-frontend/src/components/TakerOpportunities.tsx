@@ -1,6 +1,6 @@
-import { useMemo, useState } from 'react';
+import { useState } from 'react';
 import type { PastOrderStats, PastProfitableOrder, TakerOpportunityMode } from '../types';
-import { useTimezone } from '../context/TimezoneContext';
+import { useTimezone } from '../hooks/useTimezone';
 import { formatDateTimeLabel, parseUtcTimestamp } from '../utils/formatters';
 
 interface Props {
@@ -93,9 +93,9 @@ function PillGroup({ label, description, options, selected, onChange }: PillGrou
   const active = 'border-accent/60 bg-accent/10 text-accent';
   const inactive = 'border-border bg-bg/40 text-muted hover:text-text';
   return (
-    <div className="flex flex-col gap-0.5">
+    <div className="flex flex-col gap-1">
       <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
-      <div className="flex items-center gap-1">
+      <div className="flex flex-wrap items-center gap-1">
         {options.map(o => (
           <button
             key={o.value}
@@ -112,8 +112,37 @@ function PillGroup({ label, description, options, selected, onChange }: PillGrou
   );
 }
 
+interface SelectGroupProps {
+  label: string;
+  description: string;
+  options: { value: string; label: string }[];
+  selected: string;
+  onChange: (v: string) => void;
+}
+
+function SelectGroup({ label, description, options, selected, onChange }: SelectGroupProps) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
+      <select
+        title={description}
+        value={selected}
+        onChange={event => onChange(event.target.value)}
+        className="w-full rounded border border-border bg-bg/60 px-2 py-1.5 text-[0.75rem] font-medium text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
+      >
+        {options.map(option => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNetCapped, orders, ordersAll, ordersNetCapped, ordersAllNetCapped, loading, maxFiatLimit }: Props) {
   const { timezone } = useTimezone();
+  const [referenceNowMs] = useState(() => Date.now());
   const [selectedTimeframe, setSelectedTimeframe] = useState('24h');
   const [mode, setMode] = useState<TakerOpportunityMode>('net_full');
   const [showAllMethods, setShowAllMethods] = useState(false);
@@ -130,21 +159,19 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   const activeOrders = showAllMethods && hasExcluded ? ordersByMode.all : ordersByMode.filtered;
 
   const fiat = activeStats?.fiat_currency || 'EUR';
-  const selected = useMemo(() => {
-    if (!activeStats) return null;
-    return activeStats.timeframes.find(row => row.timeframe === selectedTimeframe)
+  const selected = !activeStats
+    ? null
+    : activeStats.timeframes.find(row => row.timeframe === selectedTimeframe)
       ?? activeStats.timeframes.find(row => row.timeframe === '24h')
       ?? activeStats.timeframes[0]
       ?? null;
-  }, [activeStats, selectedTimeframe]);
+  const activeTimeframe = selected?.timeframe ?? selectedTimeframe;
 
-  const visibleOrders = useMemo(() => {
-    const cutoffMs = Date.now() - timeframeHours(selected?.timeframe ?? selectedTimeframe) * 60 * 60 * 1000;
-    return activeOrders.filter(order => {
-      const lastSeen = parseUtcTimestamp(order.status.last_seen);
-      return lastSeen != null && lastSeen.getTime() >= cutoffMs;
-    });
-  }, [activeOrders, selected, selectedTimeframe]);
+  const cutoffMs = referenceNowMs - timeframeHours(activeTimeframe) * 60 * 60 * 1000;
+  const visibleOrders = activeOrders.filter(order => {
+    const lastSeen = parseUtcTimestamp(order.status.last_seen);
+    return lastSeen != null && lastSeen.getTime() >= cutoffMs;
+  });
 
   if (loading && !stats) {
     return <div className="text-[0.8rem] text-muted">Loading taker opportunity statistics…</div>;
@@ -154,152 +181,145 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
     return <div className="text-[0.8rem] text-muted">No taker opportunity statistics available yet.</div>;
   }
 
+  const summaryRows = [
+    { label: 'Orders', value: (selected?.premium_order_count ?? 0).toLocaleString('de-DE'), className: 'text-text' },
+    { label: 'Net BTC', value: fmtBTC(selected?.total_net_profit_btc), className: 'text-green' },
+    { label: `Net ${fiat}`, value: fmtFiat(selected?.total_net_profit_fiat, fiat), className: 'text-text' },
+    { label: 'Avg Size', value: fmtBTC(selected?.average_order_size_btc), className: 'text-text' },
+    { label: 'Smallest', value: fmtBTC(selected?.smallest_order_size_btc), className: 'text-muted' },
+    { label: 'Biggest', value: fmtBTC(selected?.biggest_order_size_btc), className: 'text-muted' },
+  ];
+
   return (
-    <div className="flex-1 min-h-0 flex flex-col gap-2 overflow-hidden">
-      <div className="flex flex-wrap items-end gap-3">
-        <PillGroup
-          label="Timeframe"
-          description="Show stats for orders closed within this window"
-          options={(activeStats ?? stats).timeframes.map(r => ({ value: r.timeframe, label: labelForTimeframe(r.timeframe) }))}
-          selected={selected?.timeframe ?? selectedTimeframe}
-          onChange={setSelectedTimeframe}
-        />
-        {hasExcluded && (
-          <PillGroup
-            label="Payment methods"
-            description="Selected: only your enabled methods. All: every payment method regardless of settings."
-            options={[
-              { value: 'selected', label: 'Selected' },
-              { value: 'all', label: 'All methods' },
-            ]}
-            selected={showAllMethods ? 'all' : 'selected'}
-            onChange={v => setShowAllMethods(v === 'all')}
+    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+      <div className="flex flex-1 min-h-0 flex-col gap-3 lg:flex-row">
+        <aside className="flex shrink-0 flex-col gap-3 rounded-lg border border-border bg-bg/20 p-3 lg:w-72 xl:w-80 lg:overflow-y-auto">
+          <SelectGroup
+            label="Timeframe"
+            description="Show stats for orders closed within this window"
+            options={(activeStats ?? stats).timeframes.map(r => ({ value: r.timeframe, label: labelForTimeframe(r.timeframe) }))}
+            selected={selected?.timeframe ?? selectedTimeframe}
+            onChange={setSelectedTimeframe}
           />
-        )}
-        <PillGroup
-          label="Premium mode"
-          description="Net full uses full order size. Net capped applies your max fiat position limit where needed."
-          options={[
-            { value: 'net_full', label: 'Net Full' },
-            { value: 'net_capped', label: maxFiatLimit != null && maxFiatLimit > 0 ? `Net Capped €${maxFiatLimit.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : 'Net Capped' },
-          ]}
-          selected={mode}
-          onChange={v => setMode(v as TakerOpportunityMode)}
-        />
-      </div>
+          {hasExcluded && (
+            <PillGroup
+              label="Payment methods"
+              description="Selected: only your enabled methods. All: every payment method regardless of settings."
+              options={[
+                { value: 'selected', label: 'Selected' },
+                { value: 'all', label: 'All methods' },
+              ]}
+              selected={showAllMethods ? 'all' : 'selected'}
+              onChange={v => setShowAllMethods(v === 'all')}
+            />
+          )}
+          <PillGroup
+            label="Premium mode"
+            description="Net full uses full order size. Net capped applies your max fiat position limit where needed."
+            options={[
+              { value: 'net_full', label: 'Net Full' },
+              { value: 'net_capped', label: maxFiatLimit != null && maxFiatLimit > 0 ? `Net Capped €${maxFiatLimit.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : 'Net Capped' },
+            ]}
+            selected={mode}
+            onChange={v => setMode(v as TakerOpportunityMode)}
+          />
 
-      <div className="overflow-auto rounded-lg border border-border">
-        <table className="w-full text-[0.78rem]">
-          <thead className="bg-surface text-muted">
-            <tr>
-              <th className="px-3 py-2 text-left font-medium">Window</th>
-              <th className="px-3 py-2 text-right font-medium">Orders</th>
-              <th className="px-3 py-2 text-right font-medium">Net BTC</th>
-              <th className="px-3 py-2 text-right font-medium">Net {fiat}</th>
-              <th className="px-3 py-2 text-right font-medium">Avg Size</th>
-              <th className="px-3 py-2 text-right font-medium">Smallest</th>
-              <th className="px-3 py-2 text-right font-medium">Biggest</th>
-            </tr>
-          </thead>
-          <tbody>
-            <tr className="border-t border-border">
-              <td className="px-3 py-2 text-text font-medium">{labelForTimeframe(selected?.timeframe ?? selectedTimeframe)}</td>
-              <td className="px-3 py-2 text-right text-text">{selected?.premium_order_count ?? 0}</td>
-              <td className="px-3 py-2 text-right text-green">{fmtBTC(selected?.total_net_profit_btc)}</td>
-              <td className="px-3 py-2 text-right text-text">{fmtFiat(selected?.total_net_profit_fiat, fiat)}</td>
-              <td className="px-3 py-2 text-right text-text">{fmtBTC(selected?.average_order_size_btc)}</td>
-              <td className="px-3 py-2 text-right text-muted">{fmtBTC(selected?.smallest_order_size_btc)}</td>
-              <td className="px-3 py-2 text-right text-muted">{fmtBTC(selected?.biggest_order_size_btc)}</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
+          <div className="shrink-0 overflow-hidden rounded-lg border border-border bg-bg/20">
+            <div className="border-b border-border bg-surface/70 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-wide text-muted">
+              Backtesting summary
+            </div>
+            <div className="divide-y divide-border/70 text-[0.75rem]">
+              {summaryRows.map(row => (
+                <div key={row.label} className="grid grid-cols-[minmax(5rem,0.85fr)_minmax(0,1.15fr)] gap-2 px-3 py-2">
+                  <span className="text-muted">{row.label}</span>
+                  <span className={`min-w-0 break-words text-right tabular-nums mono-nums ${row.className}`}>{row.value}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </aside>
 
-      <div className="min-h-0 flex-1 rounded-lg border border-border overflow-hidden">
-        <div className="flex items-center justify-between gap-2 border-b border-border bg-surface/70 px-3 py-2 text-[0.72rem]">
-          <span className="text-text font-medium">Profitable trades</span>
-          <span className="text-muted">{visibleOrders.length} in {labelForTimeframe(selected?.timeframe ?? selectedTimeframe).toLowerCase()}</span>
-        </div>
-        <div className="h-full overflow-y-auto">
-          {visibleOrders.length === 0 ? (
-            <div className="px-3 py-4 text-[0.75rem] text-muted">No profitable closed trades in this window for the selected net mode.</div>
-          ) : (
-            visibleOrders.map(order => {
-              const isOpen = expandedId === order.id;
-              const activeScenario = pickScenario(order, mode);
-              const seenLabel = formatDateTimeLabel(order.status.last_seen ?? '', timezone);
-              const firstSeenLabel = formatDateTimeLabel(order.status.first_seen ?? '', timezone);
+        <div className="min-h-0 flex-1 rounded-lg border border-border overflow-hidden">
+          <div className="flex items-center justify-between gap-2 border-b border-border bg-surface/70 px-3 py-2 text-[0.72rem]">
+            <span className="text-text font-medium">Profitable trades</span>
+            <span className="text-muted">{visibleOrders.length} in {labelForTimeframe(selected?.timeframe ?? selectedTimeframe).toLowerCase()}</span>
+          </div>
+          <div className="h-full overflow-y-auto">
+            {visibleOrders.length === 0 ? (
+              <div className="px-3 py-4 text-[0.75rem] text-muted">No profitable closed trades in this window for the selected net mode.</div>
+            ) : (
+              visibleOrders.map(order => {
+                const isOpen = expandedId === order.id;
+                const activeScenario = pickScenario(order, mode);
+                const seenLabel = formatDateTimeLabel(order.status.last_seen ?? '', timezone);
+                const firstSeenLabel = formatDateTimeLabel(order.status.first_seen ?? '', timezone);
 
-              return (
-                <div key={order.id} className="border-b border-border last:border-0">
-                  <button
-                    type="button"
-                    onClick={() => setExpandedId(isOpen ? null : order.id)}
-                    className="w-full bg-transparent border-none px-3 py-2 text-left transition-colors hover:bg-white/5"
-                  >
-                    <div className="flex items-center gap-2 text-[0.72rem]">
-                      <span className="min-w-18 text-text font-medium">{order.exchange}</span>
-                      <span className="min-w-14 text-muted uppercase">{order.direction}</span>
-                      <span className="truncate text-text">{order.payment_method || 'Unknown method'}</span>
-                      <span className="ml-auto text-muted">{isOpen ? '▲' : '▼'}</span>
-                    </div>
-                    <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[0.7rem] sm:grid-cols-5">
-                      <span className="text-muted">Last seen <span className="text-text">{seenLabel}</span></span>
-                      <span className="text-muted">Duration <span className="text-text">{order.status.duration?.display || '—'}</span></span>
-                      <span className="text-muted">Size <span className="text-text">{fmtBTC(activeScenario.trade_size_btc)}</span></span>
-                      <span className="text-muted">Net BTC <span className="text-green">{fmtBTC(activeScenario.profit.avg_btc)}</span></span>
-                      <span className="text-muted">Net {fiat} <span className="text-text">{fmtFiat(activeScenario.profit.avg_fiat, fiat)}</span></span>
-                    </div>
-                  </button>
+                return (
+                  <div key={order.id} className="border-b border-border last:border-0">
+                    <button
+                      type="button"
+                      onClick={() => setExpandedId(isOpen ? null : order.id)}
+                      className="w-full bg-transparent border-none px-3 py-2 text-left transition-colors hover:bg-white/5"
+                    >
+                      <div className="flex items-center gap-2 text-[0.72rem]">
+                        <span className="min-w-18 text-text font-medium">{order.exchange}</span>
+                        <span className="min-w-14 text-muted uppercase">{order.direction}</span>
+                        <span className="truncate text-text">{order.payment_method || 'Unknown method'}</span>
+                        <span className="ml-auto text-muted">{isOpen ? '▲' : '▼'}</span>
+                      </div>
+                      <div className="mt-1 grid grid-cols-2 gap-x-3 gap-y-1 text-[0.7rem] sm:grid-cols-5">
+                        <span className="text-muted">Last seen <span className="text-text">{seenLabel}</span></span>
+                        <span className="text-muted">Duration <span className="text-text">{order.status.duration?.display || '—'}</span></span>
+                        <span className="text-muted">Size <span className="text-text">{fmtBTC(activeScenario.trade_size_btc)}</span></span>
+                        <span className="text-muted">Net BTC <span className="text-green">{fmtBTC(activeScenario.profit.avg_btc)}</span></span>
+                        <span className="text-muted">Net {fiat} <span className="text-text">{fmtFiat(activeScenario.profit.avg_fiat, fiat)}</span></span>
+                      </div>
+                    </button>
 
-                  {isOpen && (
-                    <div className="border-t border-border bg-bg/20 px-3 py-3 text-[0.72rem]">
-                      <div className="grid gap-3 lg:grid-cols-2">
-                        <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                          <span className="text-muted">Offer ID</span>
-                          <span className="text-text break-all">{order.offer_id || '—'}</span>
-                          <span className="text-muted">First seen</span>
-                          <span className="text-text">{firstSeenLabel}</span>
-                          <span className="text-muted">Last seen</span>
-                          <span className="text-text">{seenLabel}</span>
-                          <span className="text-muted">Avg net %</span>
-                          <span className={(activeScenario.premium.avg_net_percent ?? 0) > 0 ? 'text-green' : 'text-text'}>
-                            {fmtPct(activeScenario.premium.avg_net_percent)}
-                          </span>
-                          <span className="text-muted">Avg trade cost %</span>
-                          <span className="text-text">{fmtPct(activeScenario.premium.avg_trade_cost_percent)}</span>
-                          <span className="text-muted">Route</span>
-                          <span className="text-text">{activeScenario.route.cex} via {activeScenario.route.settlement}</span>
-                          {mode === 'net_capped' && order.analysis.capped_volume?.cap_fiat != null && (
-                            <>
-                              <span className="text-muted">Cap</span>
-                              <span className="text-text">{fmtFiat(order.analysis.capped_volume.cap_fiat, fiat)}</span>
-                            </>
-                          )}
-                        </div>
+                    {isOpen && (
+                      <div className="border-t border-border bg-bg/20 px-3 py-3 text-[0.72rem]">
+                        <div className="grid gap-3 lg:grid-cols-2">
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                            <span className="text-muted">Offer ID</span>
+                            <span className="text-text break-all">{order.offer_id || '—'}</span>
+                            <span className="text-muted">First seen</span>
+                            <span className="text-text">{firstSeenLabel}</span>
+                            <span className="text-muted">Last seen</span>
+                            <span className="text-text">{seenLabel}</span>
+                            <span className="text-muted">Avg net %</span>
+                            <span className={(activeScenario.premium.avg_net_percent ?? 0) > 0 ? 'text-green' : 'text-text'}>
+                              {fmtPct(activeScenario.premium.avg_net_percent)}
+                            </span>
+                            <span className="text-muted">Avg trade cost %</span>
+                            <span className="text-text">{fmtPct(activeScenario.premium.avg_trade_cost_percent)}</span>
+                            <span className="text-muted">Route</span>
+                            <span className="text-text">{activeScenario.route.cex} via {activeScenario.route.settlement}</span>
+                            {mode === 'net_capped' && order.analysis.capped_volume?.cap_fiat != null && (
+                              <>
+                                <span className="text-muted">Cap</span>
+                                <span className="text-text">{fmtFiat(order.analysis.capped_volume.cap_fiat, fiat)}</span>
+                              </>
+                            )}
+                          </div>
 
-                        <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                          {sortOfferEntries(order.offer).map(([key, value]) => (
-                            <div key={key} className="contents">
-                              <span className="text-muted">{humanizeKey(key)}</span>
-                              <span className="text-text break-all">{formatOfferValue(value)}</span>
-                            </div>
-                          ))}
+                          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
+                            {sortOfferEntries(order.offer).map(([key, value]) => (
+                              <div key={key} className="contents">
+                                <span className="text-muted">{humanizeKey(key)}</span>
+                                <span className="text-text break-all">{formatOfferValue(value)}</span>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
         </div>
       </div>
-
-      <p className="text-[0.7rem] text-muted">
-        Net profit of closed orders that remain profitable under the selected net-premium mode.
-        {mode === 'net_capped' && ' Capped mode models each oversized order at your max fiat position size.'}
-      </p>
     </div>
   );
 }

@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useMemo, useLayoutEffect, useState } from 'react';
-import { useFilters } from '../context/FiltersContext';
-import { useTimezone } from '../context/TimezoneContext';
+import { useFilters } from '../hooks/useFilters';
+import { useTimezone } from '../hooks/useTimezone';
 import { LoadingSpinner } from './LoadingSpinner';
 import { formatDateTimeLabel, toUtcSec } from '../utils/formatters';
 import { getBtcMax, getFirstSeen, getLastSeen, getOfferPrice, getRefPrice, isOfferLive } from '../utils/offerAccess';
@@ -18,15 +18,24 @@ function cssVar(name: string, fallback: string): string {
   return value || fallback;
 }
 
+function cumulativeRows(rows: { price: number; btc: number }[]) {
+  let runningTotal = 0;
+  return rows.map((row) => {
+    runningTotal += row.btc;
+    return { price: row.price, cum: runningTotal };
+  });
+}
+
 function DepthChartInner() {
   const { depthOffers, offers: allOffers, filters, loading, hoveredOhlcTime } = useFilters();
   const { timezone } = useTimezone();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasMetricsRef = useRef<{ w: number; h: number; dpr: number } | null>(null);
+  const [referenceNowSec] = useState(() => Math.floor(Date.now() / 1000));
   const [resizeTick, setResizeTick] = useState(0);
   const [yZoom, setYZoom] = useState(1.0);
-  const headerTimestamp = formatDateTimeLabel(hoveredOhlcTime ?? Math.floor(Date.now() / 1000), timezone);
+  const headerTimestamp = formatDateTimeLabel(hoveredOhlcTime ?? referenceNowSec, timezone);
 
   // Resize observer
   useEffect(() => {
@@ -82,10 +91,8 @@ function DepthChartInner() {
     const rawBids = Object.entries(bidMap).map(([p, b]) => ({ price: +p, btc: b })).sort((a, b) => b.price - a.price);
     const rawAsks = Object.entries(askMap).map(([p, b]) => ({ price: +p, btc: b })).sort((a, b) => a.price - b.price);
 
-    let cum = 0;
-    const bids = rawBids.map(o => { cum += o.btc; return { price: o.price, cum }; });
-    cum = 0;
-    const asks = rawAsks.map(o => { cum += o.btc; return { price: o.price, cum }; });
+    const bids = cumulativeRows(rawBids);
+    const asks = cumulativeRows(rawAsks);
 
     const maxVol = Math.max(bids.at(-1)?.cum ?? 0, asks.at(-1)?.cum ?? 0) * 1.05 || 1;
     const dataRange = Math.max(

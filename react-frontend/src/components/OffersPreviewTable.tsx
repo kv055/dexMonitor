@@ -1,8 +1,8 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ExchangeTag } from './ExchangeTag';
 import { formatNum, formatBtc, premiumClass, formatTime, formatDuration } from '../utils/formatters';
-import { useTimezone } from '../context/TimezoneContext';
-import { useFilters } from '../context/FiltersContext';
+import { useTimezone } from '../hooks/useTimezone';
+import { useFilters } from '../hooks/useFilters';
 import { LoadingSpinner } from './LoadingSpinner';
 import type { CostBreakdown, BTCNetworkFeeDetail as BTCDetail } from '../types';
 import { buildOfferKeys } from '../utils/offerIdentity';
@@ -574,16 +574,16 @@ export function OffersPreviewTable() {
   const groupLabel = useGroupLabel();
   const { timezone } = useTimezone();
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
-  const [isMobile, setIsMobile] = useState(() => window.innerWidth < 1024);
-  const [showCapped, setShowCapped] = useState(false);
+  const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 1023px)').matches);
+  const [cappedSelection, setCappedSelection] = useState<{ offerKey: string | null; enabled: boolean }>({
+    offerKey: null,
+    enabled: false,
+  });
   const offerKeys = useMemo(() => buildOfferKeys(offers), [offers]);
-
-  // Reset to full-size view whenever the selected offer changes.
-  useEffect(() => { setShowCapped(false); }, [selectedOfferKey]);
+  const showCapped = cappedSelection.offerKey === selectedOfferKey && cappedSelection.enabled;
 
   useEffect(() => {
     const mq = window.matchMedia('(max-width: 1023px)');
-    setIsMobile(mq.matches);
     const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
     mq.addEventListener('change', handler);
     return () => mq.removeEventListener('change', handler);
@@ -682,7 +682,7 @@ export function OffersPreviewTable() {
                   {hasCappedScenario(selectedOffer) && (
                     <SizeToggle
                       showCapped={showCapped}
-                      onToggle={setShowCapped}
+                      onToggle={enabled => setCappedSelection({ offerKey: selectedOfferKey, enabled })}
                       cappedBtc={getCappedTradeSizeBtc(selectedOffer)}
                       refPrice={getRefPrice(selectedOffer)}
                     />
@@ -815,7 +815,7 @@ export function OffersPreviewTable() {
                 {hasCappedScenario(selectedOffer) && (
                   <SizeToggle
                     showCapped={showCapped}
-                    onToggle={setShowCapped}
+                    onToggle={enabled => setCappedSelection({ offerKey: selectedOfferKey, enabled })}
                     cappedBtc={getCappedTradeSizeBtc(selectedOffer)}
                     refPrice={getRefPrice(selectedOffer)}
                   />

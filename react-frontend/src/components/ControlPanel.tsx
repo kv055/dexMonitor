@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
-import { useFilters } from '../context/FiltersContext';
-import { useTimezone } from '../context/TimezoneContext';
-import type { PremiumFilterMode, Stats } from '../types';
+import { useFilters } from '../hooks/useFilters';
+import { useTimezone } from '../hooks/useTimezone';
+import type { PremiumFilterMode } from '../types';
 import { ExchangeTag } from './ExchangeTag';
 import { formatTimeOnly } from '../utils/formatters';
 import { getLastSeen, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
@@ -20,7 +20,6 @@ const PREMIUM_FILTER_OPTIONS: { value: PremiumFilterMode; label: string }[] = [
 interface Props {
   onRefresh: () => void;
   lastUpdatedAt: string;
-  stats: Stats | null;
 }
 
 interface PaymentDropdownProps {
@@ -64,7 +63,7 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
-    f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
+    if (filters.premiumOnly) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
     const counts: Record<string, number> = {};
     f.forEach(o => {
@@ -297,7 +296,7 @@ function DirectionDropdown({ value, onChange, inputCls }: DirectionDropdownProps
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
-    f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
+    if (filters.premiumOnly) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
     return {
       all:  f.length,
@@ -370,7 +369,7 @@ function StatusDropdown({ value, onChange, inputCls }: StatusDropdownProps) {
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
-    f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
+    if (filters.premiumOnly) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
     return {
       all:    f.length,
@@ -418,11 +417,10 @@ function StatusDropdown({ value, onChange, inputCls }: StatusDropdownProps) {
 interface ExchangeDropdownProps {
   value: string;
   onChange: (v: string) => void;
-  stats: Stats;
   inputCls: string;
 }
 
-function ExchangeDropdown({ value, onChange, stats, inputCls }: ExchangeDropdownProps) {
+function ExchangeDropdown({ value, onChange, inputCls }: ExchangeDropdownProps) {
   const { offers, filters } = useFilters();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -445,7 +443,7 @@ function ExchangeDropdown({ value, onChange, stats, inputCls }: ExchangeDropdown
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
-    f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
+    if (filters.premiumOnly) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
     const map: Record<string, number> = {};
     f.forEach(o => { map[o.exchange] = (map[o.exchange] || 0) + 1; });
@@ -454,6 +452,10 @@ function ExchangeDropdown({ value, onChange, stats, inputCls }: ExchangeDropdown
 
   const totalOffers = Object.values(countMap).reduce((s, n) => s + n, 0);
   const selectedCount = value ? (countMap[value] ?? 0) : null;
+  const exchanges = useMemo(
+    () => Object.keys(countMap).sort((a, b) => a.localeCompare(b)),
+    [countMap]
+  );
 
   return (
     <div ref={ref} className="relative">
@@ -481,14 +483,14 @@ function ExchangeDropdown({ value, onChange, stats, inputCls }: ExchangeDropdown
             <span className="text-[0.8rem]">All Exchanges</span>
             <span className="text-muted text-[0.75rem]">{totalOffers}</span>
           </button>
-          {stats.offer_counts.map(e => (
+          {exchanges.map(exchange => (
             <button
-              key={e.exchange}
-              onClick={() => { onChange(e.exchange); setOpen(false); }}
-              className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors flex items-center justify-between gap-3 ${value === e.exchange ? 'bg-bg' : ''}`}
+              key={exchange}
+              onClick={() => { onChange(exchange); setOpen(false); }}
+              className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors flex items-center justify-between gap-3 ${value === exchange ? 'bg-bg' : ''}`}
             >
-              <ExchangeTag exchange={e.exchange} />
-              <span className="text-muted text-[0.75rem]">{countMap[e.exchange] ?? 0}</span>
+              <ExchangeTag exchange={exchange} />
+              <span className="text-muted text-[0.75rem]">{countMap[exchange] ?? 0}</span>
             </button>
           ))}
         </div>
@@ -514,6 +516,7 @@ interface TimeframeDropdownProps {
 function TimeframeDropdown({ value, onChange, inputCls }: TimeframeDropdownProps) {
   const { offers, filters } = useFilters();
   const [open, setOpen] = useState(false);
+  const [referenceNowMs] = useState(() => Date.now());
   const ref = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -535,19 +538,18 @@ function TimeframeDropdown({ value, onChange, inputCls }: TimeframeDropdownProps
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
-    f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
+    if (filters.premiumOnly) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
-    const now = Date.now();
     const result: Record<string, number> = {};
     for (const opt of TIMEFRAME_OPTIONS) {
       // Normalize to DB timestamp format ("2024-01-15 13:00:00") so string
       // comparison works correctly — DB uses space, not T.
-      const cutoff = new Date(now - parseInt(opt.value) * 3600 * 1000)
+      const cutoff = new Date(referenceNowMs - parseInt(opt.value) * 3600 * 1000)
         .toISOString().replace('T', ' ').slice(0, 19);
       result[opt.value] = f.filter(o => getLastSeen(o) != null && getLastSeen(o)! >= cutoff).length;
     }
     return result;
-  }, [offers, filters]);
+  }, [offers, filters, referenceNowMs]);
 
   const selected = TIMEFRAME_OPTIONS.find(o => o.value === value) ?? TIMEFRAME_OPTIONS[2];
 
@@ -580,7 +582,7 @@ function TimeframeDropdown({ value, onChange, inputCls }: TimeframeDropdownProps
   );
 }
 
-export function ControlPanel({ onRefresh, lastUpdatedAt, stats }: Props) {
+export function ControlPanel({ onRefresh, lastUpdatedAt }: Props) {
   const { filters, setFilters, resetFilters } = useFilters();
   const { timezone } = useTimezone();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -606,8 +608,9 @@ export function ControlPanel({ onRefresh, lastUpdatedAt, stats }: Props) {
         <div className="flex flex-col gap-0.5">
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Ref Price</span>
           <select
-            className={inputCls}
+            className={disabledInputCls}
             value={filters.cex}
+            disabled
             onChange={e => setFilters({ cex: e.target.value })}
           >
             <option value="kraken">BTC/EUR — Kraken</option>
@@ -651,7 +654,6 @@ export function ControlPanel({ onRefresh, lastUpdatedAt, stats }: Props) {
           <ExchangeDropdown
             value={filters.exchange}
             onChange={v => setFilters({ exchange: v })}
-            stats={stats ?? { offer_counts: [], price_stats: [] }}
             inputCls={inputCls}
           />
         </div>
@@ -689,6 +691,20 @@ export function ControlPanel({ onRefresh, lastUpdatedAt, stats }: Props) {
             <input type="number" className={`${inputCls} w-14`} placeholder="Max" step="0.1"
               value={filters.premiumMax} onChange={e => setFilters({ premiumMax: e.target.value })} />
           </div>
+        </div>
+        <div className="flex flex-col gap-0.5">
+          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Profitability</span>
+          <button
+            type="button"
+            onClick={() => setFilters({ premiumOnly: !filters.premiumOnly })}
+            className={`rounded-md border px-2 py-0.5 text-[0.8rem] font-medium transition-colors ${
+              filters.premiumOnly
+                ? 'border-accent bg-accent/10 text-accent'
+                : 'border-border bg-bg text-muted hover:text-text'
+            }`}
+          >
+            Premium Only
+          </button>
         </div>
       </div>
     </div>

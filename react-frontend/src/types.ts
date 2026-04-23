@@ -432,6 +432,7 @@ export interface Filters {
   exchange: string;
   payment: string;
   status: string;
+  premiumOnly: boolean;
   premiumMin: string;
   premiumMax: string;
   premiumMode: PremiumFilterMode;

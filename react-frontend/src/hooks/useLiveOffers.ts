@@ -23,6 +23,7 @@ export function useLiveOffers() {
   const mountedRef  = useRef(true);
   const everOpenRef = useRef(false);
   const sessionRef  = useRef(0);
+  const connectRef = useRef<(session: number) => void>(() => {});
   const cexRef      = useRef('kraken');
   const excludedCEXesRef = useRef<string[]>([]);
   const feeTierRef = useRef('');
@@ -54,7 +55,7 @@ export function useLiveOffers() {
     };
     poll();
     pollRef.current = setInterval(poll, POLL_INTERVAL_MS);
-  }, [stopPolling, buildQueryString]);
+  }, [buildQueryString]);
 
   const connect = useCallback((session: number) => {
     if (!mountedRef.current || sessionRef.current !== session) return;
@@ -90,12 +91,16 @@ export function useLiveOffers() {
       if (sessionRef.current !== session || !mountedRef.current) return;
       setWssConnected(false);
       if (everOpenRef.current) {
-        setTimeout(() => connect(session), RECONNECT_DELAY_MS);
+        setTimeout(() => connectRef.current(session), RECONNECT_DELAY_MS);
       } else {
         startPolling(session);
       }
     };
-  }, [startPolling, stopPolling]);
+  }, [buildQueryString, startPolling, stopPolling]);
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -103,11 +108,11 @@ export function useLiveOffers() {
     connect(session);
     return () => {
       mountedRef.current = false;
-      sessionRef.current++;
+      sessionRef.current = session + 1;
       wsRef.current?.close();
       stopPolling();
     };
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [connect, stopPolling]);
 
   // Called by MonitorView when filters.cex or trade cost settings change.
   // Immediately fetches fresh offers, then reconnects WS.

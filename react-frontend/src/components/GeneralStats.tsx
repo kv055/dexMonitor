@@ -228,7 +228,7 @@ function PremiumsCard({ stats }: { stats: GeneralStatsData }) {
 }
 
 function PastPremiumsCard({ stats }: { stats: GeneralStatsData }) {
-  const frames = stats.past_premiums ?? [];
+  const frames = useMemo(() => stats.past_premiums ?? [], [stats.past_premiums]);
   const [mode, setMode] = useState<'raw' | 'net_full' | 'net_capped'>('raw');
   const [selectedTimeframe, setSelectedTimeframe] = useState('24h');
   const selected = useMemo(() => (
@@ -343,7 +343,7 @@ function PaymentMethodsCard({ stats }: { stats: GeneralStatsData }) {
   );
 }
 
-export function GeneralStats({ theme: _theme, stats, loading }: { theme: 'dark' | 'light'; stats: GeneralStatsData | null; loading: boolean }) {
+export function GeneralStats({ stats, loading }: { stats: GeneralStatsData | null; loading: boolean }) {
   if (loading && !stats) {
     return <div className="relative h-8"><LoadingSpinner label="Loading statistics" /></div>;
   }

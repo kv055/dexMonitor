@@ -4,7 +4,6 @@
  */
 
 export const FIXED_TIME = new Date('2026-04-01T12:00:00Z').getTime();
-const FIXED_SEC = FIXED_TIME / 1000;
 
 function ts(hoursAgo: number): string {
   const d = new Date(FIXED_TIME - hoursAgo * 3600_000);

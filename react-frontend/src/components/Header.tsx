@@ -1,11 +1,11 @@
 
+import { usePreferences } from '../hooks/usePreferences';
+
 export type Tab = 'monitor' | 'insights' | 'mmcontroller' | 'trading';
 
 interface Props {
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
-  theme: 'dark' | 'light';
-  onToggleTheme: () => void;
   onOpenSettings: () => void;
 }
 
@@ -16,7 +16,9 @@ const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
   { id: 'trading', label: 'dex Trading', color: 'text-purple', disabled: false },
 ];
 
-export function Header({ activeTab, onTabChange, theme, onToggleTheme, onOpenSettings }: Props) {
+export function Header({ activeTab, onTabChange, onOpenSettings }: Props) {
+  const { theme, toggleTheme } = usePreferences();
+
   return (
     <header className="bg-surface border border-border rounded-lg px-3 py-1 flex items-center gap-1.5 shrink-0 min-w-0 overflow-hidden">
       {/* Scrollable tab area */}
@@ -47,7 +49,7 @@ export function Header({ activeTab, onTabChange, theme, onToggleTheme, onOpenSet
         <button
           type="button"
           className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 cursor-pointer hover:bg-bg"
-          onClick={onToggleTheme}
+          onClick={toggleTheme}
           title={theme === 'dark' ? 'Switch to day mode' : 'Switch to night mode'}
         >
           {theme === 'dark' ? '🌞' : '🌙'}

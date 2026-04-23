@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { apiFetch } from '../utils/api';
-import { useTimezone } from '../context/TimezoneContext';
+import { useTimezone } from '../hooks/useTimezone';
 import { formatDateTimeParts } from '../utils/formatters';
 import { LoadingSpinner } from './LoadingSpinner';
 

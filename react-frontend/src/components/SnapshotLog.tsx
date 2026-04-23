@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { useTimezone } from '../context/TimezoneContext';
+import { useTimezone } from '../hooks/useTimezone';
 import { apiFetch } from '../utils/api';
 import { formatDateTimeParts } from '../utils/formatters';
 

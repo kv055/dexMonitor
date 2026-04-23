@@ -10,9 +10,9 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import type { LifecyclePoint, OHLCCandle, OHLCData } from '../types';
-import { useFilters } from '../context/FiltersContext';
+import { useFilters } from '../hooks/useFilters';
 import { getFirstSeen, getLastSeen, getNetPremiumPercent, getOfferPrice, isOfferLive } from '../utils/offerAccess';
-import { useTimezone } from '../context/TimezoneContext';
+import { useTimezone } from '../hooks/useTimezone';
 import { LoadingSpinner } from './LoadingSpinner';
 import { buildOfferKeys } from '../utils/offerIdentity';
 import { apiFetch } from '../utils/api';
@@ -396,7 +396,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [shiftedDisplay, premiumOffers, offerKeys, hours, selectedOfferKey, candleMin, loadedHours, onNeedMoreData, setHoveredOhlcTime, setSelectedOfferKey]);
+  }, [shiftedDisplay, premiumOffers, offerKeys, hours, selectedOfferKey, candleMin, loadedHours, onNeedMoreData, setHoveredOhlcTime, setSelectedOfferKey, lifecycleCache]);
 
   return (
     <div className="relative h-full bg-bg flex flex-col">

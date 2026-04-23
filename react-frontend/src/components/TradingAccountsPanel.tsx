@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useState, type SetStateAction } from 'react';
 import {
   createAccount,
   createAPIKey,
@@ -51,6 +51,8 @@ const textareaCls =
   'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent min-h-24';
 const buttonCls =
   'rounded-md border border-border bg-bg px-3 py-2 text-sm font-medium text-text transition hover:bg-surface';
+const compactButtonCls =
+  'rounded-md border border-border bg-bg px-2 py-1 text-xs font-medium text-text transition hover:bg-surface';
 const primaryButtonCls =
   'rounded-md border border-accent bg-accent/10 px-3 py-2 text-sm font-medium text-accent transition hover:bg-accent/20';
 const dangerButtonCls =
@@ -60,6 +62,20 @@ function formatDate(value: string | null | undefined) {
   if (!value) return '—';
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? value : d.toLocaleString();
+}
+
+function formatAccountHeaderDate(value: string | null | undefined) {
+  if (!value) return '—';
+  const d = new Date(value);
+  return Number.isNaN(d.getTime())
+    ? value
+    : d.toLocaleString(undefined, {
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+        hour: '2-digit',
+        minute: '2-digit',
+      });
 }
 
 function providerLabel(value: string) {
@@ -85,14 +101,15 @@ function categoryRank(category: string) {
   return index === -1 ? CATEGORY_ORDER.length : index;
 }
 
-function HealthBadge({ account }: { account: TradingAccount }) {
+function HealthBadge({ account, compact = false }: { account: TradingAccount; compact?: boolean }) {
   const label = account.is_healthy ? 'Healthy' : 'Unhealthy';
   const cls = account.is_healthy
     ? 'border-green/40 bg-green/10 text-green'
     : 'border-red/40 bg-red/10 text-red';
+  const sizeCls = compact ? 'px-1.5 py-0.5 text-[0.65rem]' : 'px-2 py-1 text-xs';
   return (
     <span
-      className={`rounded-full border px-2 py-1 text-xs font-medium ${cls}`}
+      className={`rounded-full border font-medium ${sizeCls} ${cls}`}
       title={`Last health check: ${formatDate(account.last_health_check)}`}
     >
       {label}
@@ -105,6 +122,40 @@ interface AccountFormState {
   email: string;
   password: string;
   phone: string;
+}
+
+interface TradingPanelUiState {
+  expandedId: number | null;
+  showNewAccountForm: boolean;
+  newAccount: AccountFormState;
+  editingAccountId: number | null;
+  editingAccount: AccountFormState;
+  newTOTPByAccount: Record<number, TOTPFormState>;
+  editingTOTPById: Record<number, TOTPFormState>;
+  newPasskeyByAccount: Record<number, PasskeyFormState>;
+  editingPasskeyById: Record<number, PasskeyFormState>;
+  newSeedByAccount: Record<number, SeedFormState>;
+  editingSeedById: Record<number, SeedFormState>;
+  newAPIKeyByAccount: Record<number, APIKeyFormState>;
+  editingAPIKeyById: Record<number, APIKeyFormState>;
+  checkingHealthByAccount: Record<number, boolean>;
+  healthMessage: string | null;
+}
+
+type TradingPanelUiAction = {
+  type: 'UPDATE';
+  update: (state: TradingPanelUiState) => TradingPanelUiState;
+};
+
+function resolveState<T>(value: SetStateAction<T>, previous: T): T {
+  return typeof value === 'function' ? (value as (prev: T) => T)(previous) : value;
+}
+
+function tradingPanelUiReducer(state: TradingPanelUiState, action: TradingPanelUiAction): TradingPanelUiState {
+  switch (action.type) {
+    case 'UPDATE':
+      return action.update(state);
+  }
 }
 
 interface TOTPFormState {
@@ -144,20 +195,83 @@ function AccountEditor({
   onChange,
   onSubmit,
   submitLabel,
+  compact = false,
+  submitDisabled = false,
 }: {
   value: AccountFormState;
   onChange: (next: AccountFormState) => void;
   onSubmit: () => void;
   submitLabel: string;
+  compact?: boolean;
+  submitDisabled?: boolean;
 }) {
   const options = useMemo(() => providerOptionsForValue(value.provider), [value.provider]);
+  const fieldCls = compact
+    ? 'w-full rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none focus:border-accent'
+    : inputCls;
+  const labelCls = compact ? 'grid min-w-0 gap-1 text-xs text-muted' : 'grid gap-1 text-sm text-muted';
+  const submitCls = submitDisabled
+    ? `${primaryButtonCls} cursor-not-allowed opacity-50`
+    : primaryButtonCls;
+
+  if (compact) {
+    return (
+      <div className="grid items-end gap-2 md:grid-cols-[minmax(9rem,1.1fr)_minmax(9rem,1fr)_minmax(8rem,1fr)_minmax(7rem,0.8fr)_auto]">
+        <label className={labelCls}>
+          <span>Provider</span>
+          <select
+            className={fieldCls}
+            value={value.provider}
+            onChange={e => onChange({ ...value, provider: e.target.value })}
+          >
+            {options.map(option => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label className={labelCls}>
+          <span>Email</span>
+          <input
+            className={fieldCls}
+            value={value.email}
+            onChange={e => onChange({ ...value, email: e.target.value })}
+            placeholder="Optional"
+          />
+        </label>
+        <label className={labelCls}>
+          <span>Password</span>
+          <input
+            className={fieldCls}
+            type="password"
+            value={value.password}
+            onChange={e => onChange({ ...value, password: e.target.value })}
+            placeholder="Optional"
+          />
+        </label>
+        <label className={labelCls}>
+          <span>Phone</span>
+          <input
+            className={fieldCls}
+            value={value.phone}
+            onChange={e => onChange({ ...value, phone: e.target.value })}
+            placeholder="Optional"
+          />
+        </label>
+        <button type="button" className={submitCls} disabled={submitDisabled} onClick={onSubmit}>
+          {submitLabel}
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="grid gap-3 md:grid-cols-4">
-      <label className="grid gap-1 text-sm text-muted">
+      <label className={labelCls}>
         <span>Provider</span>
         <select
-          className={inputCls}
+          className={fieldCls}
           value={value.provider}
           onChange={e => onChange({ ...value, provider: e.target.value })}
         >
@@ -168,36 +282,36 @@ function AccountEditor({
           ))}
         </select>
       </label>
-      <label className="grid gap-1 text-sm text-muted">
+      <label className={labelCls}>
         <span>Email</span>
         <input
-          className={inputCls}
+          className={fieldCls}
           value={value.email}
           onChange={e => onChange({ ...value, email: e.target.value })}
           placeholder="Optional"
         />
       </label>
-      <label className="grid gap-1 text-sm text-muted">
+      <label className={labelCls}>
         <span>Password</span>
         <input
-          className={inputCls}
+          className={fieldCls}
           type="password"
           value={value.password}
           onChange={e => onChange({ ...value, password: e.target.value })}
           placeholder="Optional"
         />
       </label>
-      <label className="grid gap-1 text-sm text-muted">
+      <label className={labelCls}>
         <span>Phone</span>
         <input
-          className={inputCls}
+          className={fieldCls}
           value={value.phone}
           onChange={e => onChange({ ...value, phone: e.target.value })}
           placeholder="Optional"
         />
       </label>
       <div className="md:col-span-4 flex justify-end">
-        <button type="button" className={primaryButtonCls} onClick={onSubmit}>
+        <button type="button" className={submitCls} disabled={submitDisabled} onClick={onSubmit}>
           {submitLabel}
         </button>
       </div>
@@ -231,21 +345,86 @@ export function TradingAccountsPanel() {
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [newAccount, setNewAccount] = useState<AccountFormState>(emptyAccountForm());
-  const [editingAccountId, setEditingAccountId] = useState<number | null>(null);
-  const [editingAccount, setEditingAccount] = useState<AccountFormState>(emptyAccountForm());
+  const [uiState, dispatchUi] = useReducer(tradingPanelUiReducer, undefined, () => ({
+    expandedId: null,
+    showNewAccountForm: false,
+    newAccount: emptyAccountForm(),
+    editingAccountId: null,
+    editingAccount: emptyAccountForm(),
+    newTOTPByAccount: {},
+    editingTOTPById: {},
+    newPasskeyByAccount: {},
+    editingPasskeyById: {},
+    newSeedByAccount: {},
+    editingSeedById: {},
+    newAPIKeyByAccount: {},
+    editingAPIKeyById: {},
+    checkingHealthByAccount: {},
+    healthMessage: null,
+  }));
+  const {
+    expandedId,
+    showNewAccountForm,
+    newAccount,
+    editingAccountId,
+    editingAccount,
+    newTOTPByAccount,
+    editingTOTPById,
+    newPasskeyByAccount,
+    editingPasskeyById,
+    newSeedByAccount,
+    editingSeedById,
+    newAPIKeyByAccount,
+    editingAPIKeyById,
+    checkingHealthByAccount,
+    healthMessage,
+  } = uiState;
 
-  const [newTOTPByAccount, setNewTOTPByAccount] = useState<Record<number, TOTPFormState>>({});
-  const [editingTOTPById, setEditingTOTPById] = useState<Record<number, TOTPFormState>>({});
-  const [newPasskeyByAccount, setNewPasskeyByAccount] = useState<Record<number, PasskeyFormState>>({});
-  const [editingPasskeyById, setEditingPasskeyById] = useState<Record<number, PasskeyFormState>>({});
-  const [newSeedByAccount, setNewSeedByAccount] = useState<Record<number, SeedFormState>>({});
-  const [editingSeedById, setEditingSeedById] = useState<Record<number, SeedFormState>>({});
-  const [newAPIKeyByAccount, setNewAPIKeyByAccount] = useState<Record<number, APIKeyFormState>>({});
-  const [editingAPIKeyById, setEditingAPIKeyById] = useState<Record<number, APIKeyFormState>>({});
-  const [checkingHealthByAccount, setCheckingHealthByAccount] = useState<Record<number, boolean>>({});
-  const [healthMessage, setHealthMessage] = useState<string | null>(null);
+  const setExpandedId = useCallback((value: SetStateAction<number | null>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, expandedId: resolveState(value, state.expandedId) }) });
+  }, []);
+  const setShowNewAccountForm = useCallback((value: SetStateAction<boolean>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, showNewAccountForm: resolveState(value, state.showNewAccountForm) }) });
+  }, []);
+  const setNewAccount = useCallback((value: SetStateAction<AccountFormState>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, newAccount: resolveState(value, state.newAccount) }) });
+  }, []);
+  const setEditingAccountId = useCallback((value: SetStateAction<number | null>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, editingAccountId: resolveState(value, state.editingAccountId) }) });
+  }, []);
+  const setEditingAccount = useCallback((value: SetStateAction<AccountFormState>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, editingAccount: resolveState(value, state.editingAccount) }) });
+  }, []);
+  const setNewTOTPByAccount = useCallback((value: SetStateAction<Record<number, TOTPFormState>>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, newTOTPByAccount: resolveState(value, state.newTOTPByAccount) }) });
+  }, []);
+  const setEditingTOTPById = useCallback((value: SetStateAction<Record<number, TOTPFormState>>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, editingTOTPById: resolveState(value, state.editingTOTPById) }) });
+  }, []);
+  const setNewPasskeyByAccount = useCallback((value: SetStateAction<Record<number, PasskeyFormState>>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, newPasskeyByAccount: resolveState(value, state.newPasskeyByAccount) }) });
+  }, []);
+  const setEditingPasskeyById = useCallback((value: SetStateAction<Record<number, PasskeyFormState>>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, editingPasskeyById: resolveState(value, state.editingPasskeyById) }) });
+  }, []);
+  const setNewSeedByAccount = useCallback((value: SetStateAction<Record<number, SeedFormState>>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, newSeedByAccount: resolveState(value, state.newSeedByAccount) }) });
+  }, []);
+  const setEditingSeedById = useCallback((value: SetStateAction<Record<number, SeedFormState>>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, editingSeedById: resolveState(value, state.editingSeedById) }) });
+  }, []);
+  const setNewAPIKeyByAccount = useCallback((value: SetStateAction<Record<number, APIKeyFormState>>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, newAPIKeyByAccount: resolveState(value, state.newAPIKeyByAccount) }) });
+  }, []);
+  const setEditingAPIKeyById = useCallback((value: SetStateAction<Record<number, APIKeyFormState>>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, editingAPIKeyById: resolveState(value, state.editingAPIKeyById) }) });
+  }, []);
+  const setCheckingHealthByAccount = useCallback((value: SetStateAction<Record<number, boolean>>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, checkingHealthByAccount: resolveState(value, state.checkingHealthByAccount) }) });
+  }, []);
+  const setHealthMessage = useCallback((value: SetStateAction<string | null>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, healthMessage: resolveState(value, state.healthMessage) }) });
+  }, []);
 
   const groupedAccounts = useMemo(() => {
     const groups = new Map<string, TradingAccount[]>();
@@ -264,25 +443,23 @@ export function TradingAccountsPanel() {
       });
   }, [accounts]);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
       const next = await fetchTradingAccounts();
       setAccounts(next);
-      if (expandedId != null && !next.some(account => account.id === expandedId)) {
-        setExpandedId(null);
-      }
+      setExpandedId(current => current != null && !next.some(account => account.id === current) ? null : current);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load trading accounts');
     } finally {
       setLoading(false);
     }
-  };
+  }, [setExpandedId]);
 
   useEffect(() => {
     void load();
-  }, []);
+  }, [load]);
 
   const withReload = async (fn: () => Promise<void>) => {
     try {
@@ -814,151 +991,161 @@ export function TradingAccountsPanel() {
   };
 
   return (
-    <div className="h-full min-h-0 flex flex-col gap-3 overflow-hidden">
-      <div className="rounded-lg border border-border bg-surface p-3">
-        <div className="mb-3 flex items-center justify-between">
+    <div className="h-full min-h-0 overflow-hidden">
+      <div className="h-full min-h-0 rounded-lg border border-border bg-surface p-3 flex flex-col gap-3 overflow-hidden">
+        <div className={`flex items-center justify-between gap-3 ${showNewAccountForm ? 'mb-3' : ''}`}>
           <div>
             <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">Accounts Management</h3>
             <p className="mt-1 text-sm text-muted">Manage accounts plus linked TOTP secrets, passkeys, seeds, and API keys.</p>
           </div>
-          <button type="button" className={buttonCls} onClick={() => void load()}>
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <button type="button" className={primaryButtonCls} onClick={() => setShowNewAccountForm(prev => !prev)}>
+              {showNewAccountForm ? 'Cancel' : 'Add Account'}
+            </button>
+            <button type="button" className={buttonCls} onClick={() => void load()}>
+              Refresh
+            </button>
+          </div>
         </div>
 
-        <AccountEditor
-          value={newAccount}
-          onChange={setNewAccount}
-          submitLabel="Add New Account"
-          onSubmit={() =>
-            withReload(async () => {
-              await createAccount(newAccount);
-              setNewAccount(emptyAccountForm());
-            })
-          }
-        />
-      </div>
-
-      {error ? (
-        <div className="rounded-lg border border-red/40 bg-red/10 px-3 py-2 text-sm text-red">{error}</div>
-      ) : null}
-      {healthMessage ? (
-        <div className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted">{healthMessage}</div>
-      ) : null}
-
-      <div className="min-h-0 flex-1 overflow-y-auto pr-1 grid content-start gap-3">
-        {loading ? (
-          <div className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">Loading trading accounts…</div>
+        {showNewAccountForm ? (
+          <AccountEditor
+            value={newAccount}
+            onChange={setNewAccount}
+            submitLabel="Add New Account"
+            compact
+            submitDisabled={!newAccount.provider}
+            onSubmit={() =>
+              withReload(async () => {
+                await createAccount(newAccount);
+                setNewAccount(emptyAccountForm());
+                setShowNewAccountForm(false);
+              })
+            }
+          />
         ) : null}
-        {!loading && accounts.length === 0 ? (
-          <div className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">No accounts yet.</div>
-        ) : null}
-        {groupedAccounts.map(group => (
-          <div key={group.category} className="grid gap-3">
-            <div className="flex items-center gap-3 py-1">
-              <div className="h-px flex-1 bg-border" />
-              <div className="text-[0.65rem] font-semibold uppercase tracking-widest text-muted">
-                {group.category}
-              </div>
-              <div className="h-px flex-1 bg-border" />
-            </div>
-            {group.accounts.map(account => {
-              const expanded = expandedId === account.id;
-              const isEditingAccount = editingAccountId === account.id;
-              return (
-                <div key={account.id} className="rounded-lg border border-border bg-surface">
-                  <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                    <div>
-                      <div className="text-base font-semibold text-text">{providerLabel(account.provider)}</div>
-                      <div className="text-xs text-muted">
-                        account #{account.id} • created {formatDate(account.created_at)}
-                      </div>
-                    </div>
-                    <div className="flex flex-wrap items-center gap-2">
-                      <HealthBadge account={account} />
-                      <button
-                        type="button"
-                        className={buttonCls}
-                        disabled={!!checkingHealthByAccount[account.id]}
-                        onClick={() => void triggerHealthCheck(account)}
-                      >
-                        {checkingHealthByAccount[account.id] ? 'Checking…' : 'Check Health'}
-                      </button>
-                      <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
-                        {account.totp_secrets.length} TOTP
-                      </span>
-                      <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
-                        {account.passkey_credentials.length} Passkeys
-                      </span>
-                      <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
-                        {account.seeds.length} Seeds
-                        </span>
-                        <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
-                        {account.api_keys.length} {isRobosatsProvider(account.provider) ? 'Robot Tokens' : 'API Keys'}
-                        </span>
-                      <button type="button" className={buttonCls} onClick={() => setExpandedId(expanded ? null : account.id)}>
-                        {expanded ? 'Collapse' : 'Expand'}
-                      </button>
-                    </div>
-                  </div>
-                  {expanded ? (
-                    <div className="border-t border-border px-4 py-4">
-                      <div className="mb-4 rounded-lg border border-border bg-bg p-3">
-                        <div className="mb-3 flex items-center justify-between">
-                          <h4 className="text-sm font-semibold text-text">Account</h4>
-                          <div className="flex gap-2">
-                            {!isEditingAccount ? (
-                              <button type="button" className={buttonCls} onClick={() => startAccountEdit(account)}>
-                                Edit Account
-                              </button>
-                            ) : null}
-                            <button
-                              type="button"
-                              className={dangerButtonCls}
-                              onClick={() => withReload(async () => { await deleteAccount(account.id); })}
-                            >
-                              Delete Account
-                            </button>
-                          </div>
-                        </div>
-                        {isEditingAccount ? (
-                          <AccountEditor
-                            value={editingAccount}
-                            onChange={setEditingAccount}
-                            submitLabel="Save Account"
-                            onSubmit={() =>
-                              withReload(async () => {
-                                await updateAccount(account.id, editingAccount);
-                                setEditingAccountId(null);
-                              })
-                            }
-                          />
-                        ) : (
-                          <div className="grid gap-2 text-sm text-muted md:grid-cols-4">
-                            <div><span className="text-text">Provider:</span> {providerLabel(account.provider)}</div>
-                            <div><span className="text-text">Category:</span> {account.category}</div>
-                            <div><span className="text-text">Health:</span> <span className={account.is_healthy ? 'text-green' : 'text-red'}>{account.is_healthy ? 'Healthy' : 'Unhealthy'}</span></div>
-                            <div><span className="text-text">Last check:</span> {formatDate(account.last_health_check)}</div>
-                            <div><span className="text-text">Email:</span> {account.email || '—'}</div>
-                            <div><span className="text-text">Password:</span> {account.password ? '••••••••' : '—'}</div>
-                            <div><span className="text-text">Phone:</span> {account.phone || '—'}</div>
-                          </div>
-                        )}
-                      </div>
 
-                      <div className="grid gap-4 xl:grid-cols-2">
-                        {renderTOTPSection(account)}
-                        {renderPasskeysSection(account)}
-                        {renderSeedsSection(account)}
-                        {renderAPIKeysSection(account)}
-                      </div>
-                    </div>
-                  ) : null}
+        {error ? (
+          <div className="rounded-lg border border-red/40 bg-red/10 px-3 py-2 text-sm text-red">{error}</div>
+        ) : null}
+        {healthMessage ? (
+          <div className="rounded-lg border border-border bg-bg px-3 py-2 text-sm text-muted">{healthMessage}</div>
+        ) : null}
+
+        <div className="min-h-0 flex-1 overflow-y-auto pr-1 grid content-start gap-1.5">
+          {loading ? (
+            <div className="rounded-lg border border-border bg-bg p-4 text-sm text-muted">Loading trading accounts…</div>
+          ) : null}
+          {!loading && accounts.length === 0 ? (
+            <div className="rounded-lg border border-border bg-bg p-4 text-sm text-muted">No accounts yet.</div>
+          ) : null}
+          {groupedAccounts.map(group => (
+            <div key={group.category} className="grid gap-1.5">
+              <div className="flex items-center gap-2 py-0.5">
+                <div className="h-px flex-1 bg-border" />
+                <div className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted">
+                  {group.category}
                 </div>
-              );
-            })}
-          </div>
-        ))}
+                <div className="h-px flex-1 bg-border" />
+              </div>
+              {group.accounts.map(account => {
+                const expanded = expandedId === account.id;
+                const isEditingAccount = editingAccountId === account.id;
+                return (
+                  <div key={account.id} className="rounded-lg border border-border bg-bg">
+                    <div className="flex flex-wrap items-center justify-between gap-1.5 px-2.5 py-1.5">
+                      <div className="flex min-w-44 items-baseline gap-1.5">
+                        <div className="text-sm font-semibold text-text">{providerLabel(account.provider)}</div>
+                        <div className="text-[0.68rem] text-muted">
+                          • created {formatAccountHeaderDate(account.created_at)}
+                        </div>
+                      </div>
+                      <div className="flex flex-wrap items-center gap-1.5">
+                        <HealthBadge account={account} compact />
+                        <button
+                          type="button"
+                          className={compactButtonCls}
+                          disabled={!!checkingHealthByAccount[account.id]}
+                          onClick={() => void triggerHealthCheck(account)}
+                        >
+                          {checkingHealthByAccount[account.id] ? 'Checking…' : 'Check Health'}
+                        </button>
+                        <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted">
+                          {account.totp_secrets.length} TOTP
+                        </span>
+                        <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted">
+                          {account.passkey_credentials.length} Passkeys
+                        </span>
+                        <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted">
+                          {account.seeds.length} Seeds
+                        </span>
+                        <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted">
+                          {account.api_keys.length} {isRobosatsProvider(account.provider) ? 'Robot Tokens' : 'API Keys'}
+                        </span>
+                        <button type="button" className={compactButtonCls} onClick={() => setExpandedId(expanded ? null : account.id)}>
+                          {expanded ? 'Collapse' : 'Expand'}
+                        </button>
+                      </div>
+                    </div>
+                    {expanded ? (
+                      <div className="border-t border-border px-4 py-4">
+                        <div className="mb-4 rounded-lg border border-border bg-surface p-3">
+                          <div className="mb-3 flex items-center justify-between">
+                            <h4 className="text-sm font-semibold text-text">Account</h4>
+                            <div className="flex gap-2">
+                              {!isEditingAccount ? (
+                                <button type="button" className={buttonCls} onClick={() => startAccountEdit(account)}>
+                                  Edit Account
+                                </button>
+                              ) : null}
+                              <button
+                                type="button"
+                                className={dangerButtonCls}
+                                onClick={() => withReload(async () => { await deleteAccount(account.id); })}
+                              >
+                                Delete Account
+                              </button>
+                            </div>
+                          </div>
+                          {isEditingAccount ? (
+                            <AccountEditor
+                              value={editingAccount}
+                              onChange={setEditingAccount}
+                              submitLabel="Save Account"
+                              onSubmit={() =>
+                                withReload(async () => {
+                                  await updateAccount(account.id, editingAccount);
+                                  setEditingAccountId(null);
+                                })
+                              }
+                            />
+                          ) : (
+                            <div className="grid gap-2 text-sm text-muted md:grid-cols-4">
+                              <div><span className="text-text">Provider:</span> {providerLabel(account.provider)}</div>
+                              <div><span className="text-text">Category:</span> {account.category}</div>
+                              <div><span className="text-text">Health:</span> <span className={account.is_healthy ? 'text-green' : 'text-red'}>{account.is_healthy ? 'Healthy' : 'Unhealthy'}</span></div>
+                              <div><span className="text-text">Last check:</span> {formatDate(account.last_health_check)}</div>
+                              <div><span className="text-text">Email:</span> {account.email || '—'}</div>
+                              <div><span className="text-text">Password:</span> {account.password ? '••••••••' : '—'}</div>
+                              <div><span className="text-text">Phone:</span> {account.phone || '—'}</div>
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="grid gap-4 xl:grid-cols-2">
+                          {renderTOTPSection(account)}
+                          {renderPasskeysSection(account)}
+                          {renderSeedsSection(account)}
+                          {renderAPIKeysSection(account)}
+                        </div>
+                      </div>
+                    ) : null}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   );

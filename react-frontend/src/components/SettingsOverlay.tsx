@@ -1,25 +1,13 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import type { PaymentMethodGroup, TradeCostConfig } from '../types';
+import { usePreferences } from '../hooks/usePreferences';
+import { useTradeCostConfig } from '../hooks/useTradeCostConfig';
+import type { PaymentMethodGroup } from '../types';
 
 interface Props {
   open: boolean;
   onClose: () => void;
-  preferredTimezone: string;
-  onTimezoneChange: (timezone: string) => void;
   groups: PaymentMethodGroup[];
-  excludedMethods: string[];
-  onToggleMethod: (method: string) => void;
-  onToggleGroup: (groupMethods: string[], exclude: boolean) => void;
-  tradeCostConfig: TradeCostConfig;
-  excludedCEXes: string[];
-  onToggleCEX: (cex: string) => void;
-  feeTier: string;
-  onFeeTierChange: (tier: string) => void;
-  coupledHedge: boolean;
-  onCoupledHedgeChange: (v: boolean) => void;
-  maxFiatLimit: number | null;
-  onMaxFiatLimitChange: (v: number | null) => void;
 }
 
 function getOffsetMinutes(timezone: string): number {
@@ -179,42 +167,33 @@ const allTimezones = getAllTimezonesSorted();
 export function SettingsOverlay({
   open,
   onClose,
-  preferredTimezone,
-  onTimezoneChange,
   groups,
-  excludedMethods,
-  onToggleMethod,
-  onToggleGroup,
-  tradeCostConfig,
-  excludedCEXes,
-  onToggleCEX,
-  feeTier,
-  onFeeTierChange,
-  coupledHedge,
-  onCoupledHedgeChange,
-  maxFiatLimit,
-  onMaxFiatLimitChange,
 }: Props) {
+  const {
+    preferredTimezone,
+    setPreferredTimezone,
+    excludedMethods,
+    toggleMethod,
+    toggleGroup,
+    excludedCEXes,
+    toggleCEX,
+    feeTier,
+    setFeeTier,
+    coupledHedge,
+    setCoupledHedge,
+    maxFiatLimit,
+    setMaxFiatLimit,
+  } = usePreferences();
+  const { config: tradeCostConfig } = useTradeCostConfig();
   const excludedSet = new Set(excludedMethods);
   const excludedCEXSet = new Set(excludedCEXes);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(() => new Set(groups.map(g => g.name)));
-
-  // Keep newly loaded groups collapsed by default
-  useEffect(() => {
-    setCollapsedGroups(prev => {
-      const next = new Set(prev);
-      let changed = false;
-      for (const g of groups) {
-        if (!next.has(g.name)) { next.add(g.name); changed = true; }
-      }
-      return changed ? next : prev;
-    });
-  }, [groups]);
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
 
   const toggleCollapse = (name: string) =>
-    setCollapsedGroups(prev => {
+    setExpandedGroups(prev => {
       const next = new Set(prev);
-      next.has(name) ? next.delete(name) : next.add(name);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
       return next;
     });
 
@@ -264,7 +243,7 @@ export function SettingsOverlay({
             </div>
             <select
               value={preferredTimezone}
-              onChange={event => onTimezoneChange(event.target.value)}
+              onChange={event => setPreferredTimezone(event.target.value)}
               className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent"
             >
               {allTimezones.map(tz => (
@@ -290,7 +269,7 @@ export function SettingsOverlay({
                 {groups.map(group => {
                   const allExcluded = group.methods.every(m => excludedSet.has(m));
                   const someExcluded = group.methods.some(m => excludedSet.has(m));
-                  const collapsed = collapsedGroups.has(group.name);
+                  const collapsed = !expandedGroups.has(group.name);
                   return (
                     <div key={group.name} className="rounded-md border border-border overflow-hidden">
                       {/* Group header row — click left side to collapse, right button to toggle */}
@@ -311,7 +290,7 @@ export function SettingsOverlay({
                         </button>
                         <button
                           type="button"
-                          onClick={() => onToggleGroup(group.methods, !allExcluded)}
+                          onClick={() => toggleGroup(group.methods, !allExcluded)}
                           className={`shrink-0 text-[0.65rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
                             allExcluded
                               ? 'border-green/50 text-green hover:bg-green/10'
@@ -332,7 +311,7 @@ export function SettingsOverlay({
                               <span className={`text-[0.65rem] ${excluded ? 'text-muted line-through' : 'text-text'}`}>{method}</span>
                               <button
                                 type="button"
-                                onClick={() => onToggleMethod(method)}
+                                onClick={() => toggleMethod(method)}
                                 className={`text-[0.6rem] px-1.5 py-0.5 rounded border font-medium transition-colors ${
                                   excluded
                                     ? 'border-green/40 text-green hover:bg-green/10'
@@ -379,7 +358,7 @@ export function SettingsOverlay({
                       </div>
                       <button
                         type="button"
-                        onClick={() => onToggleCEX(cex.name)}
+                        onClick={() => toggleCEX(cex.name)}
                         className={`text-[0.6rem] px-1.5 py-0.5 rounded border font-medium transition-colors ${
                           excluded
                             ? 'border-green/40 text-green hover:bg-green/10'
@@ -406,7 +385,7 @@ export function SettingsOverlay({
             </div>
             <select
               value={feeTier}
-              onChange={event => onFeeTierChange(event.target.value)}
+              onChange={event => setFeeTier(event.target.value)}
               className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent"
             >
               {tradeCostConfig.fee_tiers.map(tier => (
@@ -427,7 +406,7 @@ export function SettingsOverlay({
               </div>
               <button
                 type="button"
-                onClick={() => onCoupledHedgeChange(!coupledHedge)}
+                onClick={() => setCoupledHedge(!coupledHedge)}
                 className={`shrink-0 text-[0.65rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
                   coupledHedge
                     ? 'border-accent/60 text-accent bg-accent/10'
@@ -458,14 +437,14 @@ export function SettingsOverlay({
                 value={maxFiatLimit ?? ''}
                 onChange={e => {
                   const v = e.target.value;
-                  onMaxFiatLimitChange(v === '' ? null : Math.max(0, Number(v)));
+                  setMaxFiatLimit(v === '' ? null : Math.max(0, Number(v)));
                 }}
                 className="flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent mono-nums"
               />
               {maxFiatLimit != null && (
                 <button
                   type="button"
-                  onClick={() => onMaxFiatLimitChange(null)}
+                  onClick={() => setMaxFiatLimit(null)}
                   className="text-[0.65rem] px-2 py-0.5 rounded-md border border-border text-muted hover:border-red/50 hover:text-red transition-colors"
                 >
                   Clear
