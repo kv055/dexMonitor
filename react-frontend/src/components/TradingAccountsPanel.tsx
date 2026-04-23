@@ -11,6 +11,7 @@ import {
   deleteSeed,
   deleteTOTPSecret,
   fetchTradingAccounts,
+  runAccountHealthCheck,
   updateAccount,
   updateAPIKey,
   updatePasskey,
@@ -25,16 +26,24 @@ type ProviderOption = { value: string; label: string };
 
 const PROVIDER_OPTIONS: ProviderOption[] = [
   { value: '', label: 'Please select provider' },
-  { value: 'kraken', label: 'Kraken' },
-  { value: 'coinbase', label: 'Coinbase' },
-  { value: 'binance', label: 'Binance' },
-  { value: 'hodlhodl', label: 'HodlHodl' },
-  { value: 'bisq', label: 'Bisq' },
-  { value: 'robosats', label: 'RoboSats' },
-  { value: 'paypal', label: 'PayPal' },
-  { value: 'revolut', label: 'Revolut' },
-  { value: 'wise', label: 'Wise' },
+  { value: 'Kraken', label: 'Kraken' },
+  { value: 'Coinbase', label: 'Coinbase' },
+  { value: 'Bitstamp', label: 'Bitstamp' },
+  { value: 'Binance', label: 'Binance' },
+  { value: 'ByBit', label: 'ByBit' },
+  { value: 'KuCoin', label: 'KuCoin' },
+  { value: 'Huobi', label: 'Huobi' },
+  { value: 'HodlHodl', label: 'HodlHodl' },
+  { value: 'Bisq', label: 'Bisq' },
+  { value: 'Robosats', label: 'RoboSats' },
+  { value: 'PayPal', label: 'PayPal' },
+  { value: 'Revolut', label: 'Revolut' },
+  { value: 'WISE', label: 'WISE' },
+  { value: 'N26', label: 'N26' },
+  { value: 'LND wallet', label: 'LND wallet' },
 ];
+
+const CATEGORY_ORDER = ['Fiat Transmitter', 'DEX', 'CEX', 'Internal Infrastructure', 'Uncategorized'];
 
 const inputCls =
   'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent';
@@ -54,16 +63,37 @@ function formatDate(value: string | null | undefined) {
 }
 
 function providerLabel(value: string) {
-  const match = PROVIDER_OPTIONS.find(option => option.value === value);
+  const normalized = value.trim().toLowerCase();
+  const match = PROVIDER_OPTIONS.find(option => option.value.toLowerCase() === normalized);
   return match?.label ?? value;
 }
 
 function providerOptionsForValue(value: string): ProviderOption[] {
   const trimmed = value.trim().toLowerCase();
-  if (!trimmed || PROVIDER_OPTIONS.some(option => option.value === trimmed)) {
+  if (!trimmed || PROVIDER_OPTIONS.some(option => option.value.toLowerCase() === trimmed)) {
     return PROVIDER_OPTIONS;
   }
-  return [...PROVIDER_OPTIONS, { value: trimmed, label: value }];
+  return [...PROVIDER_OPTIONS, { value: value.trim(), label: value }];
+}
+
+function categoryRank(category: string) {
+  const index = CATEGORY_ORDER.indexOf(category);
+  return index === -1 ? CATEGORY_ORDER.length : index;
+}
+
+function HealthBadge({ account }: { account: TradingAccount }) {
+  const label = account.is_healthy ? 'Healthy' : 'Unhealthy';
+  const cls = account.is_healthy
+    ? 'border-green/40 bg-green/10 text-green'
+    : 'border-red/40 bg-red/10 text-red';
+  return (
+    <span
+      className={`rounded-full border px-2 py-1 text-xs font-medium ${cls}`}
+      title={`Last health check: ${formatDate(account.last_health_check)}`}
+    >
+      {label}
+    </span>
+  );
 }
 
 interface AccountFormState {
@@ -210,6 +240,25 @@ export function TradingAccountsPanel() {
   const [editingSeedById, setEditingSeedById] = useState<Record<number, SeedFormState>>({});
   const [newAPIKeyByAccount, setNewAPIKeyByAccount] = useState<Record<number, APIKeyFormState>>({});
   const [editingAPIKeyById, setEditingAPIKeyById] = useState<Record<number, APIKeyFormState>>({});
+  const [checkingHealthByAccount, setCheckingHealthByAccount] = useState<Record<number, boolean>>({});
+  const [healthMessage, setHealthMessage] = useState<string | null>(null);
+
+  const groupedAccounts = useMemo(() => {
+    const groups = new Map<string, TradingAccount[]>();
+    for (const account of accounts) {
+      const category = account.category || 'Uncategorized';
+      groups.set(category, [...(groups.get(category) ?? []), account]);
+    }
+    return Array.from(groups.entries())
+      .map(([category, groupAccounts]) => ({
+        category,
+        accounts: groupAccounts,
+      }))
+      .sort((a, b) => {
+        const rankDelta = categoryRank(a.category) - categoryRank(b.category);
+        return rankDelta || a.category.localeCompare(b.category);
+      });
+  }, [accounts]);
 
   const load = async () => {
     setLoading(true);
@@ -238,6 +287,25 @@ export function TradingAccountsPanel() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Trading accounts request failed');
+    }
+  };
+
+  const triggerHealthCheck = async (account: TradingAccount) => {
+    setCheckingHealthByAccount(prev => ({ ...prev, [account.id]: true }));
+    setError(null);
+    setHealthMessage(null);
+    try {
+      const result = await runAccountHealthCheck(account.id);
+      setAccounts(prev => prev.map(item => (item.id === result.account.id ? result.account : item)));
+      setHealthMessage(`${providerLabel(account.provider)}: ${result.message}`);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Health check failed');
+    } finally {
+      setCheckingHealthByAccount(prev => {
+        const next = { ...prev };
+        delete next[account.id];
+        return next;
+      });
     }
   };
 
@@ -729,7 +797,7 @@ export function TradingAccountsPanel() {
   };
 
   return (
-    <div className="flex-1 lg:min-h-0 flex flex-col gap-3">
+    <div className="h-full min-h-0 flex flex-col gap-3 overflow-hidden">
       <div className="rounded-lg border border-border bg-surface p-3">
         <div className="mb-3 flex items-center justify-between">
           <div>
@@ -757,97 +825,123 @@ export function TradingAccountsPanel() {
       {error ? (
         <div className="rounded-lg border border-red/40 bg-red/10 px-3 py-2 text-sm text-red">{error}</div>
       ) : null}
+      {healthMessage ? (
+        <div className="rounded-lg border border-border bg-surface px-3 py-2 text-sm text-muted">{healthMessage}</div>
+      ) : null}
 
-      <div className="grid gap-3">
+      <div className="min-h-0 flex-1 overflow-y-auto pr-1 grid content-start gap-3">
         {loading ? (
           <div className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">Loading trading accounts…</div>
         ) : null}
         {!loading && accounts.length === 0 ? (
           <div className="rounded-lg border border-border bg-surface p-4 text-sm text-muted">No accounts yet.</div>
         ) : null}
-        {accounts.map(account => {
-          const expanded = expandedId === account.id;
-          const isEditingAccount = editingAccountId === account.id;
-          return (
-            <div key={account.id} className="rounded-lg border border-border bg-surface">
-              <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
-                <div>
-                  <div className="text-base font-semibold text-text">{providerLabel(account.provider)}</div>
-                  <div className="text-xs text-muted">
-                    account #{account.id} • created {formatDate(account.created_at)}
-                  </div>
-                </div>
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
-                    {account.totp_secrets.length} TOTP
-                  </span>
-                  <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
-                    {account.passkey_credentials.length} Passkeys
-                  </span>
-                  <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
-                    {account.seeds.length} Seeds
-                  </span>
-                  <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
-                    {account.api_keys.length} API Keys
-                  </span>
-                  <button type="button" className={buttonCls} onClick={() => setExpandedId(expanded ? null : account.id)}>
-                    {expanded ? 'Collapse' : 'Expand'}
-                  </button>
-                </div>
+        {groupedAccounts.map(group => (
+          <div key={group.category} className="grid gap-3">
+            <div className="flex items-center gap-3 py-1">
+              <div className="h-px flex-1 bg-border" />
+              <div className="text-[0.65rem] font-semibold uppercase tracking-widest text-muted">
+                {group.category}
               </div>
-              {expanded ? (
-                <div className="border-t border-border px-4 py-4">
-                  <div className="mb-4 rounded-lg border border-border bg-bg p-3">
-                    <div className="mb-3 flex items-center justify-between">
-                      <h4 className="text-sm font-semibold text-text">Account</h4>
-                      <div className="flex gap-2">
-                        {!isEditingAccount ? (
-                          <button type="button" className={buttonCls} onClick={() => startAccountEdit(account)}>
-                            Edit Account
-                          </button>
-                        ) : null}
-                        <button
-                          type="button"
-                          className={dangerButtonCls}
-                          onClick={() => withReload(async () => { await deleteAccount(account.id); })}
-                        >
-                          Delete Account
-                        </button>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+            {group.accounts.map(account => {
+              const expanded = expandedId === account.id;
+              const isEditingAccount = editingAccountId === account.id;
+              return (
+                <div key={account.id} className="rounded-lg border border-border bg-surface">
+                  <div className="flex flex-wrap items-center justify-between gap-3 px-4 py-3">
+                    <div>
+                      <div className="text-base font-semibold text-text">{providerLabel(account.provider)}</div>
+                      <div className="text-xs text-muted">
+                        account #{account.id} • created {formatDate(account.created_at)}
                       </div>
                     </div>
-                    {isEditingAccount ? (
-                      <AccountEditor
-                        value={editingAccount}
-                        onChange={setEditingAccount}
-                        submitLabel="Save Account"
-                        onSubmit={() =>
-                          withReload(async () => {
-                            await updateAccount(account.id, editingAccount);
-                            setEditingAccountId(null);
-                          })
-                        }
-                      />
-                    ) : (
-                      <div className="grid gap-2 text-sm text-muted md:grid-cols-4">
-                        <div><span className="text-text">Provider:</span> {providerLabel(account.provider)}</div>
-                        <div><span className="text-text">Email:</span> {account.email || '—'}</div>
-                        <div><span className="text-text">Password:</span> {account.password ? '••••••••' : '—'}</div>
-                        <div><span className="text-text">Phone:</span> {account.phone || '—'}</div>
+                    <div className="flex flex-wrap items-center gap-2">
+                      <HealthBadge account={account} />
+                      <button
+                        type="button"
+                        className={buttonCls}
+                        disabled={!!checkingHealthByAccount[account.id]}
+                        onClick={() => void triggerHealthCheck(account)}
+                      >
+                        {checkingHealthByAccount[account.id] ? 'Checking…' : 'Check Health'}
+                      </button>
+                      <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
+                        {account.totp_secrets.length} TOTP
+                      </span>
+                      <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
+                        {account.passkey_credentials.length} Passkeys
+                      </span>
+                      <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
+                        {account.seeds.length} Seeds
+                      </span>
+                      <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
+                        {account.api_keys.length} API Keys
+                      </span>
+                      <button type="button" className={buttonCls} onClick={() => setExpandedId(expanded ? null : account.id)}>
+                        {expanded ? 'Collapse' : 'Expand'}
+                      </button>
+                    </div>
+                  </div>
+                  {expanded ? (
+                    <div className="border-t border-border px-4 py-4">
+                      <div className="mb-4 rounded-lg border border-border bg-bg p-3">
+                        <div className="mb-3 flex items-center justify-between">
+                          <h4 className="text-sm font-semibold text-text">Account</h4>
+                          <div className="flex gap-2">
+                            {!isEditingAccount ? (
+                              <button type="button" className={buttonCls} onClick={() => startAccountEdit(account)}>
+                                Edit Account
+                              </button>
+                            ) : null}
+                            <button
+                              type="button"
+                              className={dangerButtonCls}
+                              onClick={() => withReload(async () => { await deleteAccount(account.id); })}
+                            >
+                              Delete Account
+                            </button>
+                          </div>
+                        </div>
+                        {isEditingAccount ? (
+                          <AccountEditor
+                            value={editingAccount}
+                            onChange={setEditingAccount}
+                            submitLabel="Save Account"
+                            onSubmit={() =>
+                              withReload(async () => {
+                                await updateAccount(account.id, editingAccount);
+                                setEditingAccountId(null);
+                              })
+                            }
+                          />
+                        ) : (
+                          <div className="grid gap-2 text-sm text-muted md:grid-cols-4">
+                            <div><span className="text-text">Provider:</span> {providerLabel(account.provider)}</div>
+                            <div><span className="text-text">Category:</span> {account.category}</div>
+                            <div><span className="text-text">Health:</span> <span className={account.is_healthy ? 'text-green' : 'text-red'}>{account.is_healthy ? 'Healthy' : 'Unhealthy'}</span></div>
+                            <div><span className="text-text">Last check:</span> {formatDate(account.last_health_check)}</div>
+                            <div><span className="text-text">Email:</span> {account.email || '—'}</div>
+                            <div><span className="text-text">Password:</span> {account.password ? '••••••••' : '—'}</div>
+                            <div><span className="text-text">Phone:</span> {account.phone || '—'}</div>
+                          </div>
+                        )}
                       </div>
-                    )}
-                  </div>
 
-                  <div className="grid gap-4 xl:grid-cols-2">
-                    {renderTOTPSection(account)}
-                    {renderPasskeysSection(account)}
-                    {renderSeedsSection(account)}
-                    {renderAPIKeysSection(account)}
-                  </div>
+                      <div className="grid gap-4 xl:grid-cols-2">
+                        {renderTOTPSection(account)}
+                        {renderPasskeysSection(account)}
+                        {renderSeedsSection(account)}
+                        {renderAPIKeysSection(account)}
+                      </div>
+                    </div>
+                  ) : null}
                 </div>
-              ) : null}
-            </div>
-          );
-        })}
+              );
+            })}
+          </div>
+        ))}
       </div>
     </div>
   );

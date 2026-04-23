@@ -1,5 +1,6 @@
 import type {
   TradingAccount,
+  TradingAccountHealthCheckResult,
   TradingAPIKey,
   TradingPasskey,
   TradingSeed,
@@ -42,6 +43,12 @@ export function updateAccount(id: number, payload: { provider: string; email: st
 
 export function deleteAccount(id: number) {
   return request<{ ok: boolean }>(`/api/trading/accounts/${id}`, { method: 'DELETE' });
+}
+
+export function runAccountHealthCheck(id: number) {
+  return request<TradingAccountHealthCheckResult>(`/api/trading/accounts/${id}/health_check`, {
+    method: 'POST',
+  });
 }
 
 export function createTOTPSecret(accountId: number, payload: { secret: string; is_active: boolean }) {

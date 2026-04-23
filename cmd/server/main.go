@@ -425,6 +425,7 @@ func main() {
 	mux.HandleFunc("POST /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("PUT /api/trading/accounts/{id}", handleTradingAccountByID)
 	mux.HandleFunc("DELETE /api/trading/accounts/{id}", handleTradingAccountByID)
+	mux.HandleFunc("POST /api/trading/accounts/{id}/health_check", handleTradingAccountHealthCheck)
 	mux.HandleFunc("POST /api/trading/accounts/{id}/totp_secrets", handleTradingAccountTOTPSecrets)
 	mux.HandleFunc("POST /api/trading/accounts/{id}/passkey_credentials", handleTradingAccountPasskeys)
 	mux.HandleFunc("POST /api/trading/accounts/{id}/seeds", handleTradingAccountSeeds)
@@ -2141,9 +2142,12 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 type tradingAccount struct {
 	ID                 int64               `json:"id"`
 	Provider           string              `json:"provider"`
+	Category           string              `json:"category"`
 	Email              *string             `json:"email"`
 	Password           *string             `json:"password"`
 	Phone              *string             `json:"phone"`
+	IsHealthy          bool                `json:"is_healthy"`
+	LastHealthCheck    *string             `json:"last_health_check"`
 	CreatedAt          string              `json:"created_at"`
 	UpdatedAt          string              `json:"updated_at"`
 	TOTPSecrets        []tradingTOTPSecret `json:"totp_secrets"`
@@ -2573,9 +2577,24 @@ func handleTradingAPIKeyByID(w http.ResponseWriter, r *http.Request) {
 
 func loadTradingAccounts(ctx context.Context) ([]tradingAccount, error) {
 	rows, err := db.QueryContext(ctx, `
-		SELECT id, provider, email, password, phone, created_at, updated_at
+		SELECT id,
+		       provider,
+		       CASE
+		           WHEN lower(provider) IN ('wise', 'paypal', 'revolut', 'n26') THEN 'Fiat Transmitter'
+		           WHEN lower(provider) IN ('robosats', 'bisq', 'hodlhodl') THEN 'DEX'
+		           WHEN lower(provider) IN ('kraken', 'coinbase', 'bitstamp', 'binance', 'bybit', 'kucoin', 'huobi') THEN 'CEX'
+		           WHEN lower(provider) IN ('lnd', 'lnd wallet', 'lnd_wallet') THEN 'Internal Infrastructure'
+		           ELSE 'Uncategorized'
+		       END AS category,
+		       email,
+		       password,
+		       phone,
+		       is_healthy,
+		       last_health_check,
+		       created_at,
+		       updated_at
 		FROM accounts
-		ORDER BY provider, id
+		ORDER BY category, provider, id
 	`)
 	if err != nil {
 		return nil, err
@@ -2584,17 +2603,19 @@ func loadTradingAccounts(ctx context.Context) ([]tradingAccount, error) {
 
 	accounts := make([]tradingAccount, 0)
 	accountIDs := make([]int64, 0)
-	accountMap := make(map[int64]*tradingAccount)
+	accountIndex := make(map[int64]int)
 	for rows.Next() {
 		var account tradingAccount
 		var email, password, phone sql.NullString
+		var lastHealthCheck sql.NullTime
 		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&account.ID, &account.Provider, &email, &password, &phone, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&account.ID, &account.Provider, &account.Category, &email, &password, &phone, &account.IsHealthy, &lastHealthCheck, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		account.Email = nullStringPtr(email)
 		account.Password = nullStringPtr(password)
 		account.Phone = nullStringPtr(phone)
+		account.LastHealthCheck = nullTimePtr(lastHealthCheck)
 		account.CreatedAt = formatTime(createdAt)
 		account.UpdatedAt = formatTime(updatedAt)
 		account.TOTPSecrets = []tradingTOTPSecret{}
@@ -2603,7 +2624,7 @@ func loadTradingAccounts(ctx context.Context) ([]tradingAccount, error) {
 		account.APIKeys = []tradingAPIKey{}
 		accounts = append(accounts, account)
 		accountIDs = append(accountIDs, account.ID)
-		accountMap[account.ID] = &accounts[len(accounts)-1]
+		accountIndex[account.ID] = len(accounts) - 1
 	}
 	if err := rows.Err(); err != nil {
 		return nil, err
@@ -2612,16 +2633,16 @@ func loadTradingAccounts(ctx context.Context) ([]tradingAccount, error) {
 		return accounts, nil
 	}
 
-	if err := appendTradingTOTPSecrets(ctx, accountMap, accountIDs); err != nil {
+	if err := appendTradingTOTPSecrets(ctx, accounts, accountIndex, accountIDs); err != nil {
 		return nil, err
 	}
-	if err := appendTradingPasskeys(ctx, accountMap, accountIDs); err != nil {
+	if err := appendTradingPasskeys(ctx, accounts, accountIndex, accountIDs); err != nil {
 		return nil, err
 	}
-	if err := appendTradingSeeds(ctx, accountMap, accountIDs); err != nil {
+	if err := appendTradingSeeds(ctx, accounts, accountIndex, accountIDs); err != nil {
 		return nil, err
 	}
-	if err := appendTradingAPIKeys(ctx, accountMap, accountIDs); err != nil {
+	if err := appendTradingAPIKeys(ctx, accounts, accountIndex, accountIDs); err != nil {
 		return nil, err
 	}
 
@@ -2641,7 +2662,7 @@ func loadTradingAccountByID(ctx context.Context, id int64) (*tradingAccount, err
 	return nil, sql.ErrNoRows
 }
 
-func appendTradingTOTPSecrets(ctx context.Context, accountMap map[int64]*tradingAccount, accountIDs []int64) error {
+func appendTradingTOTPSecrets(ctx context.Context, accounts []tradingAccount, accountIndex map[int64]int, accountIDs []int64) error {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, account_id, secret, is_active, created_at, rotated_at
 		FROM totp_secrets
@@ -2661,14 +2682,14 @@ func appendTradingTOTPSecrets(ctx context.Context, accountMap map[int64]*trading
 		}
 		item.CreatedAt = formatTime(createdAt)
 		item.RotatedAt = nullTimePtr(rotatedAt)
-		if account := accountMap[item.AccountID]; account != nil {
-			account.TOTPSecrets = append(account.TOTPSecrets, item)
+		if index, ok := accountIndex[item.AccountID]; ok {
+			accounts[index].TOTPSecrets = append(accounts[index].TOTPSecrets, item)
 		}
 	}
 	return rows.Err()
 }
 
-func appendTradingPasskeys(ctx context.Context, accountMap map[int64]*tradingAccount, accountIDs []int64) error {
+func appendTradingPasskeys(ctx context.Context, accounts []tradingAccount, accountIndex map[int64]int, accountIDs []int64) error {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, account_id, credential_id, rp_id, private_key_pkcs8, user_handle, sign_count, is_active, created_at, last_used_at
 		FROM passkey_credentials
@@ -2688,14 +2709,14 @@ func appendTradingPasskeys(ctx context.Context, accountMap map[int64]*tradingAcc
 		}
 		item.CreatedAt = formatTime(createdAt)
 		item.LastUsedAt = nullTimePtr(lastUsedAt)
-		if account := accountMap[item.AccountID]; account != nil {
-			account.PasskeyCredentials = append(account.PasskeyCredentials, item)
+		if index, ok := accountIndex[item.AccountID]; ok {
+			accounts[index].PasskeyCredentials = append(accounts[index].PasskeyCredentials, item)
 		}
 	}
 	return rows.Err()
 }
 
-func appendTradingSeeds(ctx context.Context, accountMap map[int64]*tradingAccount, accountIDs []int64) error {
+func appendTradingSeeds(ctx context.Context, accounts []tradingAccount, accountIndex map[int64]int, accountIDs []int64) error {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, account_id, seed_phrase, wallet_created_at, created_at
 		FROM seeds
@@ -2715,14 +2736,14 @@ func appendTradingSeeds(ctx context.Context, accountMap map[int64]*tradingAccoun
 		}
 		item.WalletCreatedAt = nullTimePtr(walletCreatedAt)
 		item.CreatedAt = formatTime(createdAt)
-		if account := accountMap[item.AccountID]; account != nil {
-			account.Seeds = append(account.Seeds, item)
+		if index, ok := accountIndex[item.AccountID]; ok {
+			accounts[index].Seeds = append(accounts[index].Seeds, item)
 		}
 	}
 	return rows.Err()
 }
 
-func appendTradingAPIKeys(ctx context.Context, accountMap map[int64]*tradingAccount, accountIDs []int64) error {
+func appendTradingAPIKeys(ctx context.Context, accounts []tradingAccount, accountIndex map[int64]int, accountIDs []int64) error {
 	rows, err := db.QueryContext(ctx, `
 		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, created_at, updated_at
 		FROM api_keys
@@ -2744,8 +2765,8 @@ func appendTradingAPIKeys(ctx context.Context, accountMap map[int64]*tradingAcco
 		item.Passphrase = nullStringPtr(passphrase)
 		item.CreatedAt = formatTime(createdAt)
 		item.UpdatedAt = formatTime(updatedAt)
-		if account := accountMap[item.AccountID]; account != nil {
-			account.APIKeys = append(account.APIKeys, item)
+		if index, ok := accountIndex[item.AccountID]; ok {
+			accounts[index].APIKeys = append(accounts[index].APIKeys, item)
 		}
 	}
 	return rows.Err()
@@ -2861,7 +2882,41 @@ func pathID(r *http.Request, name string) (int64, error) {
 }
 
 func normalizeProvider(value string) string {
-	return strings.ToLower(strings.TrimSpace(value))
+	trimmed := strings.TrimSpace(value)
+	switch strings.ToLower(trimmed) {
+	case "wise":
+		return "WISE"
+	case "paypal":
+		return "PayPal"
+	case "revolut":
+		return "Revolut"
+	case "n26":
+		return "N26"
+	case "robosats":
+		return "Robosats"
+	case "bisq":
+		return "Bisq"
+	case "hodlhodl":
+		return "HodlHodl"
+	case "kraken":
+		return "Kraken"
+	case "coinbase":
+		return "Coinbase"
+	case "bitstamp":
+		return "Bitstamp"
+	case "binance":
+		return "Binance"
+	case "bybit":
+		return "ByBit"
+	case "kucoin":
+		return "KuCoin"
+	case "huobi":
+		return "Huobi"
+	case "lnd", "lnd wallet", "lnd_wallet":
+		return "LND wallet"
+	default:
+		return trimmed
+	}
 }
 
 func nullStringPtr(value sql.NullString) *string {

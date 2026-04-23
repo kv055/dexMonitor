@@ -186,7 +186,11 @@ function InsightsView({ theme, pastOrderStats, pastOrderStatsAll, pastOrderStats
 }
 
 function TradingView() {
-  return <TradingAccountsPanel />;
+  return (
+    <div className="flex-1 min-h-0 overflow-hidden">
+      <TradingAccountsPanel />
+    </div>
+  );
 }
 
 export default function App() {
@@ -299,7 +303,7 @@ export default function App() {
   return (
     <TimezoneProvider timezone={preferredTimezone}>
       <FiltersProvider offers={allOffers} loading={loading} groups={groups} excludedMethods={excludedMethods}>
-      <div className="min-h-screen lg:h-screen lg:overflow-hidden flex flex-col bg-bg text-text p-2 sm:p-3 gap-2 sm:gap-3">
+      <div className="h-screen overflow-hidden flex flex-col bg-bg text-text p-2 sm:p-3 gap-2 sm:gap-3">
         <Header
           activeTab={activeTab}
           onTabChange={setActiveTab}

@@ -290,15 +290,26 @@ export interface TradingAPIKey {
 export interface TradingAccount {
   id: number;
   provider: string;
+  category: string;
   email: string | null;
   password: string | null;
   phone: string | null;
+  is_healthy: boolean;
+  last_health_check: string | null;
   created_at: string;
   updated_at: string;
   totp_secrets: TradingTOTPSecret[];
   passkey_credentials: TradingPasskey[];
   seeds: TradingSeed[];
   api_keys: TradingAPIKey[];
+}
+
+export interface TradingAccountHealthCheckResult {
+  account: TradingAccount;
+  status: 'healthy' | 'unhealthy' | 'not_implemented';
+  healthy: boolean | null;
+  message: string;
+  checked_at: string;
 }
 
 export interface PastOrderTimeframeStats {
