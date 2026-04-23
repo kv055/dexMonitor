@@ -68,6 +68,10 @@ function providerLabel(value: string) {
   return match?.label ?? value;
 }
 
+function isRobosatsProvider(value: string) {
+  return value.trim().toLowerCase() === 'robosats';
+}
+
 function providerOptionsForValue(value: string): ProviderOption[] {
   const trimmed = value.trim().toLowerCase();
   if (!trimmed || PROVIDER_OPTIONS.some(option => option.value.toLowerCase() === trimmed)) {
@@ -693,9 +697,14 @@ export function TradingAccountsPanel() {
 
   const renderAPIKeysSection = (account: TradingAccount) => {
     const draft = newAPIKeyByAccount[account.id] ?? { name: '', api_key: '', api_secret: '', passphrase: '', is_active: true };
+    const isRobosats = isRobosatsProvider(account.provider);
+    const sectionTitle = isRobosats ? 'Robot Token' : 'API Keys';
+    const newTitle = isRobosats ? 'New Robot Token' : 'New API Key';
+    const keyPlaceholder = isRobosats ? 'Robot token' : 'API key';
+    const createLabel = isRobosats ? 'Create Robot Token' : 'Create API Key';
     return (
       <div className="grid gap-3">
-        <h4 className="text-sm font-semibold text-text">API Keys</h4>
+        <h4 className="text-sm font-semibold text-text">{sectionTitle}</h4>
         <div className="grid gap-3">
           {account.api_keys.map(key => {
             const edit = editingAPIKeyById[key.id];
@@ -714,9 +723,13 @@ export function TradingAccountsPanel() {
                     <input type="checkbox" checked={form.is_active} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, is_active: e.target.checked } }))} disabled={!edit} />
                     Active
                   </label>
-                  <textarea className={`${textareaCls} md:col-span-2`} value={form.api_key} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, api_key: e.target.value } }))} placeholder="API key" disabled={!edit} />
-                  <textarea className={`${textareaCls} md:col-span-2`} value={form.api_secret} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, api_secret: e.target.value } }))} placeholder="API secret" disabled={!edit} />
-                  <input className={`${inputCls} md:col-span-2`} value={form.passphrase} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, passphrase: e.target.value } }))} placeholder="Passphrase" disabled={!edit} />
+                  <textarea className={`${textareaCls} md:col-span-2`} value={form.api_key} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, api_key: e.target.value } }))} placeholder={keyPlaceholder} disabled={!edit} />
+                  {!isRobosats ? (
+                    <>
+                      <textarea className={`${textareaCls} md:col-span-2`} value={form.api_secret} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, api_secret: e.target.value } }))} placeholder="API secret" disabled={!edit} />
+                      <input className={`${inputCls} md:col-span-2`} value={form.passphrase} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, passphrase: e.target.value } }))} placeholder="Passphrase" disabled={!edit} />
+                    </>
+                  ) : null}
                 </div>
                 <div className="mt-3 flex gap-2">
                   {edit ? (
@@ -729,8 +742,8 @@ export function TradingAccountsPanel() {
                             await updateAPIKey(key.id, {
                               name: form.name,
                               api_key: form.api_key,
-                              api_secret: form.api_secret || null,
-                              passphrase: form.passphrase || null,
+                              api_secret: isRobosats ? null : form.api_secret || null,
+                              passphrase: isRobosats ? null : form.passphrase || null,
                               is_active: form.is_active,
                             });
                             setEditingAPIKeyById(prev => {
@@ -759,16 +772,20 @@ export function TradingAccountsPanel() {
               </ResourceCard>
             );
           })}
-          <ResourceCard title="New API Key">
+          <ResourceCard title={newTitle}>
             <div className="grid gap-3 md:grid-cols-2">
               <input className={inputCls} value={draft.name} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, name: e.target.value } }))} placeholder="Name" />
               <label className="flex items-center gap-2 text-sm text-muted">
                 <input type="checkbox" checked={draft.is_active} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, is_active: e.target.checked } }))} />
                 Active
               </label>
-              <textarea className={`${textareaCls} md:col-span-2`} value={draft.api_key} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, api_key: e.target.value } }))} placeholder="API key" />
-              <textarea className={`${textareaCls} md:col-span-2`} value={draft.api_secret} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, api_secret: e.target.value } }))} placeholder="API secret" />
-              <input className={`${inputCls} md:col-span-2`} value={draft.passphrase} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, passphrase: e.target.value } }))} placeholder="Passphrase" />
+              <textarea className={`${textareaCls} md:col-span-2`} value={draft.api_key} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, api_key: e.target.value } }))} placeholder={keyPlaceholder} />
+              {!isRobosats ? (
+                <>
+                  <textarea className={`${textareaCls} md:col-span-2`} value={draft.api_secret} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, api_secret: e.target.value } }))} placeholder="API secret" />
+                  <input className={`${inputCls} md:col-span-2`} value={draft.passphrase} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, passphrase: e.target.value } }))} placeholder="Passphrase" />
+                </>
+              ) : null}
             </div>
             <div className="mt-3 flex justify-end">
               <button
@@ -779,15 +796,15 @@ export function TradingAccountsPanel() {
                     await createAPIKey(account.id, {
                       name: draft.name,
                       api_key: draft.api_key,
-                      api_secret: draft.api_secret || null,
-                      passphrase: draft.passphrase || null,
+                      api_secret: isRobosats ? null : draft.api_secret || null,
+                      passphrase: isRobosats ? null : draft.passphrase || null,
                       is_active: draft.is_active,
                     });
                     setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { name: '', api_key: '', api_secret: '', passphrase: '', is_active: true } }));
                   })
                 }
               >
-                Create API Key
+                {createLabel}
               </button>
             </div>
           </ResourceCard>
@@ -875,10 +892,10 @@ export function TradingAccountsPanel() {
                       </span>
                       <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
                         {account.seeds.length} Seeds
-                      </span>
-                      <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
-                        {account.api_keys.length} API Keys
-                      </span>
+                        </span>
+                        <span className="rounded-full border border-border px-2 py-1 text-xs text-muted">
+                        {account.api_keys.length} {isRobosatsProvider(account.provider) ? 'Robot Tokens' : 'API Keys'}
+                        </span>
                       <button type="button" className={buttonCls} onClick={() => setExpandedId(expanded ? null : account.id)}>
                         {expanded ? 'Collapse' : 'Expand'}
                       </button>

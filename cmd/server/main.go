@@ -2515,6 +2515,13 @@ func handleTradingAccountAPIKeys(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	if robosats, err := isRobosatsAccount(r.Context(), accountID); err != nil {
+		writeError(w, err)
+		return
+	} else if robosats {
+		payload.APISecret = nil
+		payload.Passphrase = nil
+	}
 	var id int64
 	if err := db.QueryRowContext(r.Context(), `
 		INSERT INTO api_keys (account_id, name, api_key, api_secret, passphrase, is_active)
@@ -2544,6 +2551,13 @@ func handleTradingAPIKeyByID(w http.ResponseWriter, r *http.Request) {
 		if err := decodeJSON(r, &payload); err != nil {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
+		}
+		if robosats, err := isRobosatsAPIKey(r.Context(), id); err != nil {
+			writeError(w, err)
+			return
+		} else if robosats {
+			payload.APISecret = nil
+			payload.Passphrase = nil
 		}
 		if _, err := db.ExecContext(r.Context(), `
 			UPDATE api_keys
@@ -2794,6 +2808,27 @@ func updateTradingAccount(ctx context.Context, id int64, payload tradingAccountP
 		WHERE id = $1
 	`, id, normalizeProvider(payload.Provider), strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone))
 	return err
+}
+
+func isRobosatsAccount(ctx context.Context, accountID int64) (bool, error) {
+	var provider string
+	if err := db.QueryRowContext(ctx, `SELECT provider FROM accounts WHERE id = $1`, accountID).Scan(&provider); err != nil {
+		return false, err
+	}
+	return normalizeProvider(provider) == "Robosats", nil
+}
+
+func isRobosatsAPIKey(ctx context.Context, apiKeyID int64) (bool, error) {
+	var provider string
+	if err := db.QueryRowContext(ctx, `
+		SELECT accounts.provider
+		FROM api_keys
+		JOIN accounts ON accounts.id = api_keys.account_id
+		WHERE api_keys.id = $1
+	`, apiKeyID).Scan(&provider); err != nil {
+		return false, err
+	}
+	return normalizeProvider(provider) == "Robosats", nil
 }
 
 func loadTradingTOTPSecretByID(ctx context.Context, id int64) (*tradingTOTPSecret, error) {
