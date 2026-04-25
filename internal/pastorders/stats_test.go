@@ -44,13 +44,13 @@ func TestBuildStatsAggregatesTimeframesAndExcludesPaymentMethods(t *testing.T) {
 	assertStatFloat(t, sevenDay.BiggestOrderBTC, 0.3)
 }
 
-func TestBuildGeneralStatsMirrorsFrontendCalculations(t *testing.T) {
+func TestBuildGeneralStatsOverviewMirrorsFrontendCounts(t *testing.T) {
 	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
 	premium3 := 3.0
 	premium2 := 2.0
 	premium5 := 5.0
 
-	stats := BuildGeneralStats([]Offer{
+	stats := BuildGeneralStatsOverview([]Offer{
 		{
 			Exchange: "bisq", Direction: "sell", PaymentMethod: "SEPA",
 			PriceDiffPercent: &premium3, FirstSeen: now.Add(-3 * time.Hour), LastSeen: now,
@@ -87,6 +87,32 @@ func TestBuildGeneralStatsMirrorsFrontendCalculations(t *testing.T) {
 	if stats.OffersByExchange[1].Name != "robosats" || stats.OffersByExchange[1].Count != 1 {
 		t.Fatalf("second offers_by_exchange = %#v, want robosats=1", stats.OffersByExchange[1])
 	}
+	if len(stats.PaymentMethodCounts) != 2 {
+		t.Fatalf("payment method count len = %d, want 2", len(stats.PaymentMethodCounts))
+	}
+}
+
+func TestBuildGeneralStatsPremiumSummaryMirrorsLegacyFields(t *testing.T) {
+	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
+	premium3 := 3.0
+	premium2 := 2.0
+	premium5 := 5.0
+
+	stats := BuildGeneralStatsPremiumSummary([]Offer{
+		{
+			Exchange: "bisq", Direction: "sell", PaymentMethod: "SEPA",
+			PriceDiffPercent: &premium3, FirstSeen: now.Add(-3 * time.Hour), LastSeen: now,
+		},
+		{
+			Exchange: "bisq", Direction: "buy", PaymentMethod: "Wise",
+			PriceDiffPercent: &premium2, FirstSeen: now.Add(-5 * time.Hour), LastSeen: now.Add(-2 * time.Hour),
+		},
+		{
+			Exchange: "robosats", Direction: "sell", PaymentMethod: "Revolut",
+			PriceDiffPercent: &premium5, FirstSeen: now.Add(-30 * time.Minute), LastSeen: now,
+		},
+	}, now, 48, []string{"Wise"})
+
 	if stats.BestAskPremiumPct == nil {
 		t.Fatal("best ask premium is nil")
 	}
@@ -95,64 +121,34 @@ func TestBuildGeneralStatsMirrorsFrontendCalculations(t *testing.T) {
 		t.Fatal("avg ask premium is nil")
 	}
 	assertStatFloat(t, *stats.AvgAskPremiumPct, 4.0)
-	if stats.AvgOfferLifetimeMs == nil {
-		t.Fatal("avg lifetime is nil")
-	}
-	if *stats.AvgOfferLifetimeMs != int64(2*time.Hour/time.Millisecond) {
-		t.Fatalf("avg lifetime ms = %d, want %d", *stats.AvgOfferLifetimeMs, int64(2*time.Hour/time.Millisecond))
+	if stats.BestBidPremiumPct != nil || stats.AvgBidPremiumPct != nil {
+		t.Fatalf("bid premium summary = %#v/%#v, want nil", stats.BestBidPremiumPct, stats.AvgBidPremiumPct)
 	}
 }
 
-func TestBuildGeneralStatsIncludesPastPremiumsByFixedTimeframe(t *testing.T) {
+func TestBuildGeneralStatsDoesNotOwnPremiumSections(t *testing.T) {
 	now := time.Date(2026, 4, 7, 12, 0, 0, 0, time.UTC)
 	bisq6h := 3.0
-	bisq24h := 5.0
-	robo24h := 4.0
-	robo7d := 6.0
-	active := 7.0
 
 	stats := BuildGeneralStats([]Offer{
 		{
 			Exchange: "bisq", Direction: "buy", PaymentMethod: "SEPA", PriceDiffPercent: &bisq6h,
 			FirstSeen: now.Add(-5 * time.Hour), LastSeen: now.Add(-5 * time.Hour), IsLive: false,
 		},
-		{
-			Exchange: "bisq", Direction: "sell", PaymentMethod: "Wise", PriceDiffPercent: &bisq24h,
-			FirstSeen: now.Add(-20 * time.Hour), LastSeen: now.Add(-20 * time.Hour), IsLive: false,
-		},
-		{
-			Exchange: "robosats", Direction: "buy", PaymentMethod: "Revolut", PriceDiffPercent: &robo24h,
-			FirstSeen: now.Add(-10 * time.Hour), LastSeen: now.Add(-10 * time.Hour), IsLive: false,
-		},
-		{
-			Exchange: "robosats", Direction: "sell", PaymentMethod: "Revolut", PriceDiffPercent: &robo7d,
-			FirstSeen: now.Add(-5 * 24 * time.Hour), LastSeen: now.Add(-5 * 24 * time.Hour), IsLive: false,
-		},
-		{
-			Exchange: "bisq", Direction: "buy", PaymentMethod: "SEPA", PriceDiffPercent: &active,
-			FirstSeen: now.Add(-30 * time.Minute), LastSeen: now.Add(-30 * time.Minute), IsLive: true,
-		},
 	}, now, 24, nil)
 
-	sixHour := findPastPremiumTimeframe(t, stats.PastPremiums, "6h")
-	if len(sixHour.AvgPremiumByExchange) != 1 || sixHour.AvgPremiumByExchange[0].Name != "bisq" {
-		t.Fatalf("6h avg premium exchanges = %#v, want [bisq]", sixHour.AvgPremiumByExchange)
+	if len(stats.PastPremiums) != 0 {
+		t.Fatalf("past premiums len = %d, want 0", len(stats.PastPremiums))
 	}
-	assertStatFloat(t, sixHour.AvgPremiumByExchange[0].AvgPremiumPct, 3.0)
-
-	twentyFourHour := findPastPremiumTimeframe(t, stats.PastPremiums, "24h")
-	if len(twentyFourHour.AvgPremiumByExchange) != 2 {
-		t.Fatalf("24h avg premium exchanges len = %d, want 2", len(twentyFourHour.AvgPremiumByExchange))
+	if stats.OpenPremiums.Raw.AvgAskPremiumPct != nil || stats.OpenPremiums.Raw.AvgBidPremiumPct != nil {
+		t.Fatalf("open premiums = %#v, want empty", stats.OpenPremiums)
 	}
-	assertStatFloat(t, twentyFourHour.AvgPremiumByExchange[0].AvgPremiumPct, 4.0)
-	assertStatFloat(t, twentyFourHour.AvgPremiumByExchange[1].AvgPremiumPct, 4.0)
-
-	sevenDay := findPastPremiumTimeframe(t, stats.PastPremiums, "7d")
-	if len(sevenDay.AvgPremiumByExchange) != 2 {
-		t.Fatalf("7d avg premium exchanges len = %d, want 2", len(sevenDay.AvgPremiumByExchange))
+	if stats.PremiumLifetimes.Raw.AvgOfferLifetimeMs != nil || len(stats.PremiumLifetimes.Raw.AvgOfferLifetimeMsByExchange) != 0 {
+		t.Fatalf("premium lifetimes = %#v, want empty", stats.PremiumLifetimes)
 	}
-	assertStatFloat(t, sevenDay.AvgPremiumByExchange[0].AvgPremiumPct, 4.0)
-	assertStatFloat(t, sevenDay.AvgPremiumByExchange[1].AvgPremiumPct, 5.0)
+	if stats.AvgOfferLifetimeMs != nil || len(stats.AvgOfferLifetimeMsByExchange) != 0 {
+		t.Fatalf("legacy lifetime fields = %#v/%#v, want empty", stats.AvgOfferLifetimeMs, stats.AvgOfferLifetimeMsByExchange)
+	}
 }
 
 func findTimeframe(t *testing.T, timeframes []TimeframeStats, label string) TimeframeStats {
@@ -164,17 +160,6 @@ func findTimeframe(t *testing.T, timeframes []TimeframeStats, label string) Time
 	}
 	t.Fatalf("timeframe %q not found in %#v", label, timeframes)
 	return TimeframeStats{}
-}
-
-func findPastPremiumTimeframe(t *testing.T, timeframes []PastPremiumTimeframeStats, label string) PastPremiumTimeframeStats {
-	t.Helper()
-	for _, timeframe := range timeframes {
-		if timeframe.Timeframe == label {
-			return timeframe
-		}
-	}
-	t.Fatalf("past premium timeframe %q not found in %#v", label, timeframes)
-	return PastPremiumTimeframeStats{}
 }
 
 func assertStatFloat(t *testing.T, got, want float64) {

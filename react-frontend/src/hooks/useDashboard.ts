@@ -1,6 +1,18 @@
 import { useCallback, useReducer } from 'react';
 import { apiFetch } from '../utils/api';
-import type { Offer, Stats, OHLCData, PastOrderStats, GeneralStatsData, PastProfitableOrder, TakerOpportunityMode } from '../types';
+import type {
+  Offer,
+  Stats,
+  OHLCData,
+  PastOrderStats,
+  GeneralStatsData,
+  GeneralStatsOverviewData,
+  OpenPremiumStats,
+  PremiumLifetimeModes,
+  PastPremiumTimeframeStats,
+  PastProfitableOrder,
+  TakerOpportunityMode,
+} from '../types';
 
 function excludedPaymentQuery(excludedPaymentMethods: string[]): string {
   if (excludedPaymentMethods.length === 0) return '';
@@ -13,6 +25,26 @@ function tradeCostQuery(excludedCEXes: string[], feeTier: string, maxFiatLimit: 
   if (feeTier) q += `&fee_tier=${encodeURIComponent(feeTier)}`;
   if (maxFiatLimit != null && maxFiatLimit > 0) q += `&max_fiat_limit=${maxFiatLimit}`;
   return q;
+}
+
+function buildGeneralStatsData(
+  overview: GeneralStatsOverviewData,
+  openPremiums: OpenPremiumStats,
+  pastPremiums: PastPremiumTimeframeStats[],
+  premiumLifetimes: PremiumLifetimeModes,
+): GeneralStatsData {
+  return {
+    ...overview,
+    best_ask_premium_pct: null,
+    avg_ask_premium_pct: openPremiums.raw.avg_ask_premium_pct,
+    best_bid_premium_pct: null,
+    avg_bid_premium_pct: openPremiums.raw.avg_bid_premium_pct,
+    open_premiums: openPremiums,
+    premium_lifetimes: premiumLifetimes,
+    avg_offer_lifetime_ms: premiumLifetimes.raw.avg_offer_lifetime_ms,
+    avg_offer_lifetime_ms_by_exchange: premiumLifetimes.raw.avg_offer_lifetime_ms_by_exchange,
+    past_premiums: pastPremiums,
+  };
 }
 
 interface DashboardState {
@@ -133,7 +165,21 @@ export function useDashboard() {
 
     dispatch({ type: 'ANALYTICS_LOAD_START' });
     try {
-      const [posAll, posFiltered, posAllNetCapped, posFilteredNetCapped, profitableAll, profitableFiltered, profitableAllNetCapped, profitableFilteredNetCapped, gs] = await Promise.all([
+      const generalStatsBaseQuery = `hours=${hours}&cex=${cex}${excludedQuery}${tcQuery}`;
+      const [
+        posAll,
+        posFiltered,
+        posAllNetCapped,
+        posFilteredNetCapped,
+        profitableAll,
+        profitableFiltered,
+        profitableAllNetCapped,
+        profitableFilteredNetCapped,
+        generalStatsOverview,
+        openPremiums,
+        pastPremiums,
+        premiumLifetimes,
+      ] = await Promise.all([
         apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_full', false)),
         excludedQuery ? apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_full', true)) : Promise.resolve(null),
         apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_capped', false)),
@@ -142,8 +188,12 @@ export function useDashboard() {
         excludedQuery ? apiFetch<PastProfitableOrder[]>(takerQuery('/api/past_profitable_orders', 'net_full', true)) : Promise.resolve(null),
         apiFetch<PastProfitableOrder[]>(takerQuery('/api/past_profitable_orders', 'net_capped', false)),
         excludedQuery ? apiFetch<PastProfitableOrder[]>(takerQuery('/api/past_profitable_orders', 'net_capped', true)) : Promise.resolve(null),
-        apiFetch<GeneralStatsData>(`/api/general_stats?hours=${hours}&cex=${cex}${excludedQuery}${tcQuery}`),
+        apiFetch<GeneralStatsOverviewData>(`/api/general_stats/overview?${generalStatsBaseQuery}`),
+        apiFetch<OpenPremiumStats>(`/api/general_stats/open_premiums?${generalStatsBaseQuery}`),
+        apiFetch<PastPremiumTimeframeStats[]>(`/api/general_stats/past_premiums?${generalStatsBaseQuery}`),
+        apiFetch<PremiumLifetimeModes>(`/api/general_stats/lifetimes?${generalStatsBaseQuery}`),
       ]);
+      const generalStats = buildGeneralStatsData(generalStatsOverview, openPremiums, pastPremiums, premiumLifetimes);
       dispatch({
         type: 'ANALYTICS_LOAD_SUCCESS',
         payload: {
@@ -155,7 +205,7 @@ export function useDashboard() {
           pastProfitableOrders: profitableFiltered ?? profitableAll,
           pastProfitableOrdersAllNetCapped: profitableAllNetCapped,
           pastProfitableOrdersNetCapped: profitableFilteredNetCapped ?? profitableAllNetCapped,
-          generalStats: gs,
+          generalStats,
         },
       });
     } catch (e: unknown) {

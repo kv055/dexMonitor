@@ -248,7 +248,11 @@ func main() {
 	mux.HandleFunc("GET /api/past_offers/{id}/lifecycle", handlePastOfferLifecycle)
 	mux.HandleFunc("GET /api/past_order_stats", handlePastOrderStats)
 	mux.HandleFunc("GET /api/past_profitable_orders", handlePastProfitableOrders)
-	mux.HandleFunc("GET /api/general_stats", handleGeneralStats)
+	mux.HandleFunc("GET /api/general_stats/overview", handleGeneralStatsOverview)
+	mux.HandleFunc("GET /api/general_stats/open_premiums", handleGeneralStatsOpenPremiums)
+	mux.HandleFunc("GET /api/general_stats/past_premiums", handleGeneralStatsPastPremiums)
+	mux.HandleFunc("GET /api/general_stats/lifetimes", handleGeneralStatsLifetimes)
+	mux.HandleFunc("GET /api/general_stats/payment_methods", handleGeneralStatsPaymentMethods)
 	mux.HandleFunc("GET /api/live_offers", handleLiveOffersREST)
 	mux.HandleFunc("GET /ws/live_offers", handleLiveOffersWS)
 	mux.HandleFunc("GET /api/stats", handleStats)
@@ -595,7 +599,17 @@ func handlePastProfitableOrders(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, result)
 }
 
-func handleGeneralStats(w http.ResponseWriter, r *http.Request) {
+type generalStatsContext struct {
+	hours                  int
+	excludedPaymentMethods []string
+	sub                    liveSubscription
+	offers                 []map[string]any
+	generalOffers          []pastorders.Offer
+	closedOfferIDs         []int64
+	now                    time.Time
+}
+
+func loadGeneralStatsContext(r *http.Request) (generalStatsContext, error) {
 	hours := queryInt(r, "hours", 24)
 	historyHours := hours
 	if historyHours < 168 {
@@ -617,15 +631,13 @@ func handleGeneralStats(w http.ResponseWriter, r *http.Request) {
 		cutoff,
 	)
 	if err != nil {
-		writeError(w, err)
-		return
+		return generalStatsContext{}, err
 	}
 	defer rows.Close()
 
 	offers, err := scanOffers(rows)
 	if err != nil {
-		writeError(w, err)
-		return
+		return generalStatsContext{}, err
 	}
 
 	generalOffers := make([]pastorders.Offer, 0, len(offers))
@@ -653,14 +665,82 @@ func handleGeneralStats(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	lifecycleAgg := fetchPastOfferLifecycleAggregates(closedOfferIDs)
-	stats := pastorders.BuildGeneralStats(generalOffers, time.Now(), hours, excludedPaymentMethods)
-	stats.OpenPremiums = buildOpenPremiumStats(sub, excludedPaymentMethods)
-	stats.PastPremiums = buildPastPremiumStats(offers, lifecycleAgg, time.Now(), excludedPaymentMethods, queryMaxFiatLimitEUR(r), queryConfirmations(r), queryExcludedCEXes(r), queryFeeTier(r))
-	stats.PremiumLifetimes = buildPremiumLifetimeStats(offers, lifecycleAgg, time.Now(), excludedPaymentMethods, queryMaxFiatLimitEUR(r), queryConfirmations(r), queryExcludedCEXes(r), queryFeeTier(r))
-	stats.AvgOfferLifetimeMs = stats.PremiumLifetimes.Raw.AvgOfferLifetimeMs
-	stats.AvgOfferLifetimeMsByExchange = stats.PremiumLifetimes.Raw.AvgOfferLifetimeMsByExchange
-	writeJSON(w, stats)
+	return generalStatsContext{
+		hours:                  hours,
+		excludedPaymentMethods: excludedPaymentMethods,
+		sub:                    sub,
+		offers:                 offers,
+		generalOffers:          generalOffers,
+		closedOfferIDs:         closedOfferIDs,
+		now:                    time.Now(),
+	}, nil
+}
+
+func (ctx generalStatsContext) overview() pastorders.GeneralStatsOverview {
+	return pastorders.BuildGeneralStatsOverview(ctx.generalOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
+}
+
+func (ctx generalStatsContext) premiumSummary() pastorders.GeneralStatsPremiumSummary {
+	return pastorders.BuildGeneralStatsPremiumSummary(ctx.generalOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
+}
+
+func (ctx generalStatsContext) openPremiums() pastorders.OpenPremiumStats {
+	return buildOpenPremiumStats(ctx.sub, ctx.excludedPaymentMethods)
+}
+
+func (ctx generalStatsContext) pastPremiums(r *http.Request, lifecycleAgg map[int64]pastLifecycleAggregate) []pastorders.PastPremiumTimeframeStats {
+	return buildPastPremiumStats(ctx.offers, lifecycleAgg, ctx.now, ctx.excludedPaymentMethods, queryMaxFiatLimitEUR(r), queryConfirmations(r), queryExcludedCEXes(r), queryFeeTier(r))
+}
+
+func (ctx generalStatsContext) premiumLifetimes(r *http.Request, lifecycleAgg map[int64]pastLifecycleAggregate) pastorders.PremiumLifetimeModes {
+	return buildPremiumLifetimeStats(ctx.offers, lifecycleAgg, ctx.now, ctx.excludedPaymentMethods, queryMaxFiatLimitEUR(r), queryConfirmations(r), queryExcludedCEXes(r), queryFeeTier(r))
+}
+
+func handleGeneralStatsOverview(w http.ResponseWriter, r *http.Request) {
+	ctx, err := loadGeneralStatsContext(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, ctx.overview())
+}
+
+func handleGeneralStatsOpenPremiums(w http.ResponseWriter, r *http.Request) {
+	ctx, err := loadGeneralStatsContext(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, ctx.openPremiums())
+}
+
+func handleGeneralStatsPastPremiums(w http.ResponseWriter, r *http.Request) {
+	ctx, err := loadGeneralStatsContext(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	lifecycleAgg := fetchPastOfferLifecycleAggregates(ctx.closedOfferIDs)
+	writeJSON(w, ctx.pastPremiums(r, lifecycleAgg))
+}
+
+func handleGeneralStatsLifetimes(w http.ResponseWriter, r *http.Request) {
+	ctx, err := loadGeneralStatsContext(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	lifecycleAgg := fetchPastOfferLifecycleAggregates(ctx.closedOfferIDs)
+	writeJSON(w, ctx.premiumLifetimes(r, lifecycleAgg))
+}
+
+func handleGeneralStatsPaymentMethods(w http.ResponseWriter, r *http.Request) {
+	ctx, err := loadGeneralStatsContext(r)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, ctx.overview().PaymentMethodCounts)
 }
 
 func buildOpenPremiumStats(sub liveSubscription, excludedPaymentMethods []string) pastorders.OpenPremiumStats {

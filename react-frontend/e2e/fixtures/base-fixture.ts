@@ -7,7 +7,11 @@ import {
   MOCK_OHLC_DATA,
   MOCK_PAYMENT_METHOD_GROUPS,
   MOCK_PAST_ORDER_STATS,
-  MOCK_GENERAL_STATS,
+  MOCK_GENERAL_STATS_LIFETIMES,
+  MOCK_GENERAL_STATS_OPEN_PREMIUMS,
+  MOCK_GENERAL_STATS_OVERVIEW,
+  MOCK_GENERAL_STATS_PAST_PREMIUMS,
+  MOCK_GENERAL_STATS_PAYMENT_METHODS,
 } from './mock-data';
 
 type Fixtures = {
@@ -68,8 +72,20 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/past_profitable_orders*', route =>
       route.fulfill({ json: [] }),
     );
-    await page.route('**/api/general_stats*', route =>
-      route.fulfill({ json: MOCK_GENERAL_STATS }),
+    await page.route('**/api/general_stats/overview*', route =>
+      route.fulfill({ json: MOCK_GENERAL_STATS_OVERVIEW }),
+    );
+    await page.route('**/api/general_stats/open_premiums*', route =>
+      route.fulfill({ json: MOCK_GENERAL_STATS_OPEN_PREMIUMS }),
+    );
+    await page.route('**/api/general_stats/past_premiums*', route =>
+      route.fulfill({ json: MOCK_GENERAL_STATS_PAST_PREMIUMS }),
+    );
+    await page.route('**/api/general_stats/lifetimes*', route =>
+      route.fulfill({ json: MOCK_GENERAL_STATS_LIFETIMES }),
+    );
+    await page.route('**/api/general_stats/payment_methods*', route =>
+      route.fulfill({ json: MOCK_GENERAL_STATS_PAYMENT_METHODS }),
     );
 
     await use();

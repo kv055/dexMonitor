@@ -741,13 +741,13 @@ func TestSnapshotLogCompactAndDetail(t *testing.T) {
 	}
 }
 
-func TestGeneralStatsRESTRespectsExcludedPaymentMethods(t *testing.T) {
+func TestGeneralStatsOverviewRESTRespectsExcludedPaymentMethods(t *testing.T) {
 	withTempOrdersDB(t)
 
-	req := httptest.NewRequest(http.MethodGet, "/api/general_stats?hours=48&exclude_payment_methods=Revolut", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/general_stats/overview?hours=48&exclude_payment_methods=Revolut", nil)
 	rec := httptest.NewRecorder()
 
-	handleGeneralStats(rec, req)
+	handleGeneralStatsOverview(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
@@ -776,7 +776,7 @@ func TestGeneralStatsRESTRespectsExcludedPaymentMethods(t *testing.T) {
 	}
 }
 
-func TestGeneralStatsRESTIncludesPastPremiumsForFixedWindows(t *testing.T) {
+func TestGeneralStatsPastPremiumsRESTIncludesFixedWindows(t *testing.T) {
 	withTempOrdersDB(t)
 
 	if _, err := db.Exec(`
@@ -790,44 +790,37 @@ func TestGeneralStatsRESTIncludesPastPremiumsForFixedWindows(t *testing.T) {
 		t.Fatalf("insert extra offers: %v", err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/general_stats?hours=24", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/general_stats/past_premiums?hours=24", nil)
 	rec := httptest.NewRecorder()
 
-	handleGeneralStats(rec, req)
+	handleGeneralStatsPastPremiums(rec, req)
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
 
-	var stats struct {
-		TotalOffers  int `json:"total_offers"`
-		PastPremiums []struct {
-			Timeframe string `json:"timeframe"`
-			Modes     struct {
-				Raw []struct {
-					Name          string  `json:"name"`
-					AvgPremiumPct float64 `json:"avg_premium_pct"`
-				} `json:"raw"`
-				NetFull []struct {
-					Name          string  `json:"name"`
-					AvgPremiumPct float64 `json:"avg_premium_pct"`
-				} `json:"net_full"`
-				NetCapped []struct {
-					Name          string  `json:"name"`
-					AvgPremiumPct float64 `json:"avg_premium_pct"`
-				} `json:"net_capped"`
-			} `json:"modes"`
-		} `json:"past_premiums"`
+	var pastPremiums []struct {
+		Timeframe string `json:"timeframe"`
+		Modes     struct {
+			Raw []struct {
+				Name          string  `json:"name"`
+				AvgPremiumPct float64 `json:"avg_premium_pct"`
+			} `json:"raw"`
+			NetFull []struct {
+				Name          string  `json:"name"`
+				AvgPremiumPct float64 `json:"avg_premium_pct"`
+			} `json:"net_full"`
+			NetCapped []struct {
+				Name          string  `json:"name"`
+				AvgPremiumPct float64 `json:"avg_premium_pct"`
+			} `json:"net_capped"`
+		} `json:"modes"`
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
+	if err := json.Unmarshal(rec.Body.Bytes(), &pastPremiums); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
 
-	if stats.TotalOffers != 6 {
-		t.Fatalf("total offers = %d, want 6", stats.TotalOffers)
-	}
-
-	twentyFourHour := findPastPremiumFrame(t, stats.PastPremiums, "24h")
+	twentyFourHour := findPastPremiumFrame(t, pastPremiums, "24h")
 	if len(twentyFourHour.Modes.Raw) == 0 {
 		t.Fatal("24h raw past premiums unexpectedly empty")
 	}
@@ -841,7 +834,7 @@ func TestGeneralStatsRESTIncludesPastPremiumsForFixedWindows(t *testing.T) {
 		t.Fatalf("24h net capped robosats avg = %v, want > 0", got)
 	}
 
-	sevenDay := findPastPremiumFrame(t, stats.PastPremiums, "7d")
+	sevenDay := findPastPremiumFrame(t, pastPremiums, "7d")
 	if len(sevenDay.Modes.Raw) == 0 {
 		t.Fatal("7d raw past premiums unexpectedly empty")
 	}
@@ -853,6 +846,93 @@ func TestGeneralStatsRESTIncludesPastPremiumsForFixedWindows(t *testing.T) {
 	}
 	if got := findNamedPremiumValue(t, sevenDay.Modes.NetCapped, "robosats"); got <= 0 {
 		t.Fatalf("7d net capped robosats avg = %v, want > 0", got)
+	}
+}
+
+func TestGeneralStatsDedicatedRESTEndpoints(t *testing.T) {
+	withTempOrdersDB(t)
+
+	overviewReq := httptest.NewRequest(http.MethodGet, "/api/general_stats/overview?hours=48&exclude_payment_methods=Revolut", nil)
+	overviewRec := httptest.NewRecorder()
+	handleGeneralStatsOverview(overviewRec, overviewReq)
+	if overviewRec.Code != http.StatusOK {
+		t.Fatalf("overview status = %d, want %d; body=%s", overviewRec.Code, http.StatusOK, overviewRec.Body.String())
+	}
+	var overview struct {
+		TotalOffers         int `json:"total_offers"`
+		ActiveOffers        int `json:"active_offers"`
+		PaymentMethodCounts []struct {
+			Name  string `json:"name"`
+			Count int    `json:"count"`
+		} `json:"payment_method_counts"`
+	}
+	if err := json.Unmarshal(overviewRec.Body.Bytes(), &overview); err != nil {
+		t.Fatalf("decode overview response: %v", err)
+	}
+	if overview.TotalOffers != 2 || overview.ActiveOffers != 1 {
+		t.Fatalf("overview totals = %d/%d, want 2/1", overview.TotalOffers, overview.ActiveOffers)
+	}
+
+	methodsReq := httptest.NewRequest(http.MethodGet, "/api/general_stats/payment_methods?hours=48", nil)
+	methodsRec := httptest.NewRecorder()
+	handleGeneralStatsPaymentMethods(methodsRec, methodsReq)
+	if methodsRec.Code != http.StatusOK {
+		t.Fatalf("payment methods status = %d, want %d; body=%s", methodsRec.Code, http.StatusOK, methodsRec.Body.String())
+	}
+	var paymentMethods []struct {
+		Name  string `json:"name"`
+		Count int    `json:"count"`
+	}
+	if err := json.Unmarshal(methodsRec.Body.Bytes(), &paymentMethods); err != nil {
+		t.Fatalf("decode payment methods response: %v", err)
+	}
+	if len(paymentMethods) == 0 {
+		t.Fatal("payment methods response unexpectedly empty")
+	}
+
+	pastReq := httptest.NewRequest(http.MethodGet, "/api/general_stats/past_premiums?hours=24", nil)
+	pastRec := httptest.NewRecorder()
+	handleGeneralStatsPastPremiums(pastRec, pastReq)
+	if pastRec.Code != http.StatusOK {
+		t.Fatalf("past premiums status = %d, want %d; body=%s", pastRec.Code, http.StatusOK, pastRec.Body.String())
+	}
+	var pastPremiums []struct {
+		Timeframe string `json:"timeframe"`
+		Modes     struct {
+			Raw []struct {
+				Name          string  `json:"name"`
+				AvgPremiumPct float64 `json:"avg_premium_pct"`
+			} `json:"raw"`
+			NetFull []struct {
+				Name          string  `json:"name"`
+				AvgPremiumPct float64 `json:"avg_premium_pct"`
+			} `json:"net_full"`
+			NetCapped []struct {
+				Name          string  `json:"name"`
+				AvgPremiumPct float64 `json:"avg_premium_pct"`
+			} `json:"net_capped"`
+		} `json:"modes"`
+	}
+	if err := json.Unmarshal(pastRec.Body.Bytes(), &pastPremiums); err != nil {
+		t.Fatalf("decode past premiums response: %v", err)
+	}
+	twentyFourHour := findPastPremiumFrame(t, pastPremiums, "24h")
+	if len(twentyFourHour.Modes.Raw) == 0 || len(twentyFourHour.Modes.NetFull) == 0 || len(twentyFourHour.Modes.NetCapped) == 0 {
+		t.Fatalf("24h past premium modes unexpectedly empty: %#v", twentyFourHour.Modes)
+	}
+
+	lifetimesReq := httptest.NewRequest(http.MethodGet, "/api/general_stats/lifetimes?hours=24", nil)
+	lifetimesRec := httptest.NewRecorder()
+	handleGeneralStatsLifetimes(lifetimesRec, lifetimesReq)
+	if lifetimesRec.Code != http.StatusOK {
+		t.Fatalf("lifetimes status = %d, want %d; body=%s", lifetimesRec.Code, http.StatusOK, lifetimesRec.Body.String())
+	}
+	var lifetimes pastorders.PremiumLifetimeModes
+	if err := json.Unmarshal(lifetimesRec.Body.Bytes(), &lifetimes); err != nil {
+		t.Fatalf("decode lifetimes response: %v", err)
+	}
+	if lifetimes.Raw.AvgOfferLifetimeMs == nil {
+		t.Fatal("raw lifetime avg is nil")
 	}
 }
 
@@ -1019,46 +1099,28 @@ func TestGeneralStatsRESTIncludesOpenPremiumModesFromLiveEngine(t *testing.T) {
 		},
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/api/general_stats?hours=48&cex=kraken&max_fiat_limit=5", nil)
+	req := httptest.NewRequest(http.MethodGet, "/api/general_stats/open_premiums?hours=48&cex=kraken&max_fiat_limit=5", nil)
 	rec := httptest.NewRecorder()
-
-	handleGeneralStats(rec, req)
+	handleGeneralStatsOpenPremiums(rec, req)
 
 	if rec.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+		t.Fatalf("open premiums status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
-
-	var stats struct {
-		OpenPremiums struct {
-			Raw struct {
-				AvgAskPremiumPct *float64 `json:"avg_ask_premium_pct"`
-				AvgBidPremiumPct *float64 `json:"avg_bid_premium_pct"`
-			} `json:"raw"`
-			NetFull struct {
-				AvgAskPremiumPct *float64 `json:"avg_ask_premium_pct"`
-				AvgBidPremiumPct *float64 `json:"avg_bid_premium_pct"`
-			} `json:"net_full"`
-			NetCapped struct {
-				AvgAskPremiumPct *float64 `json:"avg_ask_premium_pct"`
-				AvgBidPremiumPct *float64 `json:"avg_bid_premium_pct"`
-			} `json:"net_capped"`
-		} `json:"open_premiums"`
+	var openPremiums pastorders.OpenPremiumStats
+	if err := json.Unmarshal(rec.Body.Bytes(), &openPremiums); err != nil {
+		t.Fatalf("decode open premiums response: %v", err)
 	}
-	if err := json.Unmarshal(rec.Body.Bytes(), &stats); err != nil {
-		t.Fatalf("decode response: %v", err)
+	if openPremiums.Raw.AvgBidPremiumPct == nil || *openPremiums.Raw.AvgBidPremiumPct != 2.5 {
+		t.Fatalf("raw bid avg = %#v, want 2.5", openPremiums.Raw.AvgBidPremiumPct)
 	}
-
-	if stats.OpenPremiums.Raw.AvgBidPremiumPct == nil || *stats.OpenPremiums.Raw.AvgBidPremiumPct != 2.5 {
-		t.Fatalf("raw bid avg = %#v, want 2.5", stats.OpenPremiums.Raw.AvgBidPremiumPct)
+	if openPremiums.Raw.AvgAskPremiumPct == nil || *openPremiums.Raw.AvgAskPremiumPct != 2.5 {
+		t.Fatalf("raw ask avg = %#v, want 2.5", openPremiums.Raw.AvgAskPremiumPct)
 	}
-	if stats.OpenPremiums.Raw.AvgAskPremiumPct == nil || *stats.OpenPremiums.Raw.AvgAskPremiumPct != 2.5 {
-		t.Fatalf("raw ask avg = %#v, want 2.5", stats.OpenPremiums.Raw.AvgAskPremiumPct)
+	if openPremiums.NetFull.AvgBidPremiumPct == nil || *openPremiums.NetFull.AvgBidPremiumPct != 1.9 {
+		t.Fatalf("net full bid avg = %#v, want 1.9", openPremiums.NetFull.AvgBidPremiumPct)
 	}
-	if stats.OpenPremiums.NetFull.AvgBidPremiumPct == nil || *stats.OpenPremiums.NetFull.AvgBidPremiumPct != 1.9 {
-		t.Fatalf("net full bid avg = %#v, want 1.9", stats.OpenPremiums.NetFull.AvgBidPremiumPct)
-	}
-	if stats.OpenPremiums.NetCapped.AvgBidPremiumPct == nil || *stats.OpenPremiums.NetCapped.AvgBidPremiumPct != 1.65 {
-		t.Fatalf("net capped bid avg = %#v, want 1.65", stats.OpenPremiums.NetCapped.AvgBidPremiumPct)
+	if openPremiums.NetCapped.AvgBidPremiumPct == nil || *openPremiums.NetCapped.AvgBidPremiumPct != 1.65 {
+		t.Fatalf("net capped bid avg = %#v, want 1.65", openPremiums.NetCapped.AvgBidPremiumPct)
 	}
 }
 

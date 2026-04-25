@@ -378,6 +378,36 @@ export interface PastPremiumTimeframeStats {
   };
 }
 
+export interface GeneralStatsOverviewData {
+  total_offers: number;
+  active_offers: number;
+  exchanges_live: number;
+  offers_by_exchange: NamedCount[];
+  payment_method_counts: NamedCount[];
+}
+
+export interface OpenPremiumModeStats {
+  avg_ask_premium_pct: number | null;
+  avg_bid_premium_pct: number | null;
+}
+
+export interface OpenPremiumStats {
+  raw: OpenPremiumModeStats;
+  net_full: OpenPremiumModeStats;
+  net_capped: OpenPremiumModeStats;
+}
+
+export interface PremiumLifetimeStats {
+  avg_offer_lifetime_ms: number | null;
+  avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[];
+}
+
+export interface PremiumLifetimeModes {
+  raw: PremiumLifetimeStats;
+  net_full: PremiumLifetimeStats;
+  net_capped: PremiumLifetimeStats;
+}
+
 export interface GeneralStatsData {
   total_offers: number;
   active_offers: number;
@@ -387,16 +417,8 @@ export interface GeneralStatsData {
   avg_ask_premium_pct: number | null;
   best_bid_premium_pct: number | null;
   avg_bid_premium_pct: number | null;
-  open_premiums?: {
-    raw: { avg_ask_premium_pct: number | null; avg_bid_premium_pct: number | null };
-    net_full: { avg_ask_premium_pct: number | null; avg_bid_premium_pct: number | null };
-    net_capped: { avg_ask_premium_pct: number | null; avg_bid_premium_pct: number | null };
-  };
-  premium_lifetimes?: {
-    raw: { avg_offer_lifetime_ms: number | null; avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[] };
-    net_full: { avg_offer_lifetime_ms: number | null; avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[] };
-    net_capped: { avg_offer_lifetime_ms: number | null; avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[] };
-  };
+  open_premiums?: OpenPremiumStats;
+  premium_lifetimes?: PremiumLifetimeModes;
   avg_offer_lifetime_ms: number | null;
   avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[];
   payment_method_counts: NamedCount[];

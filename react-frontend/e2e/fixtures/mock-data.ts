@@ -189,6 +189,47 @@ export const MOCK_GENERAL_STATS = {
   past_premiums: [],
 };
 
+export const MOCK_GENERAL_STATS_OVERVIEW = {
+  total_offers: MOCK_GENERAL_STATS.total_offers,
+  active_offers: MOCK_GENERAL_STATS.active_offers,
+  exchanges_live: MOCK_GENERAL_STATS.exchanges_live,
+  offers_by_exchange: MOCK_GENERAL_STATS.offers_by_exchange,
+  payment_method_counts: MOCK_GENERAL_STATS.payment_method_counts,
+};
+
+export const MOCK_GENERAL_STATS_OPEN_PREMIUMS = {
+  raw: {
+    avg_ask_premium_pct: MOCK_GENERAL_STATS.avg_ask_premium_pct,
+    avg_bid_premium_pct: MOCK_GENERAL_STATS.avg_bid_premium_pct,
+  },
+  net_full: {
+    avg_ask_premium_pct: MOCK_GENERAL_STATS.avg_ask_premium_pct,
+    avg_bid_premium_pct: MOCK_GENERAL_STATS.avg_bid_premium_pct,
+  },
+  net_capped: {
+    avg_ask_premium_pct: MOCK_GENERAL_STATS.avg_ask_premium_pct,
+    avg_bid_premium_pct: MOCK_GENERAL_STATS.avg_bid_premium_pct,
+  },
+};
+
+export const MOCK_GENERAL_STATS_LIFETIMES = {
+  raw: {
+    avg_offer_lifetime_ms: MOCK_GENERAL_STATS.avg_offer_lifetime_ms,
+    avg_offer_lifetime_ms_by_exchange: MOCK_GENERAL_STATS.avg_offer_lifetime_ms_by_exchange,
+  },
+  net_full: {
+    avg_offer_lifetime_ms: MOCK_GENERAL_STATS.avg_offer_lifetime_ms,
+    avg_offer_lifetime_ms_by_exchange: MOCK_GENERAL_STATS.avg_offer_lifetime_ms_by_exchange,
+  },
+  net_capped: {
+    avg_offer_lifetime_ms: MOCK_GENERAL_STATS.avg_offer_lifetime_ms,
+    avg_offer_lifetime_ms_by_exchange: MOCK_GENERAL_STATS.avg_offer_lifetime_ms_by_exchange,
+  },
+};
+
+export const MOCK_GENERAL_STATS_PAST_PREMIUMS = MOCK_GENERAL_STATS.past_premiums;
+export const MOCK_GENERAL_STATS_PAYMENT_METHODS = MOCK_GENERAL_STATS.payment_method_counts;
+
 // ── OHLC ──────────────────────────────────────────────────────────────────────
 
 function candle(hoursAgo: number, open: number, high: number, low: number, close: number) {
