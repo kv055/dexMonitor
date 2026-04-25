@@ -236,7 +236,7 @@ func (h *LiveHub) broadcastAll() {
 	}
 	h.subsMu.Unlock()
 
-	// Always include the default so seedHubFromDB works even before any subscriber
+	// Always include the default so the first snapshot builds a cached payload.
 	if len(configSet) == 0 {
 		configSet[liveSubscription{cex: defaultCEX}] = struct{}{}
 	}
