@@ -175,6 +175,43 @@ func assertFloat(t *testing.T, got, want float64) {
 
 func strPtr(v string) *string { return &v }
 
+func storedPastOfferFixture(direction string) map[string]any {
+	return map[string]any{
+		"id":                        int64(1),
+		"exchange":                  "bisq",
+		"direction":                 direction,
+		"price":                     105.0,
+		"btc_min":                   1.0,
+		"btc_max":                   1.0,
+		"payment_method":            "SEPA",
+		"offer_id":                  "stored-policy-test",
+		"first_seen":                "2026-04-01 12:00:00",
+		"last_seen":                 "2026-04-01 12:05:00",
+		"avg_ref_price":             100.0,
+		"avg_premium_pct":           5.0,
+		"avg_trade_cost_pct":        1.2,
+		"avg_trade_cost_btc":        0.012,
+		"cex_taker_fee_btc":         0.0025,
+		"cex_withdraw_fee_btc":      0.00015,
+		"network_fee_btc":           0.0001,
+		"dex_fee_btc":               0.001,
+		"hedge_open_fee_btc":        0.0001,
+		"hedge_close_fee_btc":       0.0001,
+		"hedge_funding_fee_btc":     0.0001,
+		"hedge_fee_sum_btc":         0.0003,
+		"hedge_venue":               "kraken_futures",
+		"hedge_instrument":          "PI_XBTUSD",
+		"hedge_transfer_minutes":    int64(30),
+		"avg_net_premium_pct":       3.8,
+		"avg_estimated_profit_btc":  0.038,
+		"avg_estimated_profit_fiat": 3.8,
+		"avg_btc_amount":            1.0,
+		"price_type":                "fixed",
+		"best_route_cex":            "kraken",
+		"best_route_method":         "onchain",
+	}
+}
+
 func TestTradeCostEstimatorCostPctUsesAllComponents(t *testing.T) {
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
 
@@ -555,6 +592,132 @@ func TestPastOffersRESTIncludesCappedAnalysisWhenRequested(t *testing.T) {
 	}
 	if !foundCapped {
 		t.Fatal("expected at least one past offer with capped_volume")
+	}
+}
+
+func TestPastOfferAnalysisUsesStoredUncappedCosts(t *testing.T) {
+	oldEstimators := tradeCostEstimators
+	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
+	tradeCostEstimators = map[string]*TradeCostEstimator{
+		"kraken": fixedCostEstimator("kraken", "bisq", 0.50, 0.50, 0.50, 0.50),
+	}
+
+	offer := storedPastOfferFixture("buy")
+	offer["best_route_cex"] = "coinbase"
+	offer["best_route_method"] = "lightning"
+	offer["avg_trade_cost_pct"] = 1.2345
+	offer["avg_trade_cost_btc"] = 0.0012345
+	offer["avg_net_premium_pct"] = 3.7655
+	offer["avg_estimated_profit_btc"] = 0.0037655
+	offer["network_fee_btc"] = 0.00001234
+
+	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 10_000)
+
+	full := got.Analysis.FullVolume
+	assertFloat(t, full.Premium.AvgTradeCostPercent, 1.2345)
+	assertFloat(t, full.Premium.AvgNetPercent, 3.7655)
+	assertFloat(t, full.Profit.AvgBTC, 0.0037655)
+	assertFloat(t, full.Costs.Total.AvgBTC, 0.0012345)
+	assertFloat(t, full.Costs.Network.BTC, 0.00001234)
+	if full.Route.CEX != "coinbase" || full.Route.Settlement != "lightning" {
+		t.Fatalf("route = %#v, want stored coinbase/lightning", full.Route)
+	}
+	if full.CostPolicy != "historical_persisted" {
+		t.Fatalf("cost policy = %q", full.CostPolicy)
+	}
+}
+
+func TestPastOfferCappedAnalysisKeepsStoredRouteAndFixedTransferCosts(t *testing.T) {
+	oldEstimators := tradeCostEstimators
+	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
+	est := fixedCostEstimator("kraken", "bisq", 0.01, 0.99, 0.002, 0.99)
+	est.hedgeCostOverride = func(btcAmount float64, refPriceEUR float64, transferMinutes float64) hedgeCostDetails {
+		return hedgeCostDetails{
+			feeBTC:          btcAmount * 0.006,
+			openFeeBTC:      btcAmount * 0.001,
+			closeFeeBTC:     btcAmount * 0.002,
+			fundingFeeBTC:   btcAmount * 0.003,
+			venue:           "kraken_futures",
+			instrument:      "PI_XBTUSD",
+			transferMinutes: transferMinutes,
+		}
+	}
+	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
+
+	offer := storedPastOfferFixture("buy")
+	offer["btc_max"] = 1.0
+	offer["avg_ref_price"] = 100.0
+	offer["network_fee_btc"] = 0.0003
+	offer["cex_withdraw_fee_btc"] = 0.0007
+	offer["hedge_transfer_minutes"] = int64(42)
+	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 5)
+	if got.Analysis.CappedVolume == nil {
+		t.Fatal("expected capped volume scenario")
+	}
+
+	capped := got.Analysis.CappedVolume
+	if capped.Route.CEX != "kraken" || capped.Route.Settlement != "onchain" {
+		t.Fatalf("capped route = %#v, want stored kraken/onchain", capped.Route)
+	}
+	assertFloat(t, capped.TradeSizeBTC, 0.05)
+	assertFloat(t, capped.Costs.Network.BTC, 0.0003)
+	assertFloat(t, capped.Costs.Withdrawal.BTC, 0.0007)
+	assertFloat(t, capped.Costs.CexTaker.BTC, 0.0005)
+	assertFloat(t, capped.Costs.DexFee.BTC, 0.0001)
+	assertFloat(t, capped.Costs.Hedge.OpenFeeBTC, 0.00005)
+	assertFloat(t, capped.Costs.Hedge.CloseFeeBTC, 0.0001)
+	assertFloat(t, capped.Costs.Hedge.FundingFeeBTC, 0.00015)
+	if capped.Costs.Hedge.TransferMinutes != 42 {
+		t.Fatalf("hedge transfer minutes = %d, want 42", capped.Costs.Hedge.TransferMinutes)
+	}
+	if capped.CostPolicy != "historical_route_fixed_transfer_recomputed_size_proportional" {
+		t.Fatalf("cost policy = %q", capped.CostPolicy)
+	}
+}
+
+func TestPastOfferCappedAskOmitsWithdrawalAndHedgeCosts(t *testing.T) {
+	oldEstimators := tradeCostEstimators
+	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
+	tradeCostEstimators = map[string]*TradeCostEstimator{
+		"kraken": fixedCostEstimatorWithHedge("kraken", "bisq", 0.01, 0.99, 0.002, 0.99, 0.25),
+	}
+
+	offer := storedPastOfferFixture("sell")
+	offer["btc_max"] = 1.0
+	offer["avg_ref_price"] = 100.0
+	offer["cex_withdraw_fee_btc"] = 0.0007
+	offer["network_fee_btc"] = 0.0003
+	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 5)
+	if got.Analysis.CappedVolume == nil {
+		t.Fatal("expected capped volume scenario")
+	}
+	capped := got.Analysis.CappedVolume
+	assertFloat(t, capped.Costs.Withdrawal.BTC, 0)
+	assertFloat(t, capped.Costs.Hedge.FeeSumBTC, 0)
+	assertFloat(t, capped.Costs.Network.BTC, 0.0003)
+}
+
+func TestPastCappedCostVariesBySizeThroughProportionalAndFixedComponents(t *testing.T) {
+	oldEstimators := tradeCostEstimators
+	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
+	tradeCostEstimators = map[string]*TradeCostEstimator{
+		"kraken": fixedCostEstimator("kraken", "bisq", 0.01, 0.99, 0.002, 0.99),
+	}
+
+	offer := storedPastOfferFixture("buy")
+	offer["network_fee_btc"] = 0.0003
+	offer["cex_withdraw_fee_btc"] = 0.0007
+	offer["hedge_fee_sum_btc"] = 0.0
+	offer["hedge_open_fee_btc"] = 0.0
+	offer["hedge_close_fee_btc"] = 0.0
+	offer["hedge_funding_fee_btc"] = 0.0
+	larger := buildCappedPastBreakdown(offer, 1, 0.10, 100, 5)
+	smaller := buildCappedPastBreakdown(offer, 1, 0.05, 100, 5)
+
+	assertFloat(t, larger.TotalCostBTC, 0.0022)
+	assertFloat(t, smaller.TotalCostBTC, 0.0016)
+	if smaller.TotalCostPct <= larger.TotalCostPct {
+		t.Fatalf("smaller cap total pct = %.4f, larger = %.4f; fixed costs should weigh more at smaller size", smaller.TotalCostPct, larger.TotalCostPct)
 	}
 }
 
@@ -1267,13 +1430,19 @@ func withTempOrdersDB(t *testing.T) {
 	}
 
 	if _, err := db.Exec(`
-		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, first_seen, last_seen, is_live)
+		INSERT INTO offers (
+			exchange, direction, price, btc_min, btc_max, payment_method, offer_id,
+			avg_ref_price, avg_premium_pct, avg_trade_cost_pct, avg_trade_cost_btc,
+			cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc, dex_fee_btc,
+			avg_net_premium_pct, avg_estimated_profit_btc, avg_estimated_profit_fiat,
+			best_route_cex, best_route_method, first_seen, last_seen, is_live
+		)
 		VALUES
-			('bisq', 'buy', 105, 0.1, 0.1, 'Revolut', 'premium-30m', 100, datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
-			('bisq', 'sell', 95, 0.2, 0.2, 'Wise', 'premium-5h', 100, datetime('now', '-7 hours'), datetime('now', '-5 hours'), 0),
-			('bisq', 'buy', 105, 0.3, 0.3, 'SEPA', 'premium-30h', 100, datetime('now', '-30 hours'), datetime('now', '-30 hours'), 0),
-			('bisq', 'sell', 95, 0.4, 0.4, 'Revolut', 'active-ask-30m', 100, datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
-			('bisq', 'buy', 105, 0.5, 0.5, 'SEPA', 'old-premium', 100, datetime('now', '-200 hours'), datetime('now', '-200 hours'), 0)
+			('bisq', 'buy', 105, 0.1, 0.1, 'Revolut', 'premium-30m', 100, 5, 1.00, 0.00100, 0.00025, 0.00015, 0.00010, 0.00010, 4.00, 0.00400, 0.40, 'kraken', 'onchain', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
+			('bisq', 'sell', 95, 0.2, 0.2, 'Wise', 'premium-5h', 100, 5, 0.37, 0.00074, 0.00050, NULL, 0.00004, 0.00020, 4.63, 0.00926, 0.93, 'kraken', 'onchain', datetime('now', '-7 hours'), datetime('now', '-5 hours'), 0),
+			('bisq', 'buy', 105, 0.3, 0.3, 'SEPA', 'premium-30h', 100, 5, 1.00, 0.00300, 0.00075, 0.00015, 0.00010, 0.00030, 4.00, 0.01200, 1.20, 'kraken', 'onchain', datetime('now', '-30 hours'), datetime('now', '-30 hours'), 0),
+			('bisq', 'sell', 95, 0.4, 0.4, 'Revolut', 'active-ask-30m', 100, 5, 0.26, 0.00104, 0.00100, NULL, 0.00004, 0.00040, 4.74, 0.01896, 1.90, 'kraken', 'onchain', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
+			('bisq', 'buy', 105, 0.5, 0.5, 'SEPA', 'old-premium', 100, 5, 1.00, 0.00500, 0.00125, 0.00015, 0.00010, 0.00050, 4.00, 0.02000, 2.00, 'kraken', 'onchain', datetime('now', '-200 hours'), datetime('now', '-200 hours'), 0)
 	`); err != nil {
 		t.Fatalf("insert offers: %v", err)
 	}

@@ -305,6 +305,7 @@ func BuildGeneralStats(offers []Offer, now time.Time, hours int, excludedPayment
 	}
 }
 
+// TODO: write comments and document this function in a new readme file
 func buildPastPremiumTimeframes(offers []Offer, now time.Time) []PastPremiumTimeframeStats {
 	stats := make([]PastPremiumTimeframeStats, 0, len(PastPremiumTimeframes))
 	for _, tf := range PastPremiumTimeframes {
@@ -341,6 +342,7 @@ func buildPastPremiumTimeframes(offers []Offer, now time.Time) []PastPremiumTime
 	return stats
 }
 
+// TODO: write comments and document this function in a new readme file
 func buildTimeframeStats(orders []PremiumOrder, now time.Time, tf Timeframe, excluded map[string]struct{}) TimeframeStats {
 	cutoff := now.Add(-time.Duration(tf.Hours) * time.Hour)
 
