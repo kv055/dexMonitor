@@ -1,12 +1,9 @@
 package main
 
 import (
-	"encoding/json"
-	"errors"
-	"fmt"
 	"net/http"
-	"net/url"
-	"time"
+
+	"dexmonitor/internal/accounthealth"
 )
 
 type tradingAccountHealthCheckResult struct {
@@ -15,14 +12,6 @@ type tradingAccountHealthCheckResult struct {
 	Healthy   *bool           `json:"healthy"`
 	Message   string          `json:"message"`
 	CheckedAt string          `json:"checked_at"`
-}
-
-type mmAccountHealthResponse struct {
-	Provider  string `json:"provider"`
-	Status    string `json:"status"`
-	Healthy   bool   `json:"healthy"`
-	Message   string `json:"message"`
-	CheckedAt string `json:"checked_at"`
 }
 
 func handleTradingAccountHealthCheck(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +32,7 @@ func handleTradingAccountHealthCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, status, err := requestMMControllerAccountHealth(r, account.Provider)
+	result, status, err := accounthealth.NewService(mmControllerAPIURL).Check(r.Context(), account.Provider)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return
@@ -63,42 +52,4 @@ func handleTradingAccountHealthCheck(w http.ResponseWriter, r *http.Request) {
 		Message:   result.Message,
 		CheckedAt: result.CheckedAt,
 	})
-}
-
-func requestMMControllerAccountHealth(r *http.Request, provider string) (*mmAccountHealthResponse, int, error) {
-	baseURL, err := url.Parse(mmControllerAPIURL)
-	if err != nil {
-		return nil, http.StatusInternalServerError, fmt.Errorf("mm controller api url is invalid")
-	}
-	targetURL, err := baseURL.Parse("/api/accounts/health_check")
-	if err != nil {
-		return nil, http.StatusInternalServerError, fmt.Errorf("failed to build mm controller health request")
-	}
-	q := targetURL.Query()
-	q.Set("provider", provider)
-	targetURL.RawQuery = q.Encode()
-
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, targetURL.String(), nil)
-	if err != nil {
-		return nil, http.StatusInternalServerError, fmt.Errorf("failed to create mm controller health request")
-	}
-	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
-	if err != nil {
-		return nil, http.StatusBadGateway, fmt.Errorf("mm controller health request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		var body map[string]string
-		if err := json.NewDecoder(resp.Body).Decode(&body); err == nil && body["error"] != "" {
-			return nil, resp.StatusCode, errors.New(body["error"])
-		}
-		return nil, resp.StatusCode, fmt.Errorf("mm controller health request returned HTTP %d", resp.StatusCode)
-	}
-
-	var result mmAccountHealthResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, http.StatusBadGateway, fmt.Errorf("decode mm controller health response: %w", err)
-	}
-	return &result, http.StatusOK, nil
 }

@@ -9,6 +9,8 @@ import (
 	"sync"
 	"time"
 
+	"commons/tradecost"
+
 	"github.com/gorilla/websocket"
 )
 
@@ -42,34 +44,34 @@ type LifecyclePoint struct {
 
 // liveOutOffer is the shape sent to clients — includes computed premium fields.
 type liveOutOffer struct {
-	ID                        int64            `json:"id"`
-	Exchange                  string           `json:"exchange"`
-	Direction                 string           `json:"direction"`
-	Price                     float64          `json:"price"`
-	RawPremiumPct             float64          `json:"raw_premium_percent"` // explicit alias for PriceDiffPct
-	PriceDiffPct              float64          `json:"price_diff_percent"`
-	RefPrice                  float64          `json:"ref_price"`
-	TradeCostPct              float64          `json:"trade_cost_percent"`              // estimated CEX→DEX arbitrage cost as % of trade value
-	NetPremiumPct             float64          `json:"net_premium_percent"`             // PriceDiffPct minus TradeCostPct
-	EstimatedProfitBTC        float64          `json:"estimated_profit_btc"`            // estimated BTC profit for the offer's full trade size
-	EstimatedProfitFiat       float64          `json:"estimated_profit_fiat"`           // estimated fiat profit for the offer's full trade size
-	CostBreakdown             CostBreakdown    `json:"cost_breakdown"`                  // per-component cost detail (full size)
-	CostBreakdownCapped       *CostBreakdown   `json:"cost_breakdown_capped,omitempty"` // capped to max fiat limit (only set when limit < offer size)
-	TradeCostPctCapped        *float64         `json:"trade_cost_percent_capped,omitempty"`
-	NetPremiumPctCapped       *float64         `json:"net_premium_percent_capped,omitempty"`
-	EstimatedProfitBTCCapped  *float64         `json:"estimated_profit_btc_capped,omitempty"`  // estimated BTC profit at the max fiat cap
-	EstimatedProfitFiatCapped *float64         `json:"estimated_profit_fiat_capped,omitempty"` // estimated fiat profit at the max fiat cap
-	BTCMin                    *float64         `json:"btc_min"`
-	BTCMax                    *float64         `json:"btc_max"`
-	FiatMin                   *int64           `json:"fiat_min"`
-	FiatMax                   *int64           `json:"fiat_max"`
-	PaymentMethod             *string          `json:"payment_method"`
-	OfferID                   *string          `json:"offer_id"`
-	FirstSeen                 string           `json:"first_seen"`
-	LastSeen                  string           `json:"last_seen"`
-	IsLive                    bool             `json:"is_live"`
-	PriceType                 *string          `json:"price_type"`
-	Lifecycle                 []LifecyclePoint `json:"lifecycle,omitempty"`
+	ID                        int64                    `json:"id"`
+	Exchange                  string                   `json:"exchange"`
+	Direction                 string                   `json:"direction"`
+	Price                     float64                  `json:"price"`
+	RawPremiumPct             float64                  `json:"raw_premium_percent"` // explicit alias for PriceDiffPct
+	PriceDiffPct              float64                  `json:"price_diff_percent"`
+	RefPrice                  float64                  `json:"ref_price"`
+	TradeCostPct              float64                  `json:"trade_cost_percent"`              // estimated CEX→DEX arbitrage cost as % of trade value
+	NetPremiumPct             float64                  `json:"net_premium_percent"`             // PriceDiffPct minus TradeCostPct
+	EstimatedProfitBTC        float64                  `json:"estimated_profit_btc"`            // estimated BTC profit for the offer's full trade size
+	EstimatedProfitFiat       float64                  `json:"estimated_profit_fiat"`           // estimated fiat profit for the offer's full trade size
+	CostBreakdown             tradecost.CostBreakdown  `json:"cost_breakdown"`                  // per-component cost detail (full size)
+	CostBreakdownCapped       *tradecost.CostBreakdown `json:"cost_breakdown_capped,omitempty"` // capped to max fiat limit (only set when limit < offer size)
+	TradeCostPctCapped        *float64                 `json:"trade_cost_percent_capped,omitempty"`
+	NetPremiumPctCapped       *float64                 `json:"net_premium_percent_capped,omitempty"`
+	EstimatedProfitBTCCapped  *float64                 `json:"estimated_profit_btc_capped,omitempty"`  // estimated BTC profit at the max fiat cap
+	EstimatedProfitFiatCapped *float64                 `json:"estimated_profit_fiat_capped,omitempty"` // estimated fiat profit at the max fiat cap
+	BTCMin                    *float64                 `json:"btc_min"`
+	BTCMax                    *float64                 `json:"btc_max"`
+	FiatMin                   *int64                   `json:"fiat_min"`
+	FiatMax                   *int64                   `json:"fiat_max"`
+	PaymentMethod             *string                  `json:"payment_method"`
+	OfferID                   *string                  `json:"offer_id"`
+	FirstSeen                 string                   `json:"first_seen"`
+	LastSeen                  string                   `json:"last_seen"`
+	IsLive                    bool                     `json:"is_live"`
+	PriceType                 *string                  `json:"price_type"`
+	Lifecycle                 []LifecyclePoint         `json:"lifecycle,omitempty"`
 }
 
 func computePriceDiffPct(offerPrice, refPrice float64) float64 {
@@ -94,26 +96,26 @@ func selectBTCTradeSize(btcMax, btcMin *float64) float64 {
 	if btcMin != nil && *btcMin > 0 {
 		return *btcMin
 	}
-	return defaultBTCTradeSize
+	return tradecost.DefaultBTCTradeSize()
 }
 
-func computeNetPremiumFields(premiumPct float64, btcSize float64, dexExchange string, direction string) (float64, float64, CostBreakdown) {
+func computeNetPremiumFields(premiumPct float64, btcSize float64, dexExchange string, direction string) (float64, float64, tradecost.CostBreakdown) {
 	return computeNetPremiumFieldsWithConfirmations(premiumPct, btcSize, dexExchange, direction, 0)
 }
 
-func computeNetPremiumFieldsWithConfirmations(premiumPct float64, btcSize float64, dexExchange string, direction string, requiredConfirmations int) (float64, float64, CostBreakdown) {
+func computeNetPremiumFieldsWithConfirmations(premiumPct float64, btcSize float64, dexExchange string, direction string, requiredConfirmations int) (float64, float64, tradecost.CostBreakdown) {
 	return computeNetPremiumFieldsFull(premiumPct, btcSize, 0, dexExchange, direction, requiredConfirmations, nil, "", true)
 }
 
-func computeNetPremiumFieldsFull(premiumPct float64, btcSize float64, refPriceEUR float64, dexExchange string, direction string, requiredConfirmations int, excludedCEXes []string, feeTier string, coupledHedge bool) (float64, float64, CostBreakdown) {
+func computeNetPremiumFieldsFull(premiumPct float64, btcSize float64, refPriceEUR float64, dexExchange string, direction string, requiredConfirmations int, excludedCEXes []string, feeTier string, coupledHedge bool) (float64, float64, tradecost.CostBreakdown) {
 	if tradeRouteOptimizer == nil || premiumPct <= 0 {
-		return 0, 0, CostBreakdown{}
+		return 0, 0, tradecost.CostBreakdown{}
 	}
 
-	requiredConfirmations = resolveRequiredConfirmations(direction, requiredConfirmations)
+	requiredConfirmations = tradecost.ResolveRequiredConfirmations(direction, requiredConfirmations)
 	bd := tradeRouteOptimizer.BestBreakdownFull(btcSize, refPriceEUR, dexExchange, direction, requiredConfirmations, excludedCEXes, feeTier, coupledHedge)
 	if bd.RouteCEX == "" {
-		return 0, 0, CostBreakdown{}
+		return 0, 0, tradecost.CostBreakdown{}
 	}
 	netPremium := math.Round((premiumPct-bd.TotalCostPct)*100) / 100
 	bd.EstimatedProfitPct = netPremium
@@ -272,7 +274,7 @@ func (h *LiveHub) computeOutOffers(price float64, sub liveSubscription) []liveOu
 
 		// If a max fiat limit is set and the offer's full size exceeds it, compute a second
 		// breakdown capped to that fiat amount so the frontend can show both side by side.
-		var bdCapped *CostBreakdown
+		var bdCapped *tradecost.CostBreakdown
 		var tcCapped, npCapped *float64
 		var profitBTCCapped, profitFiatCapped *float64
 		if sub.maxFiatLimitEUR > 0 && price > 0 {
@@ -283,7 +285,7 @@ func (h *LiveHub) computeOutOffers(price float64, sub liveSubscription) []liveOu
 				tcCapped = &tc2
 				npCapped = &np2
 				profitBTC := bd2.EstimatedProfitBTC
-				profitFiat := round2(profitBTC * price)
+				profitFiat := tradecost.Round2(profitBTC * price)
 				profitBTCCapped = &profitBTC
 				profitFiatCapped = &profitFiat
 			}
@@ -300,7 +302,7 @@ func (h *LiveHub) computeOutOffers(price float64, sub liveSubscription) []liveOu
 			TradeCostPct:              tradeCostPct,
 			NetPremiumPct:             netPremium,
 			EstimatedProfitBTC:        bd.EstimatedProfitBTC,
-			EstimatedProfitFiat:       round2(bd.EstimatedProfitBTC * price),
+			EstimatedProfitFiat:       tradecost.Round2(bd.EstimatedProfitBTC * price),
 			CostBreakdown:             bd,
 			CostBreakdownCapped:       bdCapped,
 			TradeCostPctCapped:        tcCapped,

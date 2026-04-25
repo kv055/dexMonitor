@@ -5,7 +5,6 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math"
 	"net/http"
 	"net/url"
@@ -17,10 +16,16 @@ import (
 	"sync"
 	"time"
 
+	"commons/prices"
+	"commons/tradecost"
+	"dexmonitor/internal/lifecycle"
+	"dexmonitor/internal/mmproxy"
+	"dexmonitor/internal/ohlc"
 	"dexmonitor/internal/pastorders"
 	"dexmonitor/internal/paymentmethods"
+	"dexmonitor/internal/snapshotlog"
+	"dexmonitor/internal/tradingaccounts"
 
-	gorillaws "github.com/gorilla/websocket"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -31,6 +36,12 @@ var (
 	mmControllerAPIURL  string
 	db                  *sql.DB
 	pmService           *paymentmethods.Service
+	priceManager        *prices.Manager
+	lifecycleRepo       lifecycle.Repository
+	ohlcService         *ohlc.Service
+	snapshotLogRepo     snapshotlog.Repository
+	mmProxy             *mmproxy.Proxy
+	tradingAccountRepo  tradingaccounts.Repository
 )
 
 var (
@@ -38,17 +49,13 @@ var (
 	cexPrices   = map[string]float64{}
 )
 
-// defaultCEX and defaultCEXPair define the default exchange and trading pair.
-const (
-	defaultCEX     = "kraken"
-	defaultCEXPair = "BTC/EUR"
-)
+const defaultCEX = "kraken"
 
 // supportedCEXes lists all exchanges available for selection in the UI.
-var supportedCEXes = []string{"kraken", "binance", "bitstamp", "coinbase"}
+var supportedCEXes = tradecost.SupportedCEXes()
 
-var tradeCostEstimators map[string]*TradeCostEstimator
-var tradeRouteOptimizer *TradeRouteOptimizer
+var tradeCostEstimators map[string]*tradecost.TradeCostEstimator
+var tradeRouteOptimizer *tradecost.TradeRouteOptimizer
 
 // seedHubFromDB loads is_live=1 offers from the DB into the hub once at startup
 // so live data is available before the first snapshot push arrives.
@@ -134,202 +141,23 @@ func coreTablesReady() bool {
 }
 
 func getCexPrice(cex string) float64 {
+	if priceManager != nil {
+		return priceManager.Get(cex)
+	}
 	cexPricesMu.RLock()
 	defer cexPricesMu.RUnlock()
 	return cexPrices[cex]
 }
 
 func setCexPrice(cex string, p float64) {
+	if priceManager != nil {
+		priceManager.Set(cex, p)
+		return
+	}
 	cexPricesMu.Lock()
 	cexPrices[cex] = p
 	cexPricesMu.Unlock()
 	hub.broadcastForCex(cex)
-}
-
-// --- CEX WebSocket price feeds ---
-
-// runCexPriceFeed starts a reconnecting price feed for the given exchange.
-func runCexPriceFeed(ctx context.Context, cex string) {
-	backoff := time.Second
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		default:
-		}
-
-		var err error
-		switch cex {
-		case "kraken":
-			err = runKrakenFeed(ctx, cex)
-		case "binance":
-			err = runBinanceFeed(ctx, cex)
-		case "bitstamp":
-			err = runBitstampFeed(ctx, cex)
-		case "coinbase":
-			err = runCoinbaseFeed(ctx, cex)
-		default:
-			return
-		}
-
-		if err != nil {
-			fmt.Printf("[%sFeed] error: %v, retrying in %s\n", cex, err, backoff)
-		}
-		select {
-		case <-time.After(backoff):
-		case <-ctx.Done():
-			return
-		}
-		if backoff < 30*time.Second {
-			backoff *= 2
-		} else {
-			backoff = time.Second
-		}
-	}
-}
-
-func runKrakenFeed(ctx context.Context, cex string) error {
-	ws, _, err := gorillaws.DefaultDialer.DialContext(ctx, "wss://ws.kraken.com/v2", nil)
-	if err != nil {
-		return err
-	}
-	defer ws.Close()
-	fmt.Printf("[%sFeed] connected\n", cex)
-
-	sub := fmt.Sprintf(`{"method":"subscribe","params":{"channel":"ticker","symbol":["%s"]}}`, defaultCEXPair)
-	if err := ws.WriteMessage(gorillaws.TextMessage, []byte(sub)); err != nil {
-		return err
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
-		_, msgBytes, err := ws.ReadMessage()
-		if err != nil {
-			return err
-		}
-		var envelope struct {
-			Channel string `json:"channel"`
-			Data    []struct {
-				Last float64 `json:"last"`
-			} `json:"data"`
-		}
-		if json.Unmarshal(msgBytes, &envelope) == nil &&
-			envelope.Channel == "ticker" && len(envelope.Data) > 0 && envelope.Data[0].Last > 0 {
-			setCexPrice(cex, envelope.Data[0].Last)
-		}
-	}
-}
-
-func runBinanceFeed(ctx context.Context, cex string) error {
-	// BTC/EUR miniTicker stream — symbol must be lowercase for stream URL
-	ws, _, err := gorillaws.DefaultDialer.DialContext(ctx, "wss://stream.binance.com:9443/ws/btceur@miniTicker", nil)
-	if err != nil {
-		return err
-	}
-	defer ws.Close()
-	fmt.Printf("[%sFeed] connected\n", cex)
-
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
-		_, msgBytes, err := ws.ReadMessage()
-		if err != nil {
-			return err
-		}
-		var msg struct {
-			EventType string `json:"e"`
-			Close     string `json:"c"` // last price
-		}
-		if json.Unmarshal(msgBytes, &msg) == nil && msg.EventType == "24hrMiniTicker" {
-			if p, err := strconv.ParseFloat(msg.Close, 64); err == nil && p > 0 {
-				setCexPrice(cex, p)
-			}
-		}
-	}
-}
-
-func runBitstampFeed(ctx context.Context, cex string) error {
-	ws, _, err := gorillaws.DefaultDialer.DialContext(ctx, "wss://ws.bitstamp.net", nil)
-	if err != nil {
-		return err
-	}
-	defer ws.Close()
-	fmt.Printf("[%sFeed] connected\n", cex)
-
-	sub := `{"event":"bts:subscribe","data":{"channel":"live_trades_btceur"}}`
-	if err := ws.WriteMessage(gorillaws.TextMessage, []byte(sub)); err != nil {
-		return err
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
-		_, msgBytes, err := ws.ReadMessage()
-		if err != nil {
-			return err
-		}
-		var msg struct {
-			Event   string `json:"event"`
-			Channel string `json:"channel"`
-			Data    struct {
-				Price float64 `json:"price"`
-			} `json:"data"`
-		}
-		if json.Unmarshal(msgBytes, &msg) == nil &&
-			msg.Event == "trade" && msg.Data.Price > 0 {
-			setCexPrice(cex, msg.Data.Price)
-		}
-	}
-}
-
-func runCoinbaseFeed(ctx context.Context, cex string) error {
-	ws, _, err := gorillaws.DefaultDialer.DialContext(ctx, "wss://advanced-trade-ws.coinbase.com", nil)
-	if err != nil {
-		return err
-	}
-	defer ws.Close()
-	fmt.Printf("[%sFeed] connected\n", cex)
-
-	sub := `{"type":"subscribe","product_ids":["BTC-EUR"],"channel":"ticker"}`
-	if err := ws.WriteMessage(gorillaws.TextMessage, []byte(sub)); err != nil {
-		return err
-	}
-	for {
-		select {
-		case <-ctx.Done():
-			return nil
-		default:
-		}
-		_, msgBytes, err := ws.ReadMessage()
-		if err != nil {
-			return err
-		}
-		var msg struct {
-			Channel string `json:"channel"`
-			Events  []struct {
-				Tickers []struct {
-					Price string `json:"price"`
-				} `json:"tickers"`
-			} `json:"events"`
-		}
-		if json.Unmarshal(msgBytes, &msg) == nil && msg.Channel == "ticker" {
-			for _, ev := range msg.Events {
-				for _, t := range ev.Tickers {
-					if p, err := strconv.ParseFloat(t.Price, 64); err == nil && p > 0 {
-						setCexPrice(cex, p)
-					}
-				}
-			}
-		}
-	}
 }
 
 // --- Init & Main ---
@@ -374,14 +202,19 @@ func main() {
 
 	db.SetMaxOpenConns(4)
 	db.SetMaxIdleConns(2)
+	lifecycleRepo = lifecycle.NewRepository(db)
+	ohlcService = ohlc.NewService()
+	snapshotLogRepo = snapshotlog.NewRepository(db)
+	mmProxy = mmproxy.New(mmControllerAPIURL)
+	tradingAccountRepo = tradingaccounts.NewRepository(db)
 
-	tradeCostEstimators = make(map[string]*TradeCostEstimator, len(supportedCEXes))
+	tradeCostEstimators = make(map[string]*tradecost.TradeCostEstimator, len(supportedCEXes))
 	for _, c := range supportedCEXes {
-		tradeCostEstimators[c] = NewTradeCostEstimator(c)
+		tradeCostEstimators[c] = tradecost.NewTradeCostEstimator(c)
 		fmt.Printf("[TradeCost] initialized %s (taker fallback %.2f%%, onchain withdrawal fallback %.8f BTC)\n",
-			c, takerFeeFallbacks[c]*100, withdrawalFallbacks[c][MethodOnchain])
+			c, tradecost.TakerFeeFallback(c)*100, tradecost.WithdrawalFallback(c, tradecost.MethodOnchain))
 	}
-	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+	tradeRouteOptimizer = tradecost.NewOptimizer(supportedCEXes, tradeCostEstimators)
 
 	// Seed hub from DB in the background — computing trade costs makes outbound
 	// HTTP requests (mempool.space, exchange APIs) that must not block startup.
@@ -390,9 +223,11 @@ func main() {
 	// Start WebSocket price feeds for all supported CEX exchanges
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	for _, c := range supportedCEXes {
-		go runCexPriceFeed(ctx, c)
-	}
+	priceManager = prices.NewManager(supportedCEXes)
+	priceManager.SetUpdateCallback(func(cex string) {
+		hub.broadcastForCex(cex)
+	})
+	priceManager.Start(ctx)
 
 	// Payment method grouping service — loads once at startup, refreshes every hour.
 	if svc, err := paymentmethods.NewService(db); err != nil {
@@ -602,33 +437,21 @@ func fetchOfferLifecycle(ids []int64) map[int64][]LifecyclePoint {
 	if len(ids) == 0 {
 		return result
 	}
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
+	if lifecycleRepo.DB != db && db != nil {
+		lifecycleRepo = lifecycle.NewRepository(db)
 	}
-	rows, err := db.Query(rebind(fmt.Sprintf(
-		`SELECT offer_db_id, snapshot_time, price, net_premium_pct FROM order_lifecycle WHERE offer_db_id IN (%s) ORDER BY offer_db_id, snapshot_time`,
-		strings.Join(placeholders, ","),
-	)), args...)
+	points, err := lifecycleRepo.LoadByOfferIDs(context.Background(), ids)
 	if err != nil {
 		return result
 	}
-	defer rows.Close()
-	for rows.Next() {
-		var offerID int64
-		var snapTime time.Time
-		var price float64
-		var netPremiumPct sql.NullFloat64
-		if err := rows.Scan(&offerID, &snapTime, &price, &netPremiumPct); err != nil {
-			continue
+	for id, pts := range points {
+		for _, pt := range pts {
+			result[id] = append(result[id], LifecyclePoint{
+				Time:          pt.Time,
+				Price:         pt.Price,
+				NetPremiumPct: pt.NetPremiumPct,
+			})
 		}
-		pt := LifecyclePoint{Time: snapTime.UTC().Format("2006-01-02T15:04:05Z"), Price: price}
-		if netPremiumPct.Valid {
-			pt.NetPremiumPct = &netPremiumPct.Float64
-		}
-		result[offerID] = append(result[offerID], pt)
 	}
 	return result
 }
@@ -638,124 +461,15 @@ func fetchPastOfferLifecycleAggregates(ids []int64) map[int64]pastLifecycleAggre
 	if len(ids) == 0 {
 		return result
 	}
-	placeholders := make([]string, len(ids))
-	args := make([]any, len(ids))
-	for i, id := range ids {
-		placeholders[i] = "?"
-		args[i] = id
+	if lifecycleRepo.DB != db && db != nil {
+		lifecycleRepo = lifecycle.NewRepository(db)
 	}
-	rows, err := db.Query(rebind(fmt.Sprintf(
-		`SELECT offer_db_id, price, ref_price, premium_pct, trade_cost_pct, trade_cost_btc,
-		        network_fee_btc, net_premium_pct, net_premium_btc, btc_amount
-		   FROM order_lifecycle
-		  WHERE offer_db_id IN (%s)
-		  ORDER BY offer_db_id, snapshot_time`,
-		strings.Join(placeholders, ","),
-	)), args...)
+	aggregates, err := lifecycleRepo.LoadPastAggregates(context.Background(), ids)
 	if err != nil {
 		return result
 	}
-	defer rows.Close()
-
-	type accum struct {
-		count             int
-		sumPrice          float64
-		sumRefPrice       float64
-		sumPremium        float64
-		sumTradeCostPct   float64
-		countTradeCost    int
-		sumTradeCostBTC   float64
-		countTradeCostBTC int
-		sumNetPct         float64
-		countNetPct       int
-		sumProfitBTC      float64
-		countProfitBTC    int
-		sumProfitFiat     float64
-		countProfitFiat   int
-		sumBTCAmount      float64
-		countBTCAmount    int
-		sumNetworkPct     float64
-		countNetworkPct   int
-		samples           []pastLifecycleSample
-	}
-
-	accs := make(map[int64]*accum, len(ids))
-	for rows.Next() {
-		var offerID int64
-		var price, refPrice, premiumPct float64
-		var tradeCostPct, tradeCostBTC, networkFeeBTC, netPremiumPct, netPremiumBTC, btcAmount sql.NullFloat64
-		if err := rows.Scan(&offerID, &price, &refPrice, &premiumPct, &tradeCostPct, &tradeCostBTC, &networkFeeBTC, &netPremiumPct, &netPremiumBTC, &btcAmount); err != nil {
-			continue
-		}
-		ac := accs[offerID]
-		if ac == nil {
-			ac = &accum{}
-			accs[offerID] = ac
-		}
-		ac.count++
-		ac.sumPrice += price
-		ac.sumRefPrice += refPrice
-		ac.sumPremium += premiumPct
-		ac.samples = append(ac.samples, pastLifecycleSample{RefPrice: refPrice, PremiumPct: premiumPct})
-		if tradeCostPct.Valid {
-			ac.sumTradeCostPct += tradeCostPct.Float64
-			ac.countTradeCost++
-		}
-		if tradeCostBTC.Valid {
-			ac.sumTradeCostBTC += tradeCostBTC.Float64
-			ac.countTradeCostBTC++
-		}
-		if netPremiumPct.Valid {
-			ac.sumNetPct += netPremiumPct.Float64
-			ac.countNetPct++
-		}
-		if netPremiumBTC.Valid {
-			ac.sumProfitBTC += netPremiumBTC.Float64
-			ac.countProfitBTC++
-			ac.sumProfitFiat += netPremiumBTC.Float64 * refPrice
-			ac.countProfitFiat++
-		}
-		if btcAmount.Valid {
-			ac.sumBTCAmount += btcAmount.Float64
-			ac.countBTCAmount++
-			if networkFeeBTC.Valid && btcAmount.Float64 > 0 {
-				ac.sumNetworkPct += (networkFeeBTC.Float64 / btcAmount.Float64) * 100
-				ac.countNetworkPct++
-			}
-		}
-	}
-
-	for id, ac := range accs {
-		agg := pastLifecycleAggregate{}
-		if ac.count > 0 {
-			agg.Count = ac.count
-			agg.AvgOfferPrice = round4(ac.sumPrice / float64(ac.count))
-			agg.AvgRefPrice = round4(ac.sumRefPrice / float64(ac.count))
-			agg.AvgPremiumPercent = round4(ac.sumPremium / float64(ac.count))
-		}
-		if ac.countTradeCost > 0 {
-			agg.AvgTradeCostPct = round4(ac.sumTradeCostPct / float64(ac.countTradeCost))
-		}
-		if ac.countTradeCostBTC > 0 {
-			agg.AvgTradeCostBTC = round8(ac.sumTradeCostBTC / float64(ac.countTradeCostBTC))
-		}
-		if ac.countNetPct > 0 {
-			agg.AvgNetPercent = round4(ac.sumNetPct / float64(ac.countNetPct))
-		}
-		if ac.countProfitBTC > 0 {
-			agg.AvgProfitBTC = round8(ac.sumProfitBTC / float64(ac.countProfitBTC))
-		}
-		if ac.countProfitFiat > 0 {
-			agg.AvgProfitFiat = round4(ac.sumProfitFiat / float64(ac.countProfitFiat))
-		}
-		if ac.countBTCAmount > 0 {
-			agg.AvgBTCAmount = round8(ac.sumBTCAmount / float64(ac.countBTCAmount))
-		}
-		if ac.countNetworkPct > 0 {
-			agg.AvgNetworkPct = round4(ac.sumNetworkPct / float64(ac.countNetworkPct))
-		}
-		agg.Samples = ac.samples
-		result[id] = agg
+	for id, agg := range aggregates {
+		result[id] = pastLifecycleAggregate(agg)
 	}
 	return result
 }
@@ -1001,11 +715,11 @@ func buildOpenPremiumStats(sub liveSubscription, excludedPaymentMethods []string
 		var askPtr *float64
 		var bidPtr *float64
 		if a.cntAsk > 0 {
-			v := round4(a.sumAsk / float64(a.cntAsk))
+			v := tradecost.Round4(a.sumAsk / float64(a.cntAsk))
 			askPtr = &v
 		}
 		if a.cntBid > 0 {
-			v := round4(a.sumBid / float64(a.cntBid))
+			v := tradecost.Round4(a.sumBid / float64(a.cntBid))
 			bidPtr = &v
 		}
 		return pastorders.OpenPremiumModeStats{
@@ -1033,7 +747,7 @@ func buildPastPremiumStats(offers []map[string]any, lifecycleAgg map[int64]pastL
 			if count <= 0 {
 				continue
 			}
-			avg := round4(sumByExchange[exchange] / float64(count))
+			avg := tradecost.Round4(sumByExchange[exchange] / float64(count))
 			out = append(out, pastorders.NamedPremium{Name: exchange, AvgPremiumPct: avg})
 		}
 		sort.Slice(out, func(i, j int) bool {
@@ -1080,7 +794,7 @@ func buildPastPremiumStats(offers []map[string]any, lifecycleAgg map[int64]pastL
 
 			rawPremium := agg.AvgPremiumPercent
 			if rawPremium == 0 {
-				rawPremium = round4(offerFloat(offer, "avg_premium_pct"))
+				rawPremium = tradecost.Round4(offerFloat(offer, "avg_premium_pct"))
 			}
 			if raw, ok := positiveOrZero(rawPremium); ok {
 				rawSum[exchange] += raw
@@ -1089,7 +803,7 @@ func buildPastPremiumStats(offers []map[string]any, lifecycleAgg map[int64]pastL
 
 			netPremium := agg.AvgNetPercent
 			if netPremium == 0 {
-				netPremium = round4(offerFloat(offer, "avg_net_premium_pct"))
+				netPremium = tradecost.Round4(offerFloat(offer, "avg_net_premium_pct"))
 			}
 			if net, ok := positiveOrZero(netPremium); ok {
 				netSum[exchange] += net
@@ -1186,7 +900,7 @@ func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]p
 
 		rawPremium := agg.AvgPremiumPercent
 		if rawPremium == 0 {
-			rawPremium = round4(offerFloat(offer, "avg_premium_pct"))
+			rawPremium = tradecost.Round4(offerFloat(offer, "avg_premium_pct"))
 		}
 		if rawPremium > 0 {
 			add(&rawAcc, exchange, lifetime)
@@ -1194,7 +908,7 @@ func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]p
 
 		netPremium := agg.AvgNetPercent
 		if netPremium == 0 {
-			netPremium = round4(offerFloat(offer, "avg_net_premium_pct"))
+			netPremium = tradecost.Round4(offerFloat(offer, "avg_net_premium_pct"))
 		}
 		if netPremium > 0 {
 			add(&netAcc, exchange, lifetime)
@@ -1309,14 +1023,14 @@ type pastOfferVolumeLimits struct {
 }
 
 type pastOfferBTCNetworkFee struct {
-	BTC                     float64              `json:"btc"`
-	Method                  string               `json:"method"`
-	Tier                    string               `json:"tier"`
-	Confidence              float64              `json:"confidence"`
-	NumTxs                  int                  `json:"num_txs"`
-	RequiredConfirmations   int                  `json:"required_confirmations"`
-	EstimatedArrivalMinutes int                  `json:"estimated_arrival_minutes"`
-	Detail                  *BTCNetworkFeeDetail `json:"detail"`
+	BTC                     float64                        `json:"btc"`
+	Method                  string                         `json:"method"`
+	Tier                    string                         `json:"tier"`
+	Confidence              float64                        `json:"confidence"`
+	NumTxs                  int                            `json:"num_txs"`
+	RequiredConfirmations   int                            `json:"required_confirmations"`
+	EstimatedArrivalMinutes int                            `json:"estimated_arrival_minutes"`
+	Detail                  *tradecost.BTCNetworkFeeDetail `json:"detail"`
 }
 
 type pastOfferRoute struct {
@@ -1342,18 +1056,18 @@ type pastOfferCostValue struct {
 }
 
 type pastOfferHedgeCosts struct {
-	OpenFeePct      float64              `json:"open_fee_pct"`
-	OpenFeeBTC      float64              `json:"open_fee_btc"`
-	CloseFeePct     float64              `json:"close_fee_pct"`
-	CloseFeeBTC     float64              `json:"close_fee_btc"`
-	FundingFeePct   float64              `json:"funding_fee_pct"`
-	FundingFeeBTC   float64              `json:"funding_fee_btc"`
-	FeeSumPct       float64              `json:"fee_sum_pct"`
-	FeeSumBTC       float64              `json:"fee_sum_btc"`
-	Venue           string               `json:"venue"`
-	Instrument      string               `json:"instrument"`
-	TransferMinutes int                  `json:"transfer_minutes"`
-	Position        *HedgePositionDetail `json:"position,omitempty"`
+	OpenFeePct      float64                        `json:"open_fee_pct"`
+	OpenFeeBTC      float64                        `json:"open_fee_btc"`
+	CloseFeePct     float64                        `json:"close_fee_pct"`
+	CloseFeeBTC     float64                        `json:"close_fee_btc"`
+	FundingFeePct   float64                        `json:"funding_fee_pct"`
+	FundingFeeBTC   float64                        `json:"funding_fee_btc"`
+	FeeSumPct       float64                        `json:"fee_sum_pct"`
+	FeeSumBTC       float64                        `json:"fee_sum_btc"`
+	Venue           string                         `json:"venue"`
+	Instrument      string                         `json:"instrument"`
+	TransferMinutes int                            `json:"transfer_minutes"`
+	Position        *tradecost.HedgePositionDetail `json:"position,omitempty"`
 }
 
 type pastOfferScenarioCosts struct {
@@ -1406,25 +1120,8 @@ type pastOfferCompactAPI struct {
 	VolumeLimits  pastOfferVolumeLimits `json:"volume_limits"`
 }
 
-type pastLifecycleSample struct {
-	RefPrice   float64
-	PremiumPct float64
-}
-
-type pastLifecycleAggregate struct {
-	Count             int
-	AvgOfferPrice     float64
-	AvgRefPrice       float64
-	AvgPremiumPercent float64
-	AvgTradeCostPct   float64
-	AvgTradeCostBTC   float64
-	AvgNetPercent     float64
-	AvgProfitBTC      float64
-	AvgProfitFiat     float64
-	AvgBTCAmount      float64
-	AvgNetworkPct     float64
-	Samples           []pastLifecycleSample
-}
+type pastLifecycleSample = lifecycle.PastSample
+type pastLifecycleAggregate = lifecycle.PastAggregate
 
 func addPastOfferCostFields(o map[string]any, requiredConfirmations int) pastOfferAnalysis {
 	return addPastOfferCostFieldsFull(o, requiredConfirmations, nil, "", 0)
@@ -1495,40 +1192,40 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 
 	avgOfferPrice := agg.AvgOfferPrice
 	if avgOfferPrice <= 0 {
-		avgOfferPrice = round4(offerFloat(o, "price"))
+		avgOfferPrice = tradecost.Round4(offerFloat(o, "price"))
 	}
 	avgRefPrice := agg.AvgRefPrice
 	if avgRefPrice <= 0 {
-		avgRefPrice = round4(offerRefPrice(o))
+		avgRefPrice = tradecost.Round4(offerRefPrice(o))
 	}
 	avgPremiumPercent := agg.AvgPremiumPercent
 	if avgPremiumPercent == 0 {
-		avgPremiumPercent = round4(offerFloat(o, "avg_premium_pct"))
+		avgPremiumPercent = tradecost.Round4(offerFloat(o, "avg_premium_pct"))
 	}
 	avgTradeCostPct := agg.AvgTradeCostPct
 	if avgTradeCostPct == 0 {
-		avgTradeCostPct = round4(offerFloat(o, "avg_trade_cost_pct"))
+		avgTradeCostPct = tradecost.Round4(offerFloat(o, "avg_trade_cost_pct"))
 	}
 	avgTradeCostBTC := agg.AvgTradeCostBTC
 	if avgTradeCostBTC == 0 {
-		avgTradeCostBTC = round8(offerFloat(o, "avg_trade_cost_btc"))
+		avgTradeCostBTC = tradecost.Round8(offerFloat(o, "avg_trade_cost_btc"))
 	}
 	avgNetPercent := agg.AvgNetPercent
 	if avgNetPercent == 0 {
-		avgNetPercent = round4(offerFloat(o, "avg_net_premium_pct"))
+		avgNetPercent = tradecost.Round4(offerFloat(o, "avg_net_premium_pct"))
 	}
 	avgProfitBTC := agg.AvgProfitBTC
 	if avgProfitBTC == 0 {
-		avgProfitBTC = round8(offerFloat(o, "avg_estimated_profit_btc"))
+		avgProfitBTC = tradecost.Round8(offerFloat(o, "avg_estimated_profit_btc"))
 	}
 	avgProfitFiat := agg.AvgProfitFiat
 	if avgProfitFiat == 0 {
-		avgProfitFiat = round4(offerFloat(o, "avg_estimated_profit_fiat"))
+		avgProfitFiat = tradecost.Round4(offerFloat(o, "avg_estimated_profit_fiat"))
 	}
 	avgNetworkPct := agg.AvgNetworkPct
 	avgBTCAmount := agg.AvgBTCAmount
 	if avgBTCAmount == 0 {
-		avgBTCAmount = round8(offerFloat(o, "avg_btc_amount"))
+		avgBTCAmount = tradecost.Round8(offerFloat(o, "avg_btc_amount"))
 	}
 
 	var btcMinPtr, btcMaxPtr *float64
@@ -1543,11 +1240,11 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 		fullTradeSizeBTC = *btcMaxPtr
 	}
 	fullRep := buildStoredPastBreakdown(o, fullTradeSizeBTC, avgRefPrice, avgTradeCostPct, avgTradeCostBTC, avgNetPercent, avgProfitBTC)
-	fullTradeSizeFiat := round4(fullTradeSizeBTC * avgRefPrice)
+	fullTradeSizeFiat := tradecost.Round4(fullTradeSizeBTC * avgRefPrice)
 
 	fullScenario := pastOfferScenario{
 		CostPolicy:    "historical_persisted",
-		TradeSizeBTC:  round8(fullTradeSizeBTC),
+		TradeSizeBTC:  tradecost.Round8(fullTradeSizeBTC),
 		TradeSizeFiat: fullTradeSizeFiat,
 		Route: pastOfferRoute{
 			CEX:        offerString(o, "best_route_cex"),
@@ -1566,26 +1263,26 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 
 	var cappedScenario *pastOfferScenario
 	if maxFiatLimitEUR > 0 && avgRefPrice > 0 {
-		cappedTradeSizeBTC := round8(maxFiatLimitEUR / avgRefPrice)
+		cappedTradeSizeBTC := tradecost.Round8(maxFiatLimitEUR / avgRefPrice)
 		if cappedTradeSizeBTC > 0 && fullTradeSizeBTC > cappedTradeSizeBTC {
 			cappedRep := buildCappedPastBreakdown(o, fullTradeSizeBTC, cappedTradeSizeBTC, avgRefPrice, avgPremiumPercent)
 			cappedAvgTradeCostPct, cappedAvgNetPct, cappedAvgProfitBTC, cappedAvgProfitFiat, cappedAvgTradeCostBTC, cappedAvgNetworkPct :=
 				recomputeCappedLifecycleAverages(o, agg.Samples, fullTradeSizeBTC, maxFiatLimitEUR)
 			if cappedAvgProfitBTC == 0 {
-				cappedAvgTradeCostPct = round4(cappedRep.TotalCostPct)
-				cappedAvgNetPct = round4(cappedRep.EstimatedProfitPct)
-				cappedAvgProfitBTC = round8(cappedRep.EstimatedProfitBTC)
-				cappedAvgProfitFiat = round4(cappedRep.EstimatedProfitBTC * avgRefPrice)
-				cappedAvgTradeCostBTC = round8(cappedRep.TotalCostBTC)
-				cappedAvgNetworkPct = round4(cappedRep.NetworkFeePct)
+				cappedAvgTradeCostPct = tradecost.Round4(cappedRep.TotalCostPct)
+				cappedAvgNetPct = tradecost.Round4(cappedRep.EstimatedProfitPct)
+				cappedAvgProfitBTC = tradecost.Round8(cappedRep.EstimatedProfitBTC)
+				cappedAvgProfitFiat = tradecost.Round4(cappedRep.EstimatedProfitBTC * avgRefPrice)
+				cappedAvgTradeCostBTC = tradecost.Round8(cappedRep.TotalCostBTC)
+				cappedAvgNetworkPct = tradecost.Round4(cappedRep.NetworkFeePct)
 			}
-			capFiat := round4(maxFiatLimitEUR)
+			capFiat := tradecost.Round4(maxFiatLimitEUR)
 			cappedScenario = &pastOfferScenario{
 				CapFiat:       &capFiat,
 				CostPolicy:    "historical_route_fixed_transfer_recomputed_size_proportional",
 				Assumptions:   []string{"historical route", "fixed historical transfer/network assumptions", "recalculated hedge and proportional trading fees for capped BTC size"},
 				TradeSizeBTC:  cappedTradeSizeBTC,
-				TradeSizeFiat: round4(cappedTradeSizeBTC * avgRefPrice),
+				TradeSizeFiat: tradecost.Round4(cappedTradeSizeBTC * avgRefPrice),
 				Route: pastOfferRoute{
 					CEX:        offerString(o, "best_route_cex"),
 					Settlement: offerString(o, "best_route_method"),
@@ -1665,9 +1362,9 @@ func buildPastOfferCompactAPI(o map[string]any) pastOfferCompactAPI {
 		Pricing: pastOfferPricing{
 			PriceType:         normalizePastPriceType(offerString(o, "price_type")),
 			FiatCurrency:      "EUR",
-			AvgOfferPrice:     round4(offerFloat(o, "price")),
-			AvgRefPrice:       round4(offerRefPrice(o)),
-			AvgPremiumPercent: round4(nonZeroFloat(offerFloat(o, "avg_premium_pct"), offerFloat(o, "price_diff_percent"))),
+			AvgOfferPrice:     tradecost.Round4(offerFloat(o, "price")),
+			AvgRefPrice:       tradecost.Round4(offerRefPrice(o)),
+			AvgPremiumPercent: tradecost.Round4(nonZeroFloat(offerFloat(o, "avg_premium_pct"), offerFloat(o, "price_diff_percent"))),
 		},
 		VolumeLimits: pastOfferVolumeLimits{
 			BTCMin:  btcMinPtr,
@@ -1683,10 +1380,10 @@ func buildPastProfitableOrderAPI(o map[string]any, agg pastLifecycleAggregate, r
 	recomputed := addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
 	tradeSizeBTC, netProfitBTC := recomputed.valuesForMode(mode)
 	summary := pastProfitableOrderSummary{
-		NetProfitBTC:  round8(netProfitBTC),
-		NetProfitFiat: round4(netProfitBTC * recomputed.refPrice),
-		TradeSizeBTC:  round8(tradeSizeBTC),
-		TradeSizeFiat: round4(tradeSizeBTC * recomputed.refPrice),
+		NetProfitBTC:  tradecost.Round8(netProfitBTC),
+		NetProfitFiat: tradecost.Round4(netProfitBTC * recomputed.refPrice),
+		TradeSizeBTC:  tradecost.Round8(tradeSizeBTC),
+		TradeSizeFiat: tradecost.Round4(tradeSizeBTC * recomputed.refPrice),
 		NetPercent:    pastOffer.Analysis.FullVolume.Premium.AvgNetPercent,
 	}
 	if mode == takerOpportunityModeNetCapped && pastOffer.Analysis.CappedVolume != nil {
@@ -1735,9 +1432,9 @@ func normalizePastPriceType(value string) string {
 	}
 }
 
-func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct, tradeCostBTC, netPremiumPct, profitBTC float64) CostBreakdown {
+func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct, tradeCostBTC, netPremiumPct, profitBTC float64) tradecost.CostBreakdown {
 	if btcSize <= 0 {
-		return CostBreakdown{}
+		return tradecost.CostBreakdown{}
 	}
 	direction := offerString(o, "direction")
 	isAsk := direction == "sell"
@@ -1745,25 +1442,25 @@ func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct,
 		if btcSize <= 0 || btc == 0 {
 			return 0
 		}
-		return round4(btc / btcSize * 100)
+		return tradecost.Round4(btc / btcSize * 100)
 	}
 	withdrawalBTC := offerFloat(o, "cex_withdraw_fee_btc")
 	if isAsk {
 		withdrawalBTC = 0
 	}
-	hedge := HedgeBreakdown{}
+	hedge := tradecost.HedgeBreakdown{}
 	if !isAsk {
-		hedge = HedgeBreakdown{
-			OpenFeeBTC:      round8(offerFloat(o, "hedge_open_fee_btc")),
-			CloseFeeBTC:     round8(offerFloat(o, "hedge_close_fee_btc")),
-			FundingFeeBTC:   round8(offerFloat(o, "hedge_funding_fee_btc")),
-			FeeSumBTC:       round8(offerFloat(o, "hedge_fee_sum_btc")),
+		hedge = tradecost.HedgeBreakdown{
+			OpenFeeBTC:      tradecost.Round8(offerFloat(o, "hedge_open_fee_btc")),
+			CloseFeeBTC:     tradecost.Round8(offerFloat(o, "hedge_close_fee_btc")),
+			FundingFeeBTC:   tradecost.Round8(offerFloat(o, "hedge_funding_fee_btc")),
+			FeeSumBTC:       tradecost.Round8(offerFloat(o, "hedge_fee_sum_btc")),
 			Venue:           offerString(o, "hedge_venue"),
 			Instrument:      offerString(o, "hedge_instrument"),
 			TransferMinutes: int(offerFloat(o, "hedge_transfer_minutes")),
 		}
 		if hedge.FeeSumBTC == 0 {
-			hedge.FeeSumBTC = round8(hedge.OpenFeeBTC + hedge.CloseFeeBTC + hedge.FundingFeeBTC)
+			hedge.FeeSumBTC = tradecost.Round8(hedge.OpenFeeBTC + hedge.CloseFeeBTC + hedge.FundingFeeBTC)
 		}
 		hedge.OpenFeePct = pct(hedge.OpenFeeBTC)
 		hedge.CloseFeePct = pct(hedge.CloseFeeBTC)
@@ -1774,10 +1471,10 @@ func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct,
 		tradeCostBTC = offerFloat(o, "trade_cost_btc")
 	}
 	if tradeCostBTC == 0 {
-		tradeCostBTC = round8(btcSize * tradeCostPct / 100)
+		tradeCostBTC = tradecost.Round8(btcSize * tradeCostPct / 100)
 	}
 	if profitBTC == 0 {
-		profitBTC = round8(btcSize * netPremiumPct / 100)
+		profitBTC = tradecost.Round8(btcSize * netPremiumPct / 100)
 	}
 	tradeDir := "bid"
 	numNetworkTxs := 2
@@ -1785,33 +1482,33 @@ func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct,
 		tradeDir = "ask"
 		numNetworkTxs = 1
 	}
-	return CostBreakdown{
-		BTCAmount:          round8(btcSize),
+	return tradecost.CostBreakdown{
+		BTCAmount:          tradecost.Round8(btcSize),
 		RouteCEX:           offerString(o, "best_route_cex"),
 		RouteDEX:           offerString(o, "exchange"),
 		RouteMethod:        offerString(o, "best_route_method"),
 		TradeDirection:     tradeDir,
 		NumNetworkTxs:      numNetworkTxs,
-		EstimatedProfitPct: round4(netPremiumPct),
-		EstimatedProfitBTC: round8(profitBTC),
-		CexTakerFeeBTC:     round8(offerFloat(o, "cex_taker_fee_btc")),
+		EstimatedProfitPct: tradecost.Round4(netPremiumPct),
+		EstimatedProfitBTC: tradecost.Round8(profitBTC),
+		CexTakerFeeBTC:     tradecost.Round8(offerFloat(o, "cex_taker_fee_btc")),
 		CexTakerFeePct:     pct(offerFloat(o, "cex_taker_fee_btc")),
-		WithdrawalFeeBTC:   round8(withdrawalBTC),
+		WithdrawalFeeBTC:   tradecost.Round8(withdrawalBTC),
 		WithdrawalFeePct:   pct(withdrawalBTC),
-		NetworkFeeBTC:      round8(offerFloat(o, "network_fee_btc")),
+		NetworkFeeBTC:      tradecost.Round8(offerFloat(o, "network_fee_btc")),
 		NetworkFeePct:      pct(offerFloat(o, "network_fee_btc")),
 		NetworkFeeMethod:   offerString(o, "best_route_method"),
 		Hedge:              hedge,
-		DexFeeBTC:          round8(offerFloat(o, "dex_fee_btc")),
+		DexFeeBTC:          tradecost.Round8(offerFloat(o, "dex_fee_btc")),
 		DexFeePct:          pct(offerFloat(o, "dex_fee_btc")),
-		TotalCostPct:       round4(tradeCostPct),
-		TotalCostBTC:       round8(tradeCostBTC),
+		TotalCostPct:       tradecost.Round4(tradeCostPct),
+		TotalCostBTC:       tradecost.Round8(tradeCostBTC),
 	}
 }
 
-func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refPrice, premiumPct float64) CostBreakdown {
+func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refPrice, premiumPct float64) tradecost.CostBreakdown {
 	if cappedBTCSize <= 0 {
-		return CostBreakdown{}
+		return tradecost.CostBreakdown{}
 	}
 	direction := offerString(o, "direction")
 	isAsk := direction == "sell"
@@ -1821,7 +1518,7 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 		if cappedBTCSize <= 0 || btc == 0 {
 			return 0
 		}
-		return round4(btc / cappedBTCSize * 100)
+		return tradecost.Round4(btc / cappedBTCSize * 100)
 	}
 	scaleStored := func(key string) float64 {
 		if fullBTCSize <= 0 {
@@ -1832,27 +1529,31 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 
 	takerBTC := scaleStored("cex_taker_fee_btc")
 	dexFeeBTC := scaleStored("dex_fee_btc")
-	hedgeCost := hedgeCostDetails{}
+	hedge := tradecost.HedgeBreakdown{}
 	if est := tradeCostEstimators[routeCEX]; est != nil {
-		takerBTC = cappedBTCSize * est.taker.get()
-		dexFeeBTC = cappedBTCSize * est.getDexFeeFrac(dexExchange)
+		takerBTC = est.TakerFeeBTC(cappedBTCSize)
+		dexFeeBTC = est.DexFeeBTC(cappedBTCSize, dexExchange)
 		if !isAsk {
-			hedgeCost = est.estimateBestHedgeCost(cappedBTCSize, refPrice, offerFloat(o, "hedge_transfer_minutes"), true)
+			hedge = est.EstimateHedgeBreakdown(cappedBTCSize, refPrice, offerFloat(o, "hedge_transfer_minutes"), true)
 		}
 	}
-	if !isAsk && hedgeCost.feeBTC == 0 {
-		hedgeCost = hedgeCostDetails{
-			feeBTC:          scaleStored("hedge_fee_sum_btc"),
-			openFeeBTC:      scaleStored("hedge_open_fee_btc"),
-			closeFeeBTC:     scaleStored("hedge_close_fee_btc"),
-			fundingFeeBTC:   scaleStored("hedge_funding_fee_btc"),
-			venue:           offerString(o, "hedge_venue"),
-			instrument:      offerString(o, "hedge_instrument"),
-			transferMinutes: offerFloat(o, "hedge_transfer_minutes"),
+	if !isAsk && hedge.FeeSumBTC == 0 {
+		hedge = tradecost.HedgeBreakdown{
+			OpenFeeBTC:      tradecost.Round8(scaleStored("hedge_open_fee_btc")),
+			CloseFeeBTC:     tradecost.Round8(scaleStored("hedge_close_fee_btc")),
+			FundingFeeBTC:   tradecost.Round8(scaleStored("hedge_funding_fee_btc")),
+			FeeSumBTC:       tradecost.Round8(scaleStored("hedge_fee_sum_btc")),
+			Venue:           offerString(o, "hedge_venue"),
+			Instrument:      offerString(o, "hedge_instrument"),
+			TransferMinutes: int(math.Round(offerFloat(o, "hedge_transfer_minutes"))),
 		}
-		if hedgeCost.feeBTC == 0 {
-			hedgeCost.feeBTC = hedgeCost.openFeeBTC + hedgeCost.closeFeeBTC + hedgeCost.fundingFeeBTC
+		if hedge.FeeSumBTC == 0 {
+			hedge.FeeSumBTC = tradecost.Round8(hedge.OpenFeeBTC + hedge.CloseFeeBTC + hedge.FundingFeeBTC)
 		}
+		hedge.OpenFeePct = pct(hedge.OpenFeeBTC)
+		hedge.CloseFeePct = pct(hedge.CloseFeeBTC)
+		hedge.FundingFeePct = pct(hedge.FundingFeeBTC)
+		hedge.FeeSumPct = pct(hedge.FeeSumBTC)
 	}
 
 	withdrawalBTC := 0.0
@@ -1864,12 +1565,12 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 		tradeDir = "bid"
 		numNetworkTxs = 2
 	}
-	totalBTC := takerBTC + withdrawalBTC + networkBTC + dexFeeBTC + hedgeCost.feeBTC
+	totalBTC := takerBTC + withdrawalBTC + networkBTC + dexFeeBTC + hedge.FeeSumBTC
 	totalPct := pct(totalBTC)
-	netPct := round4(premiumPct - totalPct)
-	profitBTC := round8(cappedBTCSize * netPct / 100)
-	return CostBreakdown{
-		BTCAmount:          round8(cappedBTCSize),
+	netPct := tradecost.Round4(premiumPct - totalPct)
+	profitBTC := tradecost.Round8(cappedBTCSize * netPct / 100)
+	return tradecost.CostBreakdown{
+		BTCAmount:          tradecost.Round8(cappedBTCSize),
 		RouteCEX:           routeCEX,
 		RouteDEX:           dexExchange,
 		RouteMethod:        offerString(o, "best_route_method"),
@@ -1878,30 +1579,17 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 		EstimatedProfitPct: netPct,
 		EstimatedProfitBTC: profitBTC,
 		CexTakerFeePct:     pct(takerBTC),
-		CexTakerFeeBTC:     round8(takerBTC),
+		CexTakerFeeBTC:     tradecost.Round8(takerBTC),
 		WithdrawalFeePct:   pct(withdrawalBTC),
-		WithdrawalFeeBTC:   round8(withdrawalBTC),
+		WithdrawalFeeBTC:   tradecost.Round8(withdrawalBTC),
 		NetworkFeePct:      pct(networkBTC),
-		NetworkFeeBTC:      round8(networkBTC),
+		NetworkFeeBTC:      tradecost.Round8(networkBTC),
 		NetworkFeeMethod:   offerString(o, "best_route_method"),
-		Hedge: HedgeBreakdown{
-			OpenFeePct:      pct(hedgeCost.openFeeBTC),
-			OpenFeeBTC:      round8(hedgeCost.openFeeBTC),
-			CloseFeePct:     pct(hedgeCost.closeFeeBTC),
-			CloseFeeBTC:     round8(hedgeCost.closeFeeBTC),
-			FundingFeePct:   pct(hedgeCost.fundingFeeBTC),
-			FundingFeeBTC:   round8(hedgeCost.fundingFeeBTC),
-			FeeSumPct:       pct(hedgeCost.feeBTC),
-			FeeSumBTC:       round8(hedgeCost.feeBTC),
-			Venue:           nonEmptyOr(hedgeCost.venue, offerString(o, "hedge_venue")),
-			Instrument:      nonEmptyOr(hedgeCost.instrument, offerString(o, "hedge_instrument")),
-			TransferMinutes: int(math.Round(nonZeroFloat(hedgeCost.transferMinutes, offerFloat(o, "hedge_transfer_minutes")))),
-			Position:        hedgeCost.position,
-		},
-		DexFeePct:    pct(dexFeeBTC),
-		DexFeeBTC:    round8(dexFeeBTC),
-		TotalCostPct: totalPct,
-		TotalCostBTC: round8(totalBTC),
+		Hedge:              hedge,
+		DexFeePct:          pct(dexFeeBTC),
+		DexFeeBTC:          tradecost.Round8(dexFeeBTC),
+		TotalCostPct:       totalPct,
+		TotalCostBTC:       tradecost.Round8(totalBTC),
 	}
 }
 
@@ -1931,15 +1619,15 @@ func recomputeCappedLifecycleAverages(o map[string]any, samples []pastLifecycleS
 	if count == 0 {
 		return 0, 0, 0, 0, 0, 0
 	}
-	return round4(sumTradeCostPct / float64(count)),
-		round4(sumNetPct / float64(count)),
-		round8(sumProfitBTC / float64(count)),
-		round4(sumProfitFiat / float64(count)),
-		round8(sumTradeCostBTC / float64(count)),
-		round4(sumNetworkPct / float64(count))
+	return tradecost.Round4(sumTradeCostPct / float64(count)),
+		tradecost.Round4(sumNetPct / float64(count)),
+		tradecost.Round8(sumProfitBTC / float64(count)),
+		tradecost.Round4(sumProfitFiat / float64(count)),
+		tradecost.Round8(sumTradeCostBTC / float64(count)),
+		tradecost.Round4(sumNetworkPct / float64(count))
 }
 
-func buildPastScenarioCosts(rep CostBreakdown, avgNetworkPct, avgTradeCostPct, avgTradeCostBTC float64) pastOfferScenarioCosts {
+func buildPastScenarioCosts(rep tradecost.CostBreakdown, avgNetworkPct, avgTradeCostPct, avgTradeCostBTC float64) pastOfferScenarioCosts {
 	return pastOfferScenarioCosts{
 		CexTaker: pastOfferCostValue{
 			Pct: rep.CexTakerFeePct,
@@ -1981,7 +1669,7 @@ func buildPastScenarioCosts(rep CostBreakdown, avgNetworkPct, avgTradeCostPct, a
 	}
 }
 
-func buildPastBTCNetworkFee(rep CostBreakdown, requiredConfirmations int) pastOfferBTCNetworkFee {
+func buildPastBTCNetworkFee(rep tradecost.CostBreakdown, requiredConfirmations int) pastOfferBTCNetworkFee {
 	arrival := 0
 	numTxs := rep.NumNetworkTxs
 	if rep.NetworkFeeDetail != nil {
@@ -2012,102 +1700,23 @@ func writeLifecycleEntries(offers []liveOutOffer) {
 	if len(offers) == 0 || db == nil {
 		return
 	}
-	tx, err := db.Begin()
-	if err != nil {
-		fmt.Printf("[Lifecycle] begin tx error: %v\n", err)
-		return
+	if lifecycleRepo.DB != db {
+		lifecycleRepo = lifecycle.NewRepository(db)
 	}
-	insStmt, err := tx.Prepare(rebind(`
-		INSERT INTO order_lifecycle
-			(offer_db_id, price, ref_price, premium_pct,
-			 trade_cost_pct, trade_cost_btc, cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc, dex_fee_btc,
-			 net_premium_pct, net_premium_btc, btc_amount)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`))
-	if err != nil {
-		tx.Rollback()
-		fmt.Printf("[Lifecycle] prepare insert error: %v\n", err)
-		return
-	}
-	defer insStmt.Close()
-
-	updStmt, err := tx.Prepare(rebind(`
-		UPDATE offers SET
-			best_route_cex = ?,
-			best_route_method = ?,
-			hedge_open_fee_btc = ?,
-			hedge_close_fee_btc = ?,
-			hedge_funding_fee_btc = ?,
-			hedge_fee_sum_btc = ?,
-			hedge_venue = ?,
-			hedge_instrument = ?,
-			hedge_transfer_minutes = ?
-		WHERE id = ?
-	`))
-	if err != nil {
-		tx.Rollback()
-		fmt.Printf("[Lifecycle] prepare update error: %v\n", err)
-		return
-	}
-	defer updStmt.Close()
-
+	records := make([]lifecycle.Record, 0, len(offers))
 	for _, o := range offers {
-		if o.RefPrice <= 0 {
-			continue
-		}
-		bd := o.CostBreakdown
-		var cexWithdrawFee any
-		if bd.TradeDirection != "ask" {
-			cexWithdrawFee = round8(bd.WithdrawalFeeBTC)
-		}
-		_, _ = insStmt.Exec(
-			o.ID,
-			round4(o.Price),
-			round4(o.RefPrice),
-			round4(o.PriceDiffPct),
-			round4(bd.TotalCostPct),
-			round8(bd.TotalCostBTC),
-			round8(bd.CexTakerFeeBTC),
-			cexWithdrawFee,
-			round8(bd.NetworkFeeBTC),
-			round8(bd.DexFeeBTC),
-			round4(o.NetPremiumPct),
-			round8(bd.EstimatedProfitBTC),
-			round8(bd.BTCAmount),
-		)
-		if bd.RouteCEX != "" {
-			_, _ = updStmt.Exec(
-				bd.RouteCEX,
-				bd.RouteMethod,
-				round8(bd.Hedge.OpenFeeBTC),
-				round8(bd.Hedge.CloseFeeBTC),
-				round8(bd.Hedge.FundingFeeBTC),
-				round8(bd.Hedge.FeeSumBTC),
-				nullIfEmpty(bd.Hedge.Venue),
-				nullIfEmpty(bd.Hedge.Instrument),
-				nullIfZeroInt(bd.Hedge.TransferMinutes),
-				o.ID,
-			)
-		}
+		records = append(records, lifecycle.Record{
+			ID:            o.ID,
+			Price:         o.Price,
+			RefPrice:      o.RefPrice,
+			PriceDiffPct:  o.PriceDiffPct,
+			NetPremiumPct: o.NetPremiumPct,
+			CostBreakdown: o.CostBreakdown,
+		})
 	}
-
-	if err := tx.Commit(); err != nil {
-		fmt.Printf("[Lifecycle] commit error: %v\n", err)
+	if err := lifecycleRepo.PersistSnapshot(context.Background(), records); err != nil {
+		fmt.Printf("[Lifecycle] persist error: %v\n", err)
 	}
-}
-
-func nullIfEmpty(s string) any {
-	if strings.TrimSpace(s) == "" {
-		return nil
-	}
-	return s
-}
-
-func nullIfZeroInt(v int) any {
-	if v == 0 {
-		return nil
-	}
-	return v
 }
 
 // handleInternalLiveOffers receives the live offer list from the snapshot tool,
@@ -2204,17 +1813,10 @@ func handleOHLC(w http.ResponseWriter, r *http.Request) {
 	hours := queryInt(r, "hours", 24)
 	cex := queryCex(r)
 
-	var candles []map[string]any
-	switch cex {
-	case "binance":
-		candles = fetchBinanceOHLC(hours)
-	case "bitstamp":
-		candles = fetchBitstampOHLC(hours)
-	case "coinbase":
-		candles = fetchCoinbaseOHLC(hours)
-	default:
-		candles = fetchKrakenOHLC(hours)
+	if ohlcService == nil {
+		ohlcService = ohlc.NewService()
 	}
+	candles := ohlcService.Candles(r.Context(), cex, hours, snapshotIntervalMin)
 
 	rows, err := db.Query(
 		rebind("SELECT * FROM offers WHERE last_seen >= ?"),
@@ -2281,12 +1883,12 @@ func handleTradeCostConfig(w http.ResponseWriter, r *http.Request) {
 	}
 	cexes := make([]cexInfo, 0, len(supportedCEXes))
 	for _, name := range supportedCEXes {
-		profile := cexProfileFor(name)
+		profile := tradecost.ProfileFor(name)
 		methods := make([]string, 0, len(profile.Methods))
 		hasLN := false
 		for _, m := range profile.Methods {
 			methods = append(methods, string(m))
-			if m == MethodLightning {
+			if m == tradecost.MethodLightning {
 				hasLN = true
 			}
 		}
@@ -2310,39 +1912,14 @@ func handleTradeCostConfig(w http.ResponseWriter, r *http.Request) {
 
 func handleSnapshotLog(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 50)
-
-	rows, err := db.Query(
-		rebind("SELECT id, timestamp, exchanges, offers_count FROM snapshot_log ORDER BY timestamp DESC LIMIT ?"),
-		limit,
-	)
+	if snapshotLogRepo.DB != db {
+		snapshotLogRepo = snapshotlog.NewRepository(db)
+	}
+	result, err := snapshotLogRepo.List(r.Context(), limit, queryBool(r, "compact"))
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	defer rows.Close()
-
-	result := make([]map[string]any, 0)
-	for rows.Next() {
-		var id, offersCount int
-		var ts time.Time
-		var exchangesJSON []byte
-		if err := rows.Scan(&id, &ts, &exchangesJSON, &offersCount); err != nil {
-			writeError(w, err)
-			return
-		}
-		exchanges := map[string]any{}
-		json.Unmarshal(exchangesJSON, &exchanges)
-		if queryBool(r, "compact") {
-			exchanges = compactSnapshotExchanges(exchanges)
-		}
-		result = append(result, map[string]any{
-			"id":           id,
-			"timestamp":    ts,
-			"exchanges":    exchanges,
-			"offers_count": offersCount,
-		})
-	}
-
 	writeJSON(w, result)
 }
 
@@ -2353,44 +1930,19 @@ func handleSnapshotLogDetail(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var ts time.Time
-	var exchangesJSON []byte
-	var offersCount int
-	if err := db.QueryRow(
-		rebind("SELECT timestamp, exchanges, offers_count FROM snapshot_log WHERE id = ?"),
-		id,
-	).Scan(&ts, &exchangesJSON, &offersCount); err != nil {
+	if snapshotLogRepo.DB != db {
+		snapshotLogRepo = snapshotlog.NewRepository(db)
+	}
+	entry, err := snapshotLogRepo.Detail(r.Context(), id)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
-
-	exchanges := map[string]any{}
-	json.Unmarshal(exchangesJSON, &exchanges)
-	writeJSON(w, map[string]any{
-		"id":           id,
-		"timestamp":    ts,
-		"exchanges":    exchanges,
-		"offers_count": offersCount,
-	})
+	writeJSON(w, entry)
 }
 
 func compactSnapshotExchanges(exchanges map[string]any) map[string]any {
-	out := make(map[string]any, len(exchanges))
-	for name, raw := range exchanges {
-		count := 0
-		if data, ok := raw.(map[string]any); ok {
-			if v, ok := data["count"].(float64); ok {
-				count = int(v)
-			}
-			if count == 0 {
-				if ids, ok := data["ids"].([]any); ok {
-					count = len(ids)
-				}
-			}
-		}
-		out[name] = map[string]any{"count": count}
-	}
-	return out
+	return snapshotlog.CompactExchanges(exchanges)
 }
 
 func handleMmControllerTransactions(w http.ResponseWriter, r *http.Request) {
@@ -2422,99 +1974,16 @@ func handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-type tradingAccount struct {
-	ID                 int64               `json:"id"`
-	Provider           string              `json:"provider"`
-	Category           string              `json:"category"`
-	Email              *string             `json:"email"`
-	Password           *string             `json:"password"`
-	Phone              *string             `json:"phone"`
-	IsHealthy          bool                `json:"is_healthy"`
-	LastHealthCheck    *string             `json:"last_health_check"`
-	CreatedAt          string              `json:"created_at"`
-	UpdatedAt          string              `json:"updated_at"`
-	TOTPSecrets        []tradingTOTPSecret `json:"totp_secrets"`
-	PasskeyCredentials []tradingPasskey    `json:"passkey_credentials"`
-	Seeds              []tradingSeed       `json:"seeds"`
-	APIKeys            []tradingAPIKey     `json:"api_keys"`
-}
-
-type tradingTOTPSecret struct {
-	ID        int64   `json:"id"`
-	AccountID int64   `json:"account_id"`
-	Secret    string  `json:"secret"`
-	IsActive  bool    `json:"is_active"`
-	CreatedAt string  `json:"created_at"`
-	RotatedAt *string `json:"rotated_at"`
-}
-
-type tradingPasskey struct {
-	ID              int64   `json:"id"`
-	AccountID       int64   `json:"account_id"`
-	CredentialID    string  `json:"credential_id"`
-	RPID            string  `json:"rp_id"`
-	PrivateKeyPKCS8 string  `json:"private_key_pkcs8"`
-	UserHandle      string  `json:"user_handle"`
-	SignCount       int64   `json:"sign_count"`
-	IsActive        bool    `json:"is_active"`
-	CreatedAt       string  `json:"created_at"`
-	LastUsedAt      *string `json:"last_used_at"`
-}
-
-type tradingSeed struct {
-	ID              int64   `json:"id"`
-	AccountID       int64   `json:"account_id"`
-	SeedPhrase      string  `json:"seed_phrase"`
-	WalletCreatedAt *string `json:"wallet_created_at"`
-	CreatedAt       string  `json:"created_at"`
-}
-
-type tradingAPIKey struct {
-	ID         int64   `json:"id"`
-	AccountID  int64   `json:"account_id"`
-	Name       string  `json:"name"`
-	APIKey     string  `json:"api_key"`
-	APISecret  *string `json:"api_secret"`
-	Passphrase *string `json:"passphrase"`
-	IsActive   bool    `json:"is_active"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  string  `json:"updated_at"`
-}
-
-type tradingAccountPayload struct {
-	Provider string `json:"provider"`
-	Email    string `json:"email"`
-	Password string `json:"password"`
-	Phone    string `json:"phone"`
-}
-
-type tradingTOTPSecretPayload struct {
-	Secret   string `json:"secret"`
-	IsActive bool   `json:"is_active"`
-}
-
-type tradingPasskeyPayload struct {
-	CredentialID    string  `json:"credential_id"`
-	RPID            string  `json:"rp_id"`
-	PrivateKeyPKCS8 string  `json:"private_key_pkcs8"`
-	UserHandle      string  `json:"user_handle"`
-	SignCount       int64   `json:"sign_count"`
-	IsActive        bool    `json:"is_active"`
-	LastUsedAt      *string `json:"last_used_at"`
-}
-
-type tradingSeedPayload struct {
-	SeedPhrase      string  `json:"seed_phrase"`
-	WalletCreatedAt *string `json:"wallet_created_at"`
-}
-
-type tradingAPIKeyPayload struct {
-	Name       string  `json:"name"`
-	APIKey     string  `json:"api_key"`
-	APISecret  *string `json:"api_secret"`
-	Passphrase *string `json:"passphrase"`
-	IsActive   bool    `json:"is_active"`
-}
+type tradingAccount = tradingaccounts.Account
+type tradingTOTPSecret = tradingaccounts.TOTPSecret
+type tradingPasskey = tradingaccounts.Passkey
+type tradingSeed = tradingaccounts.Seed
+type tradingAPIKey = tradingaccounts.APIKey
+type tradingAccountPayload = tradingaccounts.AccountPayload
+type tradingTOTPSecretPayload = tradingaccounts.TOTPSecretPayload
+type tradingPasskeyPayload = tradingaccounts.PasskeyPayload
+type tradingSeedPayload = tradingaccounts.SeedPayload
+type tradingAPIKeyPayload = tradingaccounts.APIKeyPayload
 
 func handleTradingAccounts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -2571,7 +2040,7 @@ func handleTradingAccountByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, account)
 	case http.MethodDelete:
-		if _, err := db.ExecContext(r.Context(), `DELETE FROM accounts WHERE id = $1`, id); err != nil {
+		if err := tradingAccounts().Delete(r.Context(), id); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -2592,12 +2061,8 @@ func handleTradingAccountTOTPSecrets(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	var id int64
-	if err := db.QueryRowContext(r.Context(), `
-		INSERT INTO totp_secrets (account_id, secret, is_active)
-		VALUES ($1, $2, $3)
-		RETURNING id
-	`, accountID, strings.TrimSpace(payload.Secret), payload.IsActive).Scan(&id); err != nil {
+	id, err := tradingAccounts().CreateTOTPSecret(r.Context(), accountID, payload)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
@@ -2622,11 +2087,7 @@ func handleTradingTOTPSecretByID(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if _, err := db.ExecContext(r.Context(), `
-			UPDATE totp_secrets
-			SET secret = $2, is_active = $3
-			WHERE id = $1
-		`, id, strings.TrimSpace(payload.Secret), payload.IsActive); err != nil {
+		if err := tradingAccounts().UpdateTOTPSecret(r.Context(), id, payload); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -2637,7 +2098,7 @@ func handleTradingTOTPSecretByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, row)
 	case http.MethodDelete:
-		if _, err := db.ExecContext(r.Context(), `DELETE FROM totp_secrets WHERE id = $1`, id); err != nil {
+		if err := tradingAccounts().DeleteTOTPSecret(r.Context(), id); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -2658,13 +2119,8 @@ func handleTradingAccountPasskeys(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	var id int64
-	if err := db.QueryRowContext(r.Context(), `
-		INSERT INTO passkey_credentials (
-			account_id, credential_id, rp_id, private_key_pkcs8, user_handle, sign_count, is_active, last_used_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::timestamptz)
-		RETURNING id
-	`, accountID, payload.CredentialID, payload.RPID, payload.PrivateKeyPKCS8, payload.UserHandle, payload.SignCount, payload.IsActive, stringOrEmpty(payload.LastUsedAt)).Scan(&id); err != nil {
+	id, err := tradingAccounts().CreatePasskey(r.Context(), accountID, payload)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
@@ -2689,17 +2145,7 @@ func handleTradingPasskeyByID(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if _, err := db.ExecContext(r.Context(), `
-			UPDATE passkey_credentials
-			SET credential_id = $2,
-			    rp_id = $3,
-			    private_key_pkcs8 = $4,
-			    user_handle = $5,
-			    sign_count = $6,
-			    is_active = $7,
-			    last_used_at = NULLIF($8, '')::timestamptz
-			WHERE id = $1
-		`, id, payload.CredentialID, payload.RPID, payload.PrivateKeyPKCS8, payload.UserHandle, payload.SignCount, payload.IsActive, stringOrEmpty(payload.LastUsedAt)); err != nil {
+		if err := tradingAccounts().UpdatePasskey(r.Context(), id, payload); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -2710,7 +2156,7 @@ func handleTradingPasskeyByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, row)
 	case http.MethodDelete:
-		if _, err := db.ExecContext(r.Context(), `DELETE FROM passkey_credentials WHERE id = $1`, id); err != nil {
+		if err := tradingAccounts().DeletePasskey(r.Context(), id); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -2731,12 +2177,8 @@ func handleTradingAccountSeeds(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	var id int64
-	if err := db.QueryRowContext(r.Context(), `
-		INSERT INTO seeds (account_id, seed_phrase, wallet_created_at)
-		VALUES ($1, $2, NULLIF($3, '')::timestamptz)
-		RETURNING id
-	`, accountID, payload.SeedPhrase, stringOrEmpty(payload.WalletCreatedAt)).Scan(&id); err != nil {
+	id, err := tradingAccounts().CreateSeed(r.Context(), accountID, payload)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
@@ -2761,12 +2203,7 @@ func handleTradingSeedByID(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if _, err := db.ExecContext(r.Context(), `
-			UPDATE seeds
-			SET seed_phrase = $2,
-			    wallet_created_at = NULLIF($3, '')::timestamptz
-			WHERE id = $1
-		`, id, payload.SeedPhrase, stringOrEmpty(payload.WalletCreatedAt)); err != nil {
+		if err := tradingAccounts().UpdateSeed(r.Context(), id, payload); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -2777,7 +2214,7 @@ func handleTradingSeedByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, row)
 	case http.MethodDelete:
-		if _, err := db.ExecContext(r.Context(), `DELETE FROM seeds WHERE id = $1`, id); err != nil {
+		if err := tradingAccounts().DeleteSeed(r.Context(), id); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -2798,19 +2235,8 @@ func handleTradingAccountAPIKeys(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if robosats, err := isRobosatsAccount(r.Context(), accountID); err != nil {
-		writeError(w, err)
-		return
-	} else if robosats {
-		payload.APISecret = nil
-		payload.Passphrase = nil
-	}
-	var id int64
-	if err := db.QueryRowContext(r.Context(), `
-		INSERT INTO api_keys (account_id, name, api_key, api_secret, passphrase, is_active)
-		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6)
-		RETURNING id
-	`, accountID, payload.Name, payload.APIKey, stringOrEmpty(payload.APISecret), stringOrEmpty(payload.Passphrase), payload.IsActive).Scan(&id); err != nil {
+	id, err := tradingAccounts().CreateAPIKey(r.Context(), accountID, payload)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
@@ -2835,23 +2261,7 @@ func handleTradingAPIKeyByID(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		if robosats, err := isRobosatsAPIKey(r.Context(), id); err != nil {
-			writeError(w, err)
-			return
-		} else if robosats {
-			payload.APISecret = nil
-			payload.Passphrase = nil
-		}
-		if _, err := db.ExecContext(r.Context(), `
-			UPDATE api_keys
-			SET name = $2,
-			    api_key = $3,
-			    api_secret = NULLIF($4, ''),
-			    passphrase = NULLIF($5, ''),
-			    is_active = $6,
-			    updated_at = CURRENT_TIMESTAMP
-			WHERE id = $1
-		`, id, payload.Name, payload.APIKey, stringOrEmpty(payload.APISecret), stringOrEmpty(payload.Passphrase), payload.IsActive); err != nil {
+		if err := tradingAccounts().UpdateAPIKey(r.Context(), id, payload); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -2862,7 +2272,7 @@ func handleTradingAPIKeyByID(w http.ResponseWriter, r *http.Request) {
 		}
 		writeJSON(w, row)
 	case http.MethodDelete:
-		if _, err := db.ExecContext(r.Context(), `DELETE FROM api_keys WHERE id = $1`, id); err != nil {
+		if err := tradingAccounts().DeleteAPIKey(r.Context(), id); err != nil {
 			writeError(w, err)
 			return
 		}
@@ -2872,316 +2282,43 @@ func handleTradingAPIKeyByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func tradingAccounts() tradingaccounts.Repository {
+	if tradingAccountRepo.DB != db {
+		tradingAccountRepo = tradingaccounts.NewRepository(db)
+	}
+	return tradingAccountRepo
+}
+
 func loadTradingAccounts(ctx context.Context) ([]tradingAccount, error) {
-	rows, err := db.QueryContext(ctx, `
-		SELECT id,
-		       provider,
-		       CASE
-		           WHEN lower(provider) IN ('wise', 'paypal', 'revolut', 'n26') THEN 'Fiat Transmitter'
-		           WHEN lower(provider) IN ('robosats', 'bisq', 'hodlhodl') THEN 'DEX'
-		           WHEN lower(provider) IN ('kraken', 'coinbase', 'bitstamp', 'binance', 'bybit', 'kucoin', 'huobi') THEN 'CEX'
-		           WHEN lower(provider) IN ('lnd', 'lnd wallet', 'lnd_wallet') THEN 'Internal Infrastructure'
-		           ELSE 'Uncategorized'
-		       END AS category,
-		       email,
-		       password,
-		       phone,
-		       is_healthy,
-		       last_health_check,
-		       created_at,
-		       updated_at
-		FROM accounts
-		ORDER BY category, provider, id
-	`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	accounts := make([]tradingAccount, 0)
-	accountIDs := make([]int64, 0)
-	accountIndex := make(map[int64]int)
-	for rows.Next() {
-		var account tradingAccount
-		var email, password, phone sql.NullString
-		var lastHealthCheck sql.NullTime
-		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&account.ID, &account.Provider, &account.Category, &email, &password, &phone, &account.IsHealthy, &lastHealthCheck, &createdAt, &updatedAt); err != nil {
-			return nil, err
-		}
-		account.Email = nullStringPtr(email)
-		account.Password = nullStringPtr(password)
-		account.Phone = nullStringPtr(phone)
-		account.LastHealthCheck = nullTimePtr(lastHealthCheck)
-		account.CreatedAt = formatTime(createdAt)
-		account.UpdatedAt = formatTime(updatedAt)
-		account.TOTPSecrets = []tradingTOTPSecret{}
-		account.PasskeyCredentials = []tradingPasskey{}
-		account.Seeds = []tradingSeed{}
-		account.APIKeys = []tradingAPIKey{}
-		accounts = append(accounts, account)
-		accountIDs = append(accountIDs, account.ID)
-		accountIndex[account.ID] = len(accounts) - 1
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	if len(accountIDs) == 0 {
-		return accounts, nil
-	}
-
-	if err := appendTradingTOTPSecrets(ctx, accounts, accountIndex, accountIDs); err != nil {
-		return nil, err
-	}
-	if err := appendTradingPasskeys(ctx, accounts, accountIndex, accountIDs); err != nil {
-		return nil, err
-	}
-	if err := appendTradingSeeds(ctx, accounts, accountIndex, accountIDs); err != nil {
-		return nil, err
-	}
-	if err := appendTradingAPIKeys(ctx, accounts, accountIndex, accountIDs); err != nil {
-		return nil, err
-	}
-
-	return accounts, nil
+	return tradingAccounts().List(ctx)
 }
 
 func loadTradingAccountByID(ctx context.Context, id int64) (*tradingAccount, error) {
-	accounts, err := loadTradingAccounts(ctx)
-	if err != nil {
-		return nil, err
-	}
-	for i := range accounts {
-		if accounts[i].ID == id {
-			return &accounts[i], nil
-		}
-	}
-	return nil, sql.ErrNoRows
-}
-
-func appendTradingTOTPSecrets(ctx context.Context, accounts []tradingAccount, accountIndex map[int64]int, accountIDs []int64) error {
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, account_id, secret, is_active, created_at, rotated_at
-		FROM totp_secrets
-		WHERE account_id = ANY($1)
-		ORDER BY created_at DESC, id DESC
-	`, accountIDs)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var item tradingTOTPSecret
-		var createdAt time.Time
-		var rotatedAt sql.NullTime
-		if err := rows.Scan(&item.ID, &item.AccountID, &item.Secret, &item.IsActive, &createdAt, &rotatedAt); err != nil {
-			return err
-		}
-		item.CreatedAt = formatTime(createdAt)
-		item.RotatedAt = nullTimePtr(rotatedAt)
-		if index, ok := accountIndex[item.AccountID]; ok {
-			accounts[index].TOTPSecrets = append(accounts[index].TOTPSecrets, item)
-		}
-	}
-	return rows.Err()
-}
-
-func appendTradingPasskeys(ctx context.Context, accounts []tradingAccount, accountIndex map[int64]int, accountIDs []int64) error {
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, account_id, credential_id, rp_id, private_key_pkcs8, user_handle, sign_count, is_active, created_at, last_used_at
-		FROM passkey_credentials
-		WHERE account_id = ANY($1)
-		ORDER BY created_at DESC, id DESC
-	`, accountIDs)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var item tradingPasskey
-		var createdAt time.Time
-		var lastUsedAt sql.NullTime
-		if err := rows.Scan(&item.ID, &item.AccountID, &item.CredentialID, &item.RPID, &item.PrivateKeyPKCS8, &item.UserHandle, &item.SignCount, &item.IsActive, &createdAt, &lastUsedAt); err != nil {
-			return err
-		}
-		item.CreatedAt = formatTime(createdAt)
-		item.LastUsedAt = nullTimePtr(lastUsedAt)
-		if index, ok := accountIndex[item.AccountID]; ok {
-			accounts[index].PasskeyCredentials = append(accounts[index].PasskeyCredentials, item)
-		}
-	}
-	return rows.Err()
-}
-
-func appendTradingSeeds(ctx context.Context, accounts []tradingAccount, accountIndex map[int64]int, accountIDs []int64) error {
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, account_id, seed_phrase, wallet_created_at, created_at
-		FROM seeds
-		WHERE account_id = ANY($1)
-		ORDER BY created_at DESC, id DESC
-	`, accountIDs)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var item tradingSeed
-		var walletCreatedAt sql.NullTime
-		var createdAt time.Time
-		if err := rows.Scan(&item.ID, &item.AccountID, &item.SeedPhrase, &walletCreatedAt, &createdAt); err != nil {
-			return err
-		}
-		item.WalletCreatedAt = nullTimePtr(walletCreatedAt)
-		item.CreatedAt = formatTime(createdAt)
-		if index, ok := accountIndex[item.AccountID]; ok {
-			accounts[index].Seeds = append(accounts[index].Seeds, item)
-		}
-	}
-	return rows.Err()
-}
-
-func appendTradingAPIKeys(ctx context.Context, accounts []tradingAccount, accountIndex map[int64]int, accountIDs []int64) error {
-	rows, err := db.QueryContext(ctx, `
-		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, created_at, updated_at
-		FROM api_keys
-		WHERE account_id = ANY($1)
-		ORDER BY updated_at DESC, id DESC
-	`, accountIDs)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var item tradingAPIKey
-		var apiSecret, passphrase sql.NullString
-		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&item.ID, &item.AccountID, &item.Name, &item.APIKey, &apiSecret, &passphrase, &item.IsActive, &createdAt, &updatedAt); err != nil {
-			return err
-		}
-		item.APISecret = nullStringPtr(apiSecret)
-		item.Passphrase = nullStringPtr(passphrase)
-		item.CreatedAt = formatTime(createdAt)
-		item.UpdatedAt = formatTime(updatedAt)
-		if index, ok := accountIndex[item.AccountID]; ok {
-			accounts[index].APIKeys = append(accounts[index].APIKeys, item)
-		}
-	}
-	return rows.Err()
+	return tradingAccounts().Get(ctx, id)
 }
 
 func createTradingAccount(ctx context.Context, payload tradingAccountPayload) (int64, error) {
-	provider := normalizeProvider(payload.Provider)
-	var id int64
-	err := db.QueryRowContext(ctx, `
-		INSERT INTO accounts (provider, email, password, phone)
-		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''))
-		RETURNING id
-	`, provider, strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone)).Scan(&id)
-	return id, err
+	return tradingAccounts().Create(ctx, payload)
 }
 
 func updateTradingAccount(ctx context.Context, id int64, payload tradingAccountPayload) error {
-	_, err := db.ExecContext(ctx, `
-		UPDATE accounts
-		SET provider = $2,
-		    email = NULLIF($3, ''),
-		    password = NULLIF($4, ''),
-		    phone = NULLIF($5, ''),
-		    updated_at = CURRENT_TIMESTAMP
-		WHERE id = $1
-	`, id, normalizeProvider(payload.Provider), strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone))
-	return err
-}
-
-func isRobosatsAccount(ctx context.Context, accountID int64) (bool, error) {
-	var provider string
-	if err := db.QueryRowContext(ctx, `SELECT provider FROM accounts WHERE id = $1`, accountID).Scan(&provider); err != nil {
-		return false, err
-	}
-	return normalizeProvider(provider) == "Robosats", nil
-}
-
-func isRobosatsAPIKey(ctx context.Context, apiKeyID int64) (bool, error) {
-	var provider string
-	if err := db.QueryRowContext(ctx, `
-		SELECT accounts.provider
-		FROM api_keys
-		JOIN accounts ON accounts.id = api_keys.account_id
-		WHERE api_keys.id = $1
-	`, apiKeyID).Scan(&provider); err != nil {
-		return false, err
-	}
-	return normalizeProvider(provider) == "Robosats", nil
+	return tradingAccounts().Update(ctx, id, payload)
 }
 
 func loadTradingTOTPSecretByID(ctx context.Context, id int64) (*tradingTOTPSecret, error) {
-	var item tradingTOTPSecret
-	var createdAt time.Time
-	var rotatedAt sql.NullTime
-	err := db.QueryRowContext(ctx, `
-		SELECT id, account_id, secret, is_active, created_at, rotated_at
-		FROM totp_secrets
-		WHERE id = $1
-	`, id).Scan(&item.ID, &item.AccountID, &item.Secret, &item.IsActive, &createdAt, &rotatedAt)
-	if err != nil {
-		return nil, err
-	}
-	item.CreatedAt = formatTime(createdAt)
-	item.RotatedAt = nullTimePtr(rotatedAt)
-	return &item, nil
+	return tradingAccounts().GetTOTPSecret(ctx, id)
 }
 
 func loadTradingPasskeyByID(ctx context.Context, id int64) (*tradingPasskey, error) {
-	var item tradingPasskey
-	var createdAt time.Time
-	var lastUsedAt sql.NullTime
-	err := db.QueryRowContext(ctx, `
-		SELECT id, account_id, credential_id, rp_id, private_key_pkcs8, user_handle, sign_count, is_active, created_at, last_used_at
-		FROM passkey_credentials
-		WHERE id = $1
-	`, id).Scan(&item.ID, &item.AccountID, &item.CredentialID, &item.RPID, &item.PrivateKeyPKCS8, &item.UserHandle, &item.SignCount, &item.IsActive, &createdAt, &lastUsedAt)
-	if err != nil {
-		return nil, err
-	}
-	item.CreatedAt = formatTime(createdAt)
-	item.LastUsedAt = nullTimePtr(lastUsedAt)
-	return &item, nil
+	return tradingAccounts().GetPasskey(ctx, id)
 }
 
 func loadTradingSeedByID(ctx context.Context, id int64) (*tradingSeed, error) {
-	var item tradingSeed
-	var walletCreatedAt sql.NullTime
-	var createdAt time.Time
-	err := db.QueryRowContext(ctx, `
-		SELECT id, account_id, seed_phrase, wallet_created_at, created_at
-		FROM seeds
-		WHERE id = $1
-	`, id).Scan(&item.ID, &item.AccountID, &item.SeedPhrase, &walletCreatedAt, &createdAt)
-	if err != nil {
-		return nil, err
-	}
-	item.WalletCreatedAt = nullTimePtr(walletCreatedAt)
-	item.CreatedAt = formatTime(createdAt)
-	return &item, nil
+	return tradingAccounts().GetSeed(ctx, id)
 }
 
 func loadTradingAPIKeyByID(ctx context.Context, id int64) (*tradingAPIKey, error) {
-	var item tradingAPIKey
-	var apiSecret, passphrase sql.NullString
-	var createdAt, updatedAt time.Time
-	err := db.QueryRowContext(ctx, `
-		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, created_at, updated_at
-		FROM api_keys
-		WHERE id = $1
-	`, id).Scan(&item.ID, &item.AccountID, &item.Name, &item.APIKey, &apiSecret, &passphrase, &item.IsActive, &createdAt, &updatedAt)
-	if err != nil {
-		return nil, err
-	}
-	item.APISecret = nullStringPtr(apiSecret)
-	item.Passphrase = nullStringPtr(passphrase)
-	item.CreatedAt = formatTime(createdAt)
-	item.UpdatedAt = formatTime(updatedAt)
-	return &item, nil
+	return tradingAccounts().GetAPIKey(ctx, id)
 }
 
 func decodeJSON(r *http.Request, dest any) error {
@@ -3197,299 +2334,6 @@ func pathID(r *http.Request, name string) (int64, error) {
 		return 0, fmt.Errorf("invalid id")
 	}
 	return id, nil
-}
-
-func normalizeProvider(value string) string {
-	trimmed := strings.TrimSpace(value)
-	switch strings.ToLower(trimmed) {
-	case "wise":
-		return "WISE"
-	case "paypal":
-		return "PayPal"
-	case "revolut":
-		return "Revolut"
-	case "n26":
-		return "N26"
-	case "robosats":
-		return "Robosats"
-	case "bisq":
-		return "Bisq"
-	case "hodlhodl":
-		return "HodlHodl"
-	case "kraken":
-		return "Kraken"
-	case "coinbase":
-		return "Coinbase"
-	case "bitstamp":
-		return "Bitstamp"
-	case "binance":
-		return "Binance"
-	case "bybit":
-		return "ByBit"
-	case "kucoin":
-		return "KuCoin"
-	case "huobi":
-		return "Huobi"
-	case "lnd", "lnd wallet", "lnd_wallet":
-		return "LND wallet"
-	default:
-		return trimmed
-	}
-}
-
-func nullStringPtr(value sql.NullString) *string {
-	if !value.Valid {
-		return nil
-	}
-	v := value.String
-	return &v
-}
-
-func nullTimePtr(value sql.NullTime) *string {
-	if !value.Valid {
-		return nil
-	}
-	v := formatTime(value.Time)
-	return &v
-}
-
-func formatTime(value time.Time) string {
-	return value.UTC().Format(time.RFC3339)
-}
-
-func stringOrEmpty(value *string) string {
-	if value == nil {
-		return ""
-	}
-	return strings.TrimSpace(*value)
-}
-
-// --- Kraken OHLC (REST, for chart) ---
-
-func fetchKrakenOHLC(hours int) []map[string]any {
-	client := &http.Client{Timeout: 15 * time.Second}
-	url := fmt.Sprintf("https://api.kraken.com/0/public/OHLC?pair=XBTEUR&interval=%d", snapshotIntervalMin)
-
-	resp, err := client.Get(url)
-	if err != nil {
-		fmt.Printf("[OHLC] Kraken error: %v\n", err)
-		return nil
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		fmt.Printf("[OHLC] read error: %v\n", err)
-		return nil
-	}
-
-	var data struct {
-		Result map[string]json.RawMessage `json:"result"`
-	}
-	if err := json.Unmarshal(body, &data); err != nil {
-		fmt.Printf("[OHLC] parse error: %v\n", err)
-		return nil
-	}
-
-	cutoff := float64(time.Now().UTC().Unix() - int64(hours*3600))
-	candles := make([]map[string]any, 0)
-
-	for key, raw := range data.Result {
-		if key == "last" {
-			continue
-		}
-		var ohlcData [][]json.RawMessage
-		if err := json.Unmarshal(raw, &ohlcData); err != nil {
-			continue
-		}
-		for _, c := range ohlcData {
-			if len(c) < 5 {
-				continue
-			}
-			var ts float64
-			json.Unmarshal(c[0], &ts)
-			if ts < cutoff {
-				continue
-			}
-			var open, high, low, close string
-			json.Unmarshal(c[1], &open)
-			json.Unmarshal(c[2], &high)
-			json.Unmarshal(c[3], &low)
-			json.Unmarshal(c[4], &close)
-
-			candles = append(candles, map[string]any{
-				"time":  time.Unix(int64(ts), 0).UTC().Format("2006-01-02T15:04:05"),
-				"open":  parseFloat(open),
-				"high":  parseFloat(high),
-				"low":   parseFloat(low),
-				"close": parseFloat(close),
-			})
-		}
-		break
-	}
-	return candles
-}
-
-func fetchBinanceOHLC(hours int) []map[string]any {
-	// Binance interval must match snapshotIntervalMin; round to nearest supported value.
-	interval := "15m"
-	switch snapshotIntervalMin {
-	case 1:
-		interval = "1m"
-	case 3:
-		interval = "3m"
-	case 5:
-		interval = "5m"
-	case 30:
-		interval = "30m"
-	case 60:
-		interval = "1h"
-	}
-	startMs := (time.Now().UTC().Unix() - int64(hours*3600)) * 1000
-	apiURL := fmt.Sprintf("https://api.binance.com/api/v3/klines?symbol=BTCEUR&interval=%s&limit=1000&startTime=%d", interval, startMs)
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(apiURL)
-	if err != nil {
-		fmt.Printf("[OHLC] Binance error: %v\n", err)
-		return nil
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil
-	}
-	// Each entry: [open_time_ms, "open", "high", "low", "close", ...]
-	var raw [][]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
-		fmt.Printf("[OHLC] Binance parse error: %v\n", err)
-		return nil
-	}
-
-	candles := make([]map[string]any, 0, len(raw))
-	for _, c := range raw {
-		if len(c) < 5 {
-			continue
-		}
-		var tsMs int64
-		json.Unmarshal(c[0], &tsMs)
-		var open, high, low, cls string
-		json.Unmarshal(c[1], &open)
-		json.Unmarshal(c[2], &high)
-		json.Unmarshal(c[3], &low)
-		json.Unmarshal(c[4], &cls)
-		candles = append(candles, map[string]any{
-			"time":  time.UnixMilli(tsMs).UTC().Format("2006-01-02T15:04:05"),
-			"open":  parseFloat(open),
-			"high":  parseFloat(high),
-			"low":   parseFloat(low),
-			"close": parseFloat(cls),
-		})
-	}
-	return candles
-}
-
-func fetchBitstampOHLC(hours int) []map[string]any {
-	step := snapshotIntervalMin * 60 // seconds
-	start := time.Now().UTC().Unix() - int64(hours*3600)
-	apiURL := fmt.Sprintf("https://www.bitstamp.net/api/v2/ohlc/btceur/?step=%d&limit=1000&start=%d", step, start)
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(apiURL)
-	if err != nil {
-		fmt.Printf("[OHLC] Bitstamp error: %v\n", err)
-		return nil
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil
-	}
-	var result struct {
-		Data struct {
-			OHLC []struct {
-				Timestamp string `json:"timestamp"`
-				Open      string `json:"open"`
-				High      string `json:"high"`
-				Low       string `json:"low"`
-				Close     string `json:"close"`
-			} `json:"ohlc"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &result); err != nil {
-		fmt.Printf("[OHLC] Bitstamp parse error: %v\n", err)
-		return nil
-	}
-
-	candles := make([]map[string]any, 0, len(result.Data.OHLC))
-	for _, c := range result.Data.OHLC {
-		ts, _ := strconv.ParseInt(c.Timestamp, 10, 64)
-		candles = append(candles, map[string]any{
-			"time":  time.Unix(ts, 0).UTC().Format("2006-01-02T15:04:05"),
-			"open":  parseFloat(c.Open),
-			"high":  parseFloat(c.High),
-			"low":   parseFloat(c.Low),
-			"close": parseFloat(c.Close),
-		})
-	}
-	return candles
-}
-
-func fetchCoinbaseOHLC(hours int) []map[string]any {
-	// Coinbase granularity in seconds; max 300 candles per request.
-	gran := snapshotIntervalMin * 60
-	end := time.Now().UTC()
-	start := end.Add(-time.Duration(hours) * time.Hour)
-	apiURL := fmt.Sprintf(
-		"https://api.exchange.coinbase.com/products/BTC-EUR/candles?granularity=%d&start=%s&end=%s",
-		gran,
-		url.QueryEscape(start.Format(time.RFC3339)),
-		url.QueryEscape(end.Format(time.RFC3339)),
-	)
-
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Get(apiURL)
-	if err != nil {
-		fmt.Printf("[OHLC] Coinbase error: %v\n", err)
-		return nil
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil
-	}
-	// Each entry: [time, low, high, open, close, volume]  (newest first)
-	var raw [][]json.RawMessage
-	if err := json.Unmarshal(body, &raw); err != nil {
-		fmt.Printf("[OHLC] Coinbase parse error: %v\n", err)
-		return nil
-	}
-
-	candles := make([]map[string]any, 0, len(raw))
-	for i := len(raw) - 1; i >= 0; i-- { // reverse to chronological order
-		c := raw[i]
-		if len(c) < 5 {
-			continue
-		}
-		var ts int64
-		json.Unmarshal(c[0], &ts)
-		var low, high, open, cls float64
-		json.Unmarshal(c[1], &low)
-		json.Unmarshal(c[2], &high)
-		json.Unmarshal(c[3], &open)
-		json.Unmarshal(c[4], &cls)
-		candles = append(candles, map[string]any{
-			"time":  time.Unix(ts, 0).UTC().Format("2006-01-02T15:04:05"),
-			"open":  open,
-			"high":  high,
-			"low":   low,
-			"close": cls,
-		})
-	}
-	return candles
 }
 
 // --- Helpers ---
@@ -3840,38 +2684,10 @@ func offerBool(o map[string]any, key string) bool {
 }
 
 func forwardMMControllerJSON(w http.ResponseWriter, r *http.Request, path string) {
-	baseURL, err := url.Parse(mmControllerAPIURL)
-	if err != nil {
-		http.Error(w, "mm controller api url is invalid", http.StatusInternalServerError)
-		return
+	if mmProxy == nil {
+		mmProxy = mmproxy.New(mmControllerAPIURL)
 	}
-
-	targetURL, err := baseURL.Parse(path)
-	if err != nil {
-		http.Error(w, "failed to build mm controller request", http.StatusInternalServerError)
-		return
-	}
-	targetURL.RawQuery = r.URL.RawQuery
-
-	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, targetURL.String(), nil)
-	if err != nil {
-		http.Error(w, "failed to create mm controller request", http.StatusInternalServerError)
-		return
-	}
-
-	client := &http.Client{Timeout: 10 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		http.Error(w, fmt.Sprintf("mm controller request failed: %v", err), http.StatusBadGateway)
-		return
-	}
-	defer resp.Body.Close()
-
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(resp.StatusCode)
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		fmt.Printf("[MMControllerProxy] copy error: %v\n", err)
-	}
+	mmProxy.ForwardJSON(w, r, path)
 }
 
 func queryIntPtr(r *http.Request, key string) *int {

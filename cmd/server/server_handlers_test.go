@@ -1,16 +1,14 @@
 package main
 
 import (
+	"commons/tradecost"
 	"database/sql"
 	"dexmonitor/internal/pastorders"
 	"encoding/json"
-	"errors"
 	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
-	"sync"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -114,56 +112,12 @@ CREATE TABLE kraken_ohlc (
 );
 `
 
-func seededCachedFee(value float64) *cachedFee {
-	return &cachedFee{
-		value:     value,
-		fetchedAt: time.Now(),
-		ttl:       feeTTL,
-	}
+func fixedCostEstimator(exchange, dexExchange string, takerFeeFrac, withdrawalFeeBTC, dexFeeFrac, networkFeeBTC float64) *tradecost.TradeCostEstimator {
+	return tradecost.NewFixedEstimatorForTesting(exchange, dexExchange, takerFeeFrac, withdrawalFeeBTC, dexFeeFrac, networkFeeBTC)
 }
 
-func fixedCostEstimator(exchange, dexExchange string, takerFeeFrac, withdrawalFeeBTC, dexFeeFrac, networkFeeBTC float64) *TradeCostEstimator {
-	withdrawal := newWithdrawalFeeFetcher(exchange)
-	withdrawal.caches[MethodOnchain] = seededCachedFee(withdrawalFeeBTC)
-	withdrawal.caches[MethodLightning] = seededCachedFee(withdrawalFeeBTC)
-
-	return &TradeCostEstimator{
-		exchange:   exchange,
-		taker:      &takerFeeFetcher{exchange: exchange, cache: seededCachedFee(takerFeeFrac)},
-		withdrawal: withdrawal,
-		dexFees: map[string]*cachedFee{
-			dexExchange: seededCachedFee(dexFeeFrac),
-		},
-		cexProfile: cexProfileFor(exchange),
-		networkFeeOverride: func(method WithdrawalMethod, btcAmount float64) networkFeeDetails {
-			return networkFeeDetails{
-				feeBTC:     networkFeeBTC,
-				method:     method,
-				tier:       "standard",
-				confidence: 0.875,
-				detail: &BTCNetworkFeeDetail{
-					SelectedFullConfirmationMinutes: 30,
-				},
-			}
-		},
-		hedgeCostOverride: func(btcAmount float64, refPriceEUR float64, transferMinutes float64) hedgeCostDetails {
-			return hedgeCostDetails{}
-		},
-	}
-}
-
-func fixedCostEstimatorWithHedge(exchange, dexExchange string, takerFeeFrac, withdrawalFeeBTC, dexFeeFrac, networkFeeBTC, hedgeFeeBTC float64) *TradeCostEstimator {
-	est := fixedCostEstimator(exchange, dexExchange, takerFeeFrac, withdrawalFeeBTC, dexFeeFrac, networkFeeBTC)
-	est.hedgeCostOverride = func(btcAmount float64, refPriceEUR float64, transferMinutes float64) hedgeCostDetails {
-		return hedgeCostDetails{
-			feeBTC:          hedgeFeeBTC,
-			feePct:          hedgeFeeBTC / btcAmount * 100,
-			venue:           "coinbase_futures",
-			instrument:      "BTC-PERP",
-			transferMinutes: transferMinutes,
-		}
-	}
-	return est
+func fixedCostEstimatorWithHedge(exchange, dexExchange string, takerFeeFrac, withdrawalFeeBTC, dexFeeFrac, networkFeeBTC, hedgeFeeBTC float64) *tradecost.TradeCostEstimator {
+	return tradecost.NewFixedEstimatorWithHedgeForTesting(exchange, dexExchange, takerFeeFrac, withdrawalFeeBTC, dexFeeFrac, networkFeeBTC, hedgeFeeBTC)
 }
 
 func assertFloat(t *testing.T, got, want float64) {
@@ -212,179 +166,6 @@ func storedPastOfferFixture(direction string) map[string]any {
 	}
 }
 
-func TestTradeCostEstimatorCostPctUsesAllComponents(t *testing.T) {
-	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
-
-	got := est.CostPct(0.1, "bisq")
-
-	assertFloat(t, got, 0.55)
-}
-
-func TestTradeCostEstimatorBreakdownMatchesComponentSum(t *testing.T) {
-	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
-
-	bd := est.Breakdown(0.1, "bisq", "buy")
-
-	assertFloat(t, bd.BTCAmount, 0.1)
-	assertFloat(t, bd.CexTakerFeeBTC, 0.00025)
-	assertFloat(t, bd.CexTakerFeePct, 0.25)
-	assertFloat(t, bd.WithdrawalFeeBTC, 0.00015)
-	assertFloat(t, bd.WithdrawalFeePct, 0.15)
-	assertFloat(t, bd.NetworkFeeBTC, 0.0001) // 2 txs × 0.00005
-	assertFloat(t, bd.NetworkFeePct, 0.1)
-	assertFloat(t, bd.DexFeeBTC, 0.0001)
-	assertFloat(t, bd.DexFeePct, 0.1)
-	assertFloat(t, bd.TotalCostBTC, 0.0006)
-	assertFloat(t, bd.TotalCostPct, 0.6)
-	if bd.NetworkFeeMethod != "onchain" {
-		t.Fatalf("network method = %q, want onchain", bd.NetworkFeeMethod)
-	}
-	if bd.NetworkFeeConfidence != 0.875 {
-		t.Fatalf("network confidence = %.12f, want 0.875", bd.NetworkFeeConfidence)
-	}
-}
-
-func TestTradeCostEstimatorBreakdownIncludesHedgeCostOnBidSide(t *testing.T) {
-	est := fixedCostEstimatorWithHedge("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005, 0.0002)
-
-	bd := est.Breakdown(0.1, "bisq", "buy")
-
-	assertFloat(t, bd.Hedge.FeeSumBTC, 0.0002)
-	assertFloat(t, bd.Hedge.FeeSumPct, 0.2)
-	assertFloat(t, bd.TotalCostBTC, 0.0008)
-	assertFloat(t, bd.TotalCostPct, 0.8)
-	if bd.Hedge.Venue != "coinbase_futures" {
-		t.Fatalf("hedge venue = %q, want coinbase_futures", bd.Hedge.Venue)
-	}
-	if bd.Hedge.TransferMinutes != 60 {
-		t.Fatalf("hedge transfer minutes = %d, want 60", bd.Hedge.TransferMinutes)
-	}
-}
-
-func TestTradeCostEstimatorDoesNotIncludeHedgeCostOnAskSide(t *testing.T) {
-	est := fixedCostEstimatorWithHedge("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005, 0.0002)
-
-	bd := est.Breakdown(0.1, "bisq", "sell")
-
-	assertFloat(t, bd.Hedge.FeeSumBTC, 0)
-	assertFloat(t, bd.Hedge.FeeSumPct, 0)
-}
-
-func TestTradeCostEstimatorBreakdownRoundsBTCAndPercentFields(t *testing.T) {
-	est := fixedCostEstimator("kraken", "bisq", 0.00123456789, 0.000000004, 0.00098765432, 0.000000006)
-
-	bd := est.Breakdown(0.123456789, "bisq", "buy")
-
-	assertFloat(t, bd.BTCAmount, 0.12345679)
-	assertFloat(t, bd.CexTakerFeeBTC, 0.00015242)
-	assertFloat(t, bd.WithdrawalFeeBTC, 0)
-	assertFloat(t, bd.NetworkFeeBTC, 0.00000001)
-	assertFloat(t, bd.DexFeeBTC, 0.00012193)
-	assertFloat(t, bd.CexTakerFeePct, 0.1235)
-	assertFloat(t, bd.DexFeePct, 0.0988)
-	assertFloat(t, bd.TotalCostPct, 0.2222)
-}
-
-func TestTradeCostEstimatorZeroAmountReturnsEmptyCost(t *testing.T) {
-	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
-
-	assertFloat(t, est.CostPct(0, "bisq"), 0)
-	if bd := est.Breakdown(0, "bisq", "buy"); bd != (CostBreakdown{}) {
-		t.Fatalf("zero amount breakdown = %#v, want empty breakdown", bd)
-	}
-}
-
-func TestSelectBTCTradeSizePrefersMaxThenMinThenDefault(t *testing.T) {
-	min := 0.02
-	max := 0.05
-
-	assertFloat(t, selectBTCTradeSize(&max, &min), 0.05)
-	assertFloat(t, selectBTCTradeSize(nil, &min), 0.02)
-	assertFloat(t, selectBTCTradeSize(nil, nil), defaultBTCTradeSize)
-}
-
-func TestDirectionalPremiumPct(t *testing.T) {
-	assertFloat(t, computeDirectionalPremiumPct("buy", 105, 100), 5)
-	assertFloat(t, computeDirectionalPremiumPct("sell", 95, 100), 5)
-	assertFloat(t, computeDirectionalPremiumPct("buy", 100, 0), 0)
-}
-
-func TestComputeNetPremiumFields(t *testing.T) {
-	oldOptimizer := tradeRouteOptimizer
-	oldEstimators := tradeCostEstimators
-	defer func() {
-		tradeRouteOptimizer = oldOptimizer
-		tradeCostEstimators = oldEstimators
-	}()
-
-	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
-	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
-	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
-
-	tradeCostPct, netPremium, bd := computeNetPremiumFields(2.5, 0.1, "bisq", "buy")
-
-	assertFloat(t, tradeCostPct, 0.6)
-	assertFloat(t, netPremium, 1.9)
-	assertFloat(t, bd.EstimatedProfitPct, 1.9)
-	assertFloat(t, bd.EstimatedProfitBTC, 0.0019)
-
-	tradeCostPct, netPremium, bd = computeNetPremiumFields(-1, 0.1, "bisq", "buy")
-	assertFloat(t, tradeCostPct, 0)
-	assertFloat(t, netPremium, 0)
-	if bd != (CostBreakdown{}) {
-		t.Fatalf("negative premium breakdown = %#v, want empty breakdown", bd)
-	}
-}
-
-func TestCachedFeeUsesFallbackThenKeepsCachedValueOnFailure(t *testing.T) {
-	cache := newCachedFee(time.Hour)
-	refreshErr := errors.New("boom")
-
-	got := cache.get(0.123, func() (float64, error) {
-		return 0, refreshErr
-	}, "test fee")
-	assertFloat(t, got, 0.123)
-
-	cache.fetchedAt = time.Now().Add(-2 * time.Hour)
-	got = cache.get(0.123, func() (float64, error) {
-		return 0.456, nil
-	}, "test fee")
-	assertFloat(t, got, 0.456)
-
-	cache.fetchedAt = time.Now().Add(-2 * time.Hour)
-	got = cache.get(0.123, func() (float64, error) {
-		return 0, refreshErr
-	}, "test fee")
-	assertFloat(t, got, 0.456)
-}
-
-func TestCachedFeeSharesConcurrentRefresh(t *testing.T) {
-	cache := newCachedFee(time.Hour)
-	start := make(chan struct{})
-	var calls int32
-	var wg sync.WaitGroup
-
-	for i := 0; i < 8; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			got := cache.get(0.123, func() (float64, error) {
-				atomic.AddInt32(&calls, 1)
-				time.Sleep(20 * time.Millisecond)
-				return 0.789, nil
-			}, "test fee")
-			assertFloat(t, got, 0.789)
-		}()
-	}
-
-	close(start)
-	wg.Wait()
-	if calls != 1 {
-		t.Fatalf("refresh calls = %d, want 1", calls)
-	}
-}
-
 func TestLiveOffersRESTReturnsComputedCostFields(t *testing.T) {
 	oldHub := hub
 	oldPrices := cexPrices
@@ -401,8 +182,8 @@ func TestLiveOffersRESTReturnsComputedCostFields(t *testing.T) {
 	cexPrices = map[string]float64{"kraken": 100}
 
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
-	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
-	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{"kraken": est}
+	tradeRouteOptimizer = tradecost.NewTradeRouteOptimizer(tradeCostEstimators)
 
 	btcMin := 0.01
 	btcMax := 0.1
@@ -462,8 +243,8 @@ func TestHandleLiveOffersRESTIncludesCappedProfitFields(t *testing.T) {
 	setCexPrice("kraken", 100)
 
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
-	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
-	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{"kraken": est}
+	tradeRouteOptimizer = tradecost.NewTradeRouteOptimizer(tradeCostEstimators)
 
 	btcMin := 0.02
 	btcMax := 0.1
@@ -558,10 +339,10 @@ func TestPastOffersRESTIncludesCappedAnalysisWhenRequested(t *testing.T) {
 	withTempOrdersDB(t)
 
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
-	est.dexFees["hodlhodl"] = seededCachedFee(0.001)
-	est.dexFees["robosats"] = seededCachedFee(0.001)
-	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
-	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+	est.SetFixedDexFeeForTesting("hodlhodl", 0.001)
+	est.SetFixedDexFeeForTesting("robosats", 0.001)
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{"kraken": est}
+	tradeRouteOptimizer = tradecost.NewTradeRouteOptimizer(tradeCostEstimators)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/past_offers?hours=100000&limit=1000&max_fiat_limit=5", nil)
 	rec := httptest.NewRecorder()
@@ -598,7 +379,7 @@ func TestPastOffersRESTIncludesCappedAnalysisWhenRequested(t *testing.T) {
 func TestPastOfferAnalysisUsesStoredUncappedCosts(t *testing.T) {
 	oldEstimators := tradeCostEstimators
 	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
-	tradeCostEstimators = map[string]*TradeCostEstimator{
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{
 		"kraken": fixedCostEstimator("kraken", "bisq", 0.50, 0.50, 0.50, 0.50),
 	}
 
@@ -631,18 +412,8 @@ func TestPastOfferCappedAnalysisKeepsStoredRouteAndFixedTransferCosts(t *testing
 	oldEstimators := tradeCostEstimators
 	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
 	est := fixedCostEstimator("kraken", "bisq", 0.01, 0.99, 0.002, 0.99)
-	est.hedgeCostOverride = func(btcAmount float64, refPriceEUR float64, transferMinutes float64) hedgeCostDetails {
-		return hedgeCostDetails{
-			feeBTC:          btcAmount * 0.006,
-			openFeeBTC:      btcAmount * 0.001,
-			closeFeeBTC:     btcAmount * 0.002,
-			fundingFeeBTC:   btcAmount * 0.003,
-			venue:           "kraken_futures",
-			instrument:      "PI_XBTUSD",
-			transferMinutes: transferMinutes,
-		}
-	}
-	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
+	est = tradecost.NewFixedEstimatorWithHedgeRatesForTesting("kraken", "bisq", 0.01, 0.99, 0.002, 0.99, 0.001, 0.002, 0.003)
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{"kraken": est}
 
 	offer := storedPastOfferFixture("buy")
 	offer["btc_max"] = 1.0
@@ -678,7 +449,7 @@ func TestPastOfferCappedAnalysisKeepsStoredRouteAndFixedTransferCosts(t *testing
 func TestPastOfferCappedAskOmitsWithdrawalAndHedgeCosts(t *testing.T) {
 	oldEstimators := tradeCostEstimators
 	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
-	tradeCostEstimators = map[string]*TradeCostEstimator{
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{
 		"kraken": fixedCostEstimatorWithHedge("kraken", "bisq", 0.01, 0.99, 0.002, 0.99, 0.25),
 	}
 
@@ -700,7 +471,7 @@ func TestPastOfferCappedAskOmitsWithdrawalAndHedgeCosts(t *testing.T) {
 func TestPastCappedCostVariesBySizeThroughProportionalAndFixedComponents(t *testing.T) {
 	oldEstimators := tradeCostEstimators
 	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
-	tradeCostEstimators = map[string]*TradeCostEstimator{
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{
 		"kraken": fixedCostEstimator("kraken", "bisq", 0.01, 0.99, 0.002, 0.99),
 	}
 
@@ -804,10 +575,10 @@ func TestPastProfitableOrdersReturnsClosedNetPositiveOrders(t *testing.T) {
 	withTempOrdersDB(t)
 
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
-	est.dexFees["hodlhodl"] = seededCachedFee(0.001)
-	est.dexFees["robosats"] = seededCachedFee(0.001)
-	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
-	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+	est.SetFixedDexFeeForTesting("hodlhodl", 0.001)
+	est.SetFixedDexFeeForTesting("robosats", 0.001)
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{"kraken": est}
+	tradeRouteOptimizer = tradecost.NewTradeRouteOptimizer(tradeCostEstimators)
 
 	req := httptest.NewRequest(http.MethodGet, "/api/past_profitable_orders?premium_mode=net_capped&max_fiat_limit=5&exclude_payment_methods=Revolut", nil)
 	rec := httptest.NewRecorder()
@@ -1218,8 +989,8 @@ func TestGeneralStatsRESTIncludesOpenPremiumModesFromLiveEngine(t *testing.T) {
 	hub = &LiveHub{subscribers: map[chan []byte]liveSubscription{}}
 	cexPrices = map[string]float64{"kraken": 100}
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
-	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
-	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{"kraken": est}
+	tradeRouteOptimizer = tradecost.NewTradeRouteOptimizer(tradeCostEstimators)
 
 	btcMin := 0.02
 	btcMax := 0.1
@@ -1306,8 +1077,8 @@ func TestBuildOpenPremiumStatsIgnoresNonPremiumOffers(t *testing.T) {
 	hub = &LiveHub{subscribers: map[chan []byte]liveSubscription{}}
 	cexPrices = map[string]float64{"kraken": 100}
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
-	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
-	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{"kraken": est}
+	tradeRouteOptimizer = tradecost.NewTradeRouteOptimizer(tradeCostEstimators)
 
 	btcMin := 0.02
 	btcMax := 0.1
@@ -1448,8 +1219,8 @@ func withTempOrdersDB(t *testing.T) {
 	}
 
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
-	tradeCostEstimators = map[string]*TradeCostEstimator{"kraken": est}
-	tradeRouteOptimizer = NewTradeRouteOptimizer(tradeCostEstimators)
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{"kraken": est}
+	tradeRouteOptimizer = tradecost.NewTradeRouteOptimizer(tradeCostEstimators)
 }
 
 type pastOrderStatsTestResponse struct {
