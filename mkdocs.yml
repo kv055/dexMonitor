@@ -1,0 +1,44 @@
+site_name: dexMonitor
+docs_dir: docs
+
+nav:
+  - Overview: README.md
+  - cmd:
+      - bisqstats:
+          - Overview: cmd/bisqstats/README.md
+          - main.go: cmd/bisqstats/main.md
+      - server:
+          - Overview: cmd/server/README.md
+          - account_health.go: cmd/server/account_health.md
+          - live.go: cmd/server/live.md
+          - main.go: cmd/server/main.md
+  - internal:
+      - accounthealth:
+          - Overview: internal/accounthealth/README.md
+          - account_health.go: internal/accounthealth/account_health.md
+      - bisqstats:
+          - Overview: internal/bisqstats/README.md
+          - reader.go: internal/bisqstats/reader.md
+          - stats.go: internal/bisqstats/stats.md
+      - lifecycle:
+          - Overview: internal/lifecycle/README.md
+          - lifecycle.go: internal/lifecycle/lifecycle.md
+      - mmproxy:
+          - Overview: internal/mmproxy/README.md
+          - mmproxy.go: internal/mmproxy/mmproxy.md
+      - ohlc:
+          - Overview: internal/ohlc/README.md
+          - ohlc.go: internal/ohlc/ohlc.md
+      - pastorders:
+          - Overview: internal/pastorders/README.md
+          - stats.go: internal/pastorders/stats.md
+      - paymentmethods:
+          - Overview: internal/paymentmethods/README.md
+          - groups.go: internal/paymentmethods/groups.md
+          - service.go: internal/paymentmethods/service.md
+      - snapshotlog:
+          - Overview: internal/snapshotlog/README.md
+          - snapshotlog.go: internal/snapshotlog/snapshotlog.md
+      - tradingaccounts:
+          - Overview: internal/tradingaccounts/README.md
+          - tradingaccounts.go: internal/tradingaccounts/tradingaccounts.md
