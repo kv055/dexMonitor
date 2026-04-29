@@ -10,19 +10,29 @@ import (
 	"time"
 )
 
+// MMControllerResponse represents a mmcontroller response.
 type MMControllerResponse struct {
-	Provider  string `json:"provider"`
-	Status    string `json:"status"`
-	Healthy   bool   `json:"healthy"`
-	Message   string `json:"message"`
+	// Provider is the provider value for the mmcontroller response.
+	Provider string `json:"provider"`
+	// Status is the current status of the mmcontroller response.
+	Status string `json:"status"`
+	// Healthy reports whether the mmcontroller response condition is true.
+	Healthy bool `json:"healthy"`
+	// Message carries a human-readable message for the mmcontroller response.
+	Message string `json:"message"`
+	// CheckedAt records the relevant time for the mmcontroller response.
 	CheckedAt string `json:"checked_at"`
 }
 
+// Service represents a service.
 type Service struct {
+	// BaseURL is the base url value for the service.
 	BaseURL string
-	Client  *http.Client
+	// Client is the client value for the service.
+	Client *http.Client
 }
 
+// NewService creates a service.
 func NewService(baseURL string) *Service {
 	return &Service{
 		BaseURL: baseURL,
@@ -30,6 +40,7 @@ func NewService(baseURL string) *Service {
 	}
 }
 
+// Check checks value.
 func (s *Service) Check(ctx context.Context, provider string) (*MMControllerResponse, int, error) {
 	baseURL, err := url.Parse(s.BaseURL)
 	if err != nil {

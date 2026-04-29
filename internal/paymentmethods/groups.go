@@ -5,9 +5,12 @@ import "strings"
 // Group represents a logical payment method category with all raw method strings
 // that belong to it (as found in the offers table).
 type Group struct {
-	Name        string   `json:"name"`
-	DisplayName string   `json:"display_name"`
-	Methods     []string `json:"methods"`
+	// Name is the name value for the group.
+	Name string `json:"name"`
+	// DisplayName is the display name value for the group.
+	DisplayName string `json:"display_name"`
+	// Methods is the methods value for the group.
+	Methods []string `json:"methods"`
 }
 
 // groupRule maps a canonical group name to a list of case-insensitive substrings.

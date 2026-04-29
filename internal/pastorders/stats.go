@@ -6,11 +6,15 @@ import (
 	"time"
 )
 
+// Timeframe represents a timeframe.
 type Timeframe struct {
+	// Label is the label value for the timeframe.
 	Label string
+	// Hours is the hours value for the timeframe.
 	Hours int
 }
 
+// DefaultTimeframes lists the standard reporting windows.
 var DefaultTimeframes = []Timeframe{
 	{Label: "1h", Hours: 1},
 	{Label: "6h", Hours: 6},
@@ -19,132 +23,223 @@ var DefaultTimeframes = []Timeframe{
 	{Label: "7d", Hours: 168},
 }
 
+// PremiumOrder represents a premium order.
 type PremiumOrder struct {
+	// PaymentMethod is the payment method value for the premium order.
 	PaymentMethod string
-	LastSeen      time.Time
-	BTCAmount     float64
-	NetProfitBTC  float64
+	// LastSeen is the last seen value for the premium order.
+	LastSeen time.Time
+	// BTCAmount is a BTC-denominated btcamount value.
+	BTCAmount float64
+	// NetProfitBTC is a BTC-denominated net profit btc value.
+	NetProfitBTC float64
+	// NetProfitFiat is a fiat-denominated net profit fiat value.
 	NetProfitFiat float64
-	// optional capped values (set when the order exceeded a max fiat limit)
-	BTCAmountCapped     float64
-	NetProfitBTCCapped  float64
+	// BTCAmountCapped is set when the order exceeded a max fiat limit.
+	BTCAmountCapped float64
+	// NetProfitBTCCapped is a BTC-denominated net profit btccapped value.
+	NetProfitBTCCapped float64
+	// NetProfitFiatCapped is a fiat-denominated net profit fiat capped value.
 	NetProfitFiatCapped float64
-	HasCap              bool
+	// HasCap reports whether the premium order condition is true.
+	HasCap bool
 }
 
+// StatsResponse represents a stats response.
 type StatsResponse struct {
-	FiatCurrency           string           `json:"fiat_currency"`
-	ExcludedPaymentMethods []string         `json:"excluded_payment_methods"`
-	Timeframes             []TimeframeStats `json:"timeframes"`
+	// FiatCurrency is a fiat-denominated fiat currency value.
+	FiatCurrency string `json:"fiat_currency"`
+	// ExcludedPaymentMethods is the excluded payment methods value for the stats response.
+	ExcludedPaymentMethods []string `json:"excluded_payment_methods"`
+	// Timeframes records the relevant time for the stats response.
+	Timeframes []TimeframeStats `json:"timeframes"`
 }
 
+// TimeframeStats represents a timeframe stats.
 type TimeframeStats struct {
-	Timeframe         string  `json:"timeframe"`
-	Hours             int     `json:"hours"`
-	PremiumOrderCount int     `json:"premium_order_count"`
-	TotalProfitBTC    float64 `json:"total_net_profit_btc"`
-	TotalProfitFiat   float64 `json:"total_net_profit_fiat"`
-	AverageOrderBTC   float64 `json:"average_order_size_btc"`
-	SmallestOrderBTC  float64 `json:"smallest_order_size_btc"`
-	BiggestOrderBTC   float64 `json:"biggest_order_size_btc"`
-	// set only when at least one order in the window was capped by a max fiat limit
-	TotalProfitBTCCapped  *float64 `json:"total_net_profit_btc_capped,omitempty"`
+	// Timeframe records the relevant time for the timeframe stats.
+	Timeframe string `json:"timeframe"`
+	// Hours is the hours value for the timeframe stats.
+	Hours int `json:"hours"`
+	// PremiumOrderCount is the count associated with the timeframe stats.
+	PremiumOrderCount int `json:"premium_order_count"`
+	// TotalProfitBTC is a BTC-denominated total profit btc value.
+	TotalProfitBTC float64 `json:"total_net_profit_btc"`
+	// TotalProfitFiat is a fiat-denominated total profit fiat value.
+	TotalProfitFiat float64 `json:"total_net_profit_fiat"`
+	// AverageOrderBTC is a BTC-denominated average order btc value.
+	AverageOrderBTC float64 `json:"average_order_size_btc"`
+	// SmallestOrderBTC is a BTC-denominated smallest order btc value.
+	SmallestOrderBTC float64 `json:"smallest_order_size_btc"`
+	// BiggestOrderBTC is a BTC-denominated biggest order btc value.
+	BiggestOrderBTC float64 `json:"biggest_order_size_btc"`
+	// TotalProfitBTCCapped is set when at least one order in the window was capped by a max fiat limit.
+	TotalProfitBTCCapped *float64 `json:"total_net_profit_btc_capped,omitempty"`
+	// TotalProfitFiatCapped is a fiat-denominated total profit fiat capped value.
 	TotalProfitFiatCapped *float64 `json:"total_net_profit_fiat_capped,omitempty"`
+	// AverageOrderBTCCapped is a BTC-denominated average order btccapped value.
 	AverageOrderBTCCapped *float64 `json:"average_order_size_btc_capped,omitempty"`
 }
 
+// Offer is a normalized DEX offer used by this package.
 type Offer struct {
-	Exchange         string
-	Direction        string
-	PaymentMethod    string
+	// Exchange is the exchange value for the offer.
+	Exchange string
+	// Direction is the direction value for the offer.
+	Direction string
+	// PaymentMethod is the payment method value for the offer.
+	PaymentMethod string
+	// PriceDiffPercent is a percentage value.
 	PriceDiffPercent *float64
-	FirstSeen        time.Time
-	LastSeen         time.Time
-	IsLive           bool
+	// FirstSeen is the first seen value for the offer.
+	FirstSeen time.Time
+	// LastSeen is the last seen value for the offer.
+	LastSeen time.Time
+	// IsLive reports whether the offer condition is true.
+	IsLive bool
 }
 
+// GeneralStatsOverview represents a general stats overview.
 type GeneralStatsOverview struct {
-	TotalOffers         int     `json:"total_offers"`
-	ActiveOffers        int     `json:"active_offers"`
-	ExchangesLive       int     `json:"exchanges_live"`
-	OffersByExchange    []Count `json:"offers_by_exchange"`
+	// TotalOffers is the total offers value for the general stats overview.
+	TotalOffers int `json:"total_offers"`
+	// ActiveOffers is the active offers value for the general stats overview.
+	ActiveOffers int `json:"active_offers"`
+	// ExchangesLive is the exchanges live value for the general stats overview.
+	ExchangesLive int `json:"exchanges_live"`
+	// OffersByExchange is the offers by exchange value for the general stats overview.
+	OffersByExchange []Count `json:"offers_by_exchange"`
+	// PaymentMethodCounts is the count associated with the general stats overview.
 	PaymentMethodCounts []Count `json:"payment_method_counts"`
 }
 
+// GeneralStatsPremiumSummary represents a general stats premium summary.
 type GeneralStatsPremiumSummary struct {
+	// BestAskPremiumPct is a percentage value.
 	BestAskPremiumPct *float64 `json:"best_ask_premium_pct"`
-	AvgAskPremiumPct  *float64 `json:"avg_ask_premium_pct"`
-	BestBidPremiumPct *float64 `json:"best_bid_premium_pct"`
-	AvgBidPremiumPct  *float64 `json:"avg_bid_premium_pct"`
-}
-
-type GeneralStatsResponse struct {
-	TotalOffers                  int                         `json:"total_offers"`
-	ActiveOffers                 int                         `json:"active_offers"`
-	ExchangesLive                int                         `json:"exchanges_live"`
-	OffersByExchange             []Count                     `json:"offers_by_exchange"`
-	BestAskPremiumPct            *float64                    `json:"best_ask_premium_pct"`
-	AvgAskPremiumPct             *float64                    `json:"avg_ask_premium_pct"`
-	BestBidPremiumPct            *float64                    `json:"best_bid_premium_pct"`
-	AvgBidPremiumPct             *float64                    `json:"avg_bid_premium_pct"`
-	OpenPremiums                 OpenPremiumStats            `json:"open_premiums"`
-	AvgOfferLifetimeMs           *int64                      `json:"avg_offer_lifetime_ms"`
-	AvgOfferLifetimeMsByExchange []NamedDuration             `json:"avg_offer_lifetime_ms_by_exchange"`
-	PremiumLifetimes             PremiumLifetimeModes        `json:"premium_lifetimes"`
-	PaymentMethodCounts          []Count                     `json:"payment_method_counts"`
-	PastPremiums                 []PastPremiumTimeframeStats `json:"past_premiums"`
-}
-
-type OpenPremiumModeStats struct {
+	// AvgAskPremiumPct is a percentage value.
 	AvgAskPremiumPct *float64 `json:"avg_ask_premium_pct"`
+	// BestBidPremiumPct is a percentage value.
+	BestBidPremiumPct *float64 `json:"best_bid_premium_pct"`
+	// AvgBidPremiumPct is a percentage value.
 	AvgBidPremiumPct *float64 `json:"avg_bid_premium_pct"`
 }
 
+// GeneralStatsResponse represents a general stats response.
+type GeneralStatsResponse struct {
+	// TotalOffers is the total offers value for the general stats response.
+	TotalOffers int `json:"total_offers"`
+	// ActiveOffers is the active offers value for the general stats response.
+	ActiveOffers int `json:"active_offers"`
+	// ExchangesLive is the exchanges live value for the general stats response.
+	ExchangesLive int `json:"exchanges_live"`
+	// OffersByExchange is the offers by exchange value for the general stats response.
+	OffersByExchange []Count `json:"offers_by_exchange"`
+	// BestAskPremiumPct is a percentage value.
+	BestAskPremiumPct *float64 `json:"best_ask_premium_pct"`
+	// AvgAskPremiumPct is a percentage value.
+	AvgAskPremiumPct *float64 `json:"avg_ask_premium_pct"`
+	// BestBidPremiumPct is a percentage value.
+	BestBidPremiumPct *float64 `json:"best_bid_premium_pct"`
+	// AvgBidPremiumPct is a percentage value.
+	AvgBidPremiumPct *float64 `json:"avg_bid_premium_pct"`
+	// OpenPremiums is the open premiums value for the general stats response.
+	OpenPremiums OpenPremiumStats `json:"open_premiums"`
+	// AvgOfferLifetimeMs records the relevant time for the general stats response.
+	AvgOfferLifetimeMs *int64 `json:"avg_offer_lifetime_ms"`
+	// AvgOfferLifetimeMsByExchange records the relevant time for the general stats response.
+	AvgOfferLifetimeMsByExchange []NamedDuration `json:"avg_offer_lifetime_ms_by_exchange"`
+	// PremiumLifetimes records the relevant time for the general stats response.
+	PremiumLifetimes PremiumLifetimeModes `json:"premium_lifetimes"`
+	// PaymentMethodCounts is the count associated with the general stats response.
+	PaymentMethodCounts []Count `json:"payment_method_counts"`
+	// PastPremiums is the past premiums value for the general stats response.
+	PastPremiums []PastPremiumTimeframeStats `json:"past_premiums"`
+}
+
+// OpenPremiumModeStats summarizes live premiums for one pricing mode.
+type OpenPremiumModeStats struct {
+	// AvgAskPremiumPct is a percentage value.
+	AvgAskPremiumPct *float64 `json:"avg_ask_premium_pct"`
+	// AvgBidPremiumPct is a percentage value.
+	AvgBidPremiumPct *float64 `json:"avg_bid_premium_pct"`
+}
+
+// OpenPremiumStats groups live premium summaries by pricing mode.
 type OpenPremiumStats struct {
-	Raw       OpenPremiumModeStats `json:"raw"`
-	NetFull   OpenPremiumModeStats `json:"net_full"`
+	// Raw preserves additional source data for the open premium stats.
+	Raw OpenPremiumModeStats `json:"raw"`
+	// NetFull is the net full value for the open premium stats.
+	NetFull OpenPremiumModeStats `json:"net_full"`
+	// NetCapped is the net capped value for the open premium stats.
 	NetCapped OpenPremiumModeStats `json:"net_capped"`
 }
 
+// PremiumLifetimeStats represents a premium lifetime stats.
 type PremiumLifetimeStats struct {
-	AvgOfferLifetimeMs           *int64          `json:"avg_offer_lifetime_ms"`
+	// AvgOfferLifetimeMs records the relevant time for the premium lifetime stats.
+	AvgOfferLifetimeMs *int64 `json:"avg_offer_lifetime_ms"`
+	// AvgOfferLifetimeMsByExchange records the relevant time for the premium lifetime stats.
 	AvgOfferLifetimeMsByExchange []NamedDuration `json:"avg_offer_lifetime_ms_by_exchange"`
 }
 
+// PremiumLifetimeModes represents a premium lifetime modes.
 type PremiumLifetimeModes struct {
-	Raw       PremiumLifetimeStats `json:"raw"`
-	NetFull   PremiumLifetimeStats `json:"net_full"`
+	// Raw preserves additional source data for the premium lifetime modes.
+	Raw PremiumLifetimeStats `json:"raw"`
+	// NetFull is the net full value for the premium lifetime modes.
+	NetFull PremiumLifetimeStats `json:"net_full"`
+	// NetCapped is the net capped value for the premium lifetime modes.
 	NetCapped PremiumLifetimeStats `json:"net_capped"`
 }
 
+// NamedDuration represents a named duration.
 type NamedDuration struct {
+	// Name is the name value for the named duration.
 	Name string `json:"name"`
-	Ms   int64  `json:"ms"`
+	// Ms is the ms value for the named duration.
+	Ms int64 `json:"ms"`
 }
 
+// NamedPremium represents a named premium.
 type NamedPremium struct {
-	Name          string  `json:"name"`
+	// Name is the name value for the named premium.
+	Name string `json:"name"`
+	// AvgPremiumPct is a percentage value.
 	AvgPremiumPct float64 `json:"avg_premium_pct"`
 }
 
+// PastPremiumTimeframeStats represents a past premium timeframe stats.
 type PastPremiumTimeframeStats struct {
-	Timeframe            string           `json:"timeframe"`
-	Hours                int              `json:"hours"`
-	AvgPremiumByExchange []NamedPremium   `json:"avg_premium_by_exchange,omitempty"`
-	Modes                PastPremiumModes `json:"modes"`
+	// Timeframe records the relevant time for the past premium timeframe stats.
+	Timeframe string `json:"timeframe"`
+	// Hours is the hours value for the past premium timeframe stats.
+	Hours int `json:"hours"`
+	// AvgPremiumByExchange is the avg premium by exchange value for the past premium timeframe stats.
+	AvgPremiumByExchange []NamedPremium `json:"avg_premium_by_exchange,omitempty"`
+	// Modes is the modes value for the past premium timeframe stats.
+	Modes PastPremiumModes `json:"modes"`
 }
 
+// PastPremiumModes represents a past premium modes.
 type PastPremiumModes struct {
-	Raw       []NamedPremium `json:"raw"`
-	NetFull   []NamedPremium `json:"net_full"`
+	// Raw preserves additional source data for the past premium modes.
+	Raw []NamedPremium `json:"raw"`
+	// NetFull is the net full value for the past premium modes.
+	NetFull []NamedPremium `json:"net_full"`
+	// NetCapped is the net capped value for the past premium modes.
 	NetCapped []NamedPremium `json:"net_capped"`
 }
 
+// Count represents a count.
 type Count struct {
-	Name  string `json:"name"`
-	Count int    `json:"count"`
+	// Name is the name value for the count.
+	Name string `json:"name"`
+	// Count is the count associated with the count.
+	Count int `json:"count"`
 }
 
+// BuildStats builds a stats.
 func BuildStats(orders []PremiumOrder, now time.Time, fiatCurrency string, excludedPaymentMethods []string) StatsResponse {
 	if now.IsZero() {
 		now = time.Now()
@@ -167,6 +262,7 @@ func BuildStats(orders []PremiumOrder, now time.Time, fiatCurrency string, exclu
 	}
 }
 
+// PastPremiumTimeframes is the past premium timeframes value.
 var PastPremiumTimeframes = []Timeframe{
 	{Label: "6h", Hours: 6},
 	{Label: "24h", Hours: 24},
@@ -223,6 +319,7 @@ func isCurrentExchangeOffer(offer Offer, lastSeenByExchange map[string]time.Time
 	return !offer.LastSeen.IsZero() && offer.LastSeen.Equal(lastSeenByExchange[offer.Exchange])
 }
 
+// BuildGeneralStatsOverview builds a general stats overview.
 func BuildGeneralStatsOverview(offers []Offer, now time.Time, hours int, excludedPaymentMethods []string) GeneralStatsOverview {
 	windowed := filterGeneralStatsOffers(offers, now, hours, excludedPaymentMethods)
 	lastSeenByExchange := latestOfferTimeByExchange(windowed)
@@ -255,6 +352,7 @@ func BuildGeneralStatsOverview(offers []Offer, now time.Time, hours int, exclude
 	}
 }
 
+// BuildGeneralStatsPremiumSummary builds a general stats premium summary.
 func BuildGeneralStatsPremiumSummary(offers []Offer, now time.Time, hours int, excludedPaymentMethods []string) GeneralStatsPremiumSummary {
 	windowed := filterGeneralStatsOffers(offers, now, hours, excludedPaymentMethods)
 	lastSeenByExchange := latestOfferTimeByExchange(windowed)
@@ -309,6 +407,7 @@ func BuildGeneralStatsPremiumSummary(offers []Offer, now time.Time, hours int, e
 	}
 }
 
+// NewGeneralStatsResponse creates a general stats response.
 func NewGeneralStatsResponse(overview GeneralStatsOverview, premiumSummary GeneralStatsPremiumSummary) GeneralStatsResponse {
 	return GeneralStatsResponse{
 		TotalOffers:         overview.TotalOffers,
@@ -323,6 +422,7 @@ func NewGeneralStatsResponse(overview GeneralStatsOverview, premiumSummary Gener
 	}
 }
 
+// BuildGeneralStats builds a general stats.
 func BuildGeneralStats(offers []Offer, now time.Time, hours int, excludedPaymentMethods []string) GeneralStatsResponse {
 	return NewGeneralStatsResponse(
 		BuildGeneralStatsOverview(offers, now, hours, excludedPaymentMethods),

@@ -7,64 +7,104 @@ import (
 	"time"
 )
 
-// These types/functions aggregate per-trade settlement durations after the raw
-// Bisq ClosedTrades records have been decoded. The key metric is
-// take_offer_date -> sellerConfirmedPaymentReceiptDate.
+// TradeRecord captures the Bisq closed-trade fields needed to calculate
+// settlement duration.
 type TradeRecord struct {
-	TradeID            string
-	Role               string
-	PaymentMethodID    string
-	FiatCurrency       string
-	TakeOfferAt        time.Time
-	SellerConfirmedAt  time.Time
+	// TradeID is Bisq's trade identifier.
+	TradeID string
+	// Role is the local node's role in the trade.
+	Role string
+	// PaymentMethodID identifies the fiat payment rail used by the trade.
+	PaymentMethodID string
+	// FiatCurrency is the trade's fiat currency code.
+	FiatCurrency string
+	// TakeOfferAt records when the offer was taken.
+	TakeOfferAt time.Time
+	// SellerConfirmedAt records when the seller confirmed fiat receipt.
+	SellerConfirmedAt time.Time
+	// SettlementDuration is the elapsed time between taking the offer and seller confirmation.
 	SettlementDuration time.Duration
 }
 
+// Query selects the time window and optional grouping filters for Bisq stats.
 type Query struct {
-	Hours         int
-	Days          int
+	// Hours is the hours value for the query.
+	Hours int
+	// Days is the days value for the query.
+	Days int
+	// PaymentMethod is the payment method value for the query.
 	PaymentMethod string
-	Currency      string
+	// Currency names the asset or network for the query.
+	Currency string
 }
 
+// Response represents a response.
 type Response struct {
-	Source          string           `json:"source"`
-	Definition      Definition       `json:"definition"`
-	Window          Window           `json:"window"`
-	TradesFile      string           `json:"trades_file"`
-	CompletedTrades int              `json:"completed_trades"`
-	SkippedTrades   map[string]int   `json:"skipped_trades"`
-	Duration        DurationSummary  `json:"duration"`
+	// Source is the source value for the response.
+	Source string `json:"source"`
+	// Definition is the definition value for the response.
+	Definition Definition `json:"definition"`
+	// Window is the window value for the response.
+	Window Window `json:"window"`
+	// TradesFile is the trades file value for the response.
+	TradesFile string `json:"trades_file"`
+	// CompletedTrades is the completed trades value for the response.
+	CompletedTrades int `json:"completed_trades"`
+	// SkippedTrades is the skipped trades value for the response.
+	SkippedTrades map[string]int `json:"skipped_trades"`
+	// Duration is the duration value for the response.
+	Duration DurationSummary `json:"duration"`
+	// ByPaymentMethod is the by payment method value for the response.
 	ByPaymentMethod []GroupedSummary `json:"by_payment_method"`
-	ByCurrency      []GroupedSummary `json:"by_currency"`
-	GeneratedAt     time.Time        `json:"generated_at"`
+	// ByCurrency names the asset or network for the response.
+	ByCurrency []GroupedSummary `json:"by_currency"`
+	// GeneratedAt records the relevant time for the response.
+	GeneratedAt time.Time `json:"generated_at"`
 }
 
+// Definition represents a definition.
 type Definition struct {
+	// StartField is the start field value for the definition.
 	StartField string `json:"start_field"`
-	EndField   string `json:"end_field"`
+	// EndField is the end field value for the definition.
+	EndField string `json:"end_field"`
 }
 
+// Window represents a window.
 type Window struct {
-	Hours int       `json:"hours,omitempty"`
-	From  time.Time `json:"from,omitempty"`
-	To    time.Time `json:"to"`
+	// Hours is the hours value for the window.
+	Hours int `json:"hours,omitempty"`
+	// From is the from value for the window.
+	From time.Time `json:"from,omitempty"`
+	// To is the to value for the window.
+	To time.Time `json:"to"`
 }
 
+// GroupedSummary represents a grouped summary.
 type GroupedSummary struct {
-	Name            string          `json:"name"`
-	CompletedTrades int             `json:"completed_trades"`
-	Duration        DurationSummary `json:"duration"`
+	// Name is the name value for the grouped summary.
+	Name string `json:"name"`
+	// CompletedTrades is the completed trades value for the grouped summary.
+	CompletedTrades int `json:"completed_trades"`
+	// Duration is the duration value for the grouped summary.
+	Duration DurationSummary `json:"duration"`
 }
 
+// DurationSummary represents a duration summary.
 type DurationSummary struct {
-	MeanSeconds   int64 `json:"mean_seconds"`
+	// MeanSeconds is the mean seconds value for the duration summary.
+	MeanSeconds int64 `json:"mean_seconds"`
+	// MedianSeconds is the median seconds value for the duration summary.
 	MedianSeconds int64 `json:"median_seconds"`
-	P90Seconds    int64 `json:"p90_seconds"`
-	MinSeconds    int64 `json:"min_seconds"`
-	MaxSeconds    int64 `json:"max_seconds"`
+	// P90Seconds is the p90 seconds value for the duration summary.
+	P90Seconds int64 `json:"p90_seconds"`
+	// MinSeconds is the min seconds value for the duration summary.
+	MinSeconds int64 `json:"min_seconds"`
+	// MaxSeconds is the max seconds value for the duration summary.
+	MaxSeconds int64 `json:"max_seconds"`
 }
 
+// BuildResponse builds a response.
 func BuildResponse(records []TradeRecord, skipped map[string]int, tradesFile string, q Query, now time.Time) Response {
 	if now.IsZero() {
 		now = time.Now().UTC()

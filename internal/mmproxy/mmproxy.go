@@ -8,15 +8,20 @@ import (
 	"time"
 )
 
+// Proxy represents a proxy.
 type Proxy struct {
+	// BaseURL is the base url value for the proxy.
 	BaseURL string
-	Client  *http.Client
+	// Client is the client value for the proxy.
+	Client *http.Client
 }
 
+// New creates value.
 func New(baseURL string) *Proxy {
 	return &Proxy{BaseURL: baseURL, Client: &http.Client{Timeout: 10 * time.Second}}
 }
 
+// ForwardJSON proxies a JSON request to the market-maker controller.
 func (p *Proxy) ForwardJSON(w http.ResponseWriter, r *http.Request, path string) {
 	baseURL, err := url.Parse(p.BaseURL)
 	if err != nil {

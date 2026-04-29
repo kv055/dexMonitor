@@ -11,14 +11,18 @@ import (
 	"time"
 )
 
+// Service represents a service.
 type Service struct {
+	// Client is the client value for the service.
 	Client *http.Client
 }
 
+// NewService creates a service.
 func NewService() *Service {
 	return &Service{Client: &http.Client{Timeout: 15 * time.Second}}
 }
 
+// Candles fetches OHLC candles for the requested market.
 func (s *Service) Candles(ctx context.Context, exchange string, hours int, intervalMin int) []map[string]any {
 	switch exchange {
 	case "binance":

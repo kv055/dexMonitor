@@ -10,49 +10,80 @@ import (
 	"commons/tradecost"
 )
 
+// Point represents a point.
 type Point struct {
-	Time          string   `json:"time"`
-	Price         float64  `json:"price"`
+	// Time records the relevant time for the point.
+	Time string `json:"time"`
+	// Price is the price value used by the point.
+	Price float64 `json:"price"`
+	// NetPremiumPct is a percentage value.
 	NetPremiumPct *float64 `json:"net_premium_pct,omitempty"`
 }
 
+// PastSample represents a past sample.
 type PastSample struct {
-	RefPrice   float64
+	// RefPrice is the price value used by the past sample.
+	RefPrice float64
+	// PremiumPct is a percentage value.
 	PremiumPct float64
 }
 
+// PastAggregate represents a past aggregate.
 type PastAggregate struct {
-	Count             int
-	AvgOfferPrice     float64
-	AvgRefPrice       float64
+	// Count is the count associated with the past aggregate.
+	Count int
+	// AvgOfferPrice is the price value used by the past aggregate.
+	AvgOfferPrice float64
+	// AvgRefPrice is the price value used by the past aggregate.
+	AvgRefPrice float64
+	// AvgPremiumPercent is a percentage value.
 	AvgPremiumPercent float64
-	AvgTradeCostPct   float64
-	AvgTradeCostBTC   float64
-	AvgNetPercent     float64
-	AvgProfitBTC      float64
-	AvgProfitFiat     float64
-	AvgBTCAmount      float64
-	AvgNetworkPct     float64
-	Samples           []PastSample
+	// AvgTradeCostPct is a percentage value.
+	AvgTradeCostPct float64
+	// AvgTradeCostBTC is a BTC-denominated avg trade cost btc value.
+	AvgTradeCostBTC float64
+	// AvgNetPercent is a percentage value.
+	AvgNetPercent float64
+	// AvgProfitBTC is a BTC-denominated avg profit btc value.
+	AvgProfitBTC float64
+	// AvgProfitFiat is a fiat-denominated avg profit fiat value.
+	AvgProfitFiat float64
+	// AvgBTCAmount is a BTC-denominated avg btcamount value.
+	AvgBTCAmount float64
+	// AvgNetworkPct is a percentage value.
+	AvgNetworkPct float64
+	// Samples is the samples value for the past aggregate.
+	Samples []PastSample
 }
 
+// Record represents a record.
 type Record struct {
-	ID            int64
-	Price         float64
-	RefPrice      float64
-	PriceDiffPct  float64
+	// ID identifies the record.
+	ID int64
+	// Price is the price value used by the record.
+	Price float64
+	// RefPrice is the price value used by the record.
+	RefPrice float64
+	// PriceDiffPct is a percentage value.
+	PriceDiffPct float64
+	// NetPremiumPct is a percentage value.
 	NetPremiumPct float64
+	// CostBreakdown is the cost breakdown value for the record.
 	CostBreakdown tradecost.CostBreakdown
 }
 
+// Repository represents a repository.
 type Repository struct {
+	// DB is the database handle used by the repository.
 	DB *sql.DB
 }
 
+// NewRepository creates a repository.
 func NewRepository(db *sql.DB) Repository {
 	return Repository{DB: db}
 }
 
+// LoadByOfferIDs loads a by offer ids.
 func (r Repository) LoadByOfferIDs(ctx context.Context, ids []int64) (map[int64][]Point, error) {
 	result := make(map[int64][]Point, len(ids))
 	if r.DB == nil || len(ids) == 0 {
@@ -100,6 +131,7 @@ func formatSnapshotTime(value any) string {
 	}
 }
 
+// LoadPastAggregates loads a past aggregates.
 func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[int64]PastAggregate, error) {
 	result := make(map[int64]PastAggregate, len(ids))
 	if r.DB == nil || len(ids) == 0 {
@@ -222,6 +254,7 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 	return result, nil
 }
 
+// PersistSnapshot writes lifecycle samples and derived route costs.
 func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error {
 	if len(offers) == 0 || r.DB == nil {
 		return nil

@@ -7,108 +7,186 @@ import (
 	"time"
 )
 
+// Account is a stored trading-account profile and its credential metadata.
 type Account struct {
-	ID                 int64        `json:"id"`
-	Provider           string       `json:"provider"`
-	Category           string       `json:"category"`
-	Email              *string      `json:"email"`
-	Password           *string      `json:"password"`
-	Phone              *string      `json:"phone"`
-	IsHealthy          bool         `json:"is_healthy"`
-	LastHealthCheck    *string      `json:"last_health_check"`
-	CreatedAt          string       `json:"created_at"`
-	UpdatedAt          string       `json:"updated_at"`
-	TOTPSecrets        []TOTPSecret `json:"totp_secrets"`
-	PasskeyCredentials []Passkey    `json:"passkey_credentials"`
-	Seeds              []Seed       `json:"seeds"`
-	APIKeys            []APIKey     `json:"api_keys"`
+	// ID identifies the account.
+	ID int64 `json:"id"`
+	// Provider is the provider value for the account.
+	Provider string `json:"provider"`
+	// Category is the category value for the account.
+	Category string `json:"category"`
+	// Email is the email value for the account.
+	Email *string `json:"email"`
+	// Password is the password value for the account.
+	Password *string `json:"password"`
+	// Phone is the phone value for the account.
+	Phone *string `json:"phone"`
+	// IsHealthy reports whether the account condition is true.
+	IsHealthy bool `json:"is_healthy"`
+	// LastHealthCheck is the last health check value for the account.
+	LastHealthCheck *string `json:"last_health_check"`
+	// CreatedAt records the relevant time for the account.
+	CreatedAt string `json:"created_at"`
+	// UpdatedAt records the relevant time for the account.
+	UpdatedAt string `json:"updated_at"`
+	// TOTPSecrets is the totpsecrets value for the account.
+	TOTPSecrets []TOTPSecret `json:"totp_secrets"`
+	// PasskeyCredentials is the passkey credentials value for the account.
+	PasskeyCredentials []Passkey `json:"passkey_credentials"`
+	// Seeds is the seeds value for the account.
+	Seeds []Seed `json:"seeds"`
+	// APIKeys is the apikeys value for the account.
+	APIKeys []APIKey `json:"api_keys"`
 }
 
+// TOTPSecret represents a totpsecret.
 type TOTPSecret struct {
-	ID        int64   `json:"id"`
-	AccountID int64   `json:"account_id"`
-	Secret    string  `json:"secret"`
-	IsActive  bool    `json:"is_active"`
-	CreatedAt string  `json:"created_at"`
+	// ID identifies the totpsecret.
+	ID int64 `json:"id"`
+	// AccountID is the count associated with the totpsecret.
+	AccountID int64 `json:"account_id"`
+	// Secret is the secret value for the totpsecret.
+	Secret string `json:"secret"`
+	// IsActive reports whether the totpsecret condition is true.
+	IsActive bool `json:"is_active"`
+	// CreatedAt records the relevant time for the totpsecret.
+	CreatedAt string `json:"created_at"`
+	// RotatedAt records the relevant time for the totpsecret.
 	RotatedAt *string `json:"rotated_at"`
 }
 
+// Passkey represents a passkey.
 type Passkey struct {
-	ID              int64   `json:"id"`
-	AccountID       int64   `json:"account_id"`
-	CredentialID    string  `json:"credential_id"`
-	RPID            string  `json:"rp_id"`
-	PrivateKeyPKCS8 string  `json:"private_key_pkcs8"`
-	UserHandle      string  `json:"user_handle"`
-	SignCount       int64   `json:"sign_count"`
-	IsActive        bool    `json:"is_active"`
-	CreatedAt       string  `json:"created_at"`
-	LastUsedAt      *string `json:"last_used_at"`
+	// ID identifies the passkey.
+	ID int64 `json:"id"`
+	// AccountID is the count associated with the passkey.
+	AccountID int64 `json:"account_id"`
+	// CredentialID is the credential id value for the passkey.
+	CredentialID string `json:"credential_id"`
+	// RPID is the rpid value for the passkey.
+	RPID string `json:"rp_id"`
+	// PrivateKeyPKCS8 is the private key pkcs8 value for the passkey.
+	PrivateKeyPKCS8 string `json:"private_key_pkcs8"`
+	// UserHandle is the user handle value for the passkey.
+	UserHandle string `json:"user_handle"`
+	// SignCount is the count associated with the passkey.
+	SignCount int64 `json:"sign_count"`
+	// IsActive reports whether the passkey condition is true.
+	IsActive bool `json:"is_active"`
+	// CreatedAt records the relevant time for the passkey.
+	CreatedAt string `json:"created_at"`
+	// LastUsedAt records the relevant time for the passkey.
+	LastUsedAt *string `json:"last_used_at"`
 }
 
+// Seed represents a seed.
 type Seed struct {
-	ID              int64   `json:"id"`
-	AccountID       int64   `json:"account_id"`
-	SeedPhrase      string  `json:"seed_phrase"`
+	// ID identifies the seed.
+	ID int64 `json:"id"`
+	// AccountID is the count associated with the seed.
+	AccountID int64 `json:"account_id"`
+	// SeedPhrase is the seed phrase value for the seed.
+	SeedPhrase string `json:"seed_phrase"`
+	// WalletCreatedAt records the relevant time for the seed.
 	WalletCreatedAt *string `json:"wallet_created_at"`
-	CreatedAt       string  `json:"created_at"`
+	// CreatedAt records the relevant time for the seed.
+	CreatedAt string `json:"created_at"`
 }
 
+// APIKey is a stored exchange or DEX API credential.
 type APIKey struct {
-	ID         int64   `json:"id"`
-	AccountID  int64   `json:"account_id"`
-	Name       string  `json:"name"`
-	APIKey     string  `json:"api_key"`
-	APISecret  *string `json:"api_secret"`
+	// ID identifies the apikey.
+	ID int64 `json:"id"`
+	// AccountID is the count associated with the apikey.
+	AccountID int64 `json:"account_id"`
+	// Name is the name value for the apikey.
+	Name string `json:"name"`
+	// APIKey is the apikey value for the apikey.
+	APIKey string `json:"api_key"`
+	// APISecret is the apisecret value for the apikey.
+	APISecret *string `json:"api_secret"`
+	// Passphrase is the passphrase value for the apikey.
 	Passphrase *string `json:"passphrase"`
-	IsActive   bool    `json:"is_active"`
-	CreatedAt  string  `json:"created_at"`
-	UpdatedAt  string  `json:"updated_at"`
+	// IsActive reports whether the apikey condition is true.
+	IsActive bool `json:"is_active"`
+	// CreatedAt records the relevant time for the apikey.
+	CreatedAt string `json:"created_at"`
+	// UpdatedAt records the relevant time for the apikey.
+	UpdatedAt string `json:"updated_at"`
 }
 
+// AccountPayload is the editable account payload accepted by monitor handlers.
 type AccountPayload struct {
+	// Provider is the provider value for the account payload.
 	Provider string `json:"provider"`
-	Email    string `json:"email"`
+	// Email is the email value for the account payload.
+	Email string `json:"email"`
+	// Password is the password value for the account payload.
 	Password string `json:"password"`
-	Phone    string `json:"phone"`
+	// Phone is the phone value for the account payload.
+	Phone string `json:"phone"`
 }
 
+// TOTPSecretPayload represents a totpsecret payload.
 type TOTPSecretPayload struct {
-	Secret   string `json:"secret"`
-	IsActive bool   `json:"is_active"`
+	// Secret is the secret value for the totpsecret payload.
+	Secret string `json:"secret"`
+	// IsActive reports whether the totpsecret payload condition is true.
+	IsActive bool `json:"is_active"`
 }
 
+// PasskeyPayload represents a passkey payload.
 type PasskeyPayload struct {
-	CredentialID    string  `json:"credential_id"`
-	RPID            string  `json:"rp_id"`
-	PrivateKeyPKCS8 string  `json:"private_key_pkcs8"`
-	UserHandle      string  `json:"user_handle"`
-	SignCount       int64   `json:"sign_count"`
-	IsActive        bool    `json:"is_active"`
-	LastUsedAt      *string `json:"last_used_at"`
+	// CredentialID is the credential id value for the passkey payload.
+	CredentialID string `json:"credential_id"`
+	// RPID is the rpid value for the passkey payload.
+	RPID string `json:"rp_id"`
+	// PrivateKeyPKCS8 is the private key pkcs8 value for the passkey payload.
+	PrivateKeyPKCS8 string `json:"private_key_pkcs8"`
+	// UserHandle is the user handle value for the passkey payload.
+	UserHandle string `json:"user_handle"`
+	// SignCount is the count associated with the passkey payload.
+	SignCount int64 `json:"sign_count"`
+	// IsActive reports whether the passkey payload condition is true.
+	IsActive bool `json:"is_active"`
+	// LastUsedAt records the relevant time for the passkey payload.
+	LastUsedAt *string `json:"last_used_at"`
 }
 
+// SeedPayload represents a seed payload.
 type SeedPayload struct {
-	SeedPhrase      string  `json:"seed_phrase"`
+	// SeedPhrase is the seed phrase value for the seed payload.
+	SeedPhrase string `json:"seed_phrase"`
+	// WalletCreatedAt records the relevant time for the seed payload.
 	WalletCreatedAt *string `json:"wallet_created_at"`
 }
 
+// APIKeyPayload is the editable API-key payload accepted by monitor handlers.
 type APIKeyPayload struct {
-	Name       string  `json:"name"`
-	APIKey     string  `json:"api_key"`
-	APISecret  *string `json:"api_secret"`
+	// Name is the name value for the apikey payload.
+	Name string `json:"name"`
+	// APIKey is the apikey value for the apikey payload.
+	APIKey string `json:"api_key"`
+	// APISecret is the apisecret value for the apikey payload.
+	APISecret *string `json:"api_secret"`
+	// Passphrase is the passphrase value for the apikey payload.
 	Passphrase *string `json:"passphrase"`
-	IsActive   bool    `json:"is_active"`
+	// IsActive reports whether the apikey payload condition is true.
+	IsActive bool `json:"is_active"`
 }
 
+// Repository represents a repository.
 type Repository struct {
+	// DB is the database handle used by the repository.
 	DB *sql.DB
 }
 
+// NewRepository creates a repository.
 func NewRepository(db *sql.DB) Repository {
 	return Repository{DB: db}
 }
 
+// List returns recent records, capped by the requested limit.
 func (r Repository) List(ctx context.Context) ([]Account, error) {
 	rows, err := r.DB.QueryContext(ctx, `
 		SELECT id,
@@ -183,6 +261,7 @@ func (r Repository) List(ctx context.Context) ([]Account, error) {
 	return accounts, nil
 }
 
+// Get retrieves value.
 func (r Repository) Get(ctx context.Context, id int64) (*Account, error) {
 	accounts, err := r.List(ctx)
 	if err != nil {
@@ -196,6 +275,7 @@ func (r Repository) Get(ctx context.Context, id int64) (*Account, error) {
 	return nil, sql.ErrNoRows
 }
 
+// Create creates value.
 func (r Repository) Create(ctx context.Context, payload AccountPayload) (int64, error) {
 	provider := NormalizeProvider(payload.Provider)
 	var id int64
@@ -207,6 +287,7 @@ func (r Repository) Create(ctx context.Context, payload AccountPayload) (int64, 
 	return id, err
 }
 
+// Update replaces an account and its nested credentials.
 func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload) error {
 	_, err := r.DB.ExecContext(ctx, `
 		UPDATE accounts
@@ -220,11 +301,13 @@ func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload
 	return err
 }
 
+// Delete removes an account by provider and category.
 func (r Repository) Delete(ctx context.Context, id int64) error {
 	_, err := r.DB.ExecContext(ctx, `DELETE FROM accounts WHERE id = $1`, id)
 	return err
 }
 
+// CreateTOTPSecret creates a totpsecret.
 func (r Repository) CreateTOTPSecret(ctx context.Context, accountID int64, payload TOTPSecretPayload) (int64, error) {
 	var id int64
 	err := r.DB.QueryRowContext(ctx, `
@@ -235,6 +318,7 @@ func (r Repository) CreateTOTPSecret(ctx context.Context, accountID int64, paylo
 	return id, err
 }
 
+// UpdateTOTPSecret stores a TOTP secret for an account.
 func (r Repository) UpdateTOTPSecret(ctx context.Context, id int64, payload TOTPSecretPayload) error {
 	_, err := r.DB.ExecContext(ctx, `
 		UPDATE totp_secrets
@@ -244,11 +328,13 @@ func (r Repository) UpdateTOTPSecret(ctx context.Context, id int64, payload TOTP
 	return err
 }
 
+// DeleteTOTPSecret removes a TOTP secret from an account.
 func (r Repository) DeleteTOTPSecret(ctx context.Context, id int64) error {
 	_, err := r.DB.ExecContext(ctx, `DELETE FROM totp_secrets WHERE id = $1`, id)
 	return err
 }
 
+// GetTOTPSecret retrieves a totpsecret.
 func (r Repository) GetTOTPSecret(ctx context.Context, id int64) (*TOTPSecret, error) {
 	var item TOTPSecret
 	var createdAt time.Time
@@ -266,6 +352,7 @@ func (r Repository) GetTOTPSecret(ctx context.Context, id int64) (*TOTPSecret, e
 	return &item, nil
 }
 
+// CreatePasskey creates a passkey.
 func (r Repository) CreatePasskey(ctx context.Context, accountID int64, payload PasskeyPayload) (int64, error) {
 	var id int64
 	err := r.DB.QueryRowContext(ctx, `
@@ -277,6 +364,7 @@ func (r Repository) CreatePasskey(ctx context.Context, accountID int64, payload 
 	return id, err
 }
 
+// UpdatePasskey stores a passkey credential for an account.
 func (r Repository) UpdatePasskey(ctx context.Context, id int64, payload PasskeyPayload) error {
 	_, err := r.DB.ExecContext(ctx, `
 		UPDATE passkey_credentials
@@ -292,11 +380,13 @@ func (r Repository) UpdatePasskey(ctx context.Context, id int64, payload Passkey
 	return err
 }
 
+// DeletePasskey removes a passkey credential from an account.
 func (r Repository) DeletePasskey(ctx context.Context, id int64) error {
 	_, err := r.DB.ExecContext(ctx, `DELETE FROM passkey_credentials WHERE id = $1`, id)
 	return err
 }
 
+// GetPasskey retrieves a passkey.
 func (r Repository) GetPasskey(ctx context.Context, id int64) (*Passkey, error) {
 	var item Passkey
 	var createdAt time.Time
@@ -314,6 +404,7 @@ func (r Repository) GetPasskey(ctx context.Context, id int64) (*Passkey, error) 
 	return &item, nil
 }
 
+// CreateSeed creates a seed.
 func (r Repository) CreateSeed(ctx context.Context, accountID int64, payload SeedPayload) (int64, error) {
 	var id int64
 	err := r.DB.QueryRowContext(ctx, `
@@ -324,6 +415,7 @@ func (r Repository) CreateSeed(ctx context.Context, accountID int64, payload See
 	return id, err
 }
 
+// UpdateSeed stores a recovery seed for an account.
 func (r Repository) UpdateSeed(ctx context.Context, id int64, payload SeedPayload) error {
 	_, err := r.DB.ExecContext(ctx, `
 		UPDATE seeds
@@ -334,11 +426,13 @@ func (r Repository) UpdateSeed(ctx context.Context, id int64, payload SeedPayloa
 	return err
 }
 
+// DeleteSeed removes a recovery seed from an account.
 func (r Repository) DeleteSeed(ctx context.Context, id int64) error {
 	_, err := r.DB.ExecContext(ctx, `DELETE FROM seeds WHERE id = $1`, id)
 	return err
 }
 
+// GetSeed retrieves a seed.
 func (r Repository) GetSeed(ctx context.Context, id int64) (*Seed, error) {
 	var item Seed
 	var walletCreatedAt sql.NullTime
@@ -356,6 +450,7 @@ func (r Repository) GetSeed(ctx context.Context, id int64) (*Seed, error) {
 	return &item, nil
 }
 
+// CreateAPIKey creates an apikey.
 func (r Repository) CreateAPIKey(ctx context.Context, accountID int64, payload APIKeyPayload) (int64, error) {
 	if robosats, err := r.IsRobosatsAccount(ctx, accountID); err != nil {
 		return 0, err
@@ -372,6 +467,7 @@ func (r Repository) CreateAPIKey(ctx context.Context, accountID int64, payload A
 	return id, err
 }
 
+// UpdateAPIKey stores an API key for an account.
 func (r Repository) UpdateAPIKey(ctx context.Context, id int64, payload APIKeyPayload) error {
 	if robosats, err := r.IsRobosatsAPIKey(ctx, id); err != nil {
 		return err
@@ -392,11 +488,13 @@ func (r Repository) UpdateAPIKey(ctx context.Context, id int64, payload APIKeyPa
 	return err
 }
 
+// DeleteAPIKey removes an API key from an account.
 func (r Repository) DeleteAPIKey(ctx context.Context, id int64) error {
 	_, err := r.DB.ExecContext(ctx, `DELETE FROM api_keys WHERE id = $1`, id)
 	return err
 }
 
+// GetAPIKey retrieves an apikey.
 func (r Repository) GetAPIKey(ctx context.Context, id int64) (*APIKey, error) {
 	var item APIKey
 	var apiSecret, passphrase sql.NullString
@@ -416,6 +514,7 @@ func (r Repository) GetAPIKey(ctx context.Context, id int64) (*APIKey, error) {
 	return &item, nil
 }
 
+// IsRobosatsAccount reports whether the account belongs to RoboSats.
 func (r Repository) IsRobosatsAccount(ctx context.Context, accountID int64) (bool, error) {
 	var provider string
 	if err := r.DB.QueryRowContext(ctx, `SELECT provider FROM accounts WHERE id = $1`, accountID).Scan(&provider); err != nil {
@@ -424,6 +523,7 @@ func (r Repository) IsRobosatsAccount(ctx context.Context, accountID int64) (boo
 	return NormalizeProvider(provider) == "Robosats", nil
 }
 
+// IsRobosatsAPIKey reports whether the API key is a RoboSats credential.
 func (r Repository) IsRobosatsAPIKey(ctx context.Context, apiKeyID int64) (bool, error) {
 	var provider string
 	if err := r.DB.QueryRowContext(ctx, `
@@ -547,6 +647,7 @@ func (r Repository) appendAPIKeys(ctx context.Context, accounts []Account, accou
 	return rows.Err()
 }
 
+// NormalizeProvider returns the canonical provider name used by storage and UI code.
 func NormalizeProvider(value string) string {
 	trimmed := strings.TrimSpace(value)
 	switch strings.ToLower(trimmed) {

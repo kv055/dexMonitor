@@ -16,19 +16,21 @@ import (
 	"google.golang.org/protobuf/types/dynamicpb"
 )
 
-// Reader decodes Bisq's local ClosedTrades persistence file into internal trade
-// records. It exists so we can revisit settlement-time statistics later without
-// re-deriving the protobuf/file format details again.
+// ClosedTradesFile is the Bisq database file that stores closed trades.
 const ClosedTradesFile = "ClosedTrades"
 
+// Reader decodes Bisq's local ClosedTrades persistence file into internal trade
+// records.
 type Reader struct {
 	dbDir string
 }
 
+// NewReader creates a Bisq stats reader rooted at dbDir.
 func NewReader(dbDir string) *Reader {
 	return &Reader{dbDir: dbDir}
 }
 
+// DefaultDBDir returns the default Bisq database directory below appDataDir.
 func DefaultDBDir(appDataDir string) string {
 	if appDataDir == "" {
 		appDataDir = "/home/appuser/.local/share/Bisq"
@@ -36,10 +38,12 @@ func DefaultDBDir(appDataDir string) string {
 	return filepath.Join(appDataDir, "btc_mainnet", "db")
 }
 
+// ClosedTradesPath returns the full path to the Bisq ClosedTrades file.
 func (r *Reader) ClosedTradesPath() string {
 	return filepath.Join(r.dbDir, ClosedTradesFile)
 }
 
+// ReadClosedTradeRecords reads closed Bisq trades and reports skipped record counts by reason.
 func (r *Reader) ReadClosedTradeRecords() ([]TradeRecord, map[string]int, error) {
 	payload, err := os.ReadFile(r.ClosedTradesPath())
 	if err != nil {
@@ -339,6 +343,7 @@ func strptr(v string) *string { return &v }
 
 func int32ptr(v int32) *int32 { return &v }
 
+// DebugJSON returns a JSON representation useful while inspecting decoded Bisq records.
 func DebugJSON(data []byte) string {
 	msg := newMessage("PersistableEnvelope")
 	if err := proto.Unmarshal(data, msg); err != nil {

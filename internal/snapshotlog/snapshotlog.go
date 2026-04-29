@@ -9,21 +9,30 @@ import (
 	"time"
 )
 
+// Entry is a stored snapshot-log row returned to the monitor UI.
 type Entry struct {
-	ID          int            `json:"id"`
-	Timestamp   time.Time      `json:"timestamp"`
-	Exchanges   map[string]any `json:"exchanges"`
-	OffersCount int            `json:"offers_count"`
+	// ID identifies the entry.
+	ID int `json:"id"`
+	// Timestamp records the relevant time for the entry.
+	Timestamp time.Time `json:"timestamp"`
+	// Exchanges is the exchanges value for the entry.
+	Exchanges map[string]any `json:"exchanges"`
+	// OffersCount is the count associated with the entry.
+	OffersCount int `json:"offers_count"`
 }
 
+// Repository represents a repository.
 type Repository struct {
+	// DB is the database handle used by the repository.
 	DB *sql.DB
 }
 
+// NewRepository creates a repository.
 func NewRepository(db *sql.DB) Repository {
 	return Repository{DB: db}
 }
 
+// List returns recent records, capped by the requested limit.
 func (r Repository) List(ctx context.Context, limit int, compact bool) ([]Entry, error) {
 	rows, err := r.DB.QueryContext(ctx, rebind("SELECT id, timestamp, exchanges, offers_count FROM snapshot_log ORDER BY timestamp DESC LIMIT ?"), limit)
 	if err != nil {
@@ -48,6 +57,7 @@ func (r Repository) List(ctx context.Context, limit int, compact bool) ([]Entry,
 	return result, rows.Err()
 }
 
+// Detail returns the stored snapshot payload for a log entry.
 func (r Repository) Detail(ctx context.Context, id int64) (Entry, error) {
 	var entry Entry
 	var exchangesJSON []byte
@@ -60,6 +70,7 @@ func (r Repository) Detail(ctx context.Context, id int64) (Entry, error) {
 	return entry, nil
 }
 
+// CompactExchanges formats exchange names for compact display.
 func CompactExchanges(exchanges map[string]any) map[string]any {
 	out := make(map[string]any, len(exchanges))
 	for name, raw := range exchanges {
