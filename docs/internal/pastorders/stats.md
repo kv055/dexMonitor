@@ -1,296 +1,262 @@
-# `internal/pastorders/stats.go`
+# `stats.go`
 
-Source package: `pastorders`  
-Source lines: `528`
+## Purpose
 
-## Package Purpose
+This file builds time-windowed statistics for closed offers and general premium
+summaries for the monitor dashboard. For the Past Trades aggregation feature,
+its main responsibility is turning already-filtered profitable closed offers
+into the `/api/past_order_stats` response consumed by the Taker Opportunities
+view.
 
-This file contributes to the `pastorders` package.
+## Runtime Role
 
-## File Role
+`dexMonitor/cmd/server` loads closed offers from the database, recomputes or
+selects the relevant profitability mode, filters out unprofitable offers, and
+then passes those profitable offers into this package as `PremiumOrder` values.
 
-This file defines 17 type(s), implements 11 function or method entry point(s), declares 2 package value(s).
+This file groups those values into standard reporting windows, applies optional
+payment-method exclusions, sums BTC and fiat profit, and includes capped
+position totals when a max fiat limit reduced at least one trade.
 
-## Runtime Behavior
-
-- Serializes or deserializes JSON payloads.
-- Uses time windows, timestamps, or duration calculations.
-
-## Types
-
-### `Timeframe`
-
-Timeframe represents a timeframe.
-
-Fields:
-
-- `Label` `string`: Label is the label value for the timeframe.
-- `Hours` `int`: Hours is the hours value for the timeframe.
-
-### `PremiumOrder`
-
-PremiumOrder represents a premium order.
-
-Fields:
-
-- `PaymentMethod` `string`: PaymentMethod is the payment method value for the premium order.
-- `LastSeen` `time.Time`: LastSeen is the last seen value for the premium order.
-- `BTCAmount` `float64`: BTCAmount is a BTC-denominated btcamount value.
-- `NetProfitBTC` `float64`: NetProfitBTC is a BTC-denominated net profit btc value.
-- `NetProfitFiat` `float64`: NetProfitFiat is a fiat-denominated net profit fiat value.
-- `BTCAmountCapped` `float64`: BTCAmountCapped is set when the order exceeded a max fiat limit.
-- `NetProfitBTCCapped` `float64`: NetProfitBTCCapped is a BTC-denominated net profit btccapped value.
-- `NetProfitFiatCapped` `float64`: NetProfitFiatCapped is a fiat-denominated net profit fiat capped value.
-- `HasCap` `bool`: HasCap reports whether the premium order condition is true.
-
-### `StatsResponse`
-
-StatsResponse represents a stats response.
-
-Fields:
-
-- `FiatCurrency` `string`: FiatCurrency is a fiat-denominated fiat currency value.
-- `ExcludedPaymentMethods` `[]string`: ExcludedPaymentMethods is the excluded payment methods value for the stats response.
-- `Timeframes` `[]TimeframeStats`: Timeframes records the relevant time for the stats response.
-
-### `TimeframeStats`
-
-TimeframeStats represents a timeframe stats.
-
-Fields:
-
-- `Timeframe` `string`: Timeframe records the relevant time for the timeframe stats.
-- `Hours` `int`: Hours is the hours value for the timeframe stats.
-- `PremiumOrderCount` `int`: PremiumOrderCount is the count associated with the timeframe stats.
-- `TotalProfitBTC` `float64`: TotalProfitBTC is a BTC-denominated total profit btc value.
-- `TotalProfitFiat` `float64`: TotalProfitFiat is a fiat-denominated total profit fiat value.
-- `AverageOrderBTC` `float64`: AverageOrderBTC is a BTC-denominated average order btc value.
-- `SmallestOrderBTC` `float64`: SmallestOrderBTC is a BTC-denominated smallest order btc value.
-- `BiggestOrderBTC` `float64`: BiggestOrderBTC is a BTC-denominated biggest order btc value.
-- `TotalProfitBTCCapped` `*float64`: TotalProfitBTCCapped is set when at least one order in the window was capped by a max fiat limit.
-- `TotalProfitFiatCapped` `*float64`: TotalProfitFiatCapped is a fiat-denominated total profit fiat capped value.
-- `AverageOrderBTCCapped` `*float64`: AverageOrderBTCCapped is a BTC-denominated average order btccapped value.
-
-### `Offer`
-
-Offer is a normalized DEX offer used by this package.
-
-Fields:
-
-- `Exchange` `string`: Exchange is the exchange value for the offer.
-- `Direction` `string`: Direction is the direction value for the offer.
-- `PaymentMethod` `string`: PaymentMethod is the payment method value for the offer.
-- `PriceDiffPercent` `*float64`: PriceDiffPercent is a percentage value.
-- `FirstSeen` `time.Time`: FirstSeen is the first seen value for the offer.
-- `LastSeen` `time.Time`: LastSeen is the last seen value for the offer.
-- `IsLive` `bool`: IsLive reports whether the offer condition is true.
-
-### `GeneralStatsOverview`
-
-GeneralStatsOverview represents a general stats overview.
-
-Fields:
-
-- `TotalOffers` `int`: TotalOffers is the total offers value for the general stats overview.
-- `ActiveOffers` `int`: ActiveOffers is the active offers value for the general stats overview.
-- `ExchangesLive` `int`: ExchangesLive is the exchanges live value for the general stats overview.
-- `OffersByExchange` `[]Count`: OffersByExchange is the offers by exchange value for the general stats overview.
-- `PaymentMethodCounts` `[]Count`: PaymentMethodCounts is the count associated with the general stats overview.
-
-### `GeneralStatsPremiumSummary`
-
-GeneralStatsPremiumSummary represents a general stats premium summary.
-
-Fields:
-
-- `BestAskPremiumPct` `*float64`: BestAskPremiumPct is a percentage value.
-- `AvgAskPremiumPct` `*float64`: AvgAskPremiumPct is a percentage value.
-- `BestBidPremiumPct` `*float64`: BestBidPremiumPct is a percentage value.
-- `AvgBidPremiumPct` `*float64`: AvgBidPremiumPct is a percentage value.
-
-### `GeneralStatsResponse`
-
-GeneralStatsResponse represents a general stats response.
-
-Fields:
-
-- `TotalOffers` `int`: TotalOffers is the total offers value for the general stats response.
-- `ActiveOffers` `int`: ActiveOffers is the active offers value for the general stats response.
-- `ExchangesLive` `int`: ExchangesLive is the exchanges live value for the general stats response.
-- `OffersByExchange` `[]Count`: OffersByExchange is the offers by exchange value for the general stats response.
-- `BestAskPremiumPct` `*float64`: BestAskPremiumPct is a percentage value.
-- `AvgAskPremiumPct` `*float64`: AvgAskPremiumPct is a percentage value.
-- `BestBidPremiumPct` `*float64`: BestBidPremiumPct is a percentage value.
-- `AvgBidPremiumPct` `*float64`: AvgBidPremiumPct is a percentage value.
-- `OpenPremiums` `OpenPremiumStats`: OpenPremiums is the open premiums value for the general stats response.
-- `AvgOfferLifetimeMs` `*int64`: AvgOfferLifetimeMs records the relevant time for the general stats response.
-- `AvgOfferLifetimeMsByExchange` `[]NamedDuration`: AvgOfferLifetimeMsByExchange records the relevant time for the general stats response.
-- `PremiumLifetimes` `PremiumLifetimeModes`: PremiumLifetimes records the relevant time for the general stats response.
-- `PaymentMethodCounts` `[]Count`: PaymentMethodCounts is the count associated with the general stats response.
-- `PastPremiums` `[]PastPremiumTimeframeStats`: PastPremiums is the past premiums value for the general stats response.
-
-### `OpenPremiumModeStats`
-
-OpenPremiumModeStats summarizes live premiums for one pricing mode.
-
-Fields:
-
-- `AvgAskPremiumPct` `*float64`: AvgAskPremiumPct is a percentage value.
-- `AvgBidPremiumPct` `*float64`: AvgBidPremiumPct is a percentage value.
-
-### `OpenPremiumStats`
-
-OpenPremiumStats groups live premium summaries by pricing mode.
-
-Fields:
-
-- `Raw` `OpenPremiumModeStats`: Raw preserves additional source data for the open premium stats.
-- `NetFull` `OpenPremiumModeStats`: NetFull is the net full value for the open premium stats.
-- `NetCapped` `OpenPremiumModeStats`: NetCapped is the net capped value for the open premium stats.
-
-### `PremiumLifetimeStats`
-
-PremiumLifetimeStats represents a premium lifetime stats.
-
-Fields:
-
-- `AvgOfferLifetimeMs` `*int64`: AvgOfferLifetimeMs records the relevant time for the premium lifetime stats.
-- `AvgOfferLifetimeMsByExchange` `[]NamedDuration`: AvgOfferLifetimeMsByExchange records the relevant time for the premium lifetime stats.
-
-### `PremiumLifetimeModes`
-
-PremiumLifetimeModes represents a premium lifetime modes.
-
-Fields:
-
-- `Raw` `PremiumLifetimeStats`: Raw preserves additional source data for the premium lifetime modes.
-- `NetFull` `PremiumLifetimeStats`: NetFull is the net full value for the premium lifetime modes.
-- `NetCapped` `PremiumLifetimeStats`: NetCapped is the net capped value for the premium lifetime modes.
-
-### `NamedDuration`
-
-NamedDuration represents a named duration.
-
-Fields:
-
-- `Name` `string`: Name is the name value for the named duration.
-- `Ms` `int64`: Ms is the ms value for the named duration.
-
-### `NamedPremium`
-
-NamedPremium represents a named premium.
-
-Fields:
-
-- `Name` `string`: Name is the name value for the named premium.
-- `AvgPremiumPct` `float64`: AvgPremiumPct is a percentage value.
-
-### `PastPremiumTimeframeStats`
-
-PastPremiumTimeframeStats represents a past premium timeframe stats.
-
-Fields:
-
-- `Timeframe` `string`: Timeframe records the relevant time for the past premium timeframe stats.
-- `Hours` `int`: Hours is the hours value for the past premium timeframe stats.
-- `AvgPremiumByExchange` `[]NamedPremium`: AvgPremiumByExchange is the avg premium by exchange value for the past premium timeframe stats.
-- `Modes` `PastPremiumModes`: Modes is the modes value for the past premium timeframe stats.
-
-### `PastPremiumModes`
-
-PastPremiumModes represents a past premium modes.
-
-Fields:
-
-- `Raw` `[]NamedPremium`: Raw preserves additional source data for the past premium modes.
-- `NetFull` `[]NamedPremium`: NetFull is the net full value for the past premium modes.
-- `NetCapped` `[]NamedPremium`: NetCapped is the net capped value for the past premium modes.
-
-### `Count`
-
-Count represents a count.
-
-Fields:
-
-- `Name` `string`: Name is the name value for the count.
-- `Count` `int`: Count is the count associated with the count.
-
-## Functions and Methods
+## Function Map
 
 ### `BuildStats`
 
-BuildStats builds a stats.
+Signature:
 
-Signature: `func BuildStats(orders []PremiumOrder, now time.Time, fiatCurrency string, excludedPaymentMethods []string) StatsResponse`
+```go
+func BuildStats(orders []PremiumOrder, now time.Time, fiatCurrency string, excludedPaymentMethods []string) StatsResponse
+```
 
-### `filterGeneralStatsOffers`
+Description:
+Builds the complete past-order statistics response for the Taker Opportunities
+backtesting summary. It normalizes a missing `now` value to the current time,
+turns the excluded payment-method list into a lookup map, then calls
+`buildTimeframeStats` for each standard window in `DefaultTimeframes`.
 
-This function is part of the `pastorders` package implementation.
+The returned response preserves the fiat currency and excluded methods so the
+frontend can label summary cards and distinguish filtered statistics from
+all-method statistics.
 
-Signature: `func filterGeneralStatsOffers(offers []Offer, now time.Time, hours int, excludedPaymentMethods []string) []Offer`
+Called by:
+- `handlePastOrderStats` in `dexMonitor/cmd/server/main.go`: after closed offers
+  have been loaded, costed, filtered to profitable trades, and converted to
+  `PremiumOrder` values.
 
-### `latestOfferTimeByExchange`
+Calls:
+- `buildTimeframeStats`: computes each individual `1h`, `6h`, `24h`, `48h`, and
+  `7d` row.
 
-This function is part of the `pastorders` package implementation.
+Side effects:
+- None. It only transforms in-memory values into a response struct.
 
-Signature: `func latestOfferTimeByExchange(offers []Offer) map[string]time.Time`
+Failure behavior:
+- There is no error return. Empty input produces empty/zero-valued timeframe
+  totals.
 
-### `isCurrentExchangeOffer`
-
-This function is part of the `pastorders` package implementation.
-
-Signature: `func isCurrentExchangeOffer(offer Offer, lastSeenByExchange map[string]time.Time) bool`
-
-### `BuildGeneralStatsOverview`
-
-BuildGeneralStatsOverview builds a general stats overview.
-
-Signature: `func BuildGeneralStatsOverview(offers []Offer, now time.Time, hours int, excludedPaymentMethods []string) GeneralStatsOverview`
-
-### `BuildGeneralStatsPremiumSummary`
-
-BuildGeneralStatsPremiumSummary builds a general stats premium summary.
-
-Signature: `func BuildGeneralStatsPremiumSummary(offers []Offer, now time.Time, hours int, excludedPaymentMethods []string) GeneralStatsPremiumSummary`
-
-### `NewGeneralStatsResponse`
-
-NewGeneralStatsResponse creates a general stats response.
-
-Signature: `func NewGeneralStatsResponse(overview GeneralStatsOverview, premiumSummary GeneralStatsPremiumSummary) GeneralStatsResponse`
-
-### `BuildGeneralStats`
-
-BuildGeneralStats builds a general stats.
-
-Signature: `func BuildGeneralStats(offers []Offer, now time.Time, hours int, excludedPaymentMethods []string) GeneralStatsResponse`
+Notes:
+This function does not decide profitability. It assumes the caller already
+removed offers that should not count for the requested taker-opportunity mode.
 
 ### `buildTimeframeStats`
 
-TODO: write comments and document this function in a new readme file
+Signature:
 
-Signature: `func buildTimeframeStats(orders []PremiumOrder, now time.Time, tf Timeframe, excluded map[string]struct{}) TimeframeStats`
+```go
+func buildTimeframeStats(orders []PremiumOrder, now time.Time, tf Timeframe, excluded map[string]struct{}) TimeframeStats
+```
+
+Description:
+Aggregates profitable closed offers within one reporting window. It computes a
+cutoff from `now - tf.Hours`, skips orders whose `LastSeen` falls before that
+cutoff, and skips orders whose payment method is excluded.
+
+For remaining orders, it increments the order count, sums net BTC profit, sums
+net fiat profit, sums order size, and tracks smallest and biggest BTC order
+size. Average order size is derived from the full order-size total divided by
+the count.
+
+When at least one order was reduced by the max fiat cap, it also accumulates
+capped BTC profit, capped fiat profit, and capped order size. The capped fields
+are only populated on the response when a cap actually affected at least one
+order in that timeframe.
+
+Called by:
+- `BuildStats`: once for every standard timeframe.
+
+Calls:
+- `round`: normalizes totals and averages to the precision expected by the API.
+
+Side effects:
+- None.
+
+Failure behavior:
+- Empty windows return a `TimeframeStats` row with zero totals.
+- Capped fields are omitted when no included order has `HasCap = true`.
+
+### `filterGeneralStatsOffers`
+
+Signature:
+
+```go
+func filterGeneralStatsOffers(offers []Offer, now time.Time, hours int, excludedPaymentMethods []string) []Offer
+```
+
+Description:
+Filters normalized offers for general dashboard statistics. It applies the
+requested hour window and payment-method exclusions, defaulting an empty `now`
+to the current time and a non-positive hour value to 24 hours.
+
+Called by:
+- `BuildGeneralStatsOverview`
+- `BuildGeneralStatsPremiumSummary`
+
+Side effects:
+- None.
+
+### `latestOfferTimeByExchange`
+
+Signature:
+
+```go
+func latestOfferTimeByExchange(offers []Offer) map[string]time.Time
+```
+
+Description:
+Finds the most recent `LastSeen` timestamp for each exchange. General stats use
+this to avoid counting stale rows from an exchange when newer rows from the same
+exchange exist in the selected window.
+
+Called by:
+- `BuildGeneralStatsOverview`
+- `BuildGeneralStatsPremiumSummary`
+
+### `isCurrentExchangeOffer`
+
+Signature:
+
+```go
+func isCurrentExchangeOffer(offer Offer, lastSeenByExchange map[string]time.Time) bool
+```
+
+Description:
+Reports whether an offer belongs to the latest observed snapshot for its
+exchange. This keeps general live-style summaries focused on the current view of
+each exchange rather than every historical row in the window.
+
+Called by:
+- `BuildGeneralStatsOverview`
+- `BuildGeneralStatsPremiumSummary`
+
+### `BuildGeneralStatsOverview`
+
+Signature:
+
+```go
+func BuildGeneralStatsOverview(offers []Offer, now time.Time, hours int, excludedPaymentMethods []string) GeneralStatsOverview
+```
+
+Description:
+Builds broad dashboard counts from normalized offer data. It filters offers by
+time and payment method, keeps only the current snapshot per exchange for active
+counts, then returns total offers, active offers, distinct live exchanges,
+offers by exchange, and payment-method counts.
+
+Called by:
+- `BuildGeneralStats`
+- `generalStatsContext.overview` in `dexMonitor/cmd/server/main.go`
+
+Calls:
+- `filterGeneralStatsOffers`
+- `latestOfferTimeByExchange`
+- `isCurrentExchangeOffer`
+- `sortedCounts`
+
+### `BuildGeneralStatsPremiumSummary`
+
+Signature:
+
+```go
+func BuildGeneralStatsPremiumSummary(offers []Offer, now time.Time, hours int, excludedPaymentMethods []string) GeneralStatsPremiumSummary
+```
+
+Description:
+Computes ask and bid premium summaries from the current exchange snapshots. It
+separates `sell` and `buy` offers, sums their premium percentages, tracks the
+best premium in each direction, and returns average and best premium values when
+data exists.
+
+Called by:
+- `generalStatsContext.premiumSummary` in `dexMonitor/cmd/server/main.go`
+
+Calls:
+- `filterGeneralStatsOffers`
+- `latestOfferTimeByExchange`
+- `isCurrentExchangeOffer`
+
+### `NewGeneralStatsResponse`
+
+Signature:
+
+```go
+func NewGeneralStatsResponse(overview GeneralStatsOverview, premiumSummary GeneralStatsPremiumSummary) GeneralStatsResponse
+```
+
+Description:
+Combines an overview and premium summary into the response shape used by older
+or compact general-stats flows.
+
+Called by:
+- `BuildGeneralStats`
+
+Side effects:
+- None.
+
+### `BuildGeneralStats`
+
+Signature:
+
+```go
+func BuildGeneralStats(offers []Offer, now time.Time, hours int, excludedPaymentMethods []string) GeneralStatsResponse
+```
+
+Description:
+Builds a compact general stats response from normalized offers. It currently
+includes the overview and leaves the premium summary empty in this convenience
+path.
+
+Called by:
+- Tests and any caller that needs the compact legacy general-stats response.
+
+Calls:
+- `BuildGeneralStatsOverview`
+- `NewGeneralStatsResponse`
 
 ### `sortedCounts`
 
-This function is part of the `pastorders` package implementation.
+Signature:
 
-Signature: `func sortedCounts(counts map[string]int) []Count`
+```go
+func sortedCounts(counts map[string]int) []Count
+```
+
+Description:
+Converts a count map into a stable list ordered by descending count and then by
+name. This keeps dashboard count output deterministic.
+
+Called by:
+- `BuildGeneralStatsOverview`
 
 ### `round`
 
-This function is part of the `pastorders` package implementation.
+Signature:
 
-Signature: `func round(v float64, places int) float64`
+```go
+func round(v float64, places int) float64
+```
 
-## Constants and Variables
+Description:
+Rounds floating-point totals and averages to the requested decimal precision.
 
-- `DefaultTimeframes`: DefaultTimeframes lists the standard reporting windows.
-- `PastPremiumTimeframes`: PastPremiumTimeframes is the past premium timeframes value.
-
-## Key Dependencies
-
-- `math`
-- `sort`
-- `time`
-
+Called by:
+- `buildTimeframeStats`

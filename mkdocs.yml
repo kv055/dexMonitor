@@ -31,6 +31,7 @@ nav:
           - ohlc.go: internal/ohlc/ohlc.md
       - pastorders:
           - Overview: internal/pastorders/README.md
+          - Past Trades aggregation: internal/pastorders/past_trades_aggregation.md
           - stats.go: internal/pastorders/stats.md
       - paymentmethods:
           - Overview: internal/paymentmethods/README.md
