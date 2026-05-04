@@ -107,17 +107,19 @@ test.describe('ControlPanel', () => {
     await expect(maxInput).toHaveValue('5.0');
   });
 
-  test('premium only toggle changes styling', async ({ page }) => {
+  test('premium dropdown can include non premium offers', async ({ page }) => {
     const cp = controlPanel(page);
-    const toggle = cp.locator('button').filter({ hasText: 'Premium Only' });
+    const premiumDropdown = cp.locator('button').filter({ hasText: 'Raw Premium' });
 
-    await expect(toggle).toHaveClass(/border-accent/);
+    await expect(premiumDropdown).toBeVisible();
 
-    await jsClick(toggle);
-    await expect(toggle).toHaveClass(/border-border/);
+    await jsClick(premiumDropdown);
+    await page.locator('.absolute button').filter({ hasText: 'Incl. non premium offers' }).click();
+    await expect(cp.locator('button').filter({ hasText: 'Incl. non premium offers' })).toBeVisible();
 
-    await jsClick(toggle);
-    await expect(toggle).toHaveClass(/border-accent/);
+    await jsClick(cp.locator('button').filter({ hasText: 'Incl. non premium offers' }));
+    await page.locator('.absolute button').filter({ hasText: 'Net Premium Full' }).click();
+    await expect(cp.locator('button').filter({ hasText: 'Net Premium Full' })).toBeVisible();
   });
 
   test('reset button restores default filters', async ({ page }) => {
@@ -135,7 +137,7 @@ test.describe('ControlPanel', () => {
 
     await expect(cp.locator('button').filter({ hasText: 'All Exchanges' })).toBeVisible();
     await expect(cp.locator('input[placeholder="Min"]')).toHaveValue('');
-    await expect(cp.locator('button').filter({ hasText: 'Premium Only' })).toHaveClass(/border-accent/);
+    await expect(cp.locator('button').filter({ hasText: 'Raw Premium' })).toBeVisible();
   });
 
   test('refresh button triggers API calls', async ({ page }) => {

@@ -111,21 +111,21 @@ test.describe('Filter Flow — Cross-component integration', () => {
     expect(allCount).toBeGreaterThanOrEqual(openCount);
   });
 
-  test('premium only toggle shows/hides unprofitable offers', async ({ page }) => {
+  test('premium dropdown shows/hides non premium offers', async ({ page }) => {
     const panel = offersPanel(page);
     const cp = controlPanel(page);
 
     const rowsWithPremium = await panel.locator('table tbody tr').count();
 
-    // Toggle OFF
-    await jsClick(cp.locator('button').filter({ hasText: 'Premium Only' }));
+    // Include non-premium offers.
+    await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'Raw Premium' }), 'Incl. non premium offers');
     await page.waitForTimeout(300);
 
     const rowsWithout = await panel.locator('table tbody tr').count();
     expect(rowsWithout).toBeGreaterThanOrEqual(rowsWithPremium);
 
-    // Toggle back ON
-    await jsClick(cp.locator('button').filter({ hasText: 'Premium Only' }));
+    // Switch back to the default premium-only raw metric.
+    await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'Incl. non premium offers' }), 'Raw Premium');
     await page.waitForTimeout(300);
 
     const rowsAgain = await panel.locator('table tbody tr').count();

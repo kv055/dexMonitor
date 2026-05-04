@@ -222,11 +222,12 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
 
 interface PremiumModeDropdownProps {
   value: PremiumFilterMode;
-  onChange: (v: PremiumFilterMode) => void;
+  premiumOnly: boolean;
+  onChange: (v: PremiumFilterMode, premiumOnly?: boolean) => void;
   inputCls: string;
 }
 
-function PremiumModeDropdown({ value, onChange, inputCls }: PremiumModeDropdownProps) {
+function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls }: PremiumModeDropdownProps) {
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -238,7 +239,9 @@ function PremiumModeDropdown({ value, onChange, inputCls }: PremiumModeDropdownP
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  const selected = PREMIUM_FILTER_OPTIONS.find(opt => opt.value === value) ?? PREMIUM_FILTER_OPTIONS[0];
+  const selected = premiumOnly
+    ? PREMIUM_FILTER_OPTIONS.find(opt => opt.value === value) ?? PREMIUM_FILTER_OPTIONS[0]
+    : { value, label: 'Incl. non premium offers' };
 
   return (
     <div ref={ref} className="relative">
@@ -255,12 +258,18 @@ function PremiumModeDropdown({ value, onChange, inputCls }: PremiumModeDropdownP
           {PREMIUM_FILTER_OPTIONS.map(opt => (
             <button
               key={opt.value}
-              onClick={() => { onChange(opt.value); setOpen(false); }}
-              className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors ${value === opt.value ? 'text-accent bg-bg' : 'text-text'}`}
+              onClick={() => { onChange(opt.value, true); setOpen(false); }}
+              className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors ${premiumOnly && value === opt.value ? 'text-accent bg-bg' : 'text-text'}`}
             >
               <span className="text-[0.8rem]">{opt.label}</span>
             </button>
           ))}
+          <button
+            onClick={() => { onChange(value, false); setOpen(false); }}
+            className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors border-t border-border/60 ${!premiumOnly ? 'text-accent bg-bg' : 'text-text'}`}
+          >
+            <span className="text-[0.8rem]">Incl. non premium offers</span>
+          </button>
         </div>
       )}
     </div>
@@ -678,7 +687,8 @@ export function ControlPanel({ onRefresh, lastUpdatedAt }: Props) {
           <span className="text-[0.6rem] text-muted uppercase tracking-wide">Premium Type</span>
           <PremiumModeDropdown
             value={filters.premiumMode}
-            onChange={v => setFilters({ premiumMode: v })}
+            premiumOnly={filters.premiumOnly}
+            onChange={(v, premiumOnly) => setFilters({ premiumMode: v, ...(premiumOnly == null ? {} : { premiumOnly }) })}
             inputCls={inputCls}
           />
         </div>
@@ -691,20 +701,6 @@ export function ControlPanel({ onRefresh, lastUpdatedAt }: Props) {
             <input type="number" className={`${inputCls} w-14`} placeholder="Max" step="0.1"
               value={filters.premiumMax} onChange={e => setFilters({ premiumMax: e.target.value })} />
           </div>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Profitability</span>
-          <button
-            type="button"
-            onClick={() => setFilters({ premiumOnly: !filters.premiumOnly })}
-            className={`rounded-md border px-2 py-0.5 text-[0.8rem] font-medium transition-colors ${
-              filters.premiumOnly
-                ? 'border-accent bg-accent/10 text-accent'
-                : 'border-border bg-bg text-muted hover:text-text'
-            }`}
-          >
-            Premium Only
-          </button>
         </div>
       </div>
     </div>

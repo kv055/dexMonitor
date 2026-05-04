@@ -166,5 +166,7 @@ export function depthPanel(page: Page) {
 
 /** Locator for the Offers table panel */
 export function offersPanel(page: Page) {
-  return page.locator('.bg-surface').filter({ hasText: 'Offers' }).first();
+  return page.locator('.bg-surface').filter({
+    has: page.getByRole('heading', { name: 'Offers', exact: true }),
+  }).first();
 }
