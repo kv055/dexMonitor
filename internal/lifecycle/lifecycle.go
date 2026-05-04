@@ -280,7 +280,9 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 			cex_taker_fee_btc = ?,
 			cex_withdraw_fee_btc = ?,
 			network_fee_btc = ?,
-			dex_fee_btc = ?
+			dex_fee_btc = ?,
+			abort_cost_btc = ?,
+			abort_cost_pct = ?
 		WHERE id = ?
 	`))
 	if err != nil {
@@ -309,6 +311,7 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 			tradecost.Round8(bd.BTCAmount),
 		)
 		if bd.RouteCEX != "" {
+			abort := tradecost.AbortCostFromBreakdown(bd)
 			_, _ = updStmt.ExecContext(ctx,
 				bd.RouteCEX,
 				bd.RouteMethod,
@@ -323,6 +326,8 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 				cexWithdrawFee,
 				tradecost.Round8(bd.NetworkFeeBTC),
 				tradecost.Round8(bd.DexFeeBTC),
+				tradecost.Round8(abort.Total.BTC),
+				tradecost.Round4(abort.Total.Pct),
 				o.ID,
 			)
 		}

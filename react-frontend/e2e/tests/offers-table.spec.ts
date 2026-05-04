@@ -66,7 +66,12 @@ test.describe('OffersPreviewTable', () => {
     await expect(panel.locator('text=DEX platform fee').first()).toBeVisible();
     await expect(panel.locator('text=Total cost').first()).toBeVisible();
     await expect(panel.locator('text=Net premium').first()).toBeVisible();
-    await expect(panel.locator('text=Abort cost').first()).toBeVisible();
+    const abortCard = panel.locator('button').filter({ hasText: 'Abort cost' }).first();
+    await expect(abortCard).toBeVisible();
+    await expect(abortCard).toHaveAttribute('aria-expanded', 'false');
+    await expect(panel.locator('text=Total abort cost').first()).not.toBeVisible();
+    await abortCard.click();
+    await expect(abortCard).toHaveAttribute('aria-expanded', 'true');
     await expect(panel.locator('text=Total abort cost').first()).toBeVisible();
   });
 
