@@ -311,8 +311,9 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
         seriesInfo.set(series, { offerKey, price: getOfferPrice(o) });
       };
 
-      if (lifecycle && lifecycle.length >= 2) {
-        // Multi-point line: split into colored segments by premium state at each point.
+      if (lifecycle && lifecycle.length > 0) {
+        // Lifecycle line: render the full known history, including points outside
+        // the initial visible range so scrolling can reveal the whole order path.
         const lcPointsRaw = lifecycle.flatMap((p) => {
           const utcSec = toUtcSec(p.time);
           if (!utcSec) return [];
@@ -326,21 +327,30 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
         const lcByTime = new Map<number, typeof lcPointsRaw[0]>();
         for (const pt of lcPointsRaw) lcByTime.set(pt.time, pt);
         const lcPoints = Array.from(lcByTime.values()).sort((a, b) => a.time - b.time);
-        if (lcPoints.length < 2) {
+        if (lcPoints.length === 0) {
           renderFallbackLine();
           return;
         }
+
+        const firstSeenUtc = toUtcSec(getFirstSeen(o) ?? '');
+        const lastSeenUtc = toUtcSec(getLastSeen(o) ?? '');
+        if (firstSeenUtc) {
+          const firstSeenDisplay = toDisplaySec(firstSeenUtc);
+          if (firstSeenDisplay < lcPoints[0].time) {
+            lcPoints.unshift({ ...lcPoints[0], time: firstSeenDisplay });
+          }
+        }
         if (isOpen) {
           const last = lcPoints[lcPoints.length - 1];
-          lcPoints.push({ ...last, time: nowSec });
+          if (last.time < nowSec) lcPoints.push({ ...last, time: nowSec });
+        } else if (lastSeenUtc) {
+          const lastSeenDisplay = toDisplaySec(lastSeenUtc);
+          const last = lcPoints[lcPoints.length - 1];
+          if (lastSeenDisplay > last.time) {
+            lcPoints.push({ time: lastSeenDisplay, value: getOfferPrice(o), color: last.color });
+          }
         }
-
-        const hasVisibleLifecycle = lcPoints.some((pt, i) => {
-          if (pt.time >= fromSec && pt.time <= nowSec) return true;
-          const next = lcPoints[i + 1];
-          return next != null && pt.time < fromSec && next.time > nowSec;
-        });
-        if (!hasVisibleLifecycle) {
+        if (lcPoints.length < 2) {
           renderFallbackLine();
           return;
         }
