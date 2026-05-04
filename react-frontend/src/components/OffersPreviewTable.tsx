@@ -360,49 +360,16 @@ function AbortCostSection({ abortCost, refPrice }: {
 }) {
   if (!abortCost || abortCost.btc_amount <= 0) return null;
 
-  type AbortRow = { label: string; btc: number; pct: number };
   const fiatValue = (btc: number | null | undefined) => (btc != null && refPrice != null ? btc * refPrice : null);
-  const rows: AbortRow[] = [
-    { label: 'CEX taker buy', btc: abortCost.cex_buy_taker?.btc ?? 0, pct: abortCost.cex_buy_taker?.pct ?? 0 },
-    { label: 'CEX taker sell', btc: abortCost.cex_sell_taker?.btc ?? 0, pct: abortCost.cex_sell_taker?.pct ?? 0 },
-    { label: 'CEX withdrawal', btc: abortCost.withdrawal?.btc ?? 0, pct: abortCost.withdrawal?.pct ?? 0 },
-    { label: `BTC network fee ×${abortCost.num_network_txs || 2} txs`, btc: abortCost.network?.btc ?? 0, pct: abortCost.network?.pct ?? 0 },
-    { label: 'Hedge closeout', btc: abortCost.hedge?.fee_sum_btc ?? 0, pct: abortCost.hedge?.fee_sum_pct ?? 0 },
-  ].filter(row => row.btc > 0 || row.pct > 0);
-  const isAsk = abortCost.trade_direction === 'ask';
+  const totalBTC = abortCost.total?.btc ?? 0;
+  const totalPct = abortCost.total?.pct ?? 0;
 
   return (
-    <div className="rounded-md border border-border bg-bg/60 px-2.5 py-2.5">
-      <div className="flex items-center justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2">
-          <span className="text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Abort cost</span>
-          <span className={`text-[0.6rem] font-semibold px-1.5 py-0.5 rounded ${isAsk ? 'bg-orange-900/30 text-orange-400' : 'bg-blue-900/30 text-blue-400'}`}>
-            {isAsk ? 'Ask side' : 'Bid side'}
-          </span>
-        </div>
-        <div className="text-right">
-          <div className="text-text font-semibold mono-nums">{fmt8(abortCost.total?.btc ?? 0)} BTC</div>
-          <div className="text-muted text-[0.65rem] mono-nums">{fmtFiatAmount(fiatValue(abortCost.total?.btc))}</div>
-        </div>
-      </div>
-      <table className="w-full">
-        <tbody>
-          {rows.map((row, i) => (
-            <tr key={row.label} className={i % 2 === 0 ? 'bg-grid/40' : ''}>
-              <td className="pr-3 py-1 text-muted rounded-l">{row.label}</td>
-              <td className="pr-3 py-1 text-right text-text mono-nums">{fmt8(row.btc)}</td>
-              <td className="pr-3 py-1 text-right text-text mono-nums">{fmtFiatAmount(fiatValue(row.btc))}</td>
-              <td className="py-1 text-right text-text mono-nums rounded-r">{fmtPct(row.pct)}</td>
-            </tr>
-          ))}
-          <tr className="border-t border-border">
-            <td className="pr-3 pt-2 font-semibold text-text">Total abort cost</td>
-            <td className="pr-3 pt-2 text-right font-semibold text-text mono-nums">{fmt8(abortCost.total?.btc ?? 0)}</td>
-            <td className="pr-3 pt-2 text-right font-semibold text-text mono-nums">{fmtFiatAmount(fiatValue(abortCost.total?.btc))}</td>
-            <td className="pt-2 text-right font-semibold text-red mono-nums">{fmtPct(abortCost.total?.pct ?? 0)}</td>
-          </tr>
-        </tbody>
-      </table>
+    <div className="flex items-center justify-between gap-3 text-[0.64rem] text-muted">
+      <span className="uppercase tracking-wide font-semibold">Abort cost</span>
+      <span className="mono-nums text-right whitespace-nowrap">
+        {fmt8(totalBTC)} BTC · {fmtFiatAmount(fiatValue(totalBTC))} · {fmtPct(totalPct)}
+      </span>
     </div>
   );
 }
@@ -559,8 +526,6 @@ function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct, refPri
         </tbody>
       </table>
 
-      <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
-
       {/* Estimated profit summary card */}
       <div className={`rounded-lg border ${profitCardBorder} ${profitCardBg} px-3 py-2.5`}>
         <div className="flex items-center justify-between gap-3">
@@ -578,6 +543,8 @@ function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct, refPri
           </span>
         </div>
       </div>
+
+      <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
     </div>
   );
 }
