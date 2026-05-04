@@ -1,6 +1,6 @@
 import { memo, useEffect, useRef, useState, useMemo } from 'react';
 import { toUtcSec } from '../utils/formatters';
-import { shiftOhlcCandlesForTimezone } from '../utils/ohlcTimezone';
+import { shiftOhlcCandlesForTimezone, shiftUtcSecForTimezone } from '../utils/ohlcTimezone';
 import {
   createChart,
   ColorType,
@@ -20,8 +20,14 @@ import { apiFetch } from '../utils/api';
 interface Props {
   data: OHLCData | null;
   loadedHours: number;
-  onNeedMoreData: (newHours: number) => void;
+  onNeedMoreData: (newHours: number, intervalMin?: number) => void;
 }
+
+type PendingVisibleRange = {
+  range: { from: UTCTimestamp; to: UTCTimestamp };
+  intervalMin: number;
+  visibleHours: number;
+};
 
 const DIR_COLORS = {
   bid_premium:  '#00d4ff',
@@ -42,6 +48,7 @@ const CANDLE_OPTIONS = [1, 5, 15, 30, 60, 240, 1440];
 const CANDLE_LABELS: Record<number, string> = {
   1: '1m', 5: '5m', 15: '15m', 30: '30m', 60: '1h', 240: '4h', 1440: '1d',
 };
+const TARGET_VISIBLE_CANDLES = 120;
 
 function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -70,10 +77,15 @@ function aggregateOHLC(candles: OHLCCandle[], targetMin: number, sourceMin: numb
   return Array.from(buckets.values()).sort((a, b) => toUtcSec(a.time) - toUtcSec(b.time));
 }
 
+function requiredHoursForCandleSize(candleMin: number): number {
+  return Math.ceil((candleMin * TARGET_VISIBLE_CANDLES) / 60);
+}
+
 function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const savedRangeRef = useRef<{ from: UTCTimestamp; to: UTCTimestamp } | null>(null);
+  const intendedRangeRef = useRef<PendingVisibleRange | null>(null);
   const fetchingMoreRef = useRef(false);
 
   const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferKey, setSelectedOfferKey, setHoveredOhlcTime, loading } = useFilters();
@@ -82,6 +94,15 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
   const lifecycleLoadingRef = useRef<Set<number>>(new Set());
 
   const sourceIntervalMin = data?.interval_min ?? 1;
+  const loadedDataHours = useMemo(() => {
+    const candles = data?.candles;
+    if (!candles || candles.length < 2) return loadedHours;
+    const first = toUtcSec(candles[0].time);
+    const last = toUtcSec(candles[candles.length - 1].time);
+    if (!first || !last || last <= first) return loadedHours;
+    return Math.ceil((last - first) / 3600 + sourceIntervalMin / 60);
+  }, [data?.candles, loadedHours, sourceIntervalMin]);
+  const availableHours = Math.max(loadedHours, loadedDataHours);
 
   // Candle size selector — default always tracks source interval
   const [candleMin, setCandleMin] = useState<number>(sourceIntervalMin);
@@ -92,9 +113,29 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
   }, [sourceIntervalMin]);
 
   const visibleOptions = useMemo(
-    () => CANDLE_OPTIONS.filter(o => o >= sourceIntervalMin),
-    [sourceIntervalMin]
+    () => CANDLE_OPTIONS,
+    []
   );
+  const requiredHours = useMemo(() => requiredHoursForCandleSize(candleMin), [candleMin]);
+  const effectiveVisibleHours = Math.max(Number(hours), requiredHours);
+
+  const handleCandleMinChange = (nextCandleMin: number) => {
+    const nextRequiredHours = requiredHoursForCandleSize(nextCandleMin);
+    const nextVisibleHours = Math.max(Number(hours), nextRequiredHours);
+    const nowUtcSec = Math.floor(Date.now() / 1000);
+    intendedRangeRef.current = {
+      intervalMin: nextCandleMin,
+      visibleHours: nextVisibleHours,
+      range: {
+        from: shiftUtcSecForTimezone(nowUtcSec - nextVisibleHours * 3600, timezone) as UTCTimestamp,
+        to: shiftUtcSecForTimezone(nowUtcSec, timezone) as UTCTimestamp,
+      },
+    };
+    setCandleMin(nextCandleMin);
+    if (nextCandleMin < sourceIntervalMin || nextRequiredHours > availableHours) {
+      onNeedMoreData(nextVisibleHours, nextCandleMin);
+    }
+  };
 
   // Aggregated candles for the chosen size
   const displayCandles = useMemo(() => {
@@ -222,8 +263,17 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
       );
     }
 
-    const nowSec = Math.floor(Date.now() / 1000) as UTCTimestamp;
-    const fromSec = (nowSec - Number(hours) * 3600) as UTCTimestamp;
+    const utcByDisplaySec = new Map(shiftedDisplay.utcByShiftedSec);
+    const toDisplaySec = (utcSec: number): UTCTimestamp => {
+      const displaySec = shiftUtcSecForTimezone(utcSec, timezone);
+      utcByDisplaySec.set(displaySec, utcSec);
+      return displaySec as UTCTimestamp;
+    };
+
+    const nowUtcSec = Math.floor(Date.now() / 1000);
+    const fromUtcSec = nowUtcSec - effectiveVisibleHours * 3600;
+    const nowSec = toDisplaySec(nowUtcSec);
+    const fromSec = toDisplaySec(fromUtcSec);
 
     // --- Offer lines ---
     const seriesInfo = new Map<ISeriesApi<'Line'>, { offerKey: string; price: number }>();
@@ -237,21 +287,62 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
       const lifecycle = o.lifecycle ?? lifecycleCache[o.id];
 
       type TimeValue = { time: UTCTimestamp; value: number };
+      const renderFallbackLine = () => {
+        // No usable lifecycle in the current view: show the offer at its known endpoint.
+        const anchorUtc = isOpen ? nowUtcSec : toUtcSec(getLastSeen(o) ?? getFirstSeen(o) ?? '');
+        if (!anchorUtc) return;
+        const candleWidthSec = candleMin * 60;
+        const anchor = toDisplaySec(anchorUtc);
+        const start = toDisplaySec(anchorUtc - candleWidthSec);
+        const points: TimeValue[] = [
+          { time: start, value: getOfferPrice(o) },
+          { time: anchor, value: getOfferPrice(o) },
+        ];
+        const color = isSelected ? selectedLine : offerColor(o.direction, getNetPremiumPercent(o));
+        const series = chart.addLineSeries({
+          color,
+          lineWidth,
+          priceLineVisible: false,
+          lastValueVisible: false,
+          crosshairMarkerVisible: true,
+          crosshairMarkerRadius: markerRadius,
+        });
+        series.setData(points);
+        seriesInfo.set(series, { offerKey, price: getOfferPrice(o) });
+      };
 
       if (lifecycle && lifecycle.length >= 2) {
         // Multi-point line: split into colored segments by premium state at each point.
-        const lcPointsRaw = lifecycle.map((p) => ({
-          time: toUtcSec(p.time) as UTCTimestamp,
-          value: p.price,
-          color: isSelected ? selectedLine : offerColor(o.direction, p.net_premium_pct),
-        }));
+        const lcPointsRaw = lifecycle.flatMap((p) => {
+          const utcSec = toUtcSec(p.time);
+          if (!utcSec) return [];
+          return [{
+            time: toDisplaySec(utcSec),
+            value: p.price,
+            color: isSelected ? selectedLine : offerColor(o.direction, p.net_premium_pct),
+          }];
+        });
         // Deduplicate by timestamp (keep last), then sort ascending.
         const lcByTime = new Map<number, typeof lcPointsRaw[0]>();
         for (const pt of lcPointsRaw) lcByTime.set(pt.time, pt);
         const lcPoints = Array.from(lcByTime.values()).sort((a, b) => a.time - b.time);
+        if (lcPoints.length < 2) {
+          renderFallbackLine();
+          return;
+        }
         if (isOpen) {
           const last = lcPoints[lcPoints.length - 1];
           lcPoints.push({ ...last, time: nowSec });
+        }
+
+        const hasVisibleLifecycle = lcPoints.some((pt, i) => {
+          if (pt.time >= fromSec && pt.time <= nowSec) return true;
+          const next = lcPoints[i + 1];
+          return next != null && pt.time < fromSec && next.time > nowSec;
+        });
+        if (!hasVisibleLifecycle) {
+          renderFallbackLine();
+          return;
         }
 
         const representativePrice = lcPoints[Math.floor(lcPoints.length / 2)].value;
@@ -293,33 +384,25 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
           }
         }
       } else {
-        // No lifecycle — flat line, colored by current premium state.
-        const anchorRaw = isOpen ? nowSec : toUtcSec(getLastSeen(o) ?? getFirstSeen(o) ?? '');
-        if (!anchorRaw) return;
-        const anchor = anchorRaw as UTCTimestamp;
-        const candleWidthSec = candleMin * 60;
-        const points: TimeValue[] = [
-          { time: (anchor - candleWidthSec) as UTCTimestamp, value: getOfferPrice(o) },
-          { time: anchor, value: getOfferPrice(o) },
-        ];
-        const color = isSelected ? selectedLine : offerColor(o.direction, getNetPremiumPercent(o));
-        const series = chart.addLineSeries({
-          color,
-          lineWidth,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: true,
-          crosshairMarkerRadius: markerRadius,
-        });
-        series.setData(points);
-        seriesInfo.set(series, { offerKey, price: getOfferPrice(o) });
+        renderFallbackLine();
       }
     });
 
     // Apply visible range — restore saved range if available (e.g. after load-more)
     const hasData = shiftedDisplay.candles.length > 0 || premiumOffers.length > 0;
     if (hasData) {
-      if (savedRangeRef.current) {
+      const intendedRange = intendedRangeRef.current;
+      const intendedRangeReady = intendedRange != null &&
+        sourceIntervalMin <= intendedRange.intervalMin &&
+        loadedDataHours >= intendedRange.visibleHours;
+      if (intendedRangeReady) {
+        try {
+          chart.timeScale().setVisibleRange(intendedRange.range);
+        } catch {
+          chart.timeScale().setVisibleRange({ from: fromSec, to: nowSec });
+        }
+        intendedRangeRef.current = null;
+      } else if (savedRangeRef.current) {
         try {
           chart.timeScale().setVisibleRange(savedRangeRef.current);
         } catch {
@@ -348,8 +431,8 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
         fetchingMoreRef.current = true;
         // Save the current visible range so we can restore it after the chart re-renders
         savedRangeRef.current = { from: range.from as UTCTimestamp, to: range.to as UTCTimestamp };
-        const newHours = loadedHours * 3;
-        onNeedMoreData(newHours);
+        const newHours = Math.max(availableHours * 3, requiredHours * 2);
+        onNeedMoreData(newHours, candleMin);
         // Reset the guard after a cooldown so rapid scrolling doesn't spam requests
         setTimeout(() => { fetchingMoreRef.current = false; }, 10_000);
       }
@@ -362,7 +445,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
         return;
       }
       const shiftedSec = param.time as number;
-      setHoveredOhlcTime(shiftedDisplay.utcByShiftedSec.get(shiftedSec) ?? shiftedSec);
+      setHoveredOhlcTime(utcByDisplaySec.get(shiftedSec) ?? shiftedSec);
     });
 
     // Click handler
@@ -396,7 +479,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [shiftedDisplay, premiumOffers, offerKeys, hours, selectedOfferKey, candleMin, loadedHours, onNeedMoreData, setHoveredOhlcTime, setSelectedOfferKey, lifecycleCache]);
+  }, [shiftedDisplay, premiumOffers, offerKeys, hours, selectedOfferKey, candleMin, loadedHours, onNeedMoreData, setHoveredOhlcTime, setSelectedOfferKey, lifecycleCache, timezone, effectiveVisibleHours, availableHours, requiredHours]);
 
   return (
     <div className="relative h-full bg-bg flex flex-col">
@@ -406,7 +489,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
         {visibleOptions.map(opt => (
           <button
             key={opt}
-            onClick={() => setCandleMin(opt)}
+            onClick={() => handleCandleMinChange(opt)}
             className={`text-[0.65rem] px-1.5 py-0.5 rounded transition-colors ${
               candleMin === opt
                 ? 'bg-accent text-bg font-semibold'

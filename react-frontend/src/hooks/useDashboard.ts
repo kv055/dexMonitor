@@ -214,9 +214,9 @@ export function useDashboard() {
     }
   }, []);
 
-  const extendOhlc = useCallback(async (hours: number, cex: string = 'kraken') => {
+  const extendOhlc = useCallback(async (hours: number, cex: string = 'kraken', intervalMin: number = 1) => {
     try {
-      const ohlc = await apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`);
+      const ohlc = await apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}&interval_min=${intervalMin}`);
       dispatch({ type: 'EXTEND_OHLC_SUCCESS', ohlcData: ohlc });
     } catch {
       // Fail silently — the existing candles remain intact

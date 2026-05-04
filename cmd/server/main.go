@@ -1826,11 +1826,12 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 func handleOHLC(w http.ResponseWriter, r *http.Request) {
 	hours := queryInt(r, "hours", 24)
 	cex := queryCex(r)
+	intervalMin := queryOHLCInterval(r)
 
 	if ohlcService == nil {
 		ohlcService = ohlc.NewService()
 	}
-	candles := ohlcService.Candles(r.Context(), cex, hours, snapshotIntervalMin)
+	candles := ohlcService.Candles(r.Context(), cex, hours, intervalMin)
 
 	rows, err := db.Query(
 		rebind("SELECT * FROM offers WHERE last_seen >= ?"),
@@ -1876,7 +1877,7 @@ func handleOHLC(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]any{
 		"candles":      candles,
 		"offers":       offers,
-		"interval_min": snapshotIntervalMin,
+		"interval_min": intervalMin,
 	})
 }
 
@@ -2528,6 +2529,16 @@ func queryInt(r *http.Request, key string, defaultVal int) int {
 		return defaultVal
 	}
 	return v
+}
+
+func queryOHLCInterval(r *http.Request) int {
+	interval := queryInt(r, "interval_min", snapshotIntervalMin)
+	switch interval {
+	case 1, 5, 15, 30, 60, 240, 1440:
+		return interval
+	default:
+		return snapshotIntervalMin
+	}
 }
 
 func queryBool(r *http.Request, key string) bool {

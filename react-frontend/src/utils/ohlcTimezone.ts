@@ -33,6 +33,12 @@ function shiftUtcDate(date: Date, timezone: string): Date {
   return new Date(date.getTime() + timezoneOffsetMs(date, timezone));
 }
 
+export function shiftUtcSecForTimezone(utcSec: number, timezone: string): number {
+  const utcDate = new Date(utcSec * 1000);
+  const shiftedDate = shiftUtcDate(utcDate, timezone);
+  return Math.floor(shiftedDate.getTime() / 1000);
+}
+
 export function shiftOhlcCandlesForTimezone(candles: OHLCCandle[], timezone: string): ShiftedOhlcCandles {
   const utcByShiftedSec = new Map<number, number>();
 
@@ -40,14 +46,13 @@ export function shiftOhlcCandlesForTimezone(candles: OHLCCandle[], timezone: str
     const utcDate = parseUtcTimestamp(candle.time);
     if (!utcDate) return { ...candle };
 
-    const shiftedDate = shiftUtcDate(utcDate, timezone);
-    const shiftedSec = Math.floor(shiftedDate.getTime() / 1000);
     const utcSec = Math.floor(utcDate.getTime() / 1000);
+    const shiftedSec = shiftUtcSecForTimezone(utcSec, timezone);
     utcByShiftedSec.set(shiftedSec, utcSec);
 
     return {
       ...candle,
-      time: shiftedDate.toISOString().replace('.000Z', 'Z'),
+      time: new Date(shiftedSec * 1000).toISOString().replace('.000Z', 'Z'),
     };
   });
 

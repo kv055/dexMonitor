@@ -12,12 +12,14 @@ const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov
 
 export function parseUtcTimestamp(ts: string | null | undefined): Date | null {
   if (!ts) return null;
-  const direct = new Date(ts);
-  if (!isNaN(direct.getTime())) return direct;
-  const utc = new Date(ts.replace(' ', 'T') + 'Z');
-  if (!isNaN(utc.getTime())) return utc;
-  const unix = Number(ts);
+  const trimmed = ts.trim();
+  const unix = Number(trimmed);
   if (!isNaN(unix) && unix > 0) return new Date(unix * 1000);
+
+  const hasExplicitTimezone = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed);
+  const normalized = trimmed.replace(' ', 'T');
+  const utc = new Date(hasExplicitTimezone ? normalized : `${normalized}Z`);
+  if (!isNaN(utc.getTime())) return utc;
   return null;
 }
 

@@ -4,6 +4,7 @@ import {
   MOCK_STATS,
   MOCK_LIVE_OFFERS,
   MOCK_PAST_OFFERS,
+  MOCK_PAST_OFFER_LIFECYCLES,
   MOCK_OHLC_DATA,
   MOCK_PAYMENT_METHOD_GROUPS,
   MOCK_PAST_ORDER_STATS,
@@ -51,9 +52,10 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/stats*', route =>
       route.fulfill({ json: MOCK_STATS }),
     );
-    await page.route('**/api/past_offers/*/lifecycle', route =>
-      route.fulfill({ json: [] }),
-    );
+    await page.route('**/api/past_offers/*/lifecycle', route => {
+      const id = Number(new URL(route.request().url()).pathname.match(/\/api\/past_offers\/(\d+)\/lifecycle$/)?.[1]);
+      return route.fulfill({ json: MOCK_PAST_OFFER_LIFECYCLES[id] ?? [] });
+    });
     await page.route('**/api/past_offers*', route =>
       route.fulfill({ json: MOCK_PAST_OFFERS }),
     );

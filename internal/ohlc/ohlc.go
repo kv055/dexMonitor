@@ -117,6 +117,10 @@ func (s *Service) fetchBinance(ctx context.Context, hours int, intervalMin int) 
 		interval = "30m"
 	case 60:
 		interval = "1h"
+	case 240:
+		interval = "4h"
+	case 1440:
+		interval = "1d"
 	}
 	startMs := (time.Now().UTC().Unix() - int64(hours*3600)) * 1000
 	apiURL := fmt.Sprintf("https://api.binance.com/api/v3/klines?symbol=BTCEUR&interval=%s&limit=1000&startTime=%d", interval, startMs)

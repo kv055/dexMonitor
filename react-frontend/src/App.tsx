@@ -42,7 +42,7 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, refresh
   lastUpdatedAt: string;
   error: string | null;
   load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
-  extendOhlc: (hours: number, cex?: string) => void;
+  extendOhlc: (hours: number, cex?: string, intervalMin?: number) => void;
   refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
 }) {
   const { filters } = useFilters();
@@ -86,7 +86,7 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, refresh
               <OHLCChart
               data={ohlcData}
               loadedHours={Number(filters.hours)}
-              onNeedMoreData={(hours) => extendOhlc(hours, filters.cex)}
+              onNeedMoreData={(hours, intervalMin) => extendOhlc(hours, filters.cex, intervalMin)}
             />
           </div>
         </div>

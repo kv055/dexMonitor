@@ -115,6 +115,24 @@ export const MOCK_PAST_OFFERS = [
   offer(105, 'hodlhodl', 'buy', 85000, 3.7, { isLive: false, firstSeenHoursAgo: 40, lastSeenHoursAgo: 34, payment: 'SEPA' }),
 ];
 
+export const MOCK_PAST_OFFER_LIFECYCLES: Record<number, Array<{ time: string; price: number; net_premium_pct: number }>> = {
+  101: [
+    { time: new Date(FIXED_TIME - 36 * 3600_000).toISOString(), price: 82900, net_premium_pct: 0.8 },
+    { time: new Date(FIXED_TIME - 33 * 3600_000).toISOString(), price: 83200, net_premium_pct: 1.0 },
+    { time: new Date(FIXED_TIME - 30 * 3600_000).toISOString(), price: 83800, net_premium_pct: 1.2 },
+  ],
+  103: [
+    { time: new Date(FIXED_TIME - 28 * 3600_000).toISOString(), price: 82400, net_premium_pct: 0.9 },
+    { time: new Date(FIXED_TIME - 26 * 3600_000).toISOString(), price: 83000, net_premium_pct: 1.1 },
+    { time: new Date(FIXED_TIME - 24 * 3600_000).toISOString(), price: 83200, net_premium_pct: 1.35 },
+  ],
+};
+
+export const MOCK_STALE_PAST_OFFER_LIFECYCLE = [
+  { time: ts(40), price: 81200, net_premium_pct: 0.4 },
+  { time: ts(39), price: 81500, net_premium_pct: 0.5 },
+];
+
 export const MOCK_PAYMENT_METHOD_GROUPS = {
   groups: [
     {
@@ -237,6 +255,15 @@ function candle(hoursAgo: number, open: number, high: number, low: number, close
   return { time: d.toISOString().replace('T', ' ').slice(0, 19), open, high, low, close };
 }
 
+function windowCandles(totalHours: number, stepHours: number) {
+  const count = Math.floor(totalHours / stepHours);
+  return Array.from({ length: count }, (_, i) => {
+    const hoursAgo = totalHours - i * stepHours;
+    const base = 81200 + i * 18;
+    return candle(hoursAgo, base, base + 240, base - 220, base + 80);
+  });
+}
+
 export const MOCK_OHLC_DATA = {
   candles: [
     candle(24, 81200, 81500, 80900, 81300),
@@ -271,4 +298,14 @@ export const MOCK_OHLC_DATA_1H = {
   candles: [
     candle(1, 84500, 84700, 84300, 84400),
   ],
+};
+
+export const MOCK_OHLC_DATA_4H_WINDOW = {
+  interval_min: 240,
+  candles: windowCandles(480, 4),
+};
+
+export const MOCK_OHLC_DATA_1D_WINDOW = {
+  interval_min: 1440,
+  candles: windowCandles(2880, 24),
 };
