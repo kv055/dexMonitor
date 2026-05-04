@@ -60,12 +60,14 @@ test.describe('OffersPreviewTable', () => {
     await expect(panel.locator('text=Trade cost breakdown')).toBeVisible();
 
     // Should show fee rows
-    await expect(panel.locator('text=CEX taker fee')).toBeVisible();
-    await expect(panel.locator('text=CEX withdrawal')).toBeVisible();
-    await expect(panel.locator('text=BTC network fee')).toBeVisible();
-    await expect(panel.locator('text=DEX platform fee')).toBeVisible();
-    await expect(panel.locator('text=Total cost')).toBeVisible();
-    await expect(panel.locator('text=Net premium')).toBeVisible();
+    await expect(panel.locator('text=CEX taker fee').first()).toBeVisible();
+    await expect(panel.locator('text=CEX withdrawal').first()).toBeVisible();
+    await expect(panel.locator('text=BTC network fee').first()).toBeVisible();
+    await expect(panel.locator('text=DEX platform fee').first()).toBeVisible();
+    await expect(panel.locator('text=Total cost').first()).toBeVisible();
+    await expect(panel.locator('text=Net premium').first()).toBeVisible();
+    await expect(panel.locator('text=Abort cost').first()).toBeVisible();
+    await expect(panel.locator('text=Total abort cost').first()).toBeVisible();
   });
 
   test('clicking selected row deselects it', async ({ page }) => {

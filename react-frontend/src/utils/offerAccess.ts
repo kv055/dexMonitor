@@ -1,4 +1,4 @@
-import type { CostBreakdown, Offer, PremiumFilterMode } from '../types';
+import type { AbortCostBreakdown, CostBreakdown, Offer, PremiumFilterMode } from '../types';
 
 export function getOfferPrice(offer: Offer): number {
   return offer.pricing?.offer_price ?? offer.pricing?.avg_offer_price ?? offer.price ?? 0;
@@ -146,4 +146,11 @@ export function getDisplayCostBreakdown(offer: Offer, capped = false): CostBreak
     total_cost_pct: totalPct,
     total_cost_btc: totalBTC,
   };
+}
+
+export function getDisplayAbortCost(offer: Offer, capped = false): AbortCostBreakdown | null {
+  if (!offer.analysis) return capped ? offer.abort_cost_capped ?? null : offer.abort_cost ?? null;
+
+  const scenario = capped ? offer.analysis.capped_volume : offer.analysis.full_volume;
+  return scenario?.abort_cost ?? null;
 }

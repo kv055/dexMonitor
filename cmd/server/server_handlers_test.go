@@ -222,6 +222,12 @@ func TestLiveOffersRESTReturnsComputedCostFields(t *testing.T) {
 	assertFloat(t, offer.CostBreakdown.TotalCostPct, 0.6)
 	assertFloat(t, offer.CostBreakdown.TotalCostBTC, 0.0006)
 	assertFloat(t, offer.CostBreakdown.EstimatedProfitBTC, 0.0019)
+	assertFloat(t, offer.AbortCost.CexBuyTaker.BTC, 0.00025)
+	assertFloat(t, offer.AbortCost.CexSellTaker.BTC, 0.00025)
+	assertFloat(t, offer.AbortCost.Withdrawal.BTC, 0.00015)
+	assertFloat(t, offer.AbortCost.Network.BTC, 0.0001)
+	assertFloat(t, offer.AbortCost.Total.BTC, 0.00075)
+	assertFloat(t, offer.AbortCost.Total.Pct, 0.75)
 }
 
 func TestHandleLiveOffersRESTIncludesCappedProfitFields(t *testing.T) {
@@ -288,6 +294,11 @@ func TestHandleLiveOffersRESTIncludesCappedProfitFields(t *testing.T) {
 	assertFloat(t, *offer.EstimatedProfitFiatCapped, 0.08)
 	assertFloat(t, offer.CostBreakdownCapped.BTCAmount, 0.05)
 	assertFloat(t, offer.CostBreakdownCapped.EstimatedProfitBTC, 0.000825)
+	if offer.AbortCostCapped == nil {
+		t.Fatal("expected capped abort cost")
+	}
+	assertFloat(t, offer.AbortCostCapped.Total.BTC, 0.0005)
+	assertFloat(t, offer.AbortCostCapped.Total.Pct, 1)
 }
 
 func TestPastOrderStatsRESTAggregatesPremiumOrdersByTimeframe(t *testing.T) {

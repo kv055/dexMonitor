@@ -52,6 +52,18 @@ export interface CostBreakdown {
   total_cost_btc: number;
 }
 
+export interface AbortCostBreakdown {
+  btc_amount: number;
+  trade_direction: string;
+  num_network_txs: number;
+  cex_buy_taker: LiveOfferCostComponent;
+  cex_sell_taker: LiveOfferCostComponent;
+  withdrawal: LiveOfferCostComponent;
+  network: LiveOfferCostComponent;
+  hedge: HedgeBreakdown;
+  total: LiveOfferCostComponent;
+}
+
 export interface HedgeBreakdown {
   open_fee_pct: number;
   open_fee_btc: number;
@@ -166,6 +178,7 @@ export interface LiveOfferScenario {
   premium: LiveOfferPremium;
   profit: LiveOfferProfit;
   costs: LiveOfferScenarioCosts;
+  abort_cost?: AbortCostBreakdown | null;
 }
 
 export interface LiveOfferAnalysis {
@@ -193,6 +206,8 @@ export interface Offer {
   estimated_profit_fiat?: number | null;
   cost_breakdown?: CostBreakdown | null;
   cost_breakdown_capped?: CostBreakdown | null;
+  abort_cost?: AbortCostBreakdown | null;
+  abort_cost_capped?: AbortCostBreakdown | null;
   trade_cost_percent_capped?: number | null;
   net_premium_percent_capped?: number | null;
   estimated_profit_btc_capped?: number | null;

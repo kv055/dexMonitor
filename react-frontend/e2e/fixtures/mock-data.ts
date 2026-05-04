@@ -29,6 +29,14 @@ function offer(
   const btcAmount = opts.btcMax ?? 0.05;
   const tradeCost = opts.tradeCostPct ?? 0.85;
   const netPremium = opts.netPremiumPct ?? (premiumPct - tradeCost);
+  const cexTakerBTC = btcAmount * 0.0025;
+  const withdrawalBTC = direction === 'sell' ? 0 : btcAmount * 0.0015;
+  const networkBTC = btcAmount * 0.001;
+  const abortNetworkBTC = direction === 'sell' ? networkBTC * 2 : networkBTC;
+  const abortTotalBTC = direction === 'sell'
+    ? abortNetworkBTC
+    : cexTakerBTC + cexTakerBTC + withdrawalBTC + abortNetworkBTC;
+  const pct = (btc: number) => btcAmount > 0 ? (btc / btcAmount) * 100 : 0;
   return {
     id,
     exchange,
@@ -47,11 +55,11 @@ function offer(
       estimated_profit_pct: netPremium,
       estimated_profit_btc: btcAmount * (netPremium / 100),
       cex_taker_fee_pct: 0.25,
-      cex_taker_fee_btc: btcAmount * 0.0025,
+      cex_taker_fee_btc: cexTakerBTC,
       withdrawal_fee_pct: 0.15,
-      withdrawal_fee_btc: btcAmount * 0.0015,
+      withdrawal_fee_btc: withdrawalBTC,
       network_fee_pct: 0.10,
-      network_fee_btc: btcAmount * 0.001,
+      network_fee_btc: networkBTC,
       network_fee_method: 'onchain',
       network_fee_tier: 'standard',
       network_fee_confidence: 0.9,
@@ -65,6 +73,31 @@ function offer(
       dex_fee_btc: btcAmount * 0.0035,
       total_cost_pct: tradeCost,
       total_cost_btc: btcAmount * (tradeCost / 100),
+    },
+    abort_cost: {
+      btc_amount: btcAmount,
+      trade_direction: direction === 'sell' ? 'ask' : 'bid',
+      num_network_txs: 2,
+      cex_buy_taker: { pct: direction === 'sell' ? 0 : pct(cexTakerBTC), btc: direction === 'sell' ? 0 : cexTakerBTC },
+      cex_sell_taker: { pct: direction === 'sell' ? 0 : pct(cexTakerBTC), btc: direction === 'sell' ? 0 : cexTakerBTC },
+      withdrawal: { pct: pct(withdrawalBTC), btc: withdrawalBTC },
+      network: { pct: pct(abortNetworkBTC), btc: abortNetworkBTC },
+      hedge: {
+        open_fee_pct: 0,
+        open_fee_btc: 0,
+        close_fee_pct: 0,
+        close_fee_btc: 0,
+        funding_fee_pct: 0,
+        funding_fee_btc: 0,
+        fee_sum_pct: 0,
+        fee_sum_btc: 0,
+        side: direction === 'sell' ? 'long' : 'short',
+        venue: '',
+        instrument: '',
+        transfer_minutes: 0,
+        position: null,
+      },
+      total: { pct: pct(abortTotalBTC), btc: abortTotalBTC },
     },
     btc_min: opts.btcMin ?? 0.001,
     btc_max: opts.btcMax ?? 0.05,
