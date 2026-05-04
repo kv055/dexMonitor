@@ -181,6 +181,46 @@ export const MOCK_PAYMENT_METHOD_GROUPS = {
   ],
 };
 
+export const MOCK_SNAPSHOT_LOG_COMPACT = [
+  {
+    id: 1,
+    timestamp: ts(0.1),
+    exchanges: {
+      bisq: { count: 0 },
+      hodlhodl: { count: 100 },
+      robosats: { count: 8 },
+    },
+    offers_count: 108,
+  },
+  {
+    id: 2,
+    timestamp: ts(1.1),
+    exchanges: {
+      hodlhodl: { count: 100 },
+      robosats: { count: 7 },
+    },
+    offers_count: 107,
+  },
+];
+
+export const MOCK_SNAPSHOT_LOG_DETAIL: Record<number, (typeof MOCK_SNAPSHOT_LOG_COMPACT)[number]> = {
+  1: {
+    ...MOCK_SNAPSHOT_LOG_COMPACT[0],
+    exchanges: {
+      bisq: { count: 0, ids: [] },
+      hodlhodl: { count: 100, ids: ['hh-1', 'hh-2'] },
+      robosats: { count: 8, ids: ['rs-1'] },
+    },
+  },
+  2: {
+    ...MOCK_SNAPSHOT_LOG_COMPACT[1],
+    exchanges: {
+      hodlhodl: { count: 100, ids: ['hh-old-1'] },
+      robosats: { count: 7, ids: ['rs-old-1'] },
+    },
+  },
+};
+
 // ── Stats ─────────────────────────────────────────────────────────────────────
 
 export const MOCK_STATS = {

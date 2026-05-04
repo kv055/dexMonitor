@@ -13,6 +13,8 @@ import {
   MOCK_GENERAL_STATS_OVERVIEW,
   MOCK_GENERAL_STATS_PAST_PREMIUMS,
   MOCK_GENERAL_STATS_PAYMENT_METHODS,
+  MOCK_SNAPSHOT_LOG_COMPACT,
+  MOCK_SNAPSHOT_LOG_DETAIL,
 } from './mock-data';
 
 type Fixtures = {
@@ -89,6 +91,14 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/general_stats/payment_methods*', route =>
       route.fulfill({ json: MOCK_GENERAL_STATS_PAYMENT_METHODS }),
     );
+    await page.route(/\/api\/snapshot-log(?:\/\d+)?(?:\?.*)?$/, route => {
+      const url = new URL(route.request().url());
+      const id = Number(url.pathname.match(/\/api\/snapshot-log\/(\d+)$/)?.[1]);
+      if (id) {
+        return route.fulfill({ json: MOCK_SNAPSHOT_LOG_DETAIL[id] ?? { error: 'not found' }, status: MOCK_SNAPSHOT_LOG_DETAIL[id] ? 200 : 404 });
+      }
+      return route.fulfill({ json: MOCK_SNAPSHOT_LOG_COMPACT });
+    });
 
     await use();
   }, { auto: true }],

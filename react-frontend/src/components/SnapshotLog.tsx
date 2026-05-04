@@ -21,8 +21,38 @@ const EXCHANGE_COLOR: Record<string, string> = {
   robosats: '#9b59b6',
 };
 
+const EXPECTED_EXCHANGES = ['bisq', 'hodlhodl', 'robosats'];
+
 function exchangeColor(name: string) {
   return EXCHANGE_COLOR[name] ?? '#888';
+}
+
+function exchangeLabel(name: string) {
+  if (name === 'bisq') return 'Bisq';
+  if (name === 'hodlhodl') return 'HodlHodl';
+  if (name === 'robosats') return 'RoboSats';
+  return name;
+}
+
+function exchangeNamesForEntry(entry: LogEntry) {
+  const names = [...EXPECTED_EXCHANGES];
+  const present = Object.keys(entry.exchanges ?? {}).sort();
+  for (const name of present) {
+    if (!names.includes(name)) names.push(name);
+  }
+  return names;
+}
+
+function exchangeSummary(name: string, data?: ExchangeData) {
+  if (!data) return `${exchangeLabel(name)}: offline`;
+  if (data.count === 0) return `${exchangeLabel(name)}: queried, 0 offers`;
+  return `${exchangeLabel(name)}: ${data.count} ${data.count === 1 ? 'offer' : 'offers'}`;
+}
+
+function exchangeDotClass(data?: ExchangeData) {
+  if (!data) return 'opacity-35 ring-1 ring-muted/60';
+  if (data.count === 0) return 'opacity-45 ring-1 ring-white/25';
+  return 'opacity-100';
 }
 
 export function SnapshotLog() {
@@ -94,7 +124,7 @@ export function SnapshotLog() {
       {!error && entries.map(e => {
         const { day: dateStr, time: timeStr } = formatDateTimeParts(e.timestamp, timezone);
         const isOpen = expanded === e.id;
-        const exchangeNames = e.exchanges ? Object.keys(e.exchanges) : [];
+        const exchangeNames = exchangeNamesForEntry(e);
 
         return (
           <div key={e.id} className="border-b border-border last:border-0">
@@ -108,14 +138,17 @@ export function SnapshotLog() {
             >
               <span className="text-muted shrink-0 w-26">{dateStr} {timeStr}</span>
               <div className="flex gap-1 shrink-0">
-                {exchangeNames.map(ex => (
-                  <span
-                    key={ex}
-                    title={`${ex}: ${e.exchanges[ex].count}`}
-                    className="w-1.5 h-1.5 rounded-full inline-block"
-                    style={{ background: exchangeColor(ex) }}
-                  />
-                ))}
+                {exchangeNames.map(ex => {
+                  const exchange = e.exchanges?.[ex];
+                  return (
+                    <span
+                      key={ex}
+                      title={exchangeSummary(ex, exchange)}
+                      className={`w-1.5 h-1.5 rounded-full inline-block ${exchangeDotClass(exchange)}`}
+                      style={{ background: exchange ? exchangeColor(ex) : 'transparent' }}
+                    />
+                  );
+                })}
               </div>
               <span className="text-text">{e.offers_count} offers</span>
               <span className="ml-auto text-muted">{isOpen ? '▲' : '▼'}</span>
@@ -129,7 +162,8 @@ export function SnapshotLog() {
                 {exchangeNames.map(ex => {
                   const exKey = `${e.id}:${ex}`;
                   const exOpen = expandedExchange === exKey;
-                  const ids = e.exchanges[ex].ids ?? [];
+                  const exchange = e.exchanges?.[ex];
+                  const ids = exchange?.ids ?? [];
                   return (
                     <div key={ex}>
                       <button
@@ -137,18 +171,24 @@ export function SnapshotLog() {
                         className="w-full flex items-center gap-2 text-[0.72rem] py-0.5 bg-transparent border-none cursor-pointer text-left hover:bg-white/5 rounded px-1 transition-colors"
                       >
                         <span
-                          className="w-1.5 h-1.5 rounded-full shrink-0"
-                          style={{ background: exchangeColor(ex) }}
+                          className={`w-1.5 h-1.5 rounded-full shrink-0 ${exchangeDotClass(exchange)}`}
+                          style={{ background: exchange ? exchangeColor(ex) : 'transparent' }}
                         />
-                        <span className="text-muted w-22 capitalize">{ex}</span>
-                        <span className="text-text">{e.exchanges[ex].count} offers</span>
+                        <span className="text-muted w-22">{exchangeLabel(ex)}</span>
+                        <span className={exchange ? 'text-text' : 'text-muted'}>
+                          {exchange ? `${exchange.count} ${exchange.count === 1 ? 'offer' : 'offers'}` : 'offline'}
+                        </span>
                         <span className="ml-auto text-muted">{exOpen ? '▲' : '▼'}</span>
                       </button>
-                      {exOpen && ids.length > 0 && (
+                      {exOpen && (
                         <div className="flex flex-wrap gap-x-2 gap-y-0.5 px-4 pb-1.5 pt-0.5">
-                          {ids.map(id => (
+                          {ids.length > 0 ? ids.map(id => (
                             <span key={id} className="text-[0.65rem] text-muted font-mono">{id}</span>
-                          ))}
+                          )) : (
+                            <span className="text-[0.65rem] text-muted">
+                              {exchange ? 'No offer IDs in this snapshot.' : 'Exchange was not reported by this snapshot run.'}
+                            </span>
+                          )}
                         </div>
                       )}
                     </div>
