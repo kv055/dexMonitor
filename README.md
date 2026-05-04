@@ -4,7 +4,7 @@
 
 It reads the shared Postgres database populated by `dexUnifiedApi`, serves the React/Vite frontend, exposes historical and live offer endpoints, computes trade-cost overlays, and proxies selected `dexMmController` transaction data for the UI.
 
-The monitor no longer owns the Bisq node, Tor container, snapshot worker, or schema migrations. Those runtime responsibilities live in `dexUnifiedApi` and the root Compose stack.
+The monitor no longer owns the Bisq node, Tor container, snapshot worker, or shared schema setup. Those runtime responsibilities live in `dexUnifiedApi` and the root Compose stack.
 
 ## What It Does
 

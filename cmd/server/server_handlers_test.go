@@ -76,10 +76,6 @@ CREATE TABLE order_lifecycle (
     premium_pct      REAL    NOT NULL,
     trade_cost_pct   REAL,
     trade_cost_btc   REAL,
-    cex_taker_fee_btc REAL,
-    cex_withdraw_fee_btc REAL,
-    network_fee_btc  REAL,
-    dex_fee_btc      REAL,
     net_premium_pct  REAL,
     net_premium_btc  REAL,
     btc_amount       REAL
@@ -103,7 +99,7 @@ CREATE TABLE snapshot_log (
     offers_count INTEGER NOT NULL
 );
 
-CREATE TABLE kraken_ohlc (
+CREATE TABLE ohlc (
     time  DATETIME PRIMARY KEY,
     open  REAL NOT NULL,
     high  REAL NOT NULL,
@@ -446,7 +442,7 @@ func TestPastOfferCappedAnalysisKeepsStoredRouteAndFixedTransferCosts(t *testing
 	}
 }
 
-func TestPastOfferCappedAskOmitsWithdrawalAndHedgeCosts(t *testing.T) {
+func TestPastOfferCappedAskOmitsWithdrawalAndIncludesLongHedgeCosts(t *testing.T) {
 	oldEstimators := tradeCostEstimators
 	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
 	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{
@@ -464,7 +460,10 @@ func TestPastOfferCappedAskOmitsWithdrawalAndHedgeCosts(t *testing.T) {
 	}
 	capped := got.Analysis.CappedVolume
 	assertFloat(t, capped.Costs.Withdrawal.BTC, 0)
-	assertFloat(t, capped.Costs.Hedge.FeeSumBTC, 0)
+	assertFloat(t, capped.Costs.Hedge.FeeSumBTC, 0.25)
+	if capped.Costs.Hedge.Side != "long" {
+		t.Fatalf("hedge side = %q, want long", capped.Costs.Hedge.Side)
+	}
 	assertFloat(t, capped.Costs.Network.BTC, 0.0003)
 }
 

@@ -140,7 +140,7 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 	ph, args := placeholders(ids)
 	rows, err := r.DB.QueryContext(ctx, rebind(fmt.Sprintf(
 		`SELECT offer_db_id, price, ref_price, premium_pct, trade_cost_pct, trade_cost_btc,
-		        network_fee_btc, net_premium_pct, net_premium_btc, btc_amount
+		        net_premium_pct, net_premium_btc, btc_amount
 		   FROM order_lifecycle
 		  WHERE offer_db_id IN (%s)
 		  ORDER BY offer_db_id, snapshot_time`,
@@ -168,8 +168,6 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 		countProfitFiat   int
 		sumBTCAmount      float64
 		countBTCAmount    int
-		sumNetworkPct     float64
-		countNetworkPct   int
 		samples           []PastSample
 	}
 
@@ -177,8 +175,8 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 	for rows.Next() {
 		var offerID int64
 		var price, refPrice, premiumPct float64
-		var tradeCostPct, tradeCostBTC, networkFeeBTC, netPremiumPct, netPremiumBTC, btcAmount sql.NullFloat64
-		if err := rows.Scan(&offerID, &price, &refPrice, &premiumPct, &tradeCostPct, &tradeCostBTC, &networkFeeBTC, &netPremiumPct, &netPremiumBTC, &btcAmount); err != nil {
+		var tradeCostPct, tradeCostBTC, netPremiumPct, netPremiumBTC, btcAmount sql.NullFloat64
+		if err := rows.Scan(&offerID, &price, &refPrice, &premiumPct, &tradeCostPct, &tradeCostBTC, &netPremiumPct, &netPremiumBTC, &btcAmount); err != nil {
 			continue
 		}
 		ac := accs[offerID]
@@ -212,10 +210,6 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 		if btcAmount.Valid {
 			ac.sumBTCAmount += btcAmount.Float64
 			ac.countBTCAmount++
-			if networkFeeBTC.Valid && btcAmount.Float64 > 0 {
-				ac.sumNetworkPct += (networkFeeBTC.Float64 / btcAmount.Float64) * 100
-				ac.countNetworkPct++
-			}
 		}
 	}
 
@@ -245,9 +239,6 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 		if ac.countBTCAmount > 0 {
 			agg.AvgBTCAmount = tradecost.Round8(ac.sumBTCAmount / float64(ac.countBTCAmount))
 		}
-		if ac.countNetworkPct > 0 {
-			agg.AvgNetworkPct = tradecost.Round4(ac.sumNetworkPct / float64(ac.countNetworkPct))
-		}
 		agg.Samples = ac.samples
 		result[id] = agg
 	}
@@ -267,9 +258,8 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 	insStmt, err := tx.PrepareContext(ctx, rebind(`
 		INSERT INTO order_lifecycle
 			(offer_db_id, price, ref_price, premium_pct,
-			 trade_cost_pct, trade_cost_btc, cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc, dex_fee_btc,
-			 net_premium_pct, net_premium_btc, btc_amount)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 trade_cost_pct, trade_cost_btc, net_premium_pct, net_premium_btc, btc_amount)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`))
 	if err != nil {
 		return fmt.Errorf("prepare insert: %w", err)
@@ -286,7 +276,11 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 			hedge_fee_sum_btc = ?,
 			hedge_venue = ?,
 			hedge_instrument = ?,
-			hedge_transfer_minutes = ?
+			hedge_transfer_minutes = ?,
+			cex_taker_fee_btc = ?,
+			cex_withdraw_fee_btc = ?,
+			network_fee_btc = ?,
+			dex_fee_btc = ?
 		WHERE id = ?
 	`))
 	if err != nil {
@@ -310,10 +304,6 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 			tradecost.Round4(o.PriceDiffPct),
 			tradecost.Round4(bd.TotalCostPct),
 			tradecost.Round8(bd.TotalCostBTC),
-			tradecost.Round8(bd.CexTakerFeeBTC),
-			cexWithdrawFee,
-			tradecost.Round8(bd.NetworkFeeBTC),
-			tradecost.Round8(bd.DexFeeBTC),
 			tradecost.Round4(o.NetPremiumPct),
 			tradecost.Round8(bd.EstimatedProfitBTC),
 			tradecost.Round8(bd.BTCAmount),
@@ -329,6 +319,10 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 				nullIfEmpty(bd.Hedge.Venue),
 				nullIfEmpty(bd.Hedge.Instrument),
 				nullIfZeroInt(bd.Hedge.TransferMinutes),
+				tradecost.Round8(bd.CexTakerFeeBTC),
+				cexWithdrawFee,
+				tradecost.Round8(bd.NetworkFeeBTC),
+				tradecost.Round8(bd.DexFeeBTC),
 				o.ID,
 			)
 		}

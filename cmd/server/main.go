@@ -1068,6 +1068,7 @@ type pastOfferHedgeCosts struct {
 	FundingFeeBTC   float64                        `json:"funding_fee_btc"`
 	FeeSumPct       float64                        `json:"fee_sum_pct"`
 	FeeSumBTC       float64                        `json:"fee_sum_btc"`
+	Side            string                         `json:"side"`
 	Venue           string                         `json:"venue"`
 	Instrument      string                         `json:"instrument"`
 	TransferMinutes int                            `json:"transfer_minutes"`
@@ -1244,6 +1245,9 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 		fullTradeSizeBTC = *btcMaxPtr
 	}
 	fullRep := buildStoredPastBreakdown(o, fullTradeSizeBTC, avgRefPrice, avgTradeCostPct, avgTradeCostBTC, avgNetPercent, avgProfitBTC)
+	if avgNetworkPct == 0 {
+		avgNetworkPct = tradecost.Round4(fullRep.NetworkFeePct)
+	}
 	fullTradeSizeFiat := tradecost.Round4(fullTradeSizeBTC * avgRefPrice)
 
 	fullScenario := pastOfferScenario{
@@ -1436,6 +1440,13 @@ func normalizePastPriceType(value string) string {
 	}
 }
 
+func hedgeSideForOfferDirection(direction string) string {
+	if direction == "sell" {
+		return "long"
+	}
+	return "short"
+}
+
 func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct, tradeCostBTC, netPremiumPct, profitBTC float64) tradecost.CostBreakdown {
 	if btcSize <= 0 {
 		return tradecost.CostBreakdown{}
@@ -1453,24 +1464,23 @@ func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct,
 		withdrawalBTC = 0
 	}
 	hedge := tradecost.HedgeBreakdown{}
-	if !isAsk {
-		hedge = tradecost.HedgeBreakdown{
-			OpenFeeBTC:      tradecost.Round8(offerFloat(o, "hedge_open_fee_btc")),
-			CloseFeeBTC:     tradecost.Round8(offerFloat(o, "hedge_close_fee_btc")),
-			FundingFeeBTC:   tradecost.Round8(offerFloat(o, "hedge_funding_fee_btc")),
-			FeeSumBTC:       tradecost.Round8(offerFloat(o, "hedge_fee_sum_btc")),
-			Venue:           offerString(o, "hedge_venue"),
-			Instrument:      offerString(o, "hedge_instrument"),
-			TransferMinutes: int(offerFloat(o, "hedge_transfer_minutes")),
-		}
-		if hedge.FeeSumBTC == 0 {
-			hedge.FeeSumBTC = tradecost.Round8(hedge.OpenFeeBTC + hedge.CloseFeeBTC + hedge.FundingFeeBTC)
-		}
-		hedge.OpenFeePct = pct(hedge.OpenFeeBTC)
-		hedge.CloseFeePct = pct(hedge.CloseFeeBTC)
-		hedge.FundingFeePct = pct(hedge.FundingFeeBTC)
-		hedge.FeeSumPct = pct(hedge.FeeSumBTC)
+	hedge = tradecost.HedgeBreakdown{
+		OpenFeeBTC:      tradecost.Round8(offerFloat(o, "hedge_open_fee_btc")),
+		CloseFeeBTC:     tradecost.Round8(offerFloat(o, "hedge_close_fee_btc")),
+		FundingFeeBTC:   tradecost.Round8(offerFloat(o, "hedge_funding_fee_btc")),
+		FeeSumBTC:       tradecost.Round8(offerFloat(o, "hedge_fee_sum_btc")),
+		Side:            hedgeSideForOfferDirection(direction),
+		Venue:           offerString(o, "hedge_venue"),
+		Instrument:      offerString(o, "hedge_instrument"),
+		TransferMinutes: int(offerFloat(o, "hedge_transfer_minutes")),
 	}
+	if hedge.FeeSumBTC == 0 {
+		hedge.FeeSumBTC = tradecost.Round8(hedge.OpenFeeBTC + hedge.CloseFeeBTC + hedge.FundingFeeBTC)
+	}
+	hedge.OpenFeePct = pct(hedge.OpenFeeBTC)
+	hedge.CloseFeePct = pct(hedge.CloseFeeBTC)
+	hedge.FundingFeePct = pct(hedge.FundingFeeBTC)
+	hedge.FeeSumPct = pct(hedge.FeeSumBTC)
 	if tradeCostBTC == 0 {
 		tradeCostBTC = offerFloat(o, "trade_cost_btc")
 	}
@@ -1537,16 +1547,15 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 	if est := tradeCostEstimators[routeCEX]; est != nil {
 		takerBTC = est.TakerFeeBTC(cappedBTCSize)
 		dexFeeBTC = est.DexFeeBTC(cappedBTCSize, dexExchange)
-		if !isAsk {
-			hedge = est.EstimateHedgeBreakdown(cappedBTCSize, refPrice, offerFloat(o, "hedge_transfer_minutes"), true)
-		}
+		hedge = est.EstimateHedgeBreakdownForDirection(cappedBTCSize, refPrice, offerFloat(o, "hedge_transfer_minutes"), true, direction)
 	}
-	if !isAsk && hedge.FeeSumBTC == 0 {
+	if hedge.FeeSumBTC == 0 {
 		hedge = tradecost.HedgeBreakdown{
 			OpenFeeBTC:      tradecost.Round8(scaleStored("hedge_open_fee_btc")),
 			CloseFeeBTC:     tradecost.Round8(scaleStored("hedge_close_fee_btc")),
 			FundingFeeBTC:   tradecost.Round8(scaleStored("hedge_funding_fee_btc")),
 			FeeSumBTC:       tradecost.Round8(scaleStored("hedge_fee_sum_btc")),
+			Side:            hedgeSideForOfferDirection(direction),
 			Venue:           offerString(o, "hedge_venue"),
 			Instrument:      offerString(o, "hedge_instrument"),
 			TransferMinutes: int(math.Round(offerFloat(o, "hedge_transfer_minutes"))),
@@ -1659,6 +1668,7 @@ func buildPastScenarioCosts(rep tradecost.CostBreakdown, avgNetworkPct, avgTrade
 			FundingFeeBTC:   rep.Hedge.FundingFeeBTC,
 			FeeSumPct:       rep.Hedge.FeeSumPct,
 			FeeSumBTC:       rep.Hedge.FeeSumBTC,
+			Side:            rep.Hedge.Side,
 			Venue:           rep.Hedge.Venue,
 			Instrument:      rep.Hedge.Instrument,
 			TransferMinutes: rep.Hedge.TransferMinutes,

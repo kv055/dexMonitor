@@ -61,6 +61,7 @@ export interface HedgeBreakdown {
   funding_fee_btc: number;
   fee_sum_pct: number;
   fee_sum_btc: number;
+  side?: 'short' | 'long' | string;
   venue: string;
   instrument: string;
   transfer_minutes: number;
@@ -68,6 +69,7 @@ export interface HedgeBreakdown {
 }
 
 export interface HedgePositionDetail {
+  side?: 'short' | 'long' | string;
   hedge_ratio: number;
   leverage_used: number;
   hedge_notional_eur: number;
