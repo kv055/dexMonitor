@@ -34,6 +34,7 @@ var (
 	snapshotIntervalMin int
 	frontendDir         string
 	mmControllerAPIURL  string
+	unifiedAPIURL       string
 	db                  *sql.DB
 	pmService           *paymentmethods.Service
 	priceManager        *prices.Manager
@@ -116,6 +117,10 @@ func init() {
 	mmControllerAPIURL = os.Getenv("MM_CONTROLLER_API_URL")
 	if mmControllerAPIURL == "" {
 		mmControllerAPIURL = "http://localhost:5001"
+	}
+	unifiedAPIURL = os.Getenv("UNIFIED_API_URL")
+	if unifiedAPIURL == "" {
+		unifiedAPIURL = "http://localhost:5010"
 	}
 }
 
