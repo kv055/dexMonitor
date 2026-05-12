@@ -55,6 +55,10 @@ function cssVar(name: string, fallback: string): string {
   return value || fallback;
 }
 
+function getNowUtcSec(): number {
+  return Math.floor(Date.now() / 1000);
+}
+
 // Re-aggregate raw candles into larger buckets client-side
 function aggregateOHLC(candles: OHLCCandle[], targetMin: number, sourceMin: number): OHLCCandle[] {
   if (targetMin <= sourceMin || candles.length === 0) return candles;
@@ -122,7 +126,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
   const handleCandleMinChange = (nextCandleMin: number) => {
     const nextRequiredHours = requiredHoursForCandleSize(nextCandleMin);
     const nextVisibleHours = Math.max(Number(hours), nextRequiredHours);
-    const nowUtcSec = Math.floor(Date.now() / 1000);
+    const nowUtcSec = getNowUtcSec();
     intendedRangeRef.current = {
       intervalMin: nextCandleMin,
       visibleHours: nextVisibleHours,
@@ -270,7 +274,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
       return displaySec as UTCTimestamp;
     };
 
-    const nowUtcSec = Math.floor(Date.now() / 1000);
+    const nowUtcSec = getNowUtcSec();
     const fromUtcSec = nowUtcSec - effectiveVisibleHours * 3600;
     const nowSec = toDisplaySec(nowUtcSec);
     const fromSec = toDisplaySec(fromUtcSec);
