@@ -41,6 +41,7 @@ Thumbs.db
 
 # Environment
 .env
+.env.keys
 .env.local
 
 # Codex
