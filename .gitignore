@@ -42,6 +42,7 @@ Thumbs.db
 # Environment
 .env
 .env.keys
+.env.hash
 .env.local
 
 # Codex
