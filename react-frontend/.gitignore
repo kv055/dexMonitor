@@ -25,7 +25,6 @@ dist-ssr
 
 # Playwright
 e2e/test-results/
-e2e/snapshots/
 e2e/tests/*-snapshots/
 playwright-report/
 blob-report/
