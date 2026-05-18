@@ -36,7 +36,7 @@ var groupRules = []groupRule{
 	{
 		name:        "bank_transfer",
 		displayName: "Bank Transfer",
-		keywords:    []string{"sepa", "national_bank", "national bank", "swift", "wire", "bank transfer", "ach"},
+		keywords:    []string{"sepa", "national_bank", "national bank", "national transfer", "n26", "swift", "wire", "bank transfer", "ach"},
 	},
 	{
 		name:        "money_transmitter",
@@ -46,7 +46,7 @@ var groupRules = []groupRule{
 	{
 		name:        "mobile_payment",
 		displayName: "Mobile Payment",
-		keywords:    []string{"mbway", "bizum", "twint", "satispay", "pix", "promptpay", "gcash", "blik", "vipps", "mobile"},
+		keywords:    []string{"mbway", "mb way", "bizum", "twint", "satispay", "pix", "promptpay", "gcash", "blik", "vipps", "lydia", "apple pay", "google pay", "mobile"},
 	},
 	{
 		name:        "crypto",
