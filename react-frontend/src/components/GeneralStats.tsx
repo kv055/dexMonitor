@@ -29,12 +29,14 @@ const EXCHANGE_COLOR: Record<string, string> = {
   bisq: 'text-accent',
   hodlhodl: 'text-green',
   robosats: 'text-purple',
+  peachbitcoin: 'text-peach',
 };
 // Hex values for bar fills (must match CSS tokens exactly)
 const EXCHANGE_HEX: Record<string, string> = {
   bisq: '#f7931a',
   hodlhodl: '#3fb950',
   robosats: '#bc8cff',
+  peachbitcoin: '#FF6B35',
 };
 
 function exchangeColor(name: string): string {
