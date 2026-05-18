@@ -246,16 +246,13 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 }
 
 // PersistSnapshot writes lifecycle samples and derived route costs.
+// Per-row best-effort: a single bad row never aborts the rest of the batch;
+// skipped/failing rows are logged with offer ID so silent data loss is loud.
 func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error {
 	if len(offers) == 0 || r.DB == nil {
 		return nil
 	}
-	tx, err := r.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-	insStmt, err := tx.PrepareContext(ctx, rebind(`
+	insStmt, err := r.DB.PrepareContext(ctx, rebind(`
 		INSERT INTO order_lifecycle
 			(offer_db_id, price, ref_price, premium_pct,
 			 trade_cost_pct, trade_cost_btc, net_premium_pct, net_premium_btc, btc_amount)
@@ -266,7 +263,7 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 	}
 	defer insStmt.Close()
 
-	updStmt, err := tx.PrepareContext(ctx, rebind(`
+	updStmt, err := r.DB.PrepareContext(ctx, rebind(`
 		UPDATE offers SET
 			best_route_cex = ?,
 			best_route_method = ?,
@@ -290,8 +287,25 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 	}
 	defer updStmt.Close()
 
+	total := len(offers)
+	var skippedRefPrice, skippedOfferPrice, inserted, insertErrs, updateErrs int
+	var skippedSampleIDs, insertErrSampleIDs []int64
+	appendSample := func(dst *[]int64, id int64) {
+		if len(*dst) < 5 {
+			*dst = append(*dst, id)
+		}
+	}
+
 	for _, o := range offers {
+		// Match the DB CHECK constraints so we don't rely on tx-abort to surface bad data.
 		if o.RefPrice <= 0 {
+			skippedRefPrice++
+			appendSample(&skippedSampleIDs, o.ID)
+			continue
+		}
+		if o.Price <= 0 {
+			skippedOfferPrice++
+			appendSample(&skippedSampleIDs, o.ID)
 			continue
 		}
 		bd := o.CostBreakdown
@@ -299,7 +313,7 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 		if bd.TradeDirection != "ask" {
 			cexWithdrawFee = tradecost.Round8(bd.WithdrawalFeeBTC)
 		}
-		_, _ = insStmt.ExecContext(ctx,
+		if _, err := insStmt.ExecContext(ctx,
 			o.ID,
 			tradecost.Round4(o.Price),
 			tradecost.Round4(o.RefPrice),
@@ -309,10 +323,16 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 			tradecost.Round4(o.NetPremiumPct),
 			tradecost.Round8(bd.EstimatedProfitBTC),
 			tradecost.Round8(bd.BTCAmount),
-		)
+		); err != nil {
+			insertErrs++
+			appendSample(&insertErrSampleIDs, o.ID)
+			fmt.Printf("[Lifecycle] insert error offer_db_id=%d: %v\n", o.ID, err)
+			continue
+		}
+		inserted++
 		if bd.RouteCEX != "" {
 			abort := tradecost.AbortCostFromBreakdown(bd)
-			_, _ = updStmt.ExecContext(ctx,
+			if _, err := updStmt.ExecContext(ctx,
 				bd.RouteCEX,
 				bd.RouteMethod,
 				tradecost.Round8(bd.Hedge.OpenFeeBTC),
@@ -329,10 +349,18 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 				tradecost.Round8(abort.Total.BTC),
 				tradecost.Round4(abort.Total.Pct),
 				o.ID,
-			)
+			); err != nil {
+				updateErrs++
+				fmt.Printf("[Lifecycle] update offer-costs error offer_db_id=%d: %v\n", o.ID, err)
+			}
 		}
 	}
-	return tx.Commit()
+
+	if skippedRefPrice+skippedOfferPrice > 0 || insertErrs > 0 || updateErrs > 0 {
+		fmt.Printf("[Lifecycle] batch=%d inserted=%d skipped_ref_price<=0=%d skipped_offer_price<=0=%d insert_errs=%d update_errs=%d sample_skipped_ids=%v sample_insert_err_ids=%v\n",
+			total, inserted, skippedRefPrice, skippedOfferPrice, insertErrs, updateErrs, skippedSampleIDs, insertErrSampleIDs)
+	}
+	return nil
 }
 
 func placeholders(ids []int64) ([]string, []any) {

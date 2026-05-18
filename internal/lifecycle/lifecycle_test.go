@@ -136,6 +136,42 @@ func TestPersistSnapshotStoresStaticCostsOnOfferOnly(t *testing.T) {
 	assertFloat(t, abortPct, 0.75)
 }
 
+func TestPersistSnapshotSkipsBadRowsAndKeepsGoodOnes(t *testing.T) {
+	db := openTestDB(t)
+	goodID := insertOffer(t, db)
+	badRefID := insertOffer(t, db)
+	badPriceID := insertOffer(t, db)
+	repo := NewRepository(db)
+
+	err := repo.PersistSnapshot(context.Background(), []Record{
+		{ID: badRefID, Price: 100, RefPrice: 0, PriceDiffPct: 0, NetPremiumPct: 0,
+			CostBreakdown: tradecost.CostBreakdown{TradeDirection: "bid"}},
+		{ID: goodID, Price: 105, RefPrice: 100, PriceDiffPct: 5, NetPremiumPct: 4,
+			CostBreakdown: tradecost.CostBreakdown{TradeDirection: "bid", BTCAmount: 0.1}},
+		{ID: badPriceID, Price: 0, RefPrice: 100, PriceDiffPct: 0, NetPremiumPct: 0,
+			CostBreakdown: tradecost.CostBreakdown{TradeDirection: "bid"}},
+	})
+	if err != nil {
+		t.Fatalf("PersistSnapshot: %v", err)
+	}
+
+	var rows int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM order_lifecycle`).Scan(&rows); err != nil {
+		t.Fatalf("count lifecycle: %v", err)
+	}
+	if rows != 1 {
+		t.Fatalf("lifecycle rows = %d, want 1 (only the good row should land)", rows)
+	}
+
+	var storedOfferID int64
+	if err := db.QueryRow(`SELECT offer_db_id FROM order_lifecycle`).Scan(&storedOfferID); err != nil {
+		t.Fatalf("select offer id: %v", err)
+	}
+	if storedOfferID != goodID {
+		t.Fatalf("stored offer = %d, want %d", storedOfferID, goodID)
+	}
+}
+
 func TestPersistSnapshotLeavesAskWithdrawalFeeNull(t *testing.T) {
 	db := openTestDB(t)
 	offerID := insertOffer(t, db)

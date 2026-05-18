@@ -50,6 +50,14 @@ var (
 	cexPrices   = map[string]float64{}
 )
 
+var (
+	snapshotPriceCacheMu  sync.Mutex
+	snapshotPriceCacheVal float64
+	snapshotPriceCacheAt  time.Time
+)
+
+const snapshotPriceCacheTTL = 30 * time.Second
+
 const defaultCEX = "kraken"
 
 // supportedCEXes lists all exchanges available for selection in the UI.
@@ -70,12 +78,49 @@ func coreTablesReady() bool {
 }
 
 func getCexPrice(cex string) float64 {
+	var p float64
 	if priceManager != nil {
-		return priceManager.Get(cex)
+		p = priceManager.Get(cex)
+	} else {
+		cexPricesMu.RLock()
+		p = cexPrices[cex]
+		cexPricesMu.RUnlock()
 	}
-	cexPricesMu.RLock()
-	defer cexPricesMu.RUnlock()
-	return cexPrices[cex]
+	if p > 0 {
+		return p
+	}
+	// Live feed (WS) hasn't produced a price yet — fall back to the most recent
+	// BTC price the snapshot tool stored. This keeps lifecycle writes working
+	// even if the dexMonitor server can't reach the CEX WS endpoint at all
+	// (firewall, TLS, DNS, etc. on the VPS).
+	return latestSnapshotPrice()
+}
+
+// latestSnapshotPrice returns the most recent btc_price from the snapshots
+// table, cached briefly so that frequent lookups don't hammer the DB.
+// Returns 0 if no snapshot has been written yet or the DB query fails.
+func latestSnapshotPrice() float64 {
+	snapshotPriceCacheMu.Lock()
+	defer snapshotPriceCacheMu.Unlock()
+	if time.Since(snapshotPriceCacheAt) < snapshotPriceCacheTTL {
+		return snapshotPriceCacheVal
+	}
+	snapshotPriceCacheAt = time.Now()
+	if db == nil {
+		snapshotPriceCacheVal = 0
+		return 0
+	}
+	var price float64
+	err := db.QueryRow(`SELECT btc_price FROM snapshots ORDER BY timestamp DESC LIMIT 1`).Scan(&price)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			fmt.Printf("[priceFallback] snapshots query error: %v\n", err)
+		}
+		snapshotPriceCacheVal = 0
+		return 0
+	}
+	snapshotPriceCacheVal = price
+	return price
 }
 
 func setCexPrice(cex string, p float64) {
@@ -157,6 +202,31 @@ func main() {
 		hub.broadcastForCex(cex)
 	})
 	priceManager.Start(ctx)
+
+	// Visibility aid: 30s after startup, log live feed prices so an operator can
+	// immediately tell whether the WS feeds connected. The fallback to the
+	// snapshots table keeps the system working without this, but a silent feed
+	// outage is exactly what masked the empty-lifecycle bug before.
+	go func() {
+		select {
+		case <-time.After(30 * time.Second):
+		case <-ctx.Done():
+			return
+		}
+		parts := make([]string, 0, len(supportedCEXes))
+		var defaultMissing bool
+		for _, c := range supportedCEXes {
+			p := priceManager.Get(c)
+			parts = append(parts, fmt.Sprintf("%s=%.2f", c, p))
+			if c == defaultCEX && p <= 0 {
+				defaultMissing = true
+			}
+		}
+		fmt.Printf("[priceFeeds] post-start prices: %s\n", strings.Join(parts, " "))
+		if defaultMissing {
+			fmt.Printf("[priceFeeds] WARNING: %s feed has no price after 30s — lifecycle writes will fall back to snapshots table\n", defaultCEX)
+		}
+	}()
 
 	// Payment method grouping service — loads once at startup, refreshes every hour.
 	if svc, err := paymentmethods.NewService(db); err != nil {
@@ -1756,7 +1826,7 @@ func handleInternalLiveOffers(w http.ResponseWriter, r *http.Request) {
 	price := getCexPrice(defaultCEX)
 	outOffers := hub.computeOutOffers(price, liveSubscription{cex: defaultCEX})
 	writeLifecycleEntries(outOffers)
-	fmt.Printf("[LiveHub] updated with %d live offers from snapshot\n", len(offers))
+	fmt.Printf("[LiveHub] updated with %d live offers from snapshot (ref_price=%.2f)\n", len(offers), price)
 	w.WriteHeader(http.StatusNoContent)
 }
 
