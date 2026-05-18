@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"commons/metrics"
 	"commons/prices"
 	"commons/tradecost"
 	"dexmonitor/internal/lifecycle"
@@ -284,7 +285,10 @@ func main() {
 	// Internal: snapshot tool pushes live offer data after each run
 	mux.HandleFunc("POST /internal/live_offers", handleInternalLiveOffers)
 
-	handler := corsMiddleware(mux)
+	metricsReg := metrics.NewServiceRegistry("dexmonitor")
+	mux.Handle("GET /metrics", metricsReg.Handler())
+
+	handler := corsMiddleware(metricsReg.Middleware(mux))
 
 	fmt.Println("Starting orderbook API server on http://127.0.0.1:5000")
 	if err := http.ListenAndServe(":5000", handler); err != nil {
