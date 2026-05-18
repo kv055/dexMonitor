@@ -108,6 +108,13 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
   }, [data?.candles, loadedHours, sourceIntervalMin]);
   const availableHours = Math.max(loadedHours, loadedDataHours);
 
+  const sourceIntervalMinRef = useRef(sourceIntervalMin);
+  const loadedDataHoursRef = useRef(loadedDataHours);
+  useEffect(() => {
+    sourceIntervalMinRef.current = sourceIntervalMin;
+    loadedDataHoursRef.current = loadedDataHours;
+  }, [sourceIntervalMin, loadedDataHours]);
+
   // Candle size selector — default always tracks source interval
   const [candleMin, setCandleMin] = useState<number>(sourceIntervalMin);
 
@@ -407,8 +414,8 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
     if (hasData) {
       const intendedRange = intendedRangeRef.current;
       const intendedRangeReady = intendedRange != null &&
-        sourceIntervalMin <= intendedRange.intervalMin &&
-        loadedDataHours >= intendedRange.visibleHours;
+        sourceIntervalMinRef.current <= intendedRange.intervalMin &&
+        loadedDataHoursRef.current >= intendedRange.visibleHours;
       if (intendedRangeReady) {
         try {
           chart.timeScale().setVisibleRange(intendedRange.range);
@@ -493,7 +500,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [shiftedDisplay, premiumOffers, offerKeys, hours, selectedOfferKey, candleMin, loadedHours, onNeedMoreData, setHoveredOhlcTime, setSelectedOfferKey, lifecycleCache, timezone, effectiveVisibleHours, availableHours, requiredHours]);
+  }, [shiftedDisplay, premiumOffers, offerKeys, hours, selectedOfferKey, candleMin, loadedHours, onNeedMoreData, setHoveredOhlcTime, setSelectedOfferKey, lifecycleCache, timezone, effectiveVisibleHours, availableHours, requiredHours, sourceIntervalMinRef, loadedDataHoursRef]);
 
   return (
     <div className="relative h-full bg-bg flex flex-col">
