@@ -18,6 +18,6 @@ test.describe('SnapshotLog', () => {
     await expect(snapshotLog.getByText('No offer IDs in this snapshot.')).toBeVisible();
 
     await snapshotLog.getByRole('button').filter({ hasText: '107 offers' }).click();
-    await expect(snapshotLog.getByText('offline')).toBeVisible();
+    await expect(snapshotLog.getByRole('button', { name: /Bisq offline/ })).toBeVisible();
   });
 });
