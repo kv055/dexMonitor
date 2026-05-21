@@ -2,6 +2,7 @@ const EXCHANGE_STYLES: Record<string, string> = {
   hodlhodl: 'bg-[#1a3a2a99] text-green',
   robosats: 'bg-[#2a1a3a99] text-purple',
   bisq: 'bg-[#3a2a1a99] text-accent',
+  peachbitcoin: 'bg-[#2d1a0e99] text-peach',
 };
 
 interface Props {
