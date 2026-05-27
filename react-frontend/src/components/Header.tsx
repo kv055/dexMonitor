@@ -21,6 +21,11 @@ export function Header({ activeTab, onTabChange, onOpenSettings }: Props) {
 
   return (
     <header className="bg-surface border border-border rounded-lg px-3 py-1 flex items-center gap-1.5 shrink-0 min-w-0 overflow-hidden">
+      <img
+        src={theme === 'dark' ? '/brand/mark-dark.svg' : '/brand/mark-light.svg'}
+        alt="dexArbPendulum"
+        className="h-8 w-auto shrink-0"
+      />
       {/* Scrollable tab area */}
       <div className="flex items-center overflow-x-auto flex-1 min-w-0 gap-1">
         {tabs.map(tab => (

@@ -1,0 +1,45 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 220" fill="none">
+
+  <g transform="translate(33 44)">
+
+    <g transform="translate(30 40)">
+
+      <path d="M -20 60 A 100 100 0 0 1 180 60" stroke="#f3efe4" stroke-width="1.4" stroke-linecap="round" fill="none" opacity="0.35"></path>
+
+      <circle cx="80" cy="-40" r="14" fill="#25c26b"></circle>
+      <circle cx="80" cy="-40" r="10" fill="none" stroke="#f3efe4" stroke-width="1.4" opacity="0.55"></circle>
+      <text x="80" y="-40" text-anchor="middle" dominant-baseline="central" font-family="'JetBrains Mono', ui-monospace, monospace" font-size="17" font-weight="700" fill="#f3efe4">$</text>
+
+      <path d="M 26 22 L 134 22" stroke="#f3efe4" stroke-width="5" stroke-linecap="round"></path>
+      <path d="M 26 22 L 26 34" stroke="#f3efe4" stroke-width="5" stroke-linecap="round"></path>
+      <path d="M 134 22 L 134 34" stroke="#f3efe4" stroke-width="5" stroke-linecap="round"></path>
+      <path d="M 32 30 L 128 30" stroke="#f3efe4" stroke-width="1.5" stroke-linecap="round" opacity="0.35"></path>
+      <circle cx="26" cy="22" r="3" fill="#f3efe4"></circle>
+      <circle cx="134" cy="22" r="3" fill="#f3efe4"></circle>
+
+      <path d="M 8 100 Q 80 -8 152 100" stroke="#f3efe4" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="2 5" opacity="0.4"></path>
+
+      <line x1="8" y1="90" x2="8" y2="140" stroke="#f3efe4" stroke-width="1.8" stroke-linecap="round"></line>
+      <rect x="2" y="100" width="12" height="32" fill="#25c26b" stroke="#f3efe4" stroke-width="1.5"></rect>
+      <line x1="152" y1="90" x2="152" y2="140" stroke="#f3efe4" stroke-width="1.8" stroke-linecap="round"></line>
+      <rect x="146" y="100" width="12" height="32" fill="#e5484d" stroke="#f3efe4" stroke-width="1.5"></rect>
+
+      <line x1="80" y1="40" x2="80" y2="110" stroke="#f3efe4" stroke-width="4" stroke-linecap="round"></line>
+      <circle cx="80" cy="40" r="3.2" fill="#f3efe4"></circle>
+      <circle cx="80" cy="122" r="14" fill="#ff6a13"></circle>
+      <circle cx="80" cy="122" r="10" fill="none" stroke="#f3efe4" stroke-width="1.4" opacity="0.55"></circle>
+      <text x="80" y="122" text-anchor="middle" dominant-baseline="central" font-family="'JetBrains Mono', ui-monospace, monospace" font-size="17" font-weight="700" fill="#f3efe4">₿</text>
+
+      <circle cx="80" cy="40" r="9" fill="#f3efe4"></circle>
+      <circle cx="80" cy="40" r="3.5" fill="#ff6a13"></circle>
+    </g>
+  </g>
+
+
+  <g transform="translate(260 0)">
+    <text x="0" y="100" font-family="'JetBrains Mono', ui-monospace, monospace" font-size="58" font-weight="700" letter-spacing="-2.3" fill="#f3efe4">dex<tspan fill="#ff6a13">Arb</tspan>Pendulum</text>
+
+    <rect x="0" y="115" width="80" height="6" fill="#ff6a13"></rect>
+    <text x="0" y="158" font-family="'JetBrains Mono', ui-monospace, monospace" font-size="18" font-weight="500" letter-spacing="2.7" fill="#7a7468">BTC DEX ↔ CEX ARBITRAGE STACK</text>
+  </g>
+</svg>
