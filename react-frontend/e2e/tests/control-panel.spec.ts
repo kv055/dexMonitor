@@ -64,8 +64,8 @@ test.describe('ControlPanel', () => {
     await expect(page.locator('button').filter({ hasText: /HODLHODL/i })).toBeVisible();
     await expect(page.locator('button').filter({ hasText: /ROBOSATS/i })).toBeVisible();
 
-    await page.locator('button').filter({ hasText: /BISQ/i }).first().click();
-    await expect(cp.locator('span').filter({ hasText: /^BISQ$/i })).toBeVisible();
+    await page.locator('button').filter({ hasText: /BISQ V1/i }).first().click();
+    await expect(cp.locator('span').filter({ hasText: /^BISQ V1$/i })).toBeVisible();
   });
 
   test('payment dropdown shows options and selection works', async ({ page }) => {
