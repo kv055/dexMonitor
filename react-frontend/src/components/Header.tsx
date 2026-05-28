@@ -51,6 +51,30 @@ export function Header({ activeTab, onTabChange, onOpenSettings }: Props) {
 
       {/* Always-visible action buttons */}
       <div className="flex items-center gap-1 shrink-0">
+        <span
+          className="text-[0.7rem] font-mono opacity-60 whitespace-nowrap px-1.5"
+          title={__COMMIT_DATE__ ? `Deployed commit ${__COMMIT_HASH__} (${new Date(__COMMIT_DATE__).toLocaleString()})` : `Deployed commit ${__COMMIT_HASH__}`}
+        >
+          {__COMMIT_HASH__}
+          {__COMMIT_DATE__ && (
+            <span className="ml-1 opacity-80">
+              {new Date(__COMMIT_DATE__).toLocaleString(undefined, {
+                year: '2-digit', month: '2-digit', day: '2-digit',
+                hour: '2-digit', minute: '2-digit',
+              })}
+            </span>
+          )}
+        </span>
+        <a
+          href="/grafana/"
+          target="_blank"
+          rel="noopener noreferrer"
+          className="text-[0.9rem] font-semibold whitespace-nowrap px-2.5 py-0.5 rounded text-peach opacity-60 hover:opacity-100 no-underline"
+          style={{ borderLeft: '1px solid var(--color-border)' }}
+          title="Open Grafana metrics dashboard"
+        >
+          Metrics
+        </a>
         <button
           type="button"
           className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 cursor-pointer hover:bg-bg"
