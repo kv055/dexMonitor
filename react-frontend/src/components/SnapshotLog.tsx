@@ -17,19 +17,21 @@ interface LogEntry {
 
 const EXCHANGE_COLOR: Record<string, string> = {
   bisq: '#f7931a',
+  bisq2: '#58a6ff',
   hodlhodl: '#4caf82',
   robosats: '#9b59b6',
   peachbitcoin: '#FF6B35',
 };
 
-const EXPECTED_EXCHANGES = ['bisq', 'hodlhodl', 'robosats', 'peachbitcoin'];
+const EXPECTED_EXCHANGES = ['bisq', 'bisq2', 'hodlhodl', 'robosats', 'peachbitcoin'];
 
 function exchangeColor(name: string) {
   return EXCHANGE_COLOR[name] ?? '#888';
 }
 
 function exchangeLabel(name: string) {
-  if (name === 'bisq') return 'Bisq';
+  if (name === 'bisq') return 'Bisq v1';
+  if (name === 'bisq2') return 'Bisq v2';
   if (name === 'hodlhodl') return 'HodlHodl';
   if (name === 'robosats') return 'RoboSats';
   if (name === 'peachbitcoin') return 'Peach Bitcoin';
