@@ -321,6 +321,20 @@ export const MOCK_GENERAL_STATS_LIFETIMES = {
 export const MOCK_GENERAL_STATS_PAST_PREMIUMS = MOCK_GENERAL_STATS.past_premiums;
 export const MOCK_GENERAL_STATS_PAYMENT_METHODS = MOCK_GENERAL_STATS.payment_method_counts;
 
+export const MOCK_TRADE_COST_CONFIG = {
+  cexes: [
+    { name: 'kraken', methods: ['onchain', 'lightning'], has_lightning: true },
+    { name: 'coinbase', methods: ['onchain'], has_lightning: false },
+  ],
+  fee_tiers: [
+    { value: '', label: 'Auto (congestion-based)' },
+    { value: 'economic', label: 'Economic (cheapest, ~1h)' },
+    { value: 'standard', label: 'Standard (balanced, ~30min)' },
+    { value: 'fast', label: 'Fast (priority, ~10min)' },
+    { value: 'express', label: 'Express (next block, ~2min)' },
+  ],
+};
+
 // ── OHLC ──────────────────────────────────────────────────────────────────────
 
 function candle(hoursAgo: number, open: number, high: number, low: number, close: number) {
