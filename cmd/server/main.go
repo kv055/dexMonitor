@@ -202,6 +202,12 @@ func main() {
 	priceManager.SetUpdateCallback(func(cex string) {
 		hub.broadcastForCex(cex)
 	})
+
+	// Metrics registry — created before the feeds start so price-feed health is
+	// reported from the first connection.
+	metricsReg := metrics.NewServiceRegistry("dexmonitor")
+	priceManager.SetMetrics(prices.NewMetrics(metricsReg.Registry))
+
 	priceManager.Start(ctx)
 
 	// Visibility aid: 30s after startup, log live feed prices so an operator can
@@ -285,7 +291,6 @@ func main() {
 	// Internal: snapshot tool pushes live offer data after each run
 	mux.HandleFunc("POST /internal/live_offers", handleInternalLiveOffers)
 
-	metricsReg := metrics.NewServiceRegistry("dexmonitor")
 	mux.Handle("GET /metrics", metricsReg.Handler())
 
 	handler := corsMiddleware(metricsReg.Middleware(mux))
