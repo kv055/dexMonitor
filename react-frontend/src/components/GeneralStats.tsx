@@ -27,6 +27,7 @@ function labelForTimeframe(timeframe: string): string {
 // Exchange → Tailwind color token (mirrors OHLCChart colors)
 const EXCHANGE_COLOR: Record<string, string> = {
   bisq: 'text-accent',
+  bisq2: 'text-blue',
   hodlhodl: 'text-green',
   robosats: 'text-purple',
   peachbitcoin: 'text-peach',
@@ -34,6 +35,7 @@ const EXCHANGE_COLOR: Record<string, string> = {
 // Hex values for bar fills (must match CSS tokens exactly)
 const EXCHANGE_HEX: Record<string, string> = {
   bisq: '#f7931a',
+  bisq2: '#58a6ff',
   hodlhodl: '#3fb950',
   robosats: '#bc8cff',
   peachbitcoin: '#FF6B35',
