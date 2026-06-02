@@ -827,6 +827,10 @@ export function OffersPreviewTable() {
             </button>
             <div className="px-4 pt-1.5 pb-1 pr-8 shrink-0">
               <OfferTimeMeta firstSeen={getFirstSeen(selectedOffer)} lastSeen={getLastSeen(selectedOffer)} isLive={isOfferLive(selectedOffer)} timezone={timezone} priceType={getPriceType(selectedOffer)} />
+              <div className="mt-1 text-[0.68rem] text-muted" title="Internal offer ID">
+                <span className="uppercase tracking-wide text-[0.6rem] mr-1">ID</span>
+                <span className="text-text">{selectedOffer.id}</span>
+              </div>
               {selectedOffer.payment_method && (
                 <div className="mt-1 text-[0.68rem] text-muted">
                   <span className="uppercase tracking-wide text-[0.6rem] mr-1">Payment</span>
