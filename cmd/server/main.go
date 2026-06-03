@@ -5,19 +5,24 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
+	"commons/logging"
 	"commons/metrics"
 	"commons/prices"
+	"commons/tracing"
 	"commons/tradecost"
 	"dexmonitor/internal/lifecycle"
 	"dexmonitor/internal/mmproxy"
@@ -29,6 +34,9 @@ import (
 
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+// serviceName is the OpenTelemetry/logging identity for this binary.
+const serviceName = "dexmonitor"
 
 var (
 	databaseURL         string
@@ -171,10 +179,17 @@ func init() {
 }
 
 func main() {
+	logging.Init(serviceName)
+	tpShutdown, terr := tracing.Init(context.Background(), serviceName)
+	if terr != nil {
+		slog.Warn("tracing init failed; continuing without traces", "err", terr)
+	}
+	defer func() { _ = tpShutdown(context.Background()) }()
+
 	var err error
 	db, err = sql.Open("pgx", databaseURL)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "failed to open database: %v\n", err)
+		slog.Error("failed to open database", "err", err)
 		os.Exit(1)
 	}
 	defer db.Close()
@@ -190,8 +205,10 @@ func main() {
 	tradeCostEstimators = make(map[string]*tradecost.TradeCostEstimator, len(supportedCEXes))
 	for _, c := range supportedCEXes {
 		tradeCostEstimators[c] = tradecost.NewTradeCostEstimator(c)
-		fmt.Printf("[TradeCost] initialized %s (taker fallback %.2f%%, onchain withdrawal fallback %.8f BTC)\n",
-			c, tradecost.TakerFeeFallback(c)*100, tradecost.WithdrawalFallback(c, tradecost.MethodOnchain))
+		slog.Info("trade-cost estimator initialized",
+			"cex", c,
+			"taker_fallback_pct", tradecost.TakerFeeFallback(c)*100,
+			"onchain_withdrawal_fallback_btc", tradecost.WithdrawalFallback(c, tradecost.MethodOnchain))
 	}
 	tradeRouteOptimizer = tradecost.NewOptimizer(supportedCEXes, tradeCostEstimators)
 
@@ -229,15 +246,15 @@ func main() {
 				defaultMissing = true
 			}
 		}
-		fmt.Printf("[priceFeeds] post-start prices: %s\n", strings.Join(parts, " "))
+		slog.InfoContext(ctx, "price feeds post-start prices", "prices", strings.Join(parts, " "))
 		if defaultMissing {
-			fmt.Printf("[priceFeeds] WARNING: %s feed has no price after 30s — lifecycle writes will fall back to snapshots table\n", defaultCEX)
+			slog.WarnContext(ctx, "default price feed has no price after 30s — lifecycle writes will fall back to snapshots table", "cex", defaultCEX)
 		}
 	}()
 
 	// Payment method grouping service — loads once at startup, refreshes every hour.
 	if svc, err := paymentmethods.NewService(db); err != nil {
-		fmt.Fprintf(os.Stderr, "paymentmethods init warning: %v\n", err)
+		slog.Warn("paymentmethods init warning", "err", err)
 	} else {
 		pmService = svc
 		go pmService.RefreshLoop(ctx, time.Hour)
@@ -293,12 +310,30 @@ func main() {
 
 	mux.Handle("GET /metrics", metricsReg.Handler())
 
-	handler := corsMiddleware(metricsReg.Middleware(mux))
+	// tracing.WrapHandler outermost starts the server span and continues inbound
+	// trace context; RouteNamer innermost names the span by matched route.
+	handler := tracing.WrapHandler(
+		corsMiddleware(metricsReg.Middleware(tracing.RouteNamer(mux))),
+		serviceName,
+	)
 
-	fmt.Println("Starting orderbook API server on http://127.0.0.1:5000")
-	if err := http.ListenAndServe(":5000", handler); err != nil {
-		fmt.Fprintf(os.Stderr, "server error: %v\n", err)
-		os.Exit(1)
+	srv := &http.Server{Addr: ":5000", Handler: handler}
+	go func() {
+		slog.Info("starting orderbook API server", "addr", ":5000")
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			slog.Error("server error", "err", err)
+			os.Exit(1)
+		}
+	}()
+
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+	<-stop
+	slog.Info("shutting down")
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancelShutdown()
+	if err := srv.Shutdown(shutdownCtx); err != nil {
+		slog.Error("graceful shutdown failed", "err", err)
 	}
 }
 

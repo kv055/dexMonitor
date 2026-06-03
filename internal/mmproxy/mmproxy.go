@@ -1,6 +1,7 @@
 package mmproxy
 
 import (
+	"commons/tracing"
 	"io"
 	"net/http"
 	"net/url"
@@ -16,9 +17,11 @@ type Proxy struct {
 	Client *http.Client
 }
 
-// New creates value.
+// New creates value. The client's transport is trace-instrumented so forwarded
+// requests start a client span and carry the inbound trace context to the
+// market-maker controller.
 func New(baseURL string) *Proxy {
-	return &Proxy{BaseURL: baseURL, Client: &http.Client{Timeout: 10 * time.Second}}
+	return &Proxy{BaseURL: baseURL, Client: tracing.Client(10 * time.Second)}
 }
 
 // ForwardJSON proxies a JSON request to the market-maker controller.
