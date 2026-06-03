@@ -5,6 +5,12 @@ WORKDIR /build
 COPY dexMonitor/react-frontend/package*.json ./
 RUN npm ci
 COPY dexMonitor/react-frontend/ ./
+# Commit metadata for the frontend's "deployed commit" header. The build runs
+# without a .git dir, so CI passes these in; vite.config falls back to git/unknown.
+ARG COMMIT_HASH=unknown
+ARG COMMIT_DATE=
+ENV COMMIT_HASH=${COMMIT_HASH}
+ENV COMMIT_DATE=${COMMIT_DATE}
 RUN npm run build
 
 # Stage 2: Build Go binary

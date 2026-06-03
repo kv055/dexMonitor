@@ -6,6 +6,10 @@ import tailwindcss from '@tailwindcss/vite'
 const viteLogger = createLogger()
 
 function gitInfo(): { hash: string; date: string } {
+  // CI bakes these in as build args (the image is built without a .git dir);
+  // the git fallback below covers the local dev server.
+  const envHash = process.env.COMMIT_HASH?.trim()
+  if (envHash) return { hash: envHash, date: process.env.COMMIT_DATE?.trim() ?? '' }
   try {
     const hash = execSync('git log -1 --format=%h', { encoding: 'utf8' }).trim()
     const date = execSync('git log -1 --format=%cI', { encoding: 'utf8' }).trim()
@@ -53,6 +57,13 @@ export default defineConfig({
       '/api/trade_cost_config': 'http://localhost:5010',
       '/api':                   'http://localhost:5000',
       '/ws':                    quietWsProxy('ws://localhost:5000'),
+      // Grafana isn't exposed to the host in local dev; reach it through nginx
+      // (port 5000), which proxies the /grafana/ sub-path to the grafana
+      // container. Without these the dev server's SPA fallback serves
+      // index.html for /grafana/ — the Metrics link just reopens the frontend.
+      // The /grafana/api/live websocket must precede /grafana to match first.
+      '/grafana/api/live':      quietWsProxy('ws://localhost:5000'),
+      '/grafana':               'http://localhost:5000',
     },
   },
 })
