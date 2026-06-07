@@ -136,7 +136,8 @@ test.describe('ControlPanel', () => {
     await cp.locator('button').filter({ hasText: '↺ Reset' }).click();
 
     await expect(cp.locator('button').filter({ hasText: 'All Exchanges' })).toBeVisible();
-    await expect(cp.locator('input[placeholder="Min"]')).toHaveValue('');
+    await expect(cp.locator('input[placeholder="Min"]')).toHaveValue('0');
+    await expect(cp.locator('input[placeholder="Max"]')).toHaveValue('30');
     await expect(cp.locator('button').filter({ hasText: 'Raw Premium' })).toBeVisible();
   });
 
