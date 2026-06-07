@@ -262,10 +262,6 @@ func main() {
 
 	mux := http.NewServeMux()
 
-	// Static frontend
-	mux.HandleFunc("GET /", serveFrontend)
-	mux.Handle("GET /assets/", http.StripPrefix("/assets/", http.FileServer(http.Dir(filepath.Join(frontendDir, "assets")))))
-
 	// API
 	mux.HandleFunc("GET /api/past_offers", handlePastOffers)
 	mux.HandleFunc("GET /api/past_offers/{id}/lifecycle", handlePastOfferLifecycle)
@@ -309,6 +305,11 @@ func main() {
 	mux.HandleFunc("POST /internal/live_offers", handleInternalLiveOffers)
 
 	mux.Handle("GET /metrics", metricsReg.Handler())
+
+	// Static frontend: full Vite dist tree (assets/, brand/, favicon.svg, …).
+	// Registered after API routes; literal patterns beat the {path...} wildcard.
+	mux.HandleFunc("GET /{$}", serveFrontend)
+	mux.HandleFunc("GET /{path...}", serveDistStatic)
 
 	// tracing.WrapHandler outermost starts the server span and continues inbound
 	// trace context; RouteNamer innermost names the span by matched route.
@@ -355,11 +356,26 @@ func corsMiddleware(next http.Handler) http.Handler {
 // --- Handlers ---
 
 func serveFrontend(w http.ResponseWriter, r *http.Request) {
-	if r.URL.Path != "/" {
+	http.ServeFile(w, r, filepath.Join(frontendDir, "index.html"))
+}
+
+func serveDistStatic(w http.ResponseWriter, r *http.Request) {
+	rel := strings.TrimPrefix(r.URL.Path, "/")
+	if rel == "" || strings.Contains(rel, "..") {
 		http.NotFound(w, r)
 		return
 	}
-	http.ServeFile(w, r, filepath.Join(frontendDir, "index.html"))
+	full := filepath.Join(frontendDir, filepath.FromSlash(rel))
+	if relPath, err := filepath.Rel(frontendDir, full); err != nil || strings.HasPrefix(relPath, "..") {
+		http.NotFound(w, r)
+		return
+	}
+	fi, err := os.Stat(full)
+	if err != nil || fi.IsDir() {
+		http.NotFound(w, r)
+		return
+	}
+	http.ServeFile(w, r, full)
 }
 
 func handleOffers(w http.ResponseWriter, r *http.Request) {
