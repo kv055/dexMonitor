@@ -1,7 +1,7 @@
 import { useReducer, useState, useMemo, type ReactNode } from 'react';
 import type { Filters, Offer, PaymentMethodGroup } from '../types';
 import { FiltersContext } from '../hooks/useFilters';
-import { DEFAULT_FILTERS, filtersReducer } from './filtersState';
+import { INITIAL_FILTERS, filtersReducer } from './filtersState';
 import { getPremiumMetricValue, getRefPrice, isOfferLive } from '../utils/offerAccess';
 
 // ── Provider ───────────────────────────────────────────────────────────────
@@ -15,7 +15,7 @@ interface Props {
 }
 
 export function FiltersProvider({ offers, loading, groups, excludedMethods, children }: Props) {
-  const [filters, dispatch] = useReducer(filtersReducer, DEFAULT_FILTERS);
+  const [filters, dispatch] = useReducer(filtersReducer, INITIAL_FILTERS);
   const [selectedOfferKey, setSelectedOfferKey] = useState<string | null>(null);
   const [hoveredOhlcTime, setHoveredOhlcTime] = useState<number | null>(null);
 

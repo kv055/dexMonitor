@@ -1,16 +1,26 @@
 import type { Filters } from '../types';
 
-export const DEFAULT_FILTERS: Filters = {
+const BASE_FILTERS: Filters = {
   direction: '',
   exchange: '',
   payment: '',
   status: 'open',
   premiumOnly: true,
-  premiumMin: '0',
-  premiumMax: '30',
+  premiumMin: '',
+  premiumMax: '',
   premiumMode: 'raw',
   hours: '24',
   cex: 'kraken',
+};
+
+/** Used by resetFilters — premium range cleared */
+export const RESET_FILTERS: Filters = { ...BASE_FILTERS };
+
+/** Used on first mount only — premium range pre-filled */
+export const INITIAL_FILTERS: Filters = {
+  ...BASE_FILTERS,
+  premiumMin: '0',
+  premiumMax: '30',
 };
 
 type Action =
@@ -22,6 +32,6 @@ export function filtersReducer(state: Filters, action: Action): Filters {
     case 'SET':
       return { ...state, ...action.payload };
     case 'RESET':
-      return DEFAULT_FILTERS;
+      return RESET_FILTERS;
   }
 }
