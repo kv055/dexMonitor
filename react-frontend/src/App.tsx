@@ -37,13 +37,14 @@ function OhlcPanelHeader() {
 }
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, refreshForCex }: {
+function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, refreshForCex, allowOhlcExtend }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   lastUpdatedAt: string;
   error: string | null;
   load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
   extendOhlc: (hours: number, cex?: string, intervalMin?: number) => void;
   refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
+  allowOhlcExtend: boolean;
 }) {
   const { filters } = useFilters();
   const { excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit } = usePreferences();
@@ -86,6 +87,7 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, refresh
               <OHLCChart
               data={ohlcData}
               loadedHours={Number(filters.hours)}
+              allowExtend={allowOhlcExtend}
               onNeedMoreData={(hours, intervalMin) => extendOhlc(hours, filters.cex, intervalMin)}
             />
           </div>
@@ -203,6 +205,7 @@ function AppShell() {
     analyticsLoading,
     load,
     extendOhlc,
+    initialLoadComplete,
   } = useDashboard();
   const { liveOffers, refreshForCex } = useLiveOffers();
   const { groups } = usePaymentMethodGroups();
@@ -243,6 +246,7 @@ function AppShell() {
             load={load}
             extendOhlc={extendOhlc}
             refreshForCex={refreshForCex}
+            allowOhlcExtend={initialLoadComplete}
           />
         )}
 

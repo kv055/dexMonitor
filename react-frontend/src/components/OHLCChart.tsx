@@ -21,6 +21,7 @@ interface Props {
   data: OHLCData | null;
   loadedHours: number;
   onNeedMoreData: (newHours: number, intervalMin?: number) => void;
+  allowExtend?: boolean;
 }
 
 type PendingVisibleRange = {
@@ -85,7 +86,7 @@ function requiredHoursForCandleSize(candleMin: number): number {
   return Math.ceil((candleMin * TARGET_VISIBLE_CANDLES) / 60);
 }
 
-function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
+function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const savedRangeRef = useRef<{ from: UTCTimestamp; to: UTCTimestamp } | null>(null);
@@ -143,7 +144,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
       },
     };
     setCandleMin(nextCandleMin);
-    if (nextCandleMin < sourceIntervalMin || nextRequiredHours > availableHours) {
+    if (allowExtend && (nextCandleMin < sourceIntervalMin || nextRequiredHours > availableHours)) {
       onNeedMoreData(nextVisibleHours, nextCandleMin);
     }
   };
@@ -445,7 +446,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
       : null;
 
     chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
-      if (!range || !earliestCandleTime || fetchingMoreRef.current) return;
+      if (!allowExtend || !range || !earliestCandleTime || fetchingMoreRef.current) return;
       // Trigger when the left edge of the view is within 2 candle-widths of the earliest data
       const triggerThreshold = earliestCandleTime + candleMin * 60 * 2;
       if ((range.from as number) <= triggerThreshold) {
@@ -500,7 +501,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData }: Props) {
       chart.remove();
       chartRef.current = null;
     };
-  }, [shiftedDisplay, premiumOffers, offerKeys, hours, selectedOfferKey, candleMin, loadedHours, onNeedMoreData, setHoveredOhlcTime, setSelectedOfferKey, lifecycleCache, timezone, effectiveVisibleHours, availableHours, requiredHours, sourceIntervalMinRef, loadedDataHoursRef]);
+  }, [shiftedDisplay, premiumOffers, offerKeys, hours, selectedOfferKey, candleMin, loadedHours, onNeedMoreData, allowExtend, setHoveredOhlcTime, setSelectedOfferKey, lifecycleCache, timezone, effectiveVisibleHours, availableHours, requiredHours, sourceIntervalMinRef, loadedDataHoursRef]);
 
   return (
     <div className="relative h-full bg-bg flex flex-col">

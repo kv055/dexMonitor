@@ -1,5 +1,5 @@
 import { useCallback, useReducer } from 'react';
-import { apiFetch } from '../utils/api';
+import { apiFetch, apiPost } from '../utils/api';
 import type {
   Offer,
   Stats,
@@ -11,7 +11,6 @@ import type {
   PremiumLifetimeModes,
   PastPremiumTimeframeStats,
   PastProfitableOrder,
-  TakerOpportunityMode,
 } from '../types';
 
 function excludedPaymentQuery(excludedPaymentMethods: string[]): string {
@@ -65,6 +64,7 @@ interface DashboardState {
   analyticsError: string | null;
   loading: boolean;
   analyticsLoading: boolean;
+  initialLoadComplete: boolean;
 }
 
 type CorePayload = Pick<DashboardState, 'stats' | 'pastOffers' | 'ohlcData' | 'lastUpdatedAt'>;
@@ -107,6 +107,7 @@ const initialDashboardState: DashboardState = {
   analyticsError: null,
   loading: true,
   analyticsLoading: false,
+  initialLoadComplete: false,
 };
 
 function hasCoreData(state: DashboardState): boolean {
@@ -116,7 +117,7 @@ function hasCoreData(state: DashboardState): boolean {
 function dashboardReducer(state: DashboardState, action: DashboardAction): DashboardState {
   switch (action.type) {
     case 'CORE_LOAD_START':
-      return { ...state, loading: !hasCoreData(state), error: null };
+      return { ...state, loading: !hasCoreData(state), error: null, initialLoadComplete: false };
     case 'CORE_LOAD_SUCCESS':
       return { ...state, ...action.payload, loading: false, error: null };
     case 'CORE_LOAD_ERROR':
@@ -124,9 +125,9 @@ function dashboardReducer(state: DashboardState, action: DashboardAction): Dashb
     case 'ANALYTICS_LOAD_START':
       return { ...state, analyticsLoading: true, analyticsError: null };
     case 'ANALYTICS_LOAD_SUCCESS':
-      return { ...state, ...action.payload, analyticsLoading: false, analyticsError: null };
+      return { ...state, ...action.payload, analyticsLoading: false, analyticsError: null, initialLoadComplete: true };
     case 'ANALYTICS_LOAD_ERROR':
-      return { ...state, analyticsLoading: false, analyticsError: action.error };
+      return { ...state, analyticsLoading: false, analyticsError: action.error, initialLoadComplete: true };
     case 'EXTEND_OHLC_SUCCESS':
       return { ...state, ohlcData: action.ohlcData };
   }
@@ -140,9 +141,6 @@ export function useDashboard() {
 
     const excludedQuery = excludedPaymentQuery(excludedPaymentMethods);
     const tcQuery = `${tradeCostQuery(excludedCEXes, feeTier, maxFiatLimit)}${!coupledHedge ? '&coupled_hedge=false' : ''}`;
-    const takerQuery = (path: string, mode: TakerOpportunityMode, filtered: boolean) =>
-      `${path}?fiat=EUR&premium_mode=${mode}${filtered ? excludedQuery : ''}${tcQuery}`;
-
     try {
       const [s, o, ohlc] = await Promise.all([
         apiFetch<Stats>(`/api/stats?hours=${hours}`),
@@ -165,46 +163,46 @@ export function useDashboard() {
 
     dispatch({ type: 'ANALYTICS_LOAD_START' });
     try {
-      const generalStatsBaseQuery = `hours=${hours}&cex=${cex}${excludedQuery}${tcQuery}`;
-      const [
-        posAll,
-        posFiltered,
-        posAllNetCapped,
-        posFilteredNetCapped,
-        profitableAll,
-        profitableFiltered,
-        profitableAllNetCapped,
-        profitableFilteredNetCapped,
-        generalStatsOverview,
-        openPremiums,
-        pastPremiums,
-        premiumLifetimes,
-      ] = await Promise.all([
-        apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_full', false)),
-        excludedQuery ? apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_full', true)) : Promise.resolve(null),
-        apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_capped', false)),
-        excludedQuery ? apiFetch<PastOrderStats>(takerQuery('/api/past_order_stats', 'net_capped', true)) : Promise.resolve(null),
-        apiFetch<PastProfitableOrder[]>(takerQuery('/api/past_profitable_orders', 'net_full', false)),
-        excludedQuery ? apiFetch<PastProfitableOrder[]>(takerQuery('/api/past_profitable_orders', 'net_full', true)) : Promise.resolve(null),
-        apiFetch<PastProfitableOrder[]>(takerQuery('/api/past_profitable_orders', 'net_capped', false)),
-        excludedQuery ? apiFetch<PastProfitableOrder[]>(takerQuery('/api/past_profitable_orders', 'net_capped', true)) : Promise.resolve(null),
-        apiFetch<GeneralStatsOverviewData>(`/api/general_stats/overview?${generalStatsBaseQuery}`),
-        apiFetch<OpenPremiumStats>(`/api/general_stats/open_premiums?${generalStatsBaseQuery}`),
-        apiFetch<PastPremiumTimeframeStats[]>(`/api/general_stats/past_premiums?${generalStatsBaseQuery}`),
-        apiFetch<PremiumLifetimeModes>(`/api/general_stats/lifetimes?${generalStatsBaseQuery}`),
-      ]);
-      const generalStats = buildGeneralStatsData(generalStatsOverview, openPremiums, pastPremiums, premiumLifetimes);
+      const analytics = await apiPost<{
+        general_stats_overview: GeneralStatsOverviewData;
+        open_premiums: OpenPremiumStats;
+        past_premiums: PastPremiumTimeframeStats[];
+        premium_lifetimes: PremiumLifetimeModes;
+        past_order_stats_all: PastOrderStats;
+        past_order_stats: PastOrderStats;
+        past_order_stats_all_net_capped: PastOrderStats;
+        past_order_stats_net_capped: PastOrderStats;
+        past_profitable_orders_all: PastProfitableOrder[];
+        past_profitable_orders: PastProfitableOrder[];
+        past_profitable_orders_all_net_capped: PastProfitableOrder[];
+        past_profitable_orders_net_capped: PastProfitableOrder[];
+      }>('/api/dashboard/analytics', {
+        hours: Number(hours),
+        cex,
+        exclude_payment_methods: excludedPaymentMethods,
+        exclude_cexes: excludedCEXes,
+        fee_tier: feeTier,
+        coupled_hedge: coupledHedge,
+        max_fiat_limit: maxFiatLimit ?? 0,
+        fiat: 'EUR',
+      });
+      const generalStats = buildGeneralStatsData(
+        analytics.general_stats_overview,
+        analytics.open_premiums,
+        analytics.past_premiums,
+        analytics.premium_lifetimes,
+      );
       dispatch({
         type: 'ANALYTICS_LOAD_SUCCESS',
         payload: {
-          pastOrderStatsAll: posAll,
-          pastOrderStats: posFiltered ?? posAll,
-          pastOrderStatsAllNetCapped: posAllNetCapped,
-          pastOrderStatsNetCapped: posFilteredNetCapped ?? posAllNetCapped,
-          pastProfitableOrdersAll: profitableAll,
-          pastProfitableOrders: profitableFiltered ?? profitableAll,
-          pastProfitableOrdersAllNetCapped: profitableAllNetCapped,
-          pastProfitableOrdersNetCapped: profitableFilteredNetCapped ?? profitableAllNetCapped,
+          pastOrderStatsAll: analytics.past_order_stats_all,
+          pastOrderStats: excludedQuery ? analytics.past_order_stats : analytics.past_order_stats_all,
+          pastOrderStatsAllNetCapped: analytics.past_order_stats_all_net_capped,
+          pastOrderStatsNetCapped: excludedQuery ? analytics.past_order_stats_net_capped : analytics.past_order_stats_all_net_capped,
+          pastProfitableOrdersAll: analytics.past_profitable_orders_all,
+          pastProfitableOrders: excludedQuery ? analytics.past_profitable_orders : analytics.past_profitable_orders_all,
+          pastProfitableOrdersAllNetCapped: analytics.past_profitable_orders_all_net_capped,
+          pastProfitableOrdersNetCapped: excludedQuery ? analytics.past_profitable_orders_net_capped : analytics.past_profitable_orders_all_net_capped,
           generalStats,
         },
       });

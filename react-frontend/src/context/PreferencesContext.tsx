@@ -15,10 +15,26 @@ interface Props {
   children: ReactNode;
 }
 
+function normalizePaymentMethodList(methods: string[]): string[] {
+  const seen = new Set<string>();
+  const result: string[] = [];
+  for (const raw of methods) {
+    for (const part of raw.split(',')) {
+      const method = part.trim();
+      if (!method || seen.has(method)) continue;
+      seen.add(method);
+      result.push(method);
+    }
+  }
+  return result;
+}
+
 function readJsonArray(key: string): string[] {
   try {
     const parsed = JSON.parse(localStorage.getItem(key) || '[]');
-    return Array.isArray(parsed) ? parsed.filter((item): item is string => typeof item === 'string') : [];
+    if (!Array.isArray(parsed)) return [];
+    const strings = parsed.filter((item): item is string => typeof item === 'string');
+    return key === 'dex-excluded-payment-methods' ? normalizePaymentMethodList(strings) : strings;
   } catch {
     return [];
   }

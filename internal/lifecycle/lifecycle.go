@@ -131,7 +131,8 @@ func formatSnapshotTime(value any) string {
 	}
 }
 
-// LoadPastAggregates loads a past aggregates.
+// LoadPastAggregates loads per-offer lifecycle averages without raw sample rows.
+// Samples are loaded on demand via LoadPastSamples when capped-premium math needs them.
 func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[int64]PastAggregate, error) {
 	result := make(map[int64]PastAggregate, len(ids))
 	if r.DB == nil || len(ids) == 0 {
@@ -139,8 +140,82 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 	}
 	ph, args := placeholders(ids)
 	rows, err := r.DB.QueryContext(ctx, rebind(fmt.Sprintf(
-		`SELECT offer_db_id, price, ref_price, premium_pct, trade_cost_pct, trade_cost_btc,
-		        net_premium_pct, net_premium_btc, btc_amount
+		`SELECT offer_db_id,
+		        COUNT(*) AS cnt,
+		        AVG(price) AS avg_price,
+		        AVG(ref_price) AS avg_ref_price,
+		        AVG(premium_pct) AS avg_premium,
+		        AVG(trade_cost_pct) AS avg_trade_cost_pct,
+		        AVG(trade_cost_btc) AS avg_trade_cost_btc,
+		        AVG(net_premium_pct) AS avg_net_pct,
+		        AVG(net_premium_btc) AS avg_profit_btc,
+		        AVG(net_premium_btc * ref_price) AS avg_profit_fiat,
+		        AVG(btc_amount) AS avg_btc_amount
+		   FROM order_lifecycle
+		  WHERE offer_db_id IN (%s)
+		  GROUP BY offer_db_id`,
+		strings.Join(ph, ","),
+	)), args...)
+	if err != nil {
+		return result, err
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		var offerID int64
+		var count int
+		var avgPrice, avgRefPrice, avgPremium sql.NullFloat64
+		var avgTradeCostPct, avgTradeCostBTC, avgNetPct, avgProfitBTC, avgProfitFiat, avgBTCAmount sql.NullFloat64
+		if err := rows.Scan(
+			&offerID, &count,
+			&avgPrice, &avgRefPrice, &avgPremium,
+			&avgTradeCostPct, &avgTradeCostBTC, &avgNetPct,
+			&avgProfitBTC, &avgProfitFiat, &avgBTCAmount,
+		); err != nil {
+			continue
+		}
+		agg := PastAggregate{Count: count}
+		if avgPrice.Valid {
+			agg.AvgOfferPrice = tradecost.Round4(avgPrice.Float64)
+		}
+		if avgRefPrice.Valid {
+			agg.AvgRefPrice = tradecost.Round4(avgRefPrice.Float64)
+		}
+		if avgPremium.Valid {
+			agg.AvgPremiumPercent = tradecost.Round4(avgPremium.Float64)
+		}
+		if avgTradeCostPct.Valid {
+			agg.AvgTradeCostPct = tradecost.Round4(avgTradeCostPct.Float64)
+		}
+		if avgTradeCostBTC.Valid {
+			agg.AvgTradeCostBTC = tradecost.Round8(avgTradeCostBTC.Float64)
+		}
+		if avgNetPct.Valid {
+			agg.AvgNetPercent = tradecost.Round4(avgNetPct.Float64)
+		}
+		if avgProfitBTC.Valid {
+			agg.AvgProfitBTC = tradecost.Round8(avgProfitBTC.Float64)
+		}
+		if avgProfitFiat.Valid {
+			agg.AvgProfitFiat = tradecost.Round4(avgProfitFiat.Float64)
+		}
+		if avgBTCAmount.Valid {
+			agg.AvgBTCAmount = tradecost.Round8(avgBTCAmount.Float64)
+		}
+		result[offerID] = agg
+	}
+	return result, nil
+}
+
+// LoadPastSamples loads ref_price/premium_pct rows for capped-premium recomputation.
+func (r Repository) LoadPastSamples(ctx context.Context, ids []int64) (map[int64][]PastSample, error) {
+	result := make(map[int64][]PastSample, len(ids))
+	if r.DB == nil || len(ids) == 0 {
+		return result, nil
+	}
+	ph, args := placeholders(ids)
+	rows, err := r.DB.QueryContext(ctx, rebind(fmt.Sprintf(
+		`SELECT offer_db_id, ref_price, premium_pct
 		   FROM order_lifecycle
 		  WHERE offer_db_id IN (%s)
 		  ORDER BY offer_db_id, snapshot_time`,
@@ -150,97 +225,13 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 		return result, err
 	}
 	defer rows.Close()
-
-	type accum struct {
-		count             int
-		sumPrice          float64
-		sumRefPrice       float64
-		sumPremium        float64
-		sumTradeCostPct   float64
-		countTradeCost    int
-		sumTradeCostBTC   float64
-		countTradeCostBTC int
-		sumNetPct         float64
-		countNetPct       int
-		sumProfitBTC      float64
-		countProfitBTC    int
-		sumProfitFiat     float64
-		countProfitFiat   int
-		sumBTCAmount      float64
-		countBTCAmount    int
-		samples           []PastSample
-	}
-
-	accs := make(map[int64]*accum, len(ids))
 	for rows.Next() {
 		var offerID int64
-		var price, refPrice, premiumPct float64
-		var tradeCostPct, tradeCostBTC, netPremiumPct, netPremiumBTC, btcAmount sql.NullFloat64
-		if err := rows.Scan(&offerID, &price, &refPrice, &premiumPct, &tradeCostPct, &tradeCostBTC, &netPremiumPct, &netPremiumBTC, &btcAmount); err != nil {
+		var refPrice, premiumPct float64
+		if err := rows.Scan(&offerID, &refPrice, &premiumPct); err != nil {
 			continue
 		}
-		ac := accs[offerID]
-		if ac == nil {
-			ac = &accum{}
-			accs[offerID] = ac
-		}
-		ac.count++
-		ac.sumPrice += price
-		ac.sumRefPrice += refPrice
-		ac.sumPremium += premiumPct
-		ac.samples = append(ac.samples, PastSample{RefPrice: refPrice, PremiumPct: premiumPct})
-		if tradeCostPct.Valid {
-			ac.sumTradeCostPct += tradeCostPct.Float64
-			ac.countTradeCost++
-		}
-		if tradeCostBTC.Valid {
-			ac.sumTradeCostBTC += tradeCostBTC.Float64
-			ac.countTradeCostBTC++
-		}
-		if netPremiumPct.Valid {
-			ac.sumNetPct += netPremiumPct.Float64
-			ac.countNetPct++
-		}
-		if netPremiumBTC.Valid {
-			ac.sumProfitBTC += netPremiumBTC.Float64
-			ac.countProfitBTC++
-			ac.sumProfitFiat += netPremiumBTC.Float64 * refPrice
-			ac.countProfitFiat++
-		}
-		if btcAmount.Valid {
-			ac.sumBTCAmount += btcAmount.Float64
-			ac.countBTCAmount++
-		}
-	}
-
-	for id, ac := range accs {
-		agg := PastAggregate{}
-		if ac.count > 0 {
-			agg.Count = ac.count
-			agg.AvgOfferPrice = tradecost.Round4(ac.sumPrice / float64(ac.count))
-			agg.AvgRefPrice = tradecost.Round4(ac.sumRefPrice / float64(ac.count))
-			agg.AvgPremiumPercent = tradecost.Round4(ac.sumPremium / float64(ac.count))
-		}
-		if ac.countTradeCost > 0 {
-			agg.AvgTradeCostPct = tradecost.Round4(ac.sumTradeCostPct / float64(ac.countTradeCost))
-		}
-		if ac.countTradeCostBTC > 0 {
-			agg.AvgTradeCostBTC = tradecost.Round8(ac.sumTradeCostBTC / float64(ac.countTradeCostBTC))
-		}
-		if ac.countNetPct > 0 {
-			agg.AvgNetPercent = tradecost.Round4(ac.sumNetPct / float64(ac.countNetPct))
-		}
-		if ac.countProfitBTC > 0 {
-			agg.AvgProfitBTC = tradecost.Round8(ac.sumProfitBTC / float64(ac.countProfitBTC))
-		}
-		if ac.countProfitFiat > 0 {
-			agg.AvgProfitFiat = tradecost.Round4(ac.sumProfitFiat / float64(ac.countProfitFiat))
-		}
-		if ac.countBTCAmount > 0 {
-			agg.AvgBTCAmount = tradecost.Round8(ac.sumBTCAmount / float64(ac.countBTCAmount))
-		}
-		agg.Samples = ac.samples
-		result[id] = agg
+		result[offerID] = append(result[offerID], PastSample{RefPrice: refPrice, PremiumPct: premiumPct})
 	}
 	return result, nil
 }

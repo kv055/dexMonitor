@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
 	"time"
 
@@ -783,6 +784,35 @@ func TestGeneralStatsOverviewRESTRespectsExcludedPaymentMethods(t *testing.T) {
 	}
 	if len(stats.OffersByExchange) != 1 || stats.OffersByExchange[0].Name != "bisq" || stats.OffersByExchange[0].Count != 1 {
 		t.Fatalf("offers_by_exchange = %#v, want [{bisq 1}]", stats.OffersByExchange)
+	}
+}
+
+func TestDashboardAnalyticsRESTBundlesPayload(t *testing.T) {
+	withTempOrdersDB(t)
+
+	body := `{"hours":48,"cex":"kraken","exclude_payment_methods":["Revolut"],"fiat":"EUR"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handleDashboardAnalytics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp dashboardAnalyticsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.GeneralStatsOverview.TotalOffers != 2 {
+		t.Fatalf("total offers = %d, want 2", resp.GeneralStatsOverview.TotalOffers)
+	}
+	if len(resp.PastPremiums) == 0 {
+		t.Fatal("expected past premium frames in bundled response")
+	}
+	if resp.PremiumLifetimes.Raw.AvgOfferLifetimeMs == nil && resp.PremiumLifetimes.NetFull.AvgOfferLifetimeMs == nil {
+		t.Fatal("expected premium lifetimes in bundled response")
 	}
 }
 

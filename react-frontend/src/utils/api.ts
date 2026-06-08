@@ -15,12 +15,24 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     headers.set('Content-Type', 'application/json');
   }
   const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
-  if (!res.ok) throw new Error(`API error: ${res.status}`);
+  if (!res.ok) {
+    if (res.status === 502) {
+      throw new Error('API error: 502 (backend unreachable or overloaded)');
+    }
+    throw new Error(`API error: ${res.status}`);
+  }
   return res.json();
 }
 
 export async function apiFetch<T>(path: string): Promise<T> {
   return request<T>(path);
+}
+
+export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
 }
 
 export function fetchTradingAccounts() {

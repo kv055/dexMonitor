@@ -172,6 +172,63 @@ func TestPersistSnapshotSkipsBadRowsAndKeepsGoodOnes(t *testing.T) {
 	}
 }
 
+func TestLoadPastAggregatesComputesAveragesWithoutSamples(t *testing.T) {
+	db := openTestDB(t)
+	offerID := insertOffer(t, db)
+	repo := NewRepository(db)
+
+	for _, row := range []struct {
+		price, ref, premium, netPct, netBTC float64
+	}{
+		{105, 100, 5, 4, 0.004},
+		{110, 100, 10, 8, 0.008},
+	} {
+		if _, err := db.Exec(
+			`INSERT INTO order_lifecycle (offer_db_id, price, ref_price, premium_pct, net_premium_pct, net_premium_btc)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			offerID, row.price, row.ref, row.premium, row.netPct, row.netBTC,
+		); err != nil {
+			t.Fatalf("insert lifecycle: %v", err)
+		}
+	}
+
+	agg, err := repo.LoadPastAggregates(context.Background(), []int64{offerID})
+	if err != nil {
+		t.Fatalf("LoadPastAggregates: %v", err)
+	}
+	got := agg[offerID]
+	if got.Count != 2 {
+		t.Fatalf("count = %d, want 2", got.Count)
+	}
+	if len(got.Samples) != 0 {
+		t.Fatalf("expected no samples in aggregate load, got %d", len(got.Samples))
+	}
+	assertFloat(t, got.AvgPremiumPercent, 7.5)
+	assertFloat(t, got.AvgNetPercent, 6)
+}
+
+func TestLoadPastSamplesReturnsRefPriceRows(t *testing.T) {
+	db := openTestDB(t)
+	offerID := insertOffer(t, db)
+	repo := NewRepository(db)
+
+	if _, err := db.Exec(
+		`INSERT INTO order_lifecycle (offer_db_id, price, ref_price, premium_pct)
+		 VALUES (?, 105, 100, 5), (?, 110, 100, 10)`,
+		offerID, offerID,
+	); err != nil {
+		t.Fatalf("insert lifecycle: %v", err)
+	}
+
+	samples, err := repo.LoadPastSamples(context.Background(), []int64{offerID})
+	if err != nil {
+		t.Fatalf("LoadPastSamples: %v", err)
+	}
+	if len(samples[offerID]) != 2 {
+		t.Fatalf("sample count = %d, want 2", len(samples[offerID]))
+	}
+}
+
 func TestPersistSnapshotLeavesAskWithdrawalFeeNull(t *testing.T) {
 	db := openTestDB(t)
 	offerID := insertOffer(t, db)

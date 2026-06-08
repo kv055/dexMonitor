@@ -67,7 +67,27 @@ var (
 
 const snapshotPriceCacheTTL = 30 * time.Second
 
+// dashboardCacheTTL deduplicates parallel general_stats and lifecycle aggregate loads.
+const dashboardCacheTTL = 30 * time.Second
+
 const defaultCEX = "kraken"
+
+var generalStatsCache struct {
+	sync.Mutex
+	entries map[string]generalStatsCacheEntry
+}
+
+type generalStatsCacheEntry struct {
+	ctx    generalStatsContext
+	expiry time.Time
+}
+
+var lifecycleAggCache struct {
+	sync.Mutex
+	key    string
+	result map[int64]pastLifecycleAggregate
+	expiry time.Time
+}
 
 // supportedCEXes lists all exchanges available for selection in the UI.
 var supportedCEXes = tradecost.SupportedCEXes()
@@ -194,8 +214,10 @@ func main() {
 	}
 	defer db.Close()
 
-	db.SetMaxOpenConns(4)
-	db.SetMaxIdleConns(2)
+	// Dashboard load fans out 15+ parallel handlers; 4 connections caused long
+	// queueing and proxy 502s under burst (unified-api uses 12).
+	db.SetMaxOpenConns(12)
+	db.SetMaxIdleConns(4)
 	lifecycleRepo = lifecycle.NewRepository(db)
 	ohlcService = ohlc.NewService()
 	snapshotLogRepo = snapshotlog.NewRepository(db)
@@ -272,6 +294,7 @@ func main() {
 	mux.HandleFunc("GET /api/general_stats/past_premiums", handleGeneralStatsPastPremiums)
 	mux.HandleFunc("GET /api/general_stats/lifetimes", handleGeneralStatsLifetimes)
 	mux.HandleFunc("GET /api/general_stats/payment_methods", handleGeneralStatsPaymentMethods)
+	mux.HandleFunc("POST /api/dashboard/analytics", handleDashboardAnalytics)
 	mux.HandleFunc("GET /api/live_offers", handleLiveOffersREST)
 	mux.HandleFunc("GET /ws/live_offers", handleLiveOffersWS)
 	mux.HandleFunc("GET /api/stats", handleStats)
@@ -469,6 +492,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lifecycleAgg := fetchPastOfferLifecycleAggregates(ids)
+	enrichLifecycleSamplesForCapped(lifecycleAgg, filteredOffers, maxFiatLimitEUR)
 	result := make([]pastOfferAPI, 0, len(filteredOffers))
 	for _, o := range filteredOffers {
 		id := int64(offerFloat(o, "id"))
@@ -519,11 +543,38 @@ func fetchOfferLifecycle(ids []int64) map[int64][]LifecyclePoint {
 	return result
 }
 
+func copyLifecycleAgg(src map[int64]pastLifecycleAggregate) map[int64]pastLifecycleAggregate {
+	dst := make(map[int64]pastLifecycleAggregate, len(src))
+	for id, agg := range src {
+		dst[id] = agg
+	}
+	return dst
+}
+
+func lifecycleAggCacheKey(ids []int64) string {
+	if len(ids) == 0 {
+		return ""
+	}
+	sorted := append([]int64(nil), ids...)
+	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
+	return fmt.Sprintf("%d:%d:%d", len(sorted), sorted[0], sorted[len(sorted)-1])
+}
+
 func fetchPastOfferLifecycleAggregates(ids []int64) map[int64]pastLifecycleAggregate {
 	result := make(map[int64]pastLifecycleAggregate, len(ids))
 	if len(ids) == 0 {
 		return result
 	}
+	key := lifecycleAggCacheKey(ids)
+	now := time.Now()
+	lifecycleAggCache.Lock()
+	if lifecycleAggCache.result != nil && lifecycleAggCache.key == key && now.Before(lifecycleAggCache.expiry) {
+		cached := lifecycleAggCache.result
+		lifecycleAggCache.Unlock()
+		return copyLifecycleAgg(cached)
+	}
+	lifecycleAggCache.Unlock()
+
 	if lifecycleRepo.DB != db && db != nil {
 		lifecycleRepo = lifecycle.NewRepository(db)
 	}
@@ -534,7 +585,56 @@ func fetchPastOfferLifecycleAggregates(ids []int64) map[int64]pastLifecycleAggre
 	for id, agg := range aggregates {
 		result[id] = pastLifecycleAggregate(agg)
 	}
-	return result
+
+	lifecycleAggCache.Lock()
+	lifecycleAggCache.key = key
+	lifecycleAggCache.result = copyLifecycleAgg(result)
+	lifecycleAggCache.expiry = now.Add(dashboardCacheTTL)
+	lifecycleAggCache.Unlock()
+	return copyLifecycleAgg(result)
+}
+
+func enrichLifecycleSamplesForCapped(agg map[int64]pastLifecycleAggregate, offers []map[string]any, maxFiatLimitEUR float64) {
+	if maxFiatLimitEUR <= 0 || len(offers) == 0 {
+		return
+	}
+	needIDs := make([]int64, 0)
+	seen := make(map[int64]struct{})
+	for _, o := range offers {
+		if offerBool(o, "is_live") {
+			continue
+		}
+		avgRefPrice := offerRefPrice(o)
+		fullTradeSizeBTC := selectBTCTradeSize(offerFloatPtr(o, "btc_max"), offerFloatPtr(o, "btc_min"))
+		if avgRefPrice <= 0 || fullTradeSizeBTC <= 0 {
+			continue
+		}
+		btcCap := maxFiatLimitEUR / avgRefPrice
+		if btcCap <= 0 || fullTradeSizeBTC <= btcCap {
+			continue
+		}
+		id := int64(offerFloat(o, "id"))
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		needIDs = append(needIDs, id)
+	}
+	if len(needIDs) == 0 {
+		return
+	}
+	if lifecycleRepo.DB != db && db != nil {
+		lifecycleRepo = lifecycle.NewRepository(db)
+	}
+	samples, err := lifecycleRepo.LoadPastSamples(context.Background(), needIDs)
+	if err != nil {
+		return
+	}
+	for id, s := range samples {
+		a := agg[id]
+		a.Samples = s
+		agg[id] = a
+	}
 }
 
 func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
@@ -645,6 +745,7 @@ func handlePastProfitableOrders(w http.ResponseWriter, r *http.Request) {
 	}
 
 	lifecycleAgg := fetchPastOfferLifecycleAggregates(ids)
+	enrichLifecycleSamplesForCapped(lifecycleAgg, filteredOffers, maxFiatLimitEUR)
 	result := make([]pastProfitableOrderAPI, 0, len(filteredOffers))
 	for _, o := range filteredOffers {
 		analysis := addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
@@ -668,7 +769,46 @@ type generalStatsContext struct {
 	now                    time.Time
 }
 
+func generalStatsCacheKey(r *http.Request) string {
+	parts := []string{
+		strconv.Itoa(queryInt(r, "hours", 24)),
+		queryCex(r),
+		strings.Join(queryExcludedPaymentMethods(r), ","),
+		strings.Join(queryExcludedCEXes(r), ","),
+		queryFeeTier(r),
+		strconv.FormatBool(queryCoupledHedge(r)),
+		strconv.FormatFloat(queryMaxFiatLimitEUR(r), 'f', -1, 64),
+		strconv.Itoa(queryConfirmations(r)),
+	}
+	return strings.Join(parts, "|")
+}
+
 func loadGeneralStatsContext(r *http.Request) (generalStatsContext, error) {
+	key := generalStatsCacheKey(r)
+	now := time.Now()
+	generalStatsCache.Lock()
+	if entry, ok := generalStatsCache.entries[key]; ok && now.Before(entry.expiry) {
+		ctx := entry.ctx
+		generalStatsCache.Unlock()
+		return ctx, nil
+	}
+	generalStatsCache.Unlock()
+
+	ctx, err := loadGeneralStatsContextUncached(r)
+	if err != nil {
+		return generalStatsContext{}, err
+	}
+
+	generalStatsCache.Lock()
+	if generalStatsCache.entries == nil {
+		generalStatsCache.entries = make(map[string]generalStatsCacheEntry)
+	}
+	generalStatsCache.entries[key] = generalStatsCacheEntry{ctx: ctx, expiry: now.Add(dashboardCacheTTL)}
+	generalStatsCache.Unlock()
+	return ctx, nil
+}
+
+func loadGeneralStatsContextUncached(r *http.Request) (generalStatsContext, error) {
 	hours := queryInt(r, "hours", 24)
 	historyHours := hours
 	if historyHours < 168 {
@@ -780,6 +920,8 @@ func handleGeneralStatsPastPremiums(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lifecycleAgg := fetchPastOfferLifecycleAggregates(ctx.closedOfferIDs)
+	maxFiat := queryMaxFiatLimitEUR(r)
+	enrichLifecycleSamplesForCapped(lifecycleAgg, ctx.offers, maxFiat)
 	writeJSON(w, ctx.pastPremiums(r, lifecycleAgg))
 }
 
@@ -790,6 +932,8 @@ func handleGeneralStatsLifetimes(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lifecycleAgg := fetchPastOfferLifecycleAggregates(ctx.closedOfferIDs)
+	maxFiat := queryMaxFiatLimitEUR(r)
+	enrichLifecycleSamplesForCapped(lifecycleAgg, ctx.offers, maxFiat)
 	writeJSON(w, ctx.premiumLifetimes(r, lifecycleAgg))
 }
 
