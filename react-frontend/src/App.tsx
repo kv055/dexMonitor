@@ -37,11 +37,11 @@ function OhlcPanelHeader() {
 }
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, refreshForCex, allowOhlcExtend }: {
+function MonitorView({ ohlcData, lastUpdatedAt, error, loadCore, extendOhlc, refreshForCex, allowOhlcExtend }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   lastUpdatedAt: string;
   error: string | null;
-  load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
+  loadCore: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
   extendOhlc: (hours: number, cex?: string, intervalMin?: number) => void;
   refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
   allowOhlcExtend: boolean;
@@ -51,10 +51,10 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, refresh
 
   useEffect(() => {
     refreshForCex(filters.cex, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
-    load(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
-    const interval = setInterval(() => load(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit), 5 * 60 * 1000);
+    loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
+    const interval = setInterval(() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit), 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, load, refreshForCex]);
+  }, [filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadCore, refreshForCex]);
 
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -68,7 +68,7 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, load, extendOhlc, refresh
       <div className="lg:flex-2 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_3fr] gap-2 sm:gap-3">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
           <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Control Panel</h3>
-          <ControlPanel onRefresh={() => load(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit)} lastUpdatedAt={lastUpdatedAt} />
+          <ControlPanel onRefresh={() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit)} lastUpdatedAt={lastUpdatedAt} />
         </div>
 
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
@@ -148,8 +148,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
         <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-1 block">General Statistics</span>
         <GeneralStats stats={generalStats} loading={loading} />
       </div>
-      {/* Middle — bigger */}
-      <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
+      <div className="lg:flex-1 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
         <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2">Taker Opportunities</span>
         <TakerOpportunities
           stats={pastOrderStats}
@@ -163,10 +162,6 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           loading={loading}
           maxFiatLimit={maxFiatLimit}
         />
-      </div>
-      {/* Bottom — bigger */}
-      <div className="lg:flex-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
-        <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2">Maker Opportunities</span>
       </div>
     </div>
   );
@@ -204,6 +199,7 @@ function AppShell() {
     loading,
     analyticsLoading,
     load,
+    loadCore,
     extendOhlc,
     initialLoadComplete,
   } = useDashboard();
@@ -243,7 +239,7 @@ function AppShell() {
             ohlcData={ohlcData}
             lastUpdatedAt={lastUpdatedAt}
             error={error}
-            load={load}
+            loadCore={loadCore}
             extendOhlc={extendOhlc}
             refreshForCex={refreshForCex}
             allowOhlcExtend={initialLoadComplete}

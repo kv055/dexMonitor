@@ -72,6 +72,8 @@ const dashboardCacheTTL = 30 * time.Second
 
 const defaultCEX = "kraken"
 
+const closedAnalyzedOffersQuery = "SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? AND historical_analysis_status = 'analyzed' ORDER BY last_seen DESC"
+
 var generalStatsCache struct {
 	sync.Mutex
 	entries map[string]generalStatsCacheEntry
@@ -379,6 +381,7 @@ func corsMiddleware(next http.Handler) http.Handler {
 // --- Handlers ---
 
 func serveFrontend(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-cache")
 	http.ServeFile(w, r, filepath.Join(frontendDir, "index.html"))
 }
 
@@ -397,6 +400,14 @@ func serveDistStatic(w http.ResponseWriter, r *http.Request) {
 	if err != nil || fi.IsDir() {
 		http.NotFound(w, r)
 		return
+	}
+	switch {
+	case strings.HasPrefix(rel, "assets/"):
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	case strings.HasPrefix(rel, "brand/"):
+		w.Header().Set("Cache-Control", "public, max-age=86400")
+	default:
+		w.Header().Set("Cache-Control", "no-cache")
 	}
 	http.ServeFile(w, r, full)
 }
@@ -650,7 +661,7 @@ func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rows, err := db.Query(
-		rebind("SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? ORDER BY last_seen DESC"),
+		rebind(closedAnalyzedOffersQuery),
 		time.Now().Add(-168*time.Hour),
 	)
 	if err != nil {
@@ -719,7 +730,7 @@ func handlePastProfitableOrders(w http.ResponseWriter, r *http.Request) {
 	premiumMode := queryTakerOpportunityMode(r)
 
 	rows, err := db.Query(
-		rebind("SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? ORDER BY last_seen DESC"),
+		rebind(closedAnalyzedOffersQuery),
 		time.Now().Add(-168*time.Hour),
 	)
 	if err != nil {

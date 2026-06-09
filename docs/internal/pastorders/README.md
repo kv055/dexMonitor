@@ -26,9 +26,10 @@ the time windows expected by the monitor API.
 ## Operational Notes
 
 `BuildStats` expects callers to apply the profitability policy first. In the
-current monitor server, that policy lives in `addPastOfferCostFieldsFull` and
-`profitableInMode`; this package receives only the closed offers that should be
-counted.
+current monitor server, taker-opportunity handlers load only analyzed closed
+offers (`historical_analysis_status = 'analyzed'`) from the last seven days,
+then apply `addPastOfferCostFieldsFull` and `profitableInMode`; this package
+receives only the closed offers that should be counted.
 
 Payment-method exclusions are applied inside the timeframe builders so the API
 can return statistics for the same closed-offer set with or without locally

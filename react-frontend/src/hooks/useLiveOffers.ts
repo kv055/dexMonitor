@@ -115,7 +115,7 @@ export function useLiveOffers() {
   }, [connect, stopPolling]);
 
   // Called by MonitorView when filters.cex or trade cost settings change.
-  // Immediately fetches fresh offers, then reconnects WS.
+  // Reconnects WS so the server pushes a fresh snapshot with updated query params.
   const refreshForCex = useCallback((cex: string, excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {
     cexRef.current = cex;
     excludedCEXesRef.current = excludedCEXes;
@@ -126,15 +126,9 @@ export function useLiveOffers() {
     stopPolling();
     wsRef.current?.close();
 
-    apiFetch<Offer[]>(`/api/live_offers?${buildQueryString()}`)
-      .then(offers => {
-        if (sessionRef.current === session && mountedRef.current) setLiveOffers(offers);
-      })
-      .catch(e => console.error('[LiveOffers] cex-change fetch error', e));
-
     setWssConnected(false);
     connect(session);
-  }, [connect, stopPolling, buildQueryString]);
+  }, [connect, stopPolling]);
 
   return { liveOffers, wssConnected, refreshForCex };
 }

@@ -343,6 +343,65 @@ func TestPastOrderStatsRESTAggregatesPremiumOrdersByTimeframe(t *testing.T) {
 	assertFloat(t, sixHour.BiggestOrderBTC, 0.4)
 }
 
+func TestPastOrderStatsExcludesNonAnalyzedClosedOffers(t *testing.T) {
+	withTempOrdersDB(t)
+
+	for _, fixture := range []struct {
+		offerID string
+		status  any
+	}{
+		{offerID: "pending-analysis", status: nil},
+		{offerID: "non-premium-closed", status: "non_premium"},
+		{offerID: "ignored-no-lifecycle", status: "ignored_no_lifecycle"},
+	} {
+		if _, err := db.Exec(`
+			INSERT INTO offers (
+				exchange, direction, price, btc_min, btc_max, payment_method, offer_id,
+				avg_ref_price, avg_net_premium_pct, avg_estimated_profit_btc, avg_estimated_profit_fiat,
+				historical_analysis_status, first_seen, last_seen, is_live
+			)
+			VALUES ('bisq', 'buy', 105, 0.1, 0.1, 'SEPA', ?, 100, 4.00, 0.00400, 0.40, ?, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 0)
+		`, fixture.offerID, fixture.status); err != nil {
+			t.Fatalf("insert %s offer: %v", fixture.offerID, err)
+		}
+	}
+
+	statsReq := httptest.NewRequest(http.MethodGet, "/api/past_order_stats?fiat=eur&premium_mode=net_full", nil)
+	statsRec := httptest.NewRecorder()
+	handlePastOrderStats(statsRec, statsReq)
+	if statsRec.Code != http.StatusOK {
+		t.Fatalf("stats status = %d, want %d; body=%s", statsRec.Code, http.StatusOK, statsRec.Body.String())
+	}
+
+	var stats pastOrderStatsTestResponse
+	if err := json.Unmarshal(statsRec.Body.Bytes(), &stats); err != nil {
+		t.Fatalf("decode stats response: %v", err)
+	}
+	oneHour := findStatsTimeframe(t, stats.Timeframes, "1h")
+	if oneHour.PremiumOrderCount != 2 {
+		t.Fatalf("1h premium count = %d, want 2 (non-analyzed offers must be excluded)", oneHour.PremiumOrderCount)
+	}
+
+	ordersReq := httptest.NewRequest(http.MethodGet, "/api/past_profitable_orders?premium_mode=net_full", nil)
+	ordersRec := httptest.NewRecorder()
+	handlePastProfitableOrders(ordersRec, ordersReq)
+	if ordersRec.Code != http.StatusOK {
+		t.Fatalf("orders status = %d, want %d; body=%s", ordersRec.Code, http.StatusOK, ordersRec.Body.String())
+	}
+
+	var orders []map[string]any
+	if err := json.Unmarshal(ordersRec.Body.Bytes(), &orders); err != nil {
+		t.Fatalf("decode orders response: %v", err)
+	}
+	for _, order := range orders {
+		offerID, _ := order["offer_id"].(string)
+		switch offerID {
+		case "pending-analysis", "non-premium-closed", "ignored-no-lifecycle":
+			t.Fatalf("unexpected non-analyzed offer %q in profitable orders", offerID)
+		}
+	}
+}
+
 func TestPastOffersRESTIncludesCappedAnalysisWhenRequested(t *testing.T) {
 	withTempOrdersDB(t)
 
@@ -1308,14 +1367,15 @@ func withTempOrdersDB(t *testing.T) {
 			avg_ref_price, avg_premium_pct, avg_trade_cost_pct, avg_trade_cost_btc,
 			cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc, dex_fee_btc,
 			avg_net_premium_pct, avg_estimated_profit_btc, avg_estimated_profit_fiat,
-			best_route_cex, best_route_method, first_seen, last_seen, is_live
+			best_route_cex, best_route_method, historical_analysis_status,
+			first_seen, last_seen, is_live
 		)
 		VALUES
-			('bisq', 'buy', 105, 0.1, 0.1, 'Revolut', 'premium-30m', 100, 5, 1.00, 0.00100, 0.00025, 0.00015, 0.00010, 0.00010, 4.00, 0.00400, 0.40, 'kraken', 'onchain', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
-			('bisq', 'sell', 95, 0.2, 0.2, 'Wise', 'premium-5h', 100, 5, 0.37, 0.00074, 0.00050, NULL, 0.00004, 0.00020, 4.63, 0.00926, 0.93, 'kraken', 'onchain', datetime('now', '-7 hours'), datetime('now', '-5 hours'), 0),
-			('bisq', 'buy', 105, 0.3, 0.3, 'SEPA', 'premium-30h', 100, 5, 1.00, 0.00300, 0.00075, 0.00015, 0.00010, 0.00030, 4.00, 0.01200, 1.20, 'kraken', 'onchain', datetime('now', '-30 hours'), datetime('now', '-30 hours'), 0),
-			('bisq', 'sell', 95, 0.4, 0.4, 'Revolut', 'active-ask-30m', 100, 5, 0.26, 0.00104, 0.00100, NULL, 0.00004, 0.00040, 4.74, 0.01896, 1.90, 'kraken', 'onchain', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
-			('bisq', 'buy', 105, 0.5, 0.5, 'SEPA', 'old-premium', 100, 5, 1.00, 0.00500, 0.00125, 0.00015, 0.00010, 0.00050, 4.00, 0.02000, 2.00, 'kraken', 'onchain', datetime('now', '-200 hours'), datetime('now', '-200 hours'), 0)
+			('bisq', 'buy', 105, 0.1, 0.1, 'Revolut', 'premium-30m', 100, 5, 1.00, 0.00100, 0.00025, 0.00015, 0.00010, 0.00010, 4.00, 0.00400, 0.40, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
+			('bisq', 'sell', 95, 0.2, 0.2, 'Wise', 'premium-5h', 100, 5, 0.37, 0.00074, 0.00050, NULL, 0.00004, 0.00020, 4.63, 0.00926, 0.93, 'kraken', 'onchain', 'analyzed', datetime('now', '-7 hours'), datetime('now', '-5 hours'), 0),
+			('bisq', 'buy', 105, 0.3, 0.3, 'SEPA', 'premium-30h', 100, 5, 1.00, 0.00300, 0.00075, 0.00015, 0.00010, 0.00030, 4.00, 0.01200, 1.20, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 hours'), datetime('now', '-30 hours'), 0),
+			('bisq', 'sell', 95, 0.4, 0.4, 'Revolut', 'active-ask-30m', 100, 5, 0.26, 0.00104, 0.00100, NULL, 0.00004, 0.00040, 4.74, 0.01896, 1.90, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
+			('bisq', 'buy', 105, 0.5, 0.5, 'SEPA', 'old-premium', 100, 5, 1.00, 0.00500, 0.00125, 0.00015, 0.00010, 0.00050, 4.00, 0.02000, 2.00, 'kraken', 'onchain', 'analyzed', datetime('now', '-200 hours'), datetime('now', '-200 hours'), 0)
 	`); err != nil {
 		t.Fatalf("insert offers: %v", err)
 	}

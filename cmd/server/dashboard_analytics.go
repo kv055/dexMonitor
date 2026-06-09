@@ -184,7 +184,7 @@ func loadGeneralStatsContextUncachedForParams(p dashboardAnalyticsParams) (gener
 
 func loadClosedOffers168h() ([]map[string]any, error) {
 	rows, err := db.Query(
-		rebind("SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? ORDER BY last_seen DESC"),
+		rebind(closedAnalyzedOffersQuery),
 		time.Now().Add(-168*time.Hour),
 	)
 	if err != nil {

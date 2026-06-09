@@ -10,7 +10,8 @@ view.
 
 ## Runtime Role
 
-`dexMonitor/cmd/server` loads closed offers from the database, recomputes or
+`dexMonitor/cmd/server` loads analyzed closed offers from the database
+(`historical_analysis_status = 'analyzed'`, last seven days), recomputes or
 selects the relevant profitability mode, filters out unprofitable offers, and
 then passes those profitable offers into this package as `PremiumOrder` values.
 

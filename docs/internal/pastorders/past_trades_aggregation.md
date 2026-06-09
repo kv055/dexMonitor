@@ -36,8 +36,14 @@ The frontend fetches both endpoints in `useDashboard.ts` for `net_full` and
 
 `analyzeClosedOffers` in
 `dexUnifiedApi/cmd/snapshot/closed_offer_analysis.go` selects closed offers that
-have not yet been analyzed. It retries offers previously marked
-`ignored_no_lifecycle` if lifecycle rows have since arrived.
+have not yet been analyzed and whose `last_seen` is older than
+`CLOSED_OFFER_ANALYSIS_GRACE_CYCLES × SNAPSHOT_INTERVAL_MIN` (defaults: 3
+cycles × 1 minute). It retries offers previously marked `ignored_no_lifecycle`
+if lifecycle rows have since arrived.
+
+If a closed offer reappears before the grace window elapses, it is never
+analyzed. If it returns after analysis, the snapshot bulk `is_live` update clears
+closure fields on relive.
 
 For each selected offer, `analyzeSingleClosedOffer` runs one SQL aggregate over
 `order_lifecycle`:
@@ -69,10 +75,12 @@ non-premium noise.
 - `GET /api/past_order_stats`
 - `GET /api/past_profitable_orders`
 
-Both handlers load closed offers from the last seven days. Profitability is
-computed through `addPastOfferCostFieldsFull`, which derives the offer premium,
-selects a BTC trade size, uses stored historical averages when available, and
-builds full-volume and optionally capped results.
+Both handlers load closed offers from the last seven days with
+`historical_analysis_status = 'analyzed'`. Only offers that completed snapshot
+historical analysis and were marked profitable enter the taker-opportunity
+pipeline. Profitability is computed through `addPastOfferCostFieldsFull`, which
+derives the offer premium, selects a BTC trade size, uses stored historical
+averages when available, and builds full-volume and optionally capped results.
 
 `profitableInMode` decides whether a closed offer counts for a request. It uses
 the selected mode and requires the selected profit to be greater than zero.
@@ -92,7 +100,8 @@ It:
 
 - Reads query options such as excluded payment methods, excluded CEXes,
   confirmation count, fee tier, max fiat limit, premium mode, and fiat label.
-- Loads closed offers whose `last_seen` is within the last seven days.
+- Loads closed offers whose `last_seen` is within the last seven days and
+  `historical_analysis_status` is `analyzed`.
 - Calls `addPastOfferCostFieldsFull` for each offer.
 - Keeps only offers where `profitableInMode` is true.
 - Converts each included offer into `pastorders.PremiumOrder`.
@@ -112,6 +121,7 @@ are included.
 
 It:
 
+- Loads the same analyzed closed-offer set as `handlePastOrderStats`.
 - Applies payment-method exclusions before lifecycle aggregation.
 - Loads lifecycle aggregates for the remaining closed offer IDs.
 - Recomputes the requested profitability mode.
@@ -226,7 +236,7 @@ func handlePastOrderStats(w http.ResponseWriter, r *http.Request)
 ```
 
 Description:
-Serves `/api/past_order_stats`. It loads recent closed offers, computes
+Serves `/api/past_order_stats`. It loads recent analyzed closed offers, computes
 profitability for the requested mode, filters to profitable trades, converts
 them into `pastorders.PremiumOrder`, and returns timeframe totals from
 `pastorders.BuildStats`.
@@ -268,9 +278,9 @@ func handlePastProfitableOrders(w http.ResponseWriter, r *http.Request)
 ```
 
 Description:
-Serves `/api/past_profitable_orders`. It loads recent closed offers, applies
-payment-method exclusions, fetches lifecycle aggregates, filters profitable
-offers for the selected mode, and returns detailed rows.
+Serves `/api/past_profitable_orders`. It loads recent analyzed closed offers,
+applies payment-method exclusions, fetches lifecycle aggregates, filters
+profitable offers for the selected mode, and returns detailed rows.
 
 ### `buildPastProfitableOrderAPI`
 
@@ -290,7 +300,8 @@ Called by:
 
 ## Operational Notes
 
-- The monitor endpoints currently look back seven days from request time.
+- The monitor endpoints currently look back seven days from request time and
+  only include offers with `historical_analysis_status = 'analyzed'`.
 - Profitability is selected by `premium_mode`; supported modes are `net_full`
   and `net_capped`.
 - `net_capped` only differs from `net_full` when a positive max fiat limit is

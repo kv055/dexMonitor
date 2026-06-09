@@ -26,6 +26,22 @@ function tradeCostQuery(excludedCEXes: string[], feeTier: string, maxFiatLimit: 
   return q;
 }
 
+type LoadParams = {
+  hours: string;
+  cex: string;
+  excludedPaymentMethods: string[];
+  excludedCEXes: string[];
+  feeTier: string;
+  coupledHedge: boolean;
+  maxFiatLimit: number | null;
+};
+
+function buildLoadQueries(params: LoadParams) {
+  const excludedQuery = excludedPaymentQuery(params.excludedPaymentMethods);
+  const tcQuery = `${tradeCostQuery(params.excludedCEXes, params.feeTier, params.maxFiatLimit)}${!params.coupledHedge ? '&coupled_hedge=false' : ''}`;
+  return { excludedQuery, tcQuery };
+}
+
 function buildGeneralStatsData(
   overview: GeneralStatsOverviewData,
   openPremiums: OpenPremiumStats,
@@ -117,17 +133,17 @@ function hasCoreData(state: DashboardState): boolean {
 function dashboardReducer(state: DashboardState, action: DashboardAction): DashboardState {
   switch (action.type) {
     case 'CORE_LOAD_START':
-      return { ...state, loading: !hasCoreData(state), error: null, initialLoadComplete: false };
+      return { ...state, loading: !hasCoreData(state), error: null };
     case 'CORE_LOAD_SUCCESS':
-      return { ...state, ...action.payload, loading: false, error: null };
+      return { ...state, ...action.payload, loading: false, error: null, initialLoadComplete: true };
     case 'CORE_LOAD_ERROR':
       return { ...state, loading: false, error: action.error };
     case 'ANALYTICS_LOAD_START':
       return { ...state, analyticsLoading: true, analyticsError: null };
     case 'ANALYTICS_LOAD_SUCCESS':
-      return { ...state, ...action.payload, analyticsLoading: false, analyticsError: null, initialLoadComplete: true };
+      return { ...state, ...action.payload, analyticsLoading: false, analyticsError: null };
     case 'ANALYTICS_LOAD_ERROR':
-      return { ...state, analyticsLoading: false, analyticsError: action.error, initialLoadComplete: true };
+      return { ...state, analyticsLoading: false, analyticsError: action.error };
     case 'EXTEND_OHLC_SUCCESS':
       return { ...state, ohlcData: action.ohlcData };
   }
@@ -136,11 +152,11 @@ function dashboardReducer(state: DashboardState, action: DashboardAction): Dashb
 export function useDashboard() {
   const [state, dispatch] = useReducer(dashboardReducer, initialDashboardState);
 
-  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {
+  const loadCore = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {
     dispatch({ type: 'CORE_LOAD_START' });
 
-    const excludedQuery = excludedPaymentQuery(excludedPaymentMethods);
-    const tcQuery = `${tradeCostQuery(excludedCEXes, feeTier, maxFiatLimit)}${!coupledHedge ? '&coupled_hedge=false' : ''}`;
+    const params: LoadParams = { hours, cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit };
+    const { excludedQuery, tcQuery } = buildLoadQueries(params);
     try {
       const [s, o, ohlc] = await Promise.all([
         apiFetch<Stats>(`/api/stats?hours=${hours}`),
@@ -160,8 +176,13 @@ export function useDashboard() {
       const message = e instanceof Error ? e.message : String(e);
       dispatch({ type: 'CORE_LOAD_ERROR', error: `Failed to load dashboard data: ${message}` });
     }
+  }, []);
 
+  const loadAnalytics = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {
     dispatch({ type: 'ANALYTICS_LOAD_START' });
+
+    const params: LoadParams = { hours, cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit };
+    const { excludedQuery } = buildLoadQueries(params);
     try {
       const analytics = await apiPost<{
         general_stats_overview: GeneralStatsOverviewData;
@@ -212,6 +233,11 @@ export function useDashboard() {
     }
   }, []);
 
+  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {
+    await loadCore(hours, cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
+    await loadAnalytics(hours, cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
+  }, [loadCore, loadAnalytics]);
+
   const extendOhlc = useCallback(async (hours: number, cex: string = 'kraken', intervalMin: number = 1) => {
     try {
       const ohlc = await apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}&interval_min=${intervalMin}`);
@@ -223,8 +249,9 @@ export function useDashboard() {
 
   return {
     ...state,
-    error: state.error ?? state.analyticsError,
     load,
+    loadCore,
+    loadAnalytics,
     extendOhlc,
   };
 }
