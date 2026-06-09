@@ -515,7 +515,7 @@ func TestPastOfferAnalysisUsesStoredUncappedCosts(t *testing.T) {
 	offer["avg_estimated_profit_btc"] = 0.0037655
 	offer["network_fee_btc"] = 0.00001234
 
-	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 10_000)
+	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 10_000, nil)
 
 	full := got.Analysis.FullVolume
 	assertFloat(t, full.Premium.AvgTradeCostPercent, 1.2345)
@@ -544,7 +544,7 @@ func TestPastOfferCappedAnalysisKeepsStoredRouteAndFixedTransferCosts(t *testing
 	offer["network_fee_btc"] = 0.0003
 	offer["cex_withdraw_fee_btc"] = 0.0007
 	offer["hedge_transfer_minutes"] = int64(42)
-	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 5)
+	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 5, nil)
 	if got.Analysis.CappedVolume == nil {
 		t.Fatal("expected capped volume scenario")
 	}
@@ -581,7 +581,7 @@ func TestPastOfferCappedAskOmitsWithdrawalAndIncludesLongHedgeCosts(t *testing.T
 	offer["avg_ref_price"] = 100.0
 	offer["cex_withdraw_fee_btc"] = 0.0007
 	offer["network_fee_btc"] = 0.0003
-	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 5)
+	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 5, nil)
 	if got.Analysis.CappedVolume == nil {
 		t.Fatal("expected capped volume scenario")
 	}
@@ -929,6 +929,86 @@ func TestDashboardAnalyticsRESTBundlesPayload(t *testing.T) {
 	if resp.PremiumLifetimes.Raw.AvgOfferLifetimeMs == nil && resp.PremiumLifetimes.NetFull.AvgOfferLifetimeMs == nil {
 		t.Fatal("expected premium lifetimes in bundled response")
 	}
+	if resp.PastProfitableOrders == nil {
+		t.Fatal("expected past_profitable_orders in bundled response")
+	}
+}
+
+func TestDashboardAnalyticsSectionsFiltersPayload(t *testing.T) {
+	withTempOrdersDB(t)
+
+	body := `{"hours":48,"cex":"kraken","sections":["taker_orders"],"fiat":"EUR"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handleDashboardAnalytics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp dashboardAnalyticsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.GeneralStatsOverview.TotalOffers != 0 {
+		t.Fatalf("overview should be omitted, got total offers = %d", resp.GeneralStatsOverview.TotalOffers)
+	}
+	if len(resp.PastOrderStats.Timeframes) != 0 {
+		t.Fatal("taker stats should be omitted for taker_orders-only request")
+	}
+	if resp.PastProfitableOrders == nil {
+		t.Fatal("expected past_profitable_orders for taker_orders section")
+	}
+}
+
+func TestDashboardAnalyticsOverviewSectionOmitsOrders(t *testing.T) {
+	withTempOrdersDB(t)
+
+	body := `{"hours":48,"cex":"kraken","sections":["overview","taker_stats"],"fiat":"EUR"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handleDashboardAnalytics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp dashboardAnalyticsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.GeneralStatsOverview.TotalOffers == 0 {
+		t.Fatal("expected overview stats in overview section response")
+	}
+	if resp.PastProfitableOrders != nil {
+		t.Fatalf("expected orders omitted, got %d orders", len(resp.PastProfitableOrders))
+	}
+}
+
+func TestDashboardAnalyticsBuildPerformanceBudget(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping analytics performance budget in short mode")
+	}
+	withTempOrdersDB(t)
+
+	body := `{"hours":48,"cex":"kraken","max_fiat_limit":300,"fiat":"EUR"}`
+	start := time.Now()
+	req := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	handleDashboardAnalytics(rec, req)
+	elapsed := time.Since(start)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("analytics build took %v, want <= 2s on temp DB", elapsed)
+	}
 }
 
 func TestGeneralStatsPastPremiumsRESTIncludesFixedWindows(t *testing.T) {
@@ -1132,7 +1212,7 @@ func TestBuildPastPremiumStatsIgnoresNonPremiumOffers(t *testing.T) {
 		},
 	}
 
-	stats := buildPastPremiumStats(offers, map[int64]pastLifecycleAggregate{}, now, nil, 0, 0, nil, "")
+	stats := buildPastPremiumStats(offers, map[int64]pastLifecycleAggregate{}, now, nil, 0, 0, nil, "", nil)
 	frame := stats[0] // 6h
 	if len(frame.Modes.Raw) != 2 {
 		t.Fatalf("6h raw len = %d, want 2", len(frame.Modes.Raw))
@@ -1189,7 +1269,7 @@ func TestBuildPremiumLifetimeStatsIgnoresNonPremiumOffers(t *testing.T) {
 		},
 	}
 
-	stats := buildPremiumLifetimeStats(offers, map[int64]pastLifecycleAggregate{}, now, nil, 0, 0, nil, "")
+	stats := buildPremiumLifetimeStats(offers, map[int64]pastLifecycleAggregate{}, now, nil, 0, 0, nil, "", nil)
 	if stats.Raw.AvgOfferLifetimeMs == nil {
 		t.Fatal("raw lifetime avg is nil")
 	}
@@ -1392,6 +1472,22 @@ func TestBuildOpenPremiumStatsIgnoresNonPremiumOffers(t *testing.T) {
 	}
 }
 
+func resetAnalyticsCaches() {
+	analyticsResultCache.Lock()
+	analyticsResultCache.entries = nil
+	analyticsResultCache.Unlock()
+
+	generalStatsCache.Lock()
+	generalStatsCache.entries = nil
+	generalStatsCache.Unlock()
+
+	lifecycleAggCache.Lock()
+	lifecycleAggCache.key = ""
+	lifecycleAggCache.result = nil
+	lifecycleAggCache.expiry = time.Time{}
+	lifecycleAggCache.Unlock()
+}
+
 func withTempOrdersDB(t *testing.T) {
 	t.Helper()
 
@@ -1402,7 +1498,10 @@ func withTempOrdersDB(t *testing.T) {
 		db = oldDB
 		tradeRouteOptimizer = oldOptimizer
 		tradeCostEstimators = oldEstimators
+		resetAnalyticsCaches()
 	})
+
+	resetAnalyticsCaches()
 
 	testDB, err := sql.Open("sqlite", t.TempDir()+"/orders.db")
 	if err != nil {

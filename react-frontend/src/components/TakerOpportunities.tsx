@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PastOrderStats, PastProfitableOrder, TakerOpportunityMode } from '../types';
+import { usePreferences } from '../hooks/usePreferences';
 import { useTimezone } from '../hooks/useTimezone';
 import { durationMinutes, formatDateTimeLabel, parseUtcTimestamp } from '../utils/formatters';
 import { LoadingSpinner } from './LoadingSpinner';
@@ -10,9 +11,6 @@ interface Props {
   statsNetCapped: PastOrderStats | null;
   statsAllNetCapped: PastOrderStats | null;
   orders: PastProfitableOrder[];
-  ordersAll: PastProfitableOrder[];
-  ordersNetCapped: PastProfitableOrder[];
-  ordersAllNetCapped: PastProfitableOrder[];
   loading: boolean;
   maxFiatLimit: number | null;
 }
@@ -70,6 +68,15 @@ function pickScenario(order: PastProfitableOrder, mode: TakerOpportunityMode) {
     return order.analysis.capped_volume;
   }
   return order.analysis.full_volume;
+}
+
+function isProfitableInMode(order: PastProfitableOrder, mode: TakerOpportunityMode): boolean {
+  return (pickScenario(order, mode).profit.avg_btc ?? 0) > 0;
+}
+
+function isPaymentMethodExcluded(method: string | null | undefined, excludedMethods: string[]): boolean {
+  if (!method || excludedMethods.length === 0) return false;
+  return excludedMethods.includes(method);
 }
 
 function orderDurationMinutes(order: PastProfitableOrder): number {
@@ -684,8 +691,9 @@ function buildExpandedDetailItems(
   return items;
 }
 
-export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNetCapped, orders, ordersAll, ordersNetCapped, ordersAllNetCapped, loading, maxFiatLimit }: Props) {
+export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNetCapped, orders, loading, maxFiatLimit }: Props) {
   const { timezone } = useTimezone();
+  const { excludedMethods } = usePreferences();
   const [initialFilters] = useState(readPersistedInsightsFilters);
   const [referenceNowMs] = useState(() => Date.now());
   const [selectedTimeframe, setSelectedTimeframe] = useState(initialFilters.selectedTimeframe);
@@ -694,7 +702,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   const [mode, setMode] = useState<TakerOpportunityMode>(initialFilters.mode);
   const [showAllMethods, setShowAllMethods] = useState(initialFilters.showAllMethods);
   const [sortBy, setSortBy] = useState<ProfitableOrderSortKey>(initialFilters.sortBy);
-  const [durationRange, setDurationRange] = useState<[number, number]>([0, 0]);
+  const [durationRange, setDurationRange] = useState<[number, number] | null>(null);
   const [profitFiatRangeCents, setProfitFiatRangeCents] = useState<[number, number] | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const persistedDurationRef = useRef({
@@ -707,17 +715,21 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   });
   const durationBoundsInitializedRef = useRef(false);
   const profitFiatBoundsInitializedRef = useRef(false);
+  const lastProfitFiatBoundsRef = useRef<{ minCents: number; maxCents: number } | null>(null);
   const profitFiatModeRef = useRef(mode);
 
   const hasExcluded = (stats?.excluded_payment_methods.length ?? 0) > 0;
   const statsByMode = mode === 'net_capped'
     ? { filtered: statsNetCapped, all: statsAllNetCapped }
     : { filtered: stats, all: statsAll };
-  const ordersByMode = mode === 'net_capped'
-    ? { filtered: ordersNetCapped, all: ordersAllNetCapped }
-    : { filtered: orders, all: ordersAll };
   const activeStats = showAllMethods && hasExcluded ? statsByMode.all : statsByMode.filtered;
-  const activeOrders = showAllMethods && hasExcluded ? ordersByMode.all : ordersByMode.filtered;
+  const activeOrders = useMemo(() => {
+    let list = orders.filter(order => isProfitableInMode(order, mode));
+    if (!showAllMethods && hasExcluded) {
+      list = list.filter(order => !isPaymentMethodExcluded(order.payment_method, excludedMethods));
+    }
+    return list;
+  }, [orders, mode, showAllMethods, hasExcluded, excludedMethods]);
 
   const fiat = activeStats?.fiat_currency || 'EUR';
   const selected = !activeStats
@@ -778,11 +790,15 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
         }
         return [durationBounds.min, durationBounds.max];
       }
-      return clampNumericRange(prev, durationBounds);
+      return clampNumericRange(
+        prev ?? [durationBounds.min, durationBounds.max],
+        durationBounds,
+      );
     });
   }, [durationBounds]);
 
   const ordersAfterDurationFilter = useMemo(() => {
+    if (durationRange == null) return ordersBeforeDurationFilter;
     const [lo, hi] = durationRange;
     return ordersBeforeDurationFilter.filter(order => {
       const mins = orderDurationMinutes(order);
@@ -804,25 +820,38 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
       profitFiatBoundsInitializedRef.current = false;
     }
 
+    const bounds = { min: profitFiatBounds.minCents, max: profitFiatBounds.maxCents };
+    const lastBounds = lastProfitFiatBoundsRef.current;
+    const boundsChanged = lastBounds != null
+      && (lastBounds.minCents !== bounds.min || lastBounds.maxCents !== bounds.max);
+
     setProfitFiatRangeCents(prev => {
-      const bounds = { min: profitFiatBounds.minCents, max: profitFiatBounds.maxCents };
       if (modeChanged || !profitFiatBoundsInitializedRef.current) {
         profitFiatBoundsInitializedRef.current = true;
         const { minCents, maxCents } = persistedProfitFiatRef.current;
         if (minCents != null && maxCents != null) {
           return clampNumericRange([minCents, maxCents], bounds);
         }
-        return [profitFiatBounds.minCents, profitFiatBounds.maxCents];
+        return [bounds.min, bounds.max];
       }
       if (prev == null) {
-        return [profitFiatBounds.minCents, profitFiatBounds.maxCents];
+        return [bounds.min, bounds.max];
+      }
+      if (boundsChanged && prev[0] === lastBounds!.minCents && prev[1] === lastBounds!.maxCents) {
+        return [bounds.min, bounds.max];
       }
       return clampNumericRange(prev, bounds);
     });
-  }, [mode, profitFiatBounds]);
+
+    lastProfitFiatBoundsRef.current = {
+      minCents: profitFiatBounds.minCents,
+      maxCents: profitFiatBounds.maxCents,
+    };
+  }, [mode, profitFiatBounds, durationRange]);
 
   useLayoutEffect(() => {
     const atFullDurationRange = durationBounds.hasData
+      && durationRange != null
       && durationRange[0] === durationBounds.min
       && durationRange[1] === durationBounds.max;
     const atFullProfitRange = profitFiatBounds.hasData
@@ -836,8 +865,12 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
       mode,
       showAllMethods,
       sortBy,
-      durationMin: !durationBounds.hasData || atFullDurationRange ? null : durationRange[0],
-      durationMax: !durationBounds.hasData || atFullDurationRange ? null : durationRange[1],
+      durationMin: !durationBounds.hasData || atFullDurationRange || durationRange == null
+        ? null
+        : durationRange[0],
+      durationMax: !durationBounds.hasData || atFullDurationRange || durationRange == null
+        ? null
+        : durationRange[1],
       profitFiatMin: !profitFiatBounds.hasData || atFullProfitRange || profitFiatRangeCents == null
         ? null
         : profitFiatFromCents(profitFiatRangeCents[0]),
@@ -901,6 +934,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
     persistedDurationRef.current = { min: null, max: null };
     persistedProfitFiatRef.current = { minCents: null, maxCents: null };
     profitFiatBoundsInitializedRef.current = false;
+    lastProfitFiatBoundsRef.current = null;
     if (durationBounds.hasData) {
       setDurationRange([durationBounds.min, durationBounds.max]);
     }
@@ -984,10 +1018,10 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
             description="Filter profitable trades by how long the offer was live"
             min={durationBounds.min}
             max={durationBounds.max}
-            value={durationRange}
+            value={durationRange ?? [durationBounds.min, durationBounds.max]}
             onChange={setDurationRange}
             formatValue={formatDurationMinutes}
-            disabled={!durationBounds.hasData}
+            disabled={!durationBounds.hasData || durationRange == null}
             disabledMessage="No duration data in this window"
           />
           <DualRangeFilter

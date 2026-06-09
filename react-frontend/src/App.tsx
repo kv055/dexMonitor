@@ -121,32 +121,29 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastProfitableOrders, pastProfitableOrdersAll, pastProfitableOrdersNetCapped, pastProfitableOrdersAllNetCapped, generalStats, loading, load }: {
+function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastProfitableOrders, generalStats, analyticsLoading, loadAnalytics }: {
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
   pastOrderStatsNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsNetCapped'];
   pastOrderStatsAllNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsAllNetCapped'];
   pastProfitableOrders: ReturnType<typeof useDashboard>['pastProfitableOrders'];
-  pastProfitableOrdersAll: ReturnType<typeof useDashboard>['pastProfitableOrdersAll'];
-  pastProfitableOrdersNetCapped: ReturnType<typeof useDashboard>['pastProfitableOrdersNetCapped'];
-  pastProfitableOrdersAllNetCapped: ReturnType<typeof useDashboard>['pastProfitableOrdersAllNetCapped'];
   generalStats: ReturnType<typeof useDashboard>['generalStats'];
-  loading: boolean;
-  load: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
+  analyticsLoading: boolean;
+  loadAnalytics: ReturnType<typeof useDashboard>['loadAnalytics'];
 }) {
   const { filters } = useFilters();
   const { excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit } = usePreferences();
 
   useEffect(() => {
-    load(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
-  }, [filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, load]);
+    loadAnalytics(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
+  }, [filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadAnalytics]);
 
   return (
     <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
       {/* Top — statistics */}
       <div className="lg:flex-none bg-surface border border-border rounded-lg px-2 py-1.5">
         <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-1 block">General Statistics</span>
-        <GeneralStats stats={generalStats} loading={loading} />
+        <GeneralStats stats={generalStats} loading={analyticsLoading} />
       </div>
       <div className="lg:flex-1 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
         <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2">Taker Opportunities</span>
@@ -156,10 +153,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           statsNetCapped={pastOrderStatsNetCapped}
           statsAllNetCapped={pastOrderStatsAllNetCapped}
           orders={pastProfitableOrders}
-          ordersAll={pastProfitableOrdersAll}
-          ordersNetCapped={pastProfitableOrdersNetCapped}
-          ordersAllNetCapped={pastProfitableOrdersAllNetCapped}
-          loading={loading}
+          loading={analyticsLoading}
           maxFiatLimit={maxFiatLimit}
         />
       </div>
@@ -189,16 +183,13 @@ function AppShell() {
     pastOrderStatsNetCapped,
     pastOrderStatsAllNetCapped,
     pastProfitableOrders,
-    pastProfitableOrdersAll,
-    pastProfitableOrdersNetCapped,
-    pastProfitableOrdersAllNetCapped,
     generalStats,
     ohlcData,
     lastUpdatedAt,
     error,
     loading,
     analyticsLoading,
-    load,
+    loadAnalytics,
     loadCore,
     extendOhlc,
     initialLoadComplete,
@@ -257,12 +248,9 @@ function AppShell() {
             pastOrderStatsNetCapped={pastOrderStatsNetCapped}
             pastOrderStatsAllNetCapped={pastOrderStatsAllNetCapped}
             pastProfitableOrders={pastProfitableOrders}
-            pastProfitableOrdersAll={pastProfitableOrdersAll}
-            pastProfitableOrdersNetCapped={pastProfitableOrdersNetCapped}
-            pastProfitableOrdersAllNetCapped={pastProfitableOrdersAllNetCapped}
             generalStats={generalStats}
-            loading={analyticsLoading}
-            load={load}
+            analyticsLoading={analyticsLoading}
+            loadAnalytics={loadAnalytics}
           />
         )}
 

@@ -507,7 +507,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	result := make([]pastOfferAPI, 0, len(filteredOffers))
 	for _, o := range filteredOffers {
 		id := int64(offerFloat(o, "id"))
-		result = append(result, buildPastOfferAPI(o, lifecycleAgg[id], requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR))
+		result = append(result, buildPastOfferAPI(o, lifecycleAgg[id], requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR, nil))
 	}
 
 	writeJSON(w, result)
@@ -634,6 +634,7 @@ func enrichLifecycleSamplesForCapped(agg map[int64]pastLifecycleAggregate, offer
 	if len(needIDs) == 0 {
 		return
 	}
+	logLargeCappedSampleLoad(needIDs)
 	if lifecycleRepo.DB != db && db != nil {
 		lifecycleRepo = lifecycle.NewRepository(db)
 	}
@@ -649,54 +650,14 @@ func enrichLifecycleSamplesForCapped(agg map[int64]pastLifecycleAggregate, offer
 }
 
 func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
-	excludedPaymentMethods := queryExcludedPaymentMethods(r)
-	excludedCEXes := queryExcludedCEXes(r)
-	requiredConfirmations := queryConfirmations(r)
-	feeTier := r.URL.Query().Get("fee_tier")
-	maxFiatLimitEUR := queryMaxFiatLimitEUR(r)
-	premiumMode := queryTakerOpportunityMode(r)
-	fiatCurrency := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("fiat")))
-	if fiatCurrency == "" {
-		fiatCurrency = "EUR"
-	}
-
-	rows, err := db.Query(
-		rebind(closedAnalyzedOffersQuery),
-		time.Now().Add(-168*time.Hour),
-	)
+	p := pastTakerParamsFromRequest(r)
+	p.ApplyPaymentExclusions = len(p.ExcludePaymentMethods) > 0
+	stats, err := buildPastOrderStatsForQuery(p)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	defer rows.Close()
-
-	offers, err := scanOffers(rows)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-
-	profitableOrders := make([]pastorders.PremiumOrder, 0, len(offers))
-	for _, o := range offers {
-		analysis := addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
-		if !analysis.profitableInMode(premiumMode) {
-			continue
-		}
-		btcAmount, netProfitBTC := analysis.valuesForMode(premiumMode)
-		profitableOrders = append(profitableOrders, pastorders.PremiumOrder{
-			PaymentMethod:       offerString(o, "payment_method"),
-			LastSeen:            parseDBTime(offerString(o, "last_seen")),
-			BTCAmount:           btcAmount,
-			NetProfitBTC:        netProfitBTC,
-			NetProfitFiat:       netProfitBTC * analysis.refPrice,
-			BTCAmountCapped:     analysis.btcSizeCapped,
-			NetProfitBTCCapped:  analysis.estimatedProfitBTCCapped,
-			NetProfitFiatCapped: analysis.estimatedProfitBTCCapped * analysis.refPrice,
-			HasCap:              premiumMode == takerOpportunityModeNetCapped && analysis.hasCap,
-		})
-	}
-
-	writeJSON(w, pastorders.BuildStats(profitableOrders, time.Now(), fiatCurrency, excludedPaymentMethods))
+	writeJSON(w, stats)
 }
 
 type pastProfitableOrderSummary struct {
@@ -722,51 +683,13 @@ type pastProfitableOrderAPI struct {
 }
 
 func handlePastProfitableOrders(w http.ResponseWriter, r *http.Request) {
-	excludedPaymentMethods := queryExcludedPaymentMethods(r)
-	requiredConfirmations := queryConfirmations(r)
-	excludedCEXes := queryExcludedCEXes(r)
-	feeTier := queryFeeTier(r)
-	maxFiatLimitEUR := queryMaxFiatLimitEUR(r)
-	premiumMode := queryTakerOpportunityMode(r)
-
-	rows, err := db.Query(
-		rebind(closedAnalyzedOffersQuery),
-		time.Now().Add(-168*time.Hour),
-	)
+	p := pastTakerParamsFromRequest(r)
+	p.ApplyPaymentExclusions = len(p.ExcludePaymentMethods) > 0
+	result, err := buildPastProfitableOrdersForQuery(p)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
-	defer rows.Close()
-
-	offers, err := scanOffers(rows)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-
-	filteredOffers := make([]map[string]any, 0, len(offers))
-	ids := make([]int64, 0, len(offers))
-	for _, o := range offers {
-		if isPaymentMethodExcluded(offerString(o, "payment_method"), excludedPaymentMethods) {
-			continue
-		}
-		filteredOffers = append(filteredOffers, o)
-		ids = append(ids, int64(offerFloat(o, "id")))
-	}
-
-	lifecycleAgg := fetchPastOfferLifecycleAggregates(ids)
-	enrichLifecycleSamplesForCapped(lifecycleAgg, filteredOffers, maxFiatLimitEUR)
-	result := make([]pastProfitableOrderAPI, 0, len(filteredOffers))
-	for _, o := range filteredOffers {
-		analysis := addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
-		if !analysis.profitableInMode(premiumMode) {
-			continue
-		}
-		id := int64(offerFloat(o, "id"))
-		result = append(result, buildPastProfitableOrderAPI(o, lifecycleAgg[id], requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR, premiumMode))
-	}
-
 	writeJSON(w, result)
 }
 
@@ -899,11 +822,11 @@ func (ctx generalStatsContext) openPremiums() pastorders.OpenPremiumStats {
 }
 
 func (ctx generalStatsContext) pastPremiums(r *http.Request, lifecycleAgg map[int64]pastLifecycleAggregate) []pastorders.PastPremiumTimeframeStats {
-	return buildPastPremiumStats(ctx.offers, lifecycleAgg, ctx.now, ctx.excludedPaymentMethods, queryMaxFiatLimitEUR(r), queryConfirmations(r), queryExcludedCEXes(r), queryFeeTier(r))
+	return buildPastPremiumStats(ctx.offers, lifecycleAgg, ctx.now, ctx.excludedPaymentMethods, queryMaxFiatLimitEUR(r), queryConfirmations(r), queryExcludedCEXes(r), queryFeeTier(r), nil)
 }
 
 func (ctx generalStatsContext) premiumLifetimes(r *http.Request, lifecycleAgg map[int64]pastLifecycleAggregate) pastorders.PremiumLifetimeModes {
-	return buildPremiumLifetimeStats(ctx.offers, lifecycleAgg, ctx.now, ctx.excludedPaymentMethods, queryMaxFiatLimitEUR(r), queryConfirmations(r), queryExcludedCEXes(r), queryFeeTier(r))
+	return buildPremiumLifetimeStats(ctx.offers, lifecycleAgg, ctx.now, ctx.excludedPaymentMethods, queryMaxFiatLimitEUR(r), queryConfirmations(r), queryExcludedCEXes(r), queryFeeTier(r), nil)
 }
 
 func handleGeneralStatsOverview(w http.ResponseWriter, r *http.Request) {
@@ -1029,7 +952,7 @@ func buildOpenPremiumStats(sub liveSubscription, excludedPaymentMethods []string
 	}
 }
 
-func buildPastPremiumStats(offers []map[string]any, lifecycleAgg map[int64]pastLifecycleAggregate, now time.Time, excludedPaymentMethods []string, maxFiatLimitEUR float64, requiredConfirmations int, excludedCEXes []string, feeTier string) []pastorders.PastPremiumTimeframeStats {
+func buildPastPremiumStats(offers []map[string]any, lifecycleAgg map[int64]pastLifecycleAggregate, now time.Time, excludedPaymentMethods []string, maxFiatLimitEUR float64, requiredConfirmations int, excludedCEXes []string, feeTier string, opts *pastAnalyticsOpts) []pastorders.PastPremiumTimeframeStats {
 	excluded := make(map[string]struct{}, len(excludedPaymentMethods))
 	for _, method := range excludedPaymentMethods {
 		excluded[method] = struct{}{}
@@ -1114,8 +1037,7 @@ func buildPastPremiumStats(offers []map[string]any, lifecycleAgg map[int64]pastL
 				if avgRefPrice > 0 && fullTradeSizeBTC > 0 {
 					btcCap := maxFiatLimitEUR / avgRefPrice
 					if btcCap > 0 && fullTradeSizeBTC > btcCap {
-						_, cappedNet, _, _, _, _ := recomputeCappedLifecycleAverages(offer, agg.Samples, fullTradeSizeBTC, maxFiatLimitEUR)
-						cappedPremium = cappedNet
+						cappedPremium = cappedNetPremium(opts, offer, agg, fullTradeSizeBTC, maxFiatLimitEUR)
 					}
 				}
 			}
@@ -1140,7 +1062,7 @@ func buildPastPremiumStats(offers []map[string]any, lifecycleAgg map[int64]pastL
 	return stats
 }
 
-func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]pastLifecycleAggregate, now time.Time, excludedPaymentMethods []string, maxFiatLimitEUR float64, requiredConfirmations int, excludedCEXes []string, feeTier string) pastorders.PremiumLifetimeModes {
+func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]pastLifecycleAggregate, now time.Time, excludedPaymentMethods []string, maxFiatLimitEUR float64, requiredConfirmations int, excludedCEXes []string, feeTier string, opts *pastAnalyticsOpts) pastorders.PremiumLifetimeModes {
 	excluded := make(map[string]struct{}, len(excludedPaymentMethods))
 	for _, method := range excludedPaymentMethods {
 		excluded[method] = struct{}{}
@@ -1218,8 +1140,7 @@ func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]p
 			if avgRefPrice > 0 && fullTradeSizeBTC > 0 {
 				btcCap := maxFiatLimitEUR / avgRefPrice
 				if btcCap > 0 && fullTradeSizeBTC > btcCap {
-					_, cappedNet, _, _, _, _ := recomputeCappedLifecycleAverages(offer, agg.Samples, fullTradeSizeBTC, maxFiatLimitEUR)
-					cappedPremium = cappedNet
+					cappedPremium = cappedNetPremium(opts, offer, agg, fullTradeSizeBTC, maxFiatLimitEUR)
 				}
 			}
 		}
@@ -1477,7 +1398,7 @@ func addPastOfferCostFieldsFull(o map[string]any, requiredConfirmations int, exc
 	}
 }
 
-func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredConfirmations int, excludedCEXes []string, feeTier string, maxFiatLimitEUR float64) pastOfferAPI {
+func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredConfirmations int, excludedCEXes []string, feeTier string, maxFiatLimitEUR float64, opts *pastAnalyticsOpts) pastOfferAPI {
 	id := int64(offerFloat(o, "id"))
 	firstSeen := offerString(o, "first_seen")
 	lastSeen := offerString(o, "last_seen")
@@ -1564,8 +1485,19 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 		cappedTradeSizeBTC := tradecost.Round8(maxFiatLimitEUR / avgRefPrice)
 		if cappedTradeSizeBTC > 0 && fullTradeSizeBTC > cappedTradeSizeBTC {
 			cappedRep := buildCappedPastBreakdown(o, fullTradeSizeBTC, cappedTradeSizeBTC, avgRefPrice, avgPremiumPercent)
-			cappedAvgTradeCostPct, cappedAvgNetPct, cappedAvgProfitBTC, cappedAvgProfitFiat, cappedAvgTradeCostBTC, cappedAvgNetworkPct :=
-				recomputeCappedLifecycleAverages(o, agg.Samples, fullTradeSizeBTC, maxFiatLimitEUR)
+			var cappedAvgTradeCostPct, cappedAvgNetPct, cappedAvgProfitBTC, cappedAvgProfitFiat, cappedAvgTradeCostBTC, cappedAvgNetworkPct float64
+			if opts != nil && opts.cappedMemo != nil {
+				avg := opts.cappedMemo.get(o, agg, fullTradeSizeBTC)
+				cappedAvgTradeCostPct = avg.tradeCostPct
+				cappedAvgNetPct = avg.netPct
+				cappedAvgProfitBTC = avg.profitBTC
+				cappedAvgProfitFiat = avg.profitFiat
+				cappedAvgTradeCostBTC = avg.tradeCostBTC
+				cappedAvgNetworkPct = avg.networkPct
+			} else {
+				cappedAvgTradeCostPct, cappedAvgNetPct, cappedAvgProfitBTC, cappedAvgProfitFiat, cappedAvgTradeCostBTC, cappedAvgNetworkPct =
+					recomputeCappedLifecycleAverages(o, agg.Samples, fullTradeSizeBTC, maxFiatLimitEUR)
+			}
 			if cappedAvgProfitBTC == 0 {
 				cappedAvgTradeCostPct = tradecost.Round4(cappedRep.TotalCostPct)
 				cappedAvgNetPct = tradecost.Round4(cappedRep.EstimatedProfitPct)
@@ -1673,8 +1605,8 @@ func buildPastOfferCompactAPI(o map[string]any) pastOfferCompactAPI {
 	}
 }
 
-func buildPastProfitableOrderAPI(o map[string]any, agg pastLifecycleAggregate, requiredConfirmations int, excludedCEXes []string, feeTier string, maxFiatLimitEUR float64, mode takerOpportunityMode) pastProfitableOrderAPI {
-	pastOffer := buildPastOfferAPI(o, agg, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
+func buildPastProfitableOrderAPI(o map[string]any, agg pastLifecycleAggregate, requiredConfirmations int, excludedCEXes []string, feeTier string, maxFiatLimitEUR float64, mode takerOpportunityMode, opts *pastAnalyticsOpts) pastProfitableOrderAPI {
+	pastOffer := buildPastOfferAPI(o, agg, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR, opts)
 	recomputed := addPastOfferCostFieldsFull(o, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
 	tradeSizeBTC, netProfitBTC := recomputed.valuesForMode(mode)
 	summary := pastProfitableOrderSummary{
