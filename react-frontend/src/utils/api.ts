@@ -24,8 +24,8 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return res.json();
 }
 
-export async function apiFetch<T>(path: string): Promise<T> {
-  return request<T>(path);
+export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
+  return request<T>(path, init);
 }
 
 export async function apiPost<T>(path: string, body: unknown): Promise<T> {

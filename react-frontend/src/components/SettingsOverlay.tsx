@@ -184,7 +184,7 @@ export function SettingsOverlay({
     maxFiatLimit,
     setMaxFiatLimit,
   } = usePreferences();
-  const { config: tradeCostConfig } = useTradeCostConfig();
+  const { config: tradeCostConfig } = useTradeCostConfig(open);
   const excludedSet = new Set(excludedMethods);
   const excludedCEXSet = new Set(excludedCEXes);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());

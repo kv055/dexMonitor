@@ -1,4 +1,4 @@
-import { useCallback, useReducer } from 'react';
+import { useCallback, useReducer, useRef } from 'react';
 import { apiFetch, apiPost } from '../utils/api';
 import type {
   Offer,
@@ -40,6 +40,10 @@ function buildLoadQueries(params: LoadParams) {
   const excludedQuery = excludedPaymentQuery(params.excludedPaymentMethods);
   const tcQuery = `${tradeCostQuery(params.excludedCEXes, params.feeTier, params.maxFiatLimit)}${!params.coupledHedge ? '&coupled_hedge=false' : ''}`;
   return { excludedQuery, tcQuery };
+}
+
+function loadCoreKey(params: LoadParams): string {
+  return JSON.stringify(params);
 }
 
 function buildGeneralStatsData(
@@ -151,31 +155,58 @@ function dashboardReducer(state: DashboardState, action: DashboardAction): Dashb
 
 export function useDashboard() {
   const [state, dispatch] = useReducer(dashboardReducer, initialDashboardState);
+  const coreLoadRef = useRef<{
+    key: string;
+    controller: AbortController;
+    promise: Promise<void>;
+  } | null>(null);
 
   const loadCore = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {
+    const params: LoadParams = { hours, cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit };
+    const key = loadCoreKey(params);
+
+    const inFlight = coreLoadRef.current;
+    if (inFlight?.key === key) {
+      return inFlight.promise;
+    }
+
+    inFlight?.controller.abort();
+
+    const controller = new AbortController();
+    const { signal } = controller;
     dispatch({ type: 'CORE_LOAD_START' });
 
-    const params: LoadParams = { hours, cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit };
     const { excludedQuery, tcQuery } = buildLoadQueries(params);
-    try {
-      const [s, o, ohlc] = await Promise.all([
-        apiFetch<Stats>(`/api/stats?hours=${hours}`),
-        apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&compact=true&cex=${cex}${excludedQuery}${tcQuery}`),
-        apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`),
-      ]);
-      dispatch({
-        type: 'CORE_LOAD_SUCCESS',
-        payload: {
-          stats: s,
-          pastOffers: o,
-          ohlcData: ohlc,
-          lastUpdatedAt: new Date().toISOString(),
-        },
-      });
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      dispatch({ type: 'CORE_LOAD_ERROR', error: `Failed to load dashboard data: ${message}` });
-    }
+    const promise = (async () => {
+      try {
+        const [s, o, ohlc] = await Promise.all([
+          apiFetch<Stats>(`/api/stats?hours=${hours}`, { signal }),
+          apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&compact=true&cex=${cex}${excludedQuery}${tcQuery}`, { signal }),
+          apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}`, { signal }),
+        ]);
+        if (signal.aborted) return;
+        dispatch({
+          type: 'CORE_LOAD_SUCCESS',
+          payload: {
+            stats: s,
+            pastOffers: o,
+            ohlcData: ohlc,
+            lastUpdatedAt: new Date().toISOString(),
+          },
+        });
+      } catch (e: unknown) {
+        if (signal.aborted) return;
+        const message = e instanceof Error ? e.message : String(e);
+        dispatch({ type: 'CORE_LOAD_ERROR', error: `Failed to load dashboard data: ${message}` });
+      } finally {
+        if (coreLoadRef.current?.key === key) {
+          coreLoadRef.current = null;
+        }
+      }
+    })();
+
+    coreLoadRef.current = { key, controller, promise };
+    return promise;
   }, []);
 
   const loadAnalytics = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {

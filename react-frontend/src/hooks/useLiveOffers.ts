@@ -29,6 +29,7 @@ export function useLiveOffers() {
   const feeTierRef = useRef('');
   const coupledHedgeRef = useRef(true);
   const maxFiatLimitRef = useRef<number | null>(null);
+  const lastRefreshKeyRef = useRef('');
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -104,19 +105,26 @@ export function useLiveOffers() {
 
   useEffect(() => {
     mountedRef.current = true;
-    const session = ++sessionRef.current;
-    connect(session);
     return () => {
       mountedRef.current = false;
-      sessionRef.current = session + 1;
+      sessionRef.current += 1;
       wsRef.current?.close();
       stopPolling();
     };
-  }, [connect, stopPolling]);
+  }, [stopPolling]);
 
   // Called by MonitorView when filters.cex or trade cost settings change.
   // Reconnects WS so the server pushes a fresh snapshot with updated query params.
   const refreshForCex = useCallback((cex: string, excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {
+    const refreshKey = JSON.stringify({ cex, excludedCEXes, feeTier, coupledHedge, maxFiatLimit });
+    if (
+      refreshKey === lastRefreshKeyRef.current
+      && wsRef.current?.readyState === WebSocket.OPEN
+    ) {
+      return;
+    }
+    lastRefreshKeyRef.current = refreshKey;
+
     cexRef.current = cex;
     excludedCEXesRef.current = excludedCEXes;
     feeTierRef.current = feeTier;

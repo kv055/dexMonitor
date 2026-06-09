@@ -7,16 +7,29 @@ const defaultConfig: TradeCostConfig = {
   fee_tiers: [{ value: '', label: 'Auto (congestion-based)' }],
 };
 
-export function useTradeCostConfig(): { config: TradeCostConfig; loading: boolean } {
+export function useTradeCostConfig(enabled = true): { config: TradeCostConfig; loading: boolean } {
   const [config, setConfig] = useState<TradeCostConfig>(defaultConfig);
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(enabled);
 
   useEffect(() => {
+    if (!enabled) {
+      setLoading(false);
+      return;
+    }
+    let cancelled = false;
+    setLoading(true);
     apiFetch<TradeCostConfig>('/api/trade_cost_config')
-      .then(data => setConfig(data))
+      .then(data => {
+        if (!cancelled) setConfig(data);
+      })
       .catch(err => console.error('Failed to load trade cost config:', err))
-      .finally(() => setLoading(false));
-  }, []);
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [enabled]);
 
   return { config, loading };
 }

@@ -8,6 +8,8 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -160,6 +162,60 @@ func storedPastOfferFixture(direction string) map[string]any {
 		"price_type":                "fixed",
 		"best_route_cex":            "kraken",
 		"best_route_method":         "onchain",
+	}
+}
+
+func TestServeDistStaticSetsCacheControlHeaders(t *testing.T) {
+	oldFrontendDir := frontendDir
+	t.Cleanup(func() { frontendDir = oldFrontendDir })
+
+	root := t.TempDir()
+	assetsDir := filepath.Join(root, "assets")
+	if err := os.MkdirAll(assetsDir, 0o755); err != nil {
+		t.Fatalf("mkdir assets: %v", err)
+	}
+	brandDir := filepath.Join(root, "brand")
+	if err := os.MkdirAll(brandDir, 0o755); err != nil {
+		t.Fatalf("mkdir brand: %v", err)
+	}
+	for path, content := range map[string]string{
+		filepath.Join(assetsDir, "app.js"): "console.log('app')",
+		filepath.Join(brandDir, "logo.svg"): "<svg/>",
+		filepath.Join(root, "favicon.ico"): "ico",
+		filepath.Join(root, "index.html"): "<!doctype html><html></html>",
+	} {
+		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+			t.Fatalf("write %s: %v", path, err)
+		}
+	}
+	frontendDir = root
+
+	for _, tc := range []struct {
+		path   string
+		wantCC string
+	}{
+		{"/assets/app.js", "public, max-age=31536000, immutable"},
+		{"/brand/logo.svg", "public, max-age=86400"},
+		{"/favicon.ico", "no-cache"},
+	} {
+		t.Run(tc.path, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, tc.path, nil)
+			rec := httptest.NewRecorder()
+			serveDistStatic(rec, req)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("status = %d, want %d", rec.Code, http.StatusOK)
+			}
+			if got := rec.Header().Get("Cache-Control"); got != tc.wantCC {
+				t.Fatalf("Cache-Control = %q, want %q", got, tc.wantCC)
+			}
+		})
+	}
+
+	indexReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	indexRec := httptest.NewRecorder()
+	serveFrontend(indexRec, indexReq)
+	if indexRec.Header().Get("Cache-Control") != "no-cache" {
+		t.Fatalf("index Cache-Control = %q, want no-cache", indexRec.Header().Get("Cache-Control"))
 	}
 }
 
