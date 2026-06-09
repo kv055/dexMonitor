@@ -780,7 +780,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
       }
       return clampNumericRange(prev, durationBounds);
     });
-  }, [durationBounds.min, durationBounds.max, durationBounds.hasData]);
+  }, [durationBounds]);
 
   const ordersAfterDurationFilter = useMemo(() => {
     const [lo, hi] = durationRange;
@@ -796,21 +796,17 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   );
 
   useEffect(() => {
-    if (profitFiatModeRef.current !== mode) {
+    if (!profitFiatBounds.hasData) return;
+
+    const modeChanged = profitFiatModeRef.current !== mode;
+    if (modeChanged) {
       profitFiatModeRef.current = mode;
       profitFiatBoundsInitializedRef.current = false;
-      setProfitFiatRangeCents(null);
     }
-  }, [mode]);
 
-  useEffect(() => {
-    if (!profitFiatBounds.hasData) {
-      setProfitFiatRangeCents(null);
-      return;
-    }
     setProfitFiatRangeCents(prev => {
       const bounds = { min: profitFiatBounds.minCents, max: profitFiatBounds.maxCents };
-      if (!profitFiatBoundsInitializedRef.current) {
+      if (modeChanged || !profitFiatBoundsInitializedRef.current) {
         profitFiatBoundsInitializedRef.current = true;
         const { minCents, maxCents } = persistedProfitFiatRef.current;
         if (minCents != null && maxCents != null) {
@@ -823,11 +819,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
       }
       return clampNumericRange(prev, bounds);
     });
-  }, [
-    profitFiatBounds.minCents,
-    profitFiatBounds.maxCents,
-    profitFiatBounds.hasData,
-  ]);
+  }, [mode, profitFiatBounds]);
 
   useLayoutEffect(() => {
     const atFullDurationRange = durationBounds.hasData
