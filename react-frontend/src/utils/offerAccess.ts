@@ -1,4 +1,4 @@
-import type { AbortCostBreakdown, CostBreakdown, Offer, PremiumFilterMode } from '../types';
+import type { AbortCostBreakdown, CostBreakdown, Offer, PastProfitableOrder, PremiumFilterMode } from '../types';
 
 export function getOfferPrice(offer: Offer): number {
   return offer.pricing?.offer_price ?? offer.pricing?.avg_offer_price ?? offer.price ?? 0;
@@ -145,6 +145,34 @@ export function getDisplayCostBreakdown(offer: Offer, capped = false): CostBreak
     dex_fee_btc: dexFeeBTC,
     total_cost_pct: totalPct,
     total_cost_btc: totalBTC,
+  };
+}
+
+export function pastProfitableOrderAsOffer(order: PastProfitableOrder): Offer {
+  const raw = order.offer;
+  const num = (key: string): number | null => (typeof raw[key] === 'number' ? raw[key] as number : null);
+  const str = (key: string): string | null => (typeof raw[key] === 'string' ? raw[key] as string : null);
+
+  return {
+    id: order.id,
+    exchange: order.exchange,
+    direction: order.direction,
+    payment_method: order.payment_method ?? null,
+    offer_id: order.offer_id ?? null,
+    status: order.status,
+    pricing: order.pricing,
+    analysis: order.analysis,
+    price: num('price') ?? undefined,
+    price_type: str('price_type'),
+    first_seen: order.status.first_seen,
+    last_seen: order.status.last_seen,
+    is_live: order.status.is_live,
+    volume_limits: {
+      btc_min: num('btc_min'),
+      btc_max: num('btc_max'),
+      fiat_min: num('fiat_min'),
+      fiat_max: num('fiat_max'),
+    },
   };
 }
 

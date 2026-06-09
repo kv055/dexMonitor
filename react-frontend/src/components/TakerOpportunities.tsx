@@ -1,8 +1,28 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { PastOrderStats, PastProfitableOrder, TakerOpportunityMode } from '../types';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import type { Offer, PastOrderStats, PastProfitableOrder, TakerOpportunityMode } from '../types';
 import { usePreferences } from '../hooks/usePreferences';
 import { useTimezone } from '../hooks/useTimezone';
 import { durationMinutes, formatDateTimeLabel, parseUtcTimestamp } from '../utils/formatters';
+import {
+  getBtcMax,
+  getBtcMin,
+  getCappedTradeSizeBtc,
+  getDisplayAbortCost,
+  getDisplayCostBreakdown,
+  getFiatMax,
+  getFiatMin,
+  getFirstSeen,
+  getLastSeen,
+  getNetPremiumPercent,
+  getOfferPrice,
+  getPriceType,
+  getRawPremiumPercent,
+  getRefPrice,
+  hasCappedScenario,
+  isOfferLive,
+  pastProfitableOrderAsOffer,
+} from '../utils/offerAccess';
+import { CostBreakdownPanel, OfferTimeMeta, SizeToggle } from './OfferBreakdownPanel';
 import { LoadingSpinner } from './LoadingSpinner';
 
 interface Props {
@@ -25,12 +45,6 @@ function fmtFiat(value: number | null | undefined, currency: string): string {
   return value.toLocaleString('de-DE', { style: 'currency', currency, maximumFractionDigits: 2 });
 }
 
-function fmtPct(value: number | null | undefined): string {
-  if (value == null) return '—';
-  const sign = value > 0 ? '+' : '';
-  return `${sign}${value.toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}%`;
-}
-
 function labelForTimeframe(timeframe: string): string {
   switch (timeframe) {
     case '1h': return 'Past 1h';
@@ -51,14 +65,6 @@ function timeframeHours(timeframe: string): number {
     case '7d': return 168;
     default: return 24;
   }
-}
-
-function humanizeKey(key: string): string {
-  return key.replaceAll('_', ' ');
-}
-
-function sortOfferEntries(offer: Record<string, string | number | boolean | null>) {
-  return Object.entries(offer).sort(([a], [b]) => a.localeCompare(b));
 }
 
 type DirectionFilter = 'both' | 'buy' | 'sell';
@@ -360,17 +366,6 @@ function computeFilteredSummary(orders: PastProfitableOrder[], mode: TakerOpport
   };
 }
 
-function formatOfferValue(value: string | number | boolean | null): string {
-  if (value == null) return '—';
-  if (typeof value === 'boolean') return value ? 'true' : 'false';
-  if (typeof value === 'number') {
-    return Number.isInteger(value)
-      ? value.toLocaleString('de-DE')
-      : value.toLocaleString('de-DE', { maximumFractionDigits: 8 });
-  }
-  return value;
-}
-
 interface PillGroupProps {
   label: string;
   description: string;
@@ -599,96 +594,153 @@ function TradeRowMetric({ label, value, valueClassName = 'text-text' }: TradeRow
   );
 }
 
-interface DetailItem {
-  label: string;
-  value: string;
-  valueClassName?: string;
-  mono?: boolean;
+function offerNumber(raw: Record<string, string | number | boolean | null>, key: string): number | null {
+  const value = raw[key];
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
-function CompactDetailGrid({ items }: { items: DetailItem[] }) {
+function formatRange(minLabel: string, maxLabel: string): string | null {
+  if (minLabel === '—' && maxLabel === '—') return null;
+  if (minLabel !== '—' && maxLabel !== '—') return `${minLabel} – ${maxLabel}`;
+  if (minLabel !== '—') return `from ${minLabel}`;
+  return `up to ${maxLabel}`;
+}
+
+function PastOfferDetailSection({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
-      {items.map((item, index) => (
-        <div key={`${item.label}-${index}`} className="min-w-0 flex items-baseline gap-1 text-[0.68rem] leading-snug">
-          <span className="shrink-0 text-muted">{item.label}:</span>
-          <span
-            className={`min-w-0 truncate ${item.mono ? 'mono-nums tabular-nums' : ''} ${item.valueClassName ?? 'text-text'}`}
-            title={item.value}
-          >
-            {item.value}
-          </span>
-        </div>
-      ))}
+    <div className="rounded-md border border-border bg-bg px-2.5 py-2 text-[0.68rem]">
+      <div className="mb-1.5 text-[0.62rem] font-semibold uppercase tracking-widest text-muted">{title}</div>
+      <div className="flex flex-col gap-1.5">{children}</div>
     </div>
   );
 }
 
-const EXPANDED_OFFER_SKIP_KEYS = new Set([
-  'id',
-  'exchange',
-  'direction',
-  'payment_method',
-  'offer_id',
-  'first_seen',
-  'last_seen',
-  'duration',
-  'is_live',
-  'avg_net_premium_pct',
-  'avg_trade_cost_pct',
-  'best_route_cex',
-  'best_route_method',
-]);
+function PastOfferDetailRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <span className="text-muted shrink-0">{label}</span>
+      <span className="min-w-0 truncate text-right font-medium text-text mono-nums tabular-nums" title={hint ?? value}>
+        {value}
+      </span>
+    </div>
+  );
+}
 
-function buildExpandedDetailItems(
-  order: PastProfitableOrder,
-  activeScenario: ReturnType<typeof pickScenario>,
-  mode: TakerOpportunityMode,
-  fiat: string,
-  firstSeenLabel: string,
-  seenLabel: string,
-): DetailItem[] {
-  const netPct = activeScenario.premium.avg_net_percent;
-  const items: DetailItem[] = [
-    { label: 'Offer ID', value: order.offer_id || '—', mono: true },
-    { label: 'First seen', value: firstSeenLabel },
-    { label: 'Last seen', value: seenLabel },
-    {
-      label: 'Avg net %',
-      value: fmtPct(netPct),
-      valueClassName: (netPct ?? 0) > 0 ? 'text-green' : 'text-text',
-      mono: true,
-    },
-    {
-      label: 'Trade cost %',
-      value: fmtPct(activeScenario.premium.avg_trade_cost_percent),
-      mono: true,
-    },
-    {
-      label: 'Route',
-      value: `${activeScenario.route.cex} · ${activeScenario.route.settlement}`,
-    },
-  ];
+function PastOfferSupplementalDetails({ order, offer, fiat }: {
+  order: PastProfitableOrder;
+  offer: Offer;
+  fiat: string;
+}) {
+  const raw = order.offer;
+  const offerPrice = getOfferPrice(offer);
+  const refPrice = getRefPrice(offer)
+    ?? order.pricing.avg_ref_price
+    ?? offerNumber(raw, 'avg_ref_price');
+  const btcMin = getBtcMin(offer);
+  const btcMax = getBtcMax(offer);
+  const fiatMin = getFiatMin(offer);
+  const fiatMax = getFiatMax(offer);
+  const avgObservedBtc = offerNumber(raw, 'avg_btc_amount');
 
-  if (mode === 'net_capped' && order.analysis.capped_volume?.cap_fiat != null) {
-    items.push({
-      label: 'Cap',
-      value: fmtFiat(order.analysis.capped_volume.cap_fiat, fiat),
-      mono: true,
-    });
-  }
+  const btcRange = formatRange(fmtBTC(btcMin), fmtBTC(btcMax));
+  const fiatRange = formatRange(fmtFiat(fiatMin, fiat), fmtFiat(fiatMax, fiat));
 
-  for (const [key, value] of sortOfferEntries(order.offer)) {
-    if (EXPANDED_OFFER_SKIP_KEYS.has(key)) continue;
-    if (value == null || value === '') continue;
-    items.push({
-      label: humanizeKey(key),
-      value: formatOfferValue(value),
-      mono: typeof value === 'number',
-    });
-  }
+  const hasPricing = offerPrice > 0 || refPrice != null;
+  const hasVolume = btcRange != null || fiatRange != null || avgObservedBtc != null;
 
-  return items;
+  if (!hasPricing && !hasVolume) return null;
+
+  return (
+    <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
+      {hasPricing && (
+        <PastOfferDetailSection title="Pricing">
+          {offerPrice > 0 && (
+            <PastOfferDetailRow label="DEX offer price" value={fmtFiat(offerPrice, fiat)} />
+          )}
+          {refPrice != null && (
+            <PastOfferDetailRow label="CEX reference price" value={fmtFiat(refPrice, fiat)} />
+          )}
+        </PastOfferDetailSection>
+      )}
+
+      {hasVolume && (
+        <PastOfferDetailSection title="Volume limits">
+          {btcRange != null && (
+            <PastOfferDetailRow label="BTC range" value={btcRange} />
+          )}
+          {fiatRange != null && (
+            <PastOfferDetailRow label={`${fiat} range`} value={fiatRange} />
+          )}
+          {avgObservedBtc != null && (
+            <PastOfferDetailRow
+              label="Avg observed size"
+              value={fmtBTC(avgObservedBtc)}
+              hint="Lifecycle average while the offer was live"
+            />
+          )}
+        </PastOfferDetailSection>
+      )}
+    </div>
+  );
+}
+
+function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
+  order: PastProfitableOrder;
+  showCapped: boolean;
+  onToggleCapped: (value: boolean) => void;
+}) {
+  const { timezone } = useTimezone();
+  const offer = pastProfitableOrderAsOffer(order);
+  const refPrice = getRefPrice(offer);
+  const costBreakdown = getDisplayCostBreakdown(offer, showCapped);
+
+  return (
+    <div className="flex flex-col gap-3">
+      <OfferTimeMeta
+        firstSeen={getFirstSeen(offer)}
+        lastSeen={getLastSeen(offer)}
+        isLive={isOfferLive(offer)}
+        timezone={timezone}
+        priceType={getPriceType(offer)}
+      />
+      <div className="text-[0.68rem] text-muted" title="Internal offer ID">
+        <span className="uppercase tracking-wide text-[0.6rem] mr-1">ID</span>
+        <span className="text-text">{order.offer_id ?? order.id}</span>
+      </div>
+      {order.payment_method && (
+        <div className="text-[0.68rem] text-muted">
+          <span className="uppercase tracking-wide text-[0.6rem] mr-1">Payment</span>
+          <span className="text-text">{order.payment_method}</span>
+        </div>
+      )}
+      <PastOfferSupplementalDetails
+        order={order}
+        offer={offer}
+        fiat={order.pricing.fiat_currency || 'EUR'}
+      />
+      {costBreakdown ? (
+        <div className="flex flex-col gap-3">
+          {hasCappedScenario(offer) && (
+            <SizeToggle
+              showCapped={showCapped}
+              onToggle={onToggleCapped}
+              cappedBtc={getCappedTradeSizeBtc(offer)}
+              refPrice={refPrice}
+            />
+          )}
+          <CostBreakdownPanel
+            bd={costBreakdown}
+            abortCost={getDisplayAbortCost(offer, showCapped)}
+            priceDiffPct={getRawPremiumPercent(offer)}
+            netPremiumPct={getNetPremiumPercent(offer, showCapped)}
+            refPrice={refPrice}
+          />
+        </div>
+      ) : (
+        <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
+      )}
+    </div>
+  );
 }
 
 export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNetCapped, orders, loading, maxFiatLimit }: Props) {
@@ -705,6 +757,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   const [durationRange, setDurationRange] = useState<[number, number] | null>(null);
   const [profitFiatRangeCents, setProfitFiatRangeCents] = useState<[number, number] | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [expandedShowCapped, setExpandedShowCapped] = useState(false);
   const persistedDurationRef = useRef({
     min: initialFilters.durationMin,
     max: initialFilters.durationMax,
@@ -718,7 +771,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   const lastProfitFiatBoundsRef = useRef<{ minCents: number; maxCents: number } | null>(null);
   const profitFiatModeRef = useRef(mode);
 
-  const hasExcluded = (stats?.excluded_payment_methods.length ?? 0) > 0;
+  const hasExcluded = (stats?.excluded_payment_methods?.length ?? 0) > 0;
   const statsByMode = mode === 'net_capped'
     ? { filtered: statsNetCapped, all: statsAllNetCapped }
     : { filtered: stats, all: statsAll };
@@ -931,6 +984,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
     setMode(DEFAULT_INSIGHTS_FILTERS.mode);
     setSortBy(DEFAULT_INSIGHTS_FILTERS.sortBy);
     setExpandedId(null);
+    setExpandedShowCapped(false);
     persistedDurationRef.current = { min: null, max: null };
     persistedProfitFiatRef.current = { minCents: null, maxCents: null };
     profitFiatBoundsInitializedRef.current = false;
@@ -1111,14 +1165,20 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
                 const isOpen = expandedId === order.id;
                 const activeScenario = pickScenario(order, mode);
                 const seenLabel = formatDateTimeLabel(order.status.last_seen ?? '', timezone);
-                const firstSeenLabel = formatDateTimeLabel(order.status.first_seen ?? '', timezone);
                 const paymentMethod = order.payment_method || 'Unknown method';
 
                 return (
                   <div key={order.id} className="border-b border-border last:border-0">
                     <button
                       type="button"
-                      onClick={() => setExpandedId(isOpen ? null : order.id)}
+                      onClick={() => {
+                        if (isOpen) {
+                          setExpandedId(null);
+                          return;
+                        }
+                        setExpandedId(order.id);
+                        setExpandedShowCapped(mode === 'net_capped' && !!order.analysis.capped_volume);
+                      }}
                       className={`w-full min-w-0 bg-transparent border-none px-3 py-2 text-left transition-colors ${isOpen ? 'bg-bg/40' : 'hover:bg-white/5'}`}
                     >
                       <div className="grid w-full min-w-0 grid-cols-[minmax(0,1.35fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.75fr)_minmax(0,0.85fr)_minmax(0,0.8fr)_1.25rem] items-center gap-2 sm:gap-3 text-[0.72rem]">
@@ -1139,16 +1199,11 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
                     </button>
 
                     {isOpen && (
-                      <div className="border-t border-border bg-bg/20 px-3 py-2">
-                        <CompactDetailGrid
-                          items={buildExpandedDetailItems(
-                            order,
-                            activeScenario,
-                            mode,
-                            fiat,
-                            firstSeenLabel,
-                            seenLabel,
-                          )}
+                      <div className="border-t border-border bg-bg/20 px-3 py-3">
+                        <PastOrderBreakdown
+                          order={order}
+                          showCapped={expandedShowCapped}
+                          onToggleCapped={setExpandedShowCapped}
                         />
                       </div>
                     )}
