@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Offer, PastOrderStats, PastProfitableOrder, TakerOpportunityMode } from '../types';
 import { usePreferences } from '../hooks/usePreferences';
 import { useTimezone } from '../hooks/useTimezone';
@@ -31,7 +32,8 @@ interface Props {
   statsNetCapped: PastOrderStats | null;
   statsAllNetCapped: PastOrderStats | null;
   orders: PastProfitableOrder[];
-  loading: boolean;
+  statsLoading: boolean;
+  ordersLoading: boolean;
   maxFiatLimit: number | null;
 }
 
@@ -743,7 +745,9 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
   );
 }
 
-export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNetCapped, orders, loading, maxFiatLimit }: Props) {
+export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNetCapped, orders, statsLoading, ordersLoading, maxFiatLimit }: Props) {
+  const deferredOrders = useDeferredValue(orders);
+  const ordersPending = deferredOrders !== orders;
   const { timezone } = useTimezone();
   const { excludedMethods } = usePreferences();
   const [initialFilters] = useState(readPersistedInsightsFilters);
@@ -770,6 +774,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   const profitFiatBoundsInitializedRef = useRef(false);
   const lastProfitFiatBoundsRef = useRef<{ minCents: number; maxCents: number } | null>(null);
   const profitFiatModeRef = useRef(mode);
+  const tradesListRef = useRef<HTMLDivElement>(null);
 
   const hasExcluded = (stats?.excluded_payment_methods?.length ?? 0) > 0;
   const statsByMode = mode === 'net_capped'
@@ -777,12 +782,12 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
     : { filtered: stats, all: statsAll };
   const activeStats = showAllMethods && hasExcluded ? statsByMode.all : statsByMode.filtered;
   const activeOrders = useMemo(() => {
-    let list = orders.filter(order => isProfitableInMode(order, mode));
+    let list = deferredOrders.filter(order => isProfitableInMode(order, mode));
     if (!showAllMethods && hasExcluded) {
       list = list.filter(order => !isPaymentMethodExcluded(order.payment_method, excludedMethods));
     }
     return list;
-  }, [orders, mode, showAllMethods, hasExcluded, excludedMethods]);
+  }, [deferredOrders, mode, showAllMethods, hasExcluded, excludedMethods]);
 
   const fiat = activeStats?.fiat_currency || 'EUR';
   const selected = !activeStats
@@ -970,6 +975,17 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
     [filteredOrders, sortBy, mode],
   );
 
+  const rowVirtualizer = useVirtualizer({
+    count: sortedOrders.length,
+    getScrollElement: () => tradesListRef.current,
+    estimateSize: index => (expandedId === sortedOrders[index]?.id ? 720 : 44),
+    overscan: 12,
+  });
+
+  useEffect(() => {
+    rowVirtualizer.measure();
+  }, [expandedId, sortedOrders.length, rowVirtualizer]);
+
   const toggleExchangeFilter = useCallback((exchange: string) => {
     setDisabledExchanges(prev =>
       prev.includes(exchange) ? prev.filter(name => name !== exchange) : [...prev, exchange],
@@ -1007,7 +1023,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
     profitFiatBounds.maxCents,
   ]);
 
-  if (loading && !stats) {
+  if (statsLoading && !stats) {
     return (
       <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
         <LoadingSpinner label="Loading taker opportunities" />
@@ -1036,7 +1052,14 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
 
   return (
     <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
-      {loading && <LoadingSpinner label="Loading taker opportunities" />}
+      {ordersLoading && orders.length === 0 && (
+        <LoadingSpinner label="Loading profitable trades" />
+      )}
+      {ordersPending && orders.length > 0 && (
+        <div className="pointer-events-none absolute inset-x-0 top-0 z-10 border-b border-border bg-surface/80 px-3 py-1 text-[0.68rem] text-muted">
+          Updating profitable trades…
+        </div>
+      )}
       <div className="flex flex-1 min-h-0 flex-col gap-3 lg:flex-row">
         <aside className="flex shrink-0 flex-col gap-3 rounded-lg border border-border bg-bg/20 p-3 lg:w-72 xl:w-80 lg:overflow-y-auto">
           <SelectGroup
@@ -1157,59 +1180,77 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
               <span className="text-muted">{sortedOrders.length} in {labelForTimeframe(selected?.timeframe ?? selectedTimeframe).toLowerCase()}</span>
             </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+          <div ref={tradesListRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
             {sortedOrders.length === 0 ? (
               <div className="px-3 py-4 text-[0.75rem] text-muted">No profitable closed trades in this window for the selected net mode.</div>
             ) : (
-              sortedOrders.map(order => {
-                const isOpen = expandedId === order.id;
-                const activeScenario = pickScenario(order, mode);
-                const seenLabel = formatDateTimeLabel(order.status.last_seen ?? '', timezone);
-                const paymentMethod = order.payment_method || 'Unknown method';
+              <div
+                className="relative w-full"
+                style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+              >
+                {rowVirtualizer.getVirtualItems().map(virtualRow => {
+                  const order = sortedOrders[virtualRow.index];
+                  const isOpen = expandedId === order.id;
+                  const activeScenario = pickScenario(order, mode);
+                  const seenLabel = formatDateTimeLabel(order.status.last_seen ?? '', timezone);
+                  const paymentMethod = order.payment_method || 'Unknown method';
 
-                return (
-                  <div key={order.id} className="border-b border-border last:border-0">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (isOpen) {
-                          setExpandedId(null);
-                          return;
-                        }
-                        setExpandedId(order.id);
-                        setExpandedShowCapped(mode === 'net_capped' && !!order.analysis.capped_volume);
+                  return (
+                    <div
+                      key={order.id}
+                      data-index={virtualRow.index}
+                      ref={rowVirtualizer.measureElement}
+                      className="border-b border-border last:border-0"
+                      style={{
+                        position: 'absolute',
+                        top: 0,
+                        left: 0,
+                        width: '100%',
+                        transform: `translateY(${virtualRow.start}px)`,
                       }}
-                      className={`w-full min-w-0 bg-transparent border-none px-3 py-2 text-left transition-colors ${isOpen ? 'bg-bg/40' : 'hover:bg-white/5'}`}
                     >
-                      <div className="grid w-full min-w-0 grid-cols-[minmax(0,1.35fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.75fr)_minmax(0,0.85fr)_minmax(0,0.8fr)_1.25rem] items-center gap-2 sm:gap-3 text-[0.72rem]">
-                        <div className="flex min-w-0 items-center gap-1.5 overflow-hidden sm:gap-2">
-                          <span className="shrink-0 rounded border border-border bg-bg/50 px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase text-text">{order.exchange}</span>
-                          <span className="shrink-0 rounded border border-border/70 px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase text-muted">{order.direction}</span>
-                          <span className="min-w-0 truncate font-medium text-text" title={paymentMethod}>
-                            {paymentMethod}
-                          </span>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          if (isOpen) {
+                            setExpandedId(null);
+                            return;
+                          }
+                          setExpandedId(order.id);
+                          setExpandedShowCapped(mode === 'net_capped' && !!order.analysis.capped_volume);
+                        }}
+                        className={`w-full min-w-0 bg-transparent border-none px-3 py-2 text-left transition-colors ${isOpen ? 'bg-bg/40' : 'hover:bg-white/5'}`}
+                      >
+                        <div className="grid w-full min-w-0 grid-cols-[minmax(0,1.35fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.75fr)_minmax(0,0.85fr)_minmax(0,0.8fr)_1.25rem] items-center gap-2 sm:gap-3 text-[0.72rem]">
+                          <div className="flex min-w-0 items-center gap-1.5 overflow-hidden sm:gap-2">
+                            <span className="shrink-0 rounded border border-border bg-bg/50 px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase text-text">{order.exchange}</span>
+                            <span className="shrink-0 rounded border border-border/70 px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase text-muted">{order.direction}</span>
+                            <span className="min-w-0 truncate font-medium text-text" title={paymentMethod}>
+                              {paymentMethod}
+                            </span>
+                          </div>
+                          <TradeRowMetric label="Last seen" value={seenLabel} />
+                          <TradeRowMetric label="Duration" value={order.status.duration?.display || '—'} />
+                          <TradeRowMetric label="Size" value={fmtBTC(activeScenario.trade_size_btc)} />
+                          <TradeRowMetric label="Net BTC" value={fmtBTC(activeScenario.profit.avg_btc)} valueClassName="text-green" />
+                          <TradeRowMetric label={`Net ${fiat}`} value={fmtFiat(activeScenario.profit.avg_fiat, fiat)} />
+                          <span className="shrink-0 text-right text-muted">{isOpen ? '▲' : '▼'}</span>
                         </div>
-                        <TradeRowMetric label="Last seen" value={seenLabel} />
-                        <TradeRowMetric label="Duration" value={order.status.duration?.display || '—'} />
-                        <TradeRowMetric label="Size" value={fmtBTC(activeScenario.trade_size_btc)} />
-                        <TradeRowMetric label="Net BTC" value={fmtBTC(activeScenario.profit.avg_btc)} valueClassName="text-green" />
-                        <TradeRowMetric label={`Net ${fiat}`} value={fmtFiat(activeScenario.profit.avg_fiat, fiat)} />
-                        <span className="shrink-0 text-right text-muted">{isOpen ? '▲' : '▼'}</span>
-                      </div>
-                    </button>
+                      </button>
 
-                    {isOpen && (
-                      <div className="border-t border-border bg-bg/20 px-3 py-3">
-                        <PastOrderBreakdown
-                          order={order}
-                          showCapped={expandedShowCapped}
-                          onToggleCapped={setExpandedShowCapped}
-                        />
-                      </div>
-                    )}
-                  </div>
-                );
-              })
+                      {isOpen && (
+                        <div className="border-t border-border bg-bg/20 px-3 py-3">
+                          <PastOrderBreakdown
+                            order={order}
+                            showCapped={expandedShowCapped}
+                            onToggleCapped={setExpandedShowCapped}
+                          />
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
             )}
           </div>
         </div>

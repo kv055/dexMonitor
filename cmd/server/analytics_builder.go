@@ -24,8 +24,19 @@ var analyticsResultCache struct {
 }
 
 type analyticsResultCacheEntry struct {
-	response dashboardAnalyticsResponse
-	expiry   time.Time
+	response      dashboardAnalyticsResponse
+	expiry        time.Time
+	builtOverview bool
+	builtStats    bool
+	builtOrders   bool
+}
+
+type analyticsBuildTimings struct {
+	cacheHit        bool
+	loadContextMs   float64
+	buildOverviewMs float64
+	buildStatsMs    float64
+	buildOrdersMs   float64
 }
 
 type cappedLifecycleAverages struct {
@@ -194,8 +205,7 @@ func premiumOrderFromAnalysis(o map[string]any, analysis pastOfferAnalysis, mode
 	}
 }
 
-func (bc *analyticsBuildContext) buildTakerAnalytics() takerAnalyticsResult {
-	opts := &pastAnalyticsOpts{cappedMemo: bc.cappedMemo}
+func (bc *analyticsBuildContext) buildTakerStatsOnly() takerAnalyticsResult {
 	now := time.Now()
 	hasExclusions := len(bc.params.ExcludePaymentMethods) > 0
 
@@ -203,7 +213,6 @@ func (bc *analyticsBuildContext) buildTakerAnalytics() takerAnalyticsResult {
 	fullFiltered := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
 	cappedAll := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
 	cappedFiltered := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
-	orders := make([]pastProfitableOrderAPI, 0, len(bc.closedOffers))
 
 	for _, o := range bc.closedOffers {
 		analysis := addPastOfferCostFieldsFull(
@@ -229,20 +238,6 @@ func (bc *analyticsBuildContext) buildTakerAnalytics() takerAnalyticsResult {
 				cappedFiltered = append(cappedFiltered, po)
 			}
 		}
-
-		if analysis.profitableInMode(takerOpportunityModeNetFull) || analysis.profitableInMode(takerOpportunityModeNetCapped) {
-			id := int64(offerFloat(o, "id"))
-			orders = append(orders, buildPastProfitableOrderAPI(
-				o,
-				bc.lifecycleAgg[id],
-				bc.params.Confirmations,
-				bc.params.ExcludeCEXes,
-				bc.params.FeeTier,
-				bc.params.MaxFiatLimitEUR,
-				takerOpportunityModeNetFull,
-				opts,
-			))
-		}
 	}
 
 	excludedMethods := []string(nil)
@@ -255,86 +250,184 @@ func (bc *analyticsBuildContext) buildTakerAnalytics() takerAnalyticsResult {
 		statsFilteredFull:   pastorders.BuildStats(fullFiltered, now, bc.params.Fiat, excludedMethods),
 		statsAllCapped:      pastorders.BuildStats(cappedAll, now, bc.params.Fiat, nil),
 		statsFilteredCapped: pastorders.BuildStats(cappedFiltered, now, bc.params.Fiat, excludedMethods),
-		orders:              orders,
 	}
 }
 
-func (bc *analyticsBuildContext) buildResponse(p dashboardAnalyticsParams) dashboardAnalyticsResponse {
+func (bc *analyticsBuildContext) buildTakerOrdersOnly() []pastProfitableOrderAPI {
 	opts := &pastAnalyticsOpts{cappedMemo: bc.cappedMemo}
-	resp := dashboardAnalyticsResponse{}
+	orders := make([]pastProfitableOrderAPI, 0, len(bc.closedOffers))
 
-	if p.wantsSection(analyticsSectionOverview) {
-		resp.GeneralStatsOverview = bc.generalCtx.overview()
-		resp.OpenPremiums = bc.generalCtx.openPremiums()
-		resp.PastPremiums = buildPastPremiumStats(
-			bc.generalCtx.offers,
-			bc.lifecycleAgg,
-			bc.generalCtx.now,
-			bc.generalCtx.excludedPaymentMethods,
-			p.MaxFiatLimitEUR,
-			p.Confirmations,
-			p.ExcludeCEXes,
-			p.FeeTier,
-			opts,
+	for _, o := range bc.closedOffers {
+		analysis := addPastOfferCostFieldsFull(
+			o,
+			bc.params.Confirmations,
+			bc.params.ExcludeCEXes,
+			bc.params.FeeTier,
+			bc.params.MaxFiatLimitEUR,
 		)
-		resp.PremiumLifetimes = buildPremiumLifetimeStats(
-			bc.generalCtx.offers,
-			bc.lifecycleAgg,
-			bc.generalCtx.now,
-			bc.generalCtx.excludedPaymentMethods,
-			p.MaxFiatLimitEUR,
-			p.Confirmations,
-			p.ExcludeCEXes,
-			p.FeeTier,
+		if !analysis.profitableInMode(takerOpportunityModeNetFull) && !analysis.profitableInMode(takerOpportunityModeNetCapped) {
+			continue
+		}
+		id := int64(offerFloat(o, "id"))
+		orders = append(orders, buildPastProfitableOrderAPI(
+			o,
+			bc.lifecycleAgg[id],
+			bc.params.Confirmations,
+			bc.params.ExcludeCEXes,
+			bc.params.FeeTier,
+			bc.params.MaxFiatLimitEUR,
+			takerOpportunityModeNetFull,
 			opts,
-		)
+		))
 	}
-
-	if p.wantsSection(analyticsSectionTakerStats) || p.wantsSection(analyticsSectionTakerOrders) {
-		taker := bc.buildTakerAnalytics()
-		if p.wantsSection(analyticsSectionTakerStats) {
-			resp.PastOrderStatsAll = taker.statsAllFull
-			resp.PastOrderStats = taker.statsFilteredFull
-			resp.PastOrderStatsAllNetCapped = taker.statsAllCapped
-			resp.PastOrderStatsNetCapped = taker.statsFilteredCapped
-		}
-		if p.wantsSection(analyticsSectionTakerOrders) {
-			resp.PastProfitableOrders = taker.orders
-		}
-	}
-
-	return resp
+	return orders
 }
 
-func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnalyticsResponse, error) {
+func (bc *analyticsBuildContext) buildTakerAnalytics() takerAnalyticsResult {
+	result := bc.buildTakerStatsOnly()
+	result.orders = bc.buildTakerOrdersOnly()
+	return result
+}
+
+func (bc *analyticsBuildContext) applyOverviewSections(resp *dashboardAnalyticsResponse, p dashboardAnalyticsParams) {
+	opts := &pastAnalyticsOpts{cappedMemo: bc.cappedMemo}
+	resp.GeneralStatsOverview = bc.generalCtx.overview()
+	resp.OpenPremiums = bc.generalCtx.openPremiums()
+	resp.PastPremiums, resp.PremiumLifetimes = buildPastPremiumAndLifetimeStats(
+		bc.generalCtx.offers,
+		bc.lifecycleAgg,
+		bc.generalCtx.now,
+		bc.generalCtx.excludedPaymentMethods,
+		p.MaxFiatLimitEUR,
+		p.Confirmations,
+		p.ExcludeCEXes,
+		p.FeeTier,
+		opts,
+	)
+}
+
+func (bc *analyticsBuildContext) applyTakerStatsSections(resp *dashboardAnalyticsResponse) {
+	taker := bc.buildTakerStatsOnly()
+	resp.PastOrderStatsAll = taker.statsAllFull
+	resp.PastOrderStats = taker.statsFilteredFull
+	resp.PastOrderStatsAllNetCapped = taker.statsAllCapped
+	resp.PastOrderStatsNetCapped = taker.statsFilteredCapped
+}
+
+func (bc *analyticsBuildContext) applyTakerOrdersSection(resp *dashboardAnalyticsResponse) {
+	resp.PastProfitableOrders = bc.buildTakerOrdersOnly()
+}
+
+func (p dashboardAnalyticsParams) needsOverviewBuild() bool {
+	return len(p.Sections) == 0 || p.wantsSection(analyticsSectionOverview)
+}
+
+func (p dashboardAnalyticsParams) needsStatsBuild() bool {
+	return len(p.Sections) == 0 || p.wantsSection(analyticsSectionTakerStats)
+}
+
+func (p dashboardAnalyticsParams) needsOrdersBuild() bool {
+	return len(p.Sections) == 0 || p.wantsSection(analyticsSectionTakerOrders)
+}
+
+func analyticsSectionsSatisfied(p dashboardAnalyticsParams, entry analyticsResultCacheEntry) bool {
+	if p.needsOverviewBuild() && !entry.builtOverview {
+		return false
+	}
+	if p.needsStatsBuild() && !entry.builtStats {
+		return false
+	}
+	if p.needsOrdersBuild() && !entry.builtOrders {
+		return false
+	}
+	return true
+}
+
+func writeAnalyticsServerTiming(w http.ResponseWriter, timings analyticsBuildTimings) {
+	w.Header().Add("Server-Timing", fmt.Sprintf(
+		"cache;desc=\"hit=%t\", ctx;dur=%.1f, overview;dur=%.1f, stats;dur=%.1f, orders;dur=%.1f",
+		timings.cacheHit,
+		timings.loadContextMs,
+		timings.buildOverviewMs,
+		timings.buildStatsMs,
+		timings.buildOrdersMs,
+	))
+}
+
+func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnalyticsResponse, analyticsBuildTimings, error) {
+	timings := analyticsBuildTimings{}
 	cacheKey := p.analyticsResultCacheKey()
 	now := time.Now()
+
 	analyticsResultCache.Lock()
-	if entry, ok := analyticsResultCache.entries[cacheKey]; ok && now.Before(entry.expiry) {
+	entry, cached := analyticsResultCache.entries[cacheKey]
+	if cached && now.Before(entry.expiry) && analyticsSectionsSatisfied(p, entry) {
 		resp := filterDashboardAnalyticsResponse(entry.response, p)
 		analyticsResultCache.Unlock()
-		return resp, nil
+		timings.cacheHit = true
+		return resp, timings, nil
+	}
+
+	merged := dashboardAnalyticsResponse{}
+	builtOverview := false
+	builtStats := false
+	builtOrders := false
+	if cached && now.Before(entry.expiry) {
+		merged = entry.response
+		builtOverview = entry.builtOverview
+		builtStats = entry.builtStats
+		builtOrders = entry.builtOrders
 	}
 	analyticsResultCache.Unlock()
 
-	bc, err := loadAnalyticsBuildContext(p)
-	if err != nil {
-		return dashboardAnalyticsResponse{}, err
+	needOverview := p.needsOverviewBuild() && !builtOverview
+	needStats := p.needsStatsBuild() && !builtStats
+	needOrders := p.needsOrdersBuild() && !builtOrders
+	if !needOverview && !needStats && !needOrders {
+		timings.cacheHit = true
+		return filterDashboardAnalyticsResponse(merged, p), timings, nil
 	}
 
-	full := bc.buildResponse(dashboardAnalyticsParams{})
+	ctxStart := time.Now()
+	bc, err := loadAnalyticsBuildContext(p)
+	if err != nil {
+		return dashboardAnalyticsResponse{}, timings, err
+	}
+	timings.loadContextMs = float64(time.Since(ctxStart).Microseconds()) / 1000
+
+	if needOverview {
+		start := time.Now()
+		bc.applyOverviewSections(&merged, p)
+		timings.buildOverviewMs = float64(time.Since(start).Microseconds()) / 1000
+		builtOverview = true
+	}
+	if needStats {
+		start := time.Now()
+		bc.applyTakerStatsSections(&merged)
+		timings.buildStatsMs = float64(time.Since(start).Microseconds()) / 1000
+		builtStats = true
+	}
+	if needOrders {
+		start := time.Now()
+		bc.applyTakerOrdersSection(&merged)
+		timings.buildOrdersMs = float64(time.Since(start).Microseconds()) / 1000
+		builtOrders = true
+	}
 
 	analyticsResultCache.Lock()
 	if analyticsResultCache.entries == nil {
 		analyticsResultCache.entries = make(map[string]analyticsResultCacheEntry)
 	}
 	analyticsResultCache.entries[cacheKey] = analyticsResultCacheEntry{
-		response: full,
-		expiry:   now.Add(analyticsResultCacheTTL),
+		response:      merged,
+		expiry:        now.Add(analyticsResultCacheTTL),
+		builtOverview: builtOverview,
+		builtStats:    builtStats,
+		builtOrders:   builtOrders,
 	}
 	analyticsResultCache.Unlock()
 
-	return filterDashboardAnalyticsResponse(full, p), nil
+	return filterDashboardAnalyticsResponse(merged, p), timings, nil
 }
 
 type pastTakerQueryParams struct {

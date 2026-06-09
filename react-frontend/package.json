@@ -13,6 +13,7 @@
     "test:e2e:update": "playwright test --update-snapshots"
   },
   "dependencies": {
+    "@tanstack/react-virtual": "^3.14.2",
     "chart.js": "^4.5.1",
     "lightweight-charts": "^4.2.3",
     "react": "^19.2.4",

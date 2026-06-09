@@ -1,4 +1,4 @@
-import { useCallback, useReducer, useRef } from 'react';
+import { useCallback, useReducer, useRef, startTransition } from 'react';
 import { apiFetch, apiPost } from '../utils/api';
 import type {
   Offer,
@@ -109,7 +109,8 @@ interface DashboardState {
   error: string | null;
   analyticsError: string | null;
   loading: boolean;
-  analyticsLoading: boolean;
+  analyticsOverviewLoading: boolean;
+  analyticsOrdersLoading: boolean;
   initialLoadComplete: boolean;
 }
 
@@ -146,7 +147,8 @@ const initialDashboardState: DashboardState = {
   error: null,
   analyticsError: null,
   loading: true,
-  analyticsLoading: false,
+  analyticsOverviewLoading: false,
+  analyticsOrdersLoading: false,
   initialLoadComplete: false,
 };
 
@@ -163,13 +165,33 @@ function dashboardReducer(state: DashboardState, action: DashboardAction): Dashb
     case 'CORE_LOAD_ERROR':
       return { ...state, loading: false, error: action.error };
     case 'ANALYTICS_LOAD_START':
-      return { ...state, analyticsLoading: true, analyticsError: null };
+      return {
+        ...state,
+        analyticsOverviewLoading: true,
+        analyticsOrdersLoading: true,
+        analyticsError: null,
+      };
     case 'ANALYTICS_OVERVIEW_SUCCESS':
-      return { ...state, ...action.payload, analyticsError: null };
+      return {
+        ...state,
+        ...action.payload,
+        analyticsOverviewLoading: false,
+        analyticsError: null,
+      };
     case 'ANALYTICS_ORDERS_SUCCESS':
-      return { ...state, pastProfitableOrders: action.pastProfitableOrders, analyticsLoading: false, analyticsError: null };
+      return {
+        ...state,
+        pastProfitableOrders: action.pastProfitableOrders,
+        analyticsOrdersLoading: false,
+        analyticsError: null,
+      };
     case 'ANALYTICS_LOAD_ERROR':
-      return { ...state, analyticsLoading: false, analyticsError: action.error };
+      return {
+        ...state,
+        analyticsOverviewLoading: false,
+        analyticsOrdersLoading: false,
+        analyticsError: action.error,
+      };
     case 'EXTEND_OHLC_SUCCESS':
       return { ...state, ohlcData: action.ohlcData };
   }
@@ -180,6 +202,10 @@ export function useDashboard() {
   const coreLoadRef = useRef<{
     key: string;
     controller: AbortController;
+    promise: Promise<void>;
+  } | null>(null);
+  const analyticsLoadRef = useRef<{
+    key: string;
     promise: Promise<void>;
   } | null>(null);
 
@@ -232,50 +258,68 @@ export function useDashboard() {
   }, []);
 
   const loadAnalytics = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {
+    const params: LoadParams = { hours, cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit };
+    const key = loadCoreKey(params);
+
+    const inFlight = analyticsLoadRef.current;
+    if (inFlight?.key === key) {
+      return inFlight.promise;
+    }
+
     dispatch({ type: 'ANALYTICS_LOAD_START' });
 
-    const params: LoadParams = { hours, cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit };
     const { excludedQuery } = buildLoadQueries(params);
-    try {
-      const overview = await apiPost<AnalyticsOverviewResponse>(
-        '/api/dashboard/analytics',
-        buildAnalyticsBody(params, ['overview', 'taker_stats']),
-      );
-      const generalStats = overview.general_stats_overview && overview.open_premiums && overview.past_premiums && overview.premium_lifetimes
-        ? buildGeneralStatsData(
-            overview.general_stats_overview,
-            overview.open_premiums,
-            overview.past_premiums,
-            overview.premium_lifetimes,
-          )
-        : null;
-      dispatch({
-        type: 'ANALYTICS_OVERVIEW_SUCCESS',
-        payload: {
-          pastOrderStatsAll: overview.past_order_stats_all ?? null,
-          pastOrderStats: excludedQuery && overview.past_order_stats
-            ? overview.past_order_stats
-            : overview.past_order_stats_all ?? null,
-          pastOrderStatsAllNetCapped: overview.past_order_stats_all_net_capped ?? null,
-          pastOrderStatsNetCapped: excludedQuery && overview.past_order_stats_net_capped
-            ? overview.past_order_stats_net_capped
-            : overview.past_order_stats_all_net_capped ?? null,
-          generalStats,
-        },
-      });
+    const promise = (async () => {
+      try {
+        const overview = await apiPost<AnalyticsOverviewResponse>(
+          '/api/dashboard/analytics',
+          buildAnalyticsBody(params, ['overview', 'taker_stats']),
+        );
+        const generalStats = overview.general_stats_overview && overview.open_premiums && overview.past_premiums && overview.premium_lifetimes
+          ? buildGeneralStatsData(
+              overview.general_stats_overview,
+              overview.open_premiums,
+              overview.past_premiums,
+              overview.premium_lifetimes,
+            )
+          : null;
+        dispatch({
+          type: 'ANALYTICS_OVERVIEW_SUCCESS',
+          payload: {
+            pastOrderStatsAll: overview.past_order_stats_all ?? null,
+            pastOrderStats: excludedQuery && overview.past_order_stats
+              ? overview.past_order_stats
+              : overview.past_order_stats_all ?? null,
+            pastOrderStatsAllNetCapped: overview.past_order_stats_all_net_capped ?? null,
+            pastOrderStatsNetCapped: excludedQuery && overview.past_order_stats_net_capped
+              ? overview.past_order_stats_net_capped
+              : overview.past_order_stats_all_net_capped ?? null,
+            generalStats,
+          },
+        });
 
-      const ordersResponse = await apiPost<AnalyticsOrdersResponse>(
-        '/api/dashboard/analytics',
-        buildAnalyticsBody(params, ['taker_orders']),
-      );
-      dispatch({
-        type: 'ANALYTICS_ORDERS_SUCCESS',
-        pastProfitableOrders: ordersResponse.past_profitable_orders ?? [],
-      });
-    } catch (e: unknown) {
-      const message = e instanceof Error ? e.message : String(e);
-      dispatch({ type: 'ANALYTICS_LOAD_ERROR', error: `Failed to load analytics: ${message}` });
-    }
+        const ordersResponse = await apiPost<AnalyticsOrdersResponse>(
+          '/api/dashboard/analytics',
+          buildAnalyticsBody(params, ['taker_orders']),
+        );
+        startTransition(() => {
+          dispatch({
+            type: 'ANALYTICS_ORDERS_SUCCESS',
+            pastProfitableOrders: ordersResponse.past_profitable_orders ?? [],
+          });
+        });
+      } catch (e: unknown) {
+        const message = e instanceof Error ? e.message : String(e);
+        dispatch({ type: 'ANALYTICS_LOAD_ERROR', error: `Failed to load analytics: ${message}` });
+      } finally {
+        if (analyticsLoadRef.current?.key === key) {
+          analyticsLoadRef.current = null;
+        }
+      }
+    })();
+
+    analyticsLoadRef.current = { key, promise };
+    return promise;
   }, []);
 
   const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {

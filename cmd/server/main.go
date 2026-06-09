@@ -953,10 +953,49 @@ func buildOpenPremiumStats(sub liveSubscription, excludedPaymentMethods []string
 }
 
 func buildPastPremiumStats(offers []map[string]any, lifecycleAgg map[int64]pastLifecycleAggregate, now time.Time, excludedPaymentMethods []string, maxFiatLimitEUR float64, requiredConfirmations int, excludedCEXes []string, feeTier string, opts *pastAnalyticsOpts) []pastorders.PastPremiumTimeframeStats {
-	excluded := make(map[string]struct{}, len(excludedPaymentMethods))
-	for _, method := range excludedPaymentMethods {
-		excluded[method] = struct{}{}
-	}
+	pastPremiums, _ := buildPastPremiumAndLifetimeStats(
+		offers,
+		lifecycleAgg,
+		now,
+		excludedPaymentMethods,
+		maxFiatLimitEUR,
+		requiredConfirmations,
+		excludedCEXes,
+		feeTier,
+		opts,
+	)
+	return pastPremiums
+}
+
+func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]pastLifecycleAggregate, now time.Time, excludedPaymentMethods []string, maxFiatLimitEUR float64, requiredConfirmations int, excludedCEXes []string, feeTier string, opts *pastAnalyticsOpts) pastorders.PremiumLifetimeModes {
+	_, lifetimes := buildPastPremiumAndLifetimeStats(
+		offers,
+		lifecycleAgg,
+		now,
+		excludedPaymentMethods,
+		maxFiatLimitEUR,
+		requiredConfirmations,
+		excludedCEXes,
+		feeTier,
+		opts,
+	)
+	return lifetimes
+}
+
+func buildPastPremiumAndLifetimeStats(
+	offers []map[string]any,
+	lifecycleAgg map[int64]pastLifecycleAggregate,
+	now time.Time,
+	excludedPaymentMethods []string,
+	maxFiatLimitEUR float64,
+	requiredConfirmations int,
+	excludedCEXes []string,
+	feeTier string,
+	opts *pastAnalyticsOpts,
+) ([]pastorders.PastPremiumTimeframeStats, pastorders.PremiumLifetimeModes) {
+	_ = requiredConfirmations
+	_ = excludedCEXes
+	_ = feeTier
 
 	buildNamed := func(sumByExchange map[string]float64, countByExchange map[string]int) []pastorders.NamedPremium {
 		out := make([]pastorders.NamedPremium, 0, len(countByExchange))
@@ -980,112 +1019,46 @@ func buildPastPremiumStats(offers []map[string]any, lifecycleAgg map[int64]pastL
 		return 0, false
 	}
 
-	stats := make([]pastorders.PastPremiumTimeframeStats, 0, len(pastorders.PastPremiumTimeframes))
-	for _, tf := range pastorders.PastPremiumTimeframes {
-		cutoff := now.Add(-time.Duration(tf.Hours) * time.Hour)
-		rawSum := map[string]float64{}
-		rawCount := map[string]int{}
-		netSum := map[string]float64{}
-		netCount := map[string]int{}
-		cappedSum := map[string]float64{}
-		cappedCount := map[string]int{}
+	type premiumBucket struct {
+		label       string
+		hours       int
+		cutoff      time.Time
+		rawSum      map[string]float64
+		rawCount    map[string]int
+		netSum      map[string]float64
+		netCount    map[string]int
+		cappedSum   map[string]float64
+		cappedCount map[string]int
+	}
 
-		for _, offer := range offers {
-			if offerBool(offer, "is_live") {
-				continue
-			}
-			exchange := offerString(offer, "exchange")
-			if exchange == "" {
-				continue
-			}
-			if isPaymentMethodExcluded(offerString(offer, "payment_method"), excludedPaymentMethods) {
-				continue
-			}
-			lastSeen := parseDBTime(offerString(offer, "last_seen"))
-			if lastSeen.IsZero() || lastSeen.Before(cutoff) {
-				continue
-			}
-
-			id := int64(offerFloat(offer, "id"))
-			agg := lifecycleAgg[id]
-
-			rawPremium := agg.AvgPremiumPercent
-			if rawPremium == 0 {
-				rawPremium = tradecost.Round4(offerFloat(offer, "avg_premium_pct"))
-			}
-			if raw, ok := positiveOrZero(rawPremium); ok {
-				rawSum[exchange] += raw
-				rawCount[exchange]++
-			}
-
-			netPremium := agg.AvgNetPercent
-			if netPremium == 0 {
-				netPremium = tradecost.Round4(offerFloat(offer, "avg_net_premium_pct"))
-			}
-			if net, ok := positiveOrZero(netPremium); ok {
-				netSum[exchange] += net
-				netCount[exchange]++
-			}
-
-			cappedPremium := netPremium
-			if maxFiatLimitEUR > 0 {
-				avgRefPrice := agg.AvgRefPrice
-				if avgRefPrice <= 0 {
-					avgRefPrice = offerRefPrice(offer)
-				}
-				fullTradeSizeBTC := selectBTCTradeSize(offerFloatPtr(offer, "btc_max"), offerFloatPtr(offer, "btc_min"))
-				if avgRefPrice > 0 && fullTradeSizeBTC > 0 {
-					btcCap := maxFiatLimitEUR / avgRefPrice
-					if btcCap > 0 && fullTradeSizeBTC > btcCap {
-						cappedPremium = cappedNetPremium(opts, offer, agg, fullTradeSizeBTC, maxFiatLimitEUR)
-					}
-				}
-			}
-			if capped, ok := positiveOrZero(cappedPremium); ok {
-				cappedSum[exchange] += capped
-				cappedCount[exchange]++
-			}
+	premiumBuckets := make([]premiumBucket, len(pastorders.PastPremiumTimeframes))
+	for i, tf := range pastorders.PastPremiumTimeframes {
+		premiumBuckets[i] = premiumBucket{
+			label:       tf.Label,
+			hours:       tf.Hours,
+			cutoff:      now.Add(-time.Duration(tf.Hours) * time.Hour),
+			rawSum:      map[string]float64{},
+			rawCount:    map[string]int{},
+			netSum:      map[string]float64{},
+			netCount:    map[string]int{},
+			cappedSum:   map[string]float64{},
+			cappedCount: map[string]int{},
 		}
-
-		raw := buildNamed(rawSum, rawCount)
-		stats = append(stats, pastorders.PastPremiumTimeframeStats{
-			Timeframe:            tf.Label,
-			Hours:                tf.Hours,
-			AvgPremiumByExchange: raw,
-			Modes: pastorders.PastPremiumModes{
-				Raw:       raw,
-				NetFull:   buildNamed(netSum, netCount),
-				NetCapped: buildNamed(cappedSum, cappedCount),
-			},
-		})
-	}
-	return stats
-}
-
-func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]pastLifecycleAggregate, now time.Time, excludedPaymentMethods []string, maxFiatLimitEUR float64, requiredConfirmations int, excludedCEXes []string, feeTier string, opts *pastAnalyticsOpts) pastorders.PremiumLifetimeModes {
-	excluded := make(map[string]struct{}, len(excludedPaymentMethods))
-	for _, method := range excludedPaymentMethods {
-		excluded[method] = struct{}{}
 	}
 
-	type acc struct {
+	type lifetimeAcc struct {
 		sum           time.Duration
 		count         int
 		sumByExchange map[string]time.Duration
 		cntByExchange map[string]int
 	}
-
-	makeAcc := func() acc {
-		return acc{
+	makeLifetimeAcc := func() lifetimeAcc {
+		return lifetimeAcc{
 			sumByExchange: map[string]time.Duration{},
 			cntByExchange: map[string]int{},
 		}
 	}
-	rawAcc := makeAcc()
-	netAcc := makeAcc()
-	cappedAcc := makeAcc()
-
-	add := func(a *acc, exchange string, lifetime time.Duration) {
+	addLifetime := func(a *lifetimeAcc, exchange string, lifetime time.Duration) {
 		if lifetime <= 0 {
 			return
 		}
@@ -1096,21 +1069,25 @@ func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]p
 			a.cntByExchange[exchange]++
 		}
 	}
+	rawLifetimeAcc := makeLifetimeAcc()
+	netLifetimeAcc := makeLifetimeAcc()
+	cappedLifetimeAcc := makeLifetimeAcc()
 
 	for _, offer := range offers {
 		if offerBool(offer, "is_live") {
 			continue
 		}
+		exchange := offerString(offer, "exchange")
+		if exchange == "" {
+			continue
+		}
 		if isPaymentMethodExcluded(offerString(offer, "payment_method"), excludedPaymentMethods) {
 			continue
 		}
-		firstSeen := parseDBTime(offerString(offer, "first_seen"))
+
 		lastSeen := parseDBTime(offerString(offer, "last_seen"))
-		if firstSeen.IsZero() || lastSeen.IsZero() || lastSeen.Before(firstSeen) {
-			continue
-		}
-		lifetime := lastSeen.Sub(firstSeen)
-		exchange := offerString(offer, "exchange")
+		firstSeen := parseDBTime(offerString(offer, "first_seen"))
+
 		id := int64(offerFloat(offer, "id"))
 		agg := lifecycleAgg[id]
 
@@ -1118,18 +1095,10 @@ func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]p
 		if rawPremium == 0 {
 			rawPremium = tradecost.Round4(offerFloat(offer, "avg_premium_pct"))
 		}
-		if rawPremium > 0 {
-			add(&rawAcc, exchange, lifetime)
-		}
-
 		netPremium := agg.AvgNetPercent
 		if netPremium == 0 {
 			netPremium = tradecost.Round4(offerFloat(offer, "avg_net_premium_pct"))
 		}
-		if netPremium > 0 {
-			add(&netAcc, exchange, lifetime)
-		}
-
 		cappedPremium := netPremium
 		if maxFiatLimitEUR > 0 {
 			avgRefPrice := agg.AvgRefPrice
@@ -1144,12 +1113,59 @@ func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]p
 				}
 			}
 		}
-		if cappedPremium > 0 {
-			add(&cappedAcc, exchange, lifetime)
+
+		if !firstSeen.IsZero() && !lastSeen.IsZero() && !lastSeen.Before(firstSeen) {
+			lifetime := lastSeen.Sub(firstSeen)
+			if rawPremium > 0 {
+				addLifetime(&rawLifetimeAcc, exchange, lifetime)
+			}
+			if netPremium > 0 {
+				addLifetime(&netLifetimeAcc, exchange, lifetime)
+			}
+			if cappedPremium > 0 {
+				addLifetime(&cappedLifetimeAcc, exchange, lifetime)
+			}
+		}
+
+		if lastSeen.IsZero() {
+			continue
+		}
+
+		for i := range premiumBuckets {
+			if lastSeen.Before(premiumBuckets[i].cutoff) {
+				continue
+			}
+			if raw, ok := positiveOrZero(rawPremium); ok {
+				premiumBuckets[i].rawSum[exchange] += raw
+				premiumBuckets[i].rawCount[exchange]++
+			}
+			if net, ok := positiveOrZero(netPremium); ok {
+				premiumBuckets[i].netSum[exchange] += net
+				premiumBuckets[i].netCount[exchange]++
+			}
+			if capped, ok := positiveOrZero(cappedPremium); ok {
+				premiumBuckets[i].cappedSum[exchange] += capped
+				premiumBuckets[i].cappedCount[exchange]++
+			}
 		}
 	}
 
-	toStats := func(a acc) pastorders.PremiumLifetimeStats {
+	pastPremiums := make([]pastorders.PastPremiumTimeframeStats, 0, len(premiumBuckets))
+	for _, bucket := range premiumBuckets {
+		raw := buildNamed(bucket.rawSum, bucket.rawCount)
+		pastPremiums = append(pastPremiums, pastorders.PastPremiumTimeframeStats{
+			Timeframe:            bucket.label,
+			Hours:                bucket.hours,
+			AvgPremiumByExchange: raw,
+			Modes: pastorders.PastPremiumModes{
+				Raw:       raw,
+				NetFull:   buildNamed(bucket.netSum, bucket.netCount),
+				NetCapped: buildNamed(bucket.cappedSum, bucket.cappedCount),
+			},
+		})
+	}
+
+	toLifetimeStats := func(a lifetimeAcc) pastorders.PremiumLifetimeStats {
 		var avgPtr *int64
 		if a.count > 0 {
 			v := int64(a.sum / time.Duration(a.count) / time.Millisecond)
@@ -1172,10 +1188,10 @@ func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]p
 		}
 	}
 
-	return pastorders.PremiumLifetimeModes{
-		Raw:       toStats(rawAcc),
-		NetFull:   toStats(netAcc),
-		NetCapped: toStats(cappedAcc),
+	return pastPremiums, pastorders.PremiumLifetimeModes{
+		Raw:       toLifetimeStats(rawLifetimeAcc),
+		NetFull:   toLifetimeStats(netLifetimeAcc),
+		NetCapped: toLifetimeStats(cappedLifetimeAcc),
 	}
 }
 

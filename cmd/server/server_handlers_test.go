@@ -976,6 +976,9 @@ func TestDashboardAnalyticsOverviewSectionOmitsOrders(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
 	}
+	if got := rec.Header().Get("Server-Timing"); got == "" {
+		t.Fatal("expected Server-Timing header on analytics response")
+	}
 
 	var resp dashboardAnalyticsResponse
 	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
@@ -984,8 +987,58 @@ func TestDashboardAnalyticsOverviewSectionOmitsOrders(t *testing.T) {
 	if resp.GeneralStatsOverview.TotalOffers == 0 {
 		t.Fatal("expected overview stats in overview section response")
 	}
+	if len(resp.PastOrderStatsAll.Timeframes) == 0 {
+		t.Fatal("expected taker stats in overview+taker_stats response")
+	}
 	if resp.PastProfitableOrders != nil {
 		t.Fatalf("expected orders omitted, got %d orders", len(resp.PastProfitableOrders))
+	}
+}
+
+func TestDashboardAnalyticsOrdersSectionReusesCache(t *testing.T) {
+	withTempOrdersDB(t)
+
+	warmBody := `{"hours":48,"cex":"kraken","sections":["overview","taker_stats"],"fiat":"EUR"}`
+	warmReq := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(warmBody))
+	warmReq.Header.Set("Content-Type", "application/json")
+	warmRec := httptest.NewRecorder()
+	handleDashboardAnalytics(warmRec, warmReq)
+	if warmRec.Code != http.StatusOK {
+		t.Fatalf("warm status = %d, want %d; body=%s", warmRec.Code, http.StatusOK, warmRec.Body.String())
+	}
+
+	ordersBody := `{"hours":48,"cex":"kraken","sections":["taker_orders"],"fiat":"EUR"}`
+	buildStart := time.Now()
+	buildReq := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(ordersBody))
+	buildReq.Header.Set("Content-Type", "application/json")
+	buildRec := httptest.NewRecorder()
+	handleDashboardAnalytics(buildRec, buildReq)
+	buildElapsed := time.Since(buildStart)
+	if buildRec.Code != http.StatusOK {
+		t.Fatalf("orders build status = %d, want %d; body=%s", buildRec.Code, http.StatusOK, buildRec.Body.String())
+	}
+	var built dashboardAnalyticsResponse
+	if err := json.Unmarshal(buildRec.Body.Bytes(), &built); err != nil {
+		t.Fatalf("decode orders build response: %v", err)
+	}
+	if built.PastProfitableOrders == nil {
+		t.Fatal("expected past_profitable_orders after orders section build")
+	}
+
+	cacheStart := time.Now()
+	cacheReq := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(ordersBody))
+	cacheReq.Header.Set("Content-Type", "application/json")
+	cacheRec := httptest.NewRecorder()
+	handleDashboardAnalytics(cacheRec, cacheReq)
+	cacheElapsed := time.Since(cacheStart)
+	if cacheRec.Code != http.StatusOK {
+		t.Fatalf("orders cache status = %d, want %d; body=%s", cacheRec.Code, http.StatusOK, cacheRec.Body.String())
+	}
+	if cacheElapsed > 200*time.Millisecond {
+		t.Fatalf("cached taker_orders request took %v, want <= 200ms", cacheElapsed)
+	}
+	if buildElapsed > 2*time.Second {
+		t.Fatalf("initial taker_orders build took %v, want <= 2s on temp DB", buildElapsed)
 	}
 }
 

@@ -223,11 +223,12 @@ func handleDashboardAnalytics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp, err := buildDashboardAnalyticsResponse(p)
+	resp, timings, err := buildDashboardAnalyticsResponse(p)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
 
+	writeAnalyticsServerTiming(w, timings)
 	writeJSON(w, resp)
 }

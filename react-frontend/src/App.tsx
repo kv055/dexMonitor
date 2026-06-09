@@ -121,14 +121,15 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastProfitableOrders, generalStats, analyticsLoading, loadAnalytics }: {
+function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastProfitableOrders, generalStats, analyticsOverviewLoading, analyticsOrdersLoading, loadAnalytics }: {
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
   pastOrderStatsNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsNetCapped'];
   pastOrderStatsAllNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsAllNetCapped'];
   pastProfitableOrders: ReturnType<typeof useDashboard>['pastProfitableOrders'];
   generalStats: ReturnType<typeof useDashboard>['generalStats'];
-  analyticsLoading: boolean;
+  analyticsOverviewLoading: boolean;
+  analyticsOrdersLoading: boolean;
   loadAnalytics: ReturnType<typeof useDashboard>['loadAnalytics'];
 }) {
   const { filters } = useFilters();
@@ -143,7 +144,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
       {/* Top — statistics */}
       <div className="lg:flex-none bg-surface border border-border rounded-lg px-2 py-1.5">
         <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-1 block">General Statistics</span>
-        <GeneralStats stats={generalStats} loading={analyticsLoading} />
+        <GeneralStats stats={generalStats} loading={analyticsOverviewLoading} />
       </div>
       <div className="lg:flex-1 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
         <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2">Taker Opportunities</span>
@@ -153,7 +154,8 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           statsNetCapped={pastOrderStatsNetCapped}
           statsAllNetCapped={pastOrderStatsAllNetCapped}
           orders={pastProfitableOrders}
-          loading={analyticsLoading}
+          statsLoading={analyticsOverviewLoading}
+          ordersLoading={analyticsOrdersLoading}
           maxFiatLimit={maxFiatLimit}
         />
       </div>
@@ -188,7 +190,8 @@ function AppShell() {
     lastUpdatedAt,
     error,
     loading,
-    analyticsLoading,
+    analyticsOverviewLoading,
+    analyticsOrdersLoading,
     loadAnalytics,
     loadCore,
     extendOhlc,
@@ -249,7 +252,8 @@ function AppShell() {
             pastOrderStatsAllNetCapped={pastOrderStatsAllNetCapped}
             pastProfitableOrders={pastProfitableOrders}
             generalStats={generalStats}
-            analyticsLoading={analyticsLoading}
+            analyticsOverviewLoading={analyticsOverviewLoading}
+            analyticsOrdersLoading={analyticsOrdersLoading}
             loadAnalytics={loadAnalytics}
           />
         )}
