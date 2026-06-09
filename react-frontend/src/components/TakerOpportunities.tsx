@@ -1,7 +1,8 @@
-import { useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { PastOrderStats, PastProfitableOrder, TakerOpportunityMode } from '../types';
 import { useTimezone } from '../hooks/useTimezone';
-import { formatDateTimeLabel, parseUtcTimestamp } from '../utils/formatters';
+import { durationMinutes, formatDateTimeLabel, parseUtcTimestamp } from '../utils/formatters';
+import { LoadingSpinner } from './LoadingSpinner';
 
 interface Props {
   stats: PastOrderStats | null;
@@ -62,11 +63,294 @@ function sortOfferEntries(offer: Record<string, string | number | boolean | null
   return Object.entries(offer).sort(([a], [b]) => a.localeCompare(b));
 }
 
+type DirectionFilter = 'both' | 'buy' | 'sell';
+
 function pickScenario(order: PastProfitableOrder, mode: TakerOpportunityMode) {
   if (mode === 'net_capped' && order.analysis.capped_volume && (order.analysis.capped_volume.profit.avg_btc ?? 0) > 0) {
     return order.analysis.capped_volume;
   }
   return order.analysis.full_volume;
+}
+
+function orderDurationMinutes(order: PastProfitableOrder): number {
+  if (order.status.duration) {
+    return order.status.duration.hours * 60 + order.status.duration.minutes;
+  }
+  return durationMinutes(order.status.first_seen, order.status.last_seen);
+}
+
+function formatDurationMinutes(totalMinutes: number): string {
+  if (totalMinutes < 1) return '0m';
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours < 24) return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  const remHours = hours % 24;
+  return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
+}
+
+type ProfitableOrderSortKey =
+  | 'last_seen_desc'
+  | 'last_seen_asc'
+  | 'net_btc_desc'
+  | 'net_btc_asc'
+  | 'net_fiat_desc'
+  | 'net_fiat_asc'
+  | 'volume_btc_desc'
+  | 'net_pct_desc'
+  | 'duration_desc'
+  | 'payment_method_asc'
+  | 'exchange_asc';
+
+const INSIGHTS_FILTERS_STORAGE_KEY = 'dex-insights-filters';
+
+interface PersistedInsightsFilters {
+  selectedTimeframe: string;
+  directionFilter: DirectionFilter;
+  disabledExchanges: string[];
+  mode: TakerOpportunityMode;
+  showAllMethods: boolean;
+  sortBy: ProfitableOrderSortKey;
+  durationMin: number | null;
+  durationMax: number | null;
+  profitFiatMin: number | null;
+  profitFiatMax: number | null;
+}
+
+const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
+  selectedTimeframe: '24h',
+  directionFilter: 'both',
+  disabledExchanges: [],
+  mode: 'net_full',
+  showAllMethods: false,
+  sortBy: 'last_seen_desc',
+  durationMin: null,
+  durationMax: null,
+  profitFiatMin: null,
+  profitFiatMax: null,
+};
+
+const VALID_TIMEFRAMES = new Set(['1h', '6h', '24h', '48h', '7d']);
+const VALID_DIRECTIONS = new Set<DirectionFilter>(['both', 'buy', 'sell']);
+const VALID_MODES = new Set<TakerOpportunityMode>(['net_full', 'net_capped']);
+const VALID_SORT_KEYS = new Set<ProfitableOrderSortKey>([
+  'last_seen_desc',
+  'last_seen_asc',
+  'net_btc_desc',
+  'net_btc_asc',
+  'net_fiat_desc',
+  'net_fiat_asc',
+  'volume_btc_desc',
+  'net_pct_desc',
+  'duration_desc',
+  'payment_method_asc',
+  'exchange_asc',
+]);
+
+function readStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string');
+}
+
+function readNullableNumber(value: unknown): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return null;
+  return value;
+}
+
+function readPersistedInsightsFilters(): PersistedInsightsFilters {
+  try {
+    const raw = localStorage.getItem(INSIGHTS_FILTERS_STORAGE_KEY);
+    if (!raw) return DEFAULT_INSIGHTS_FILTERS;
+    const parsed = JSON.parse(raw) as Partial<PersistedInsightsFilters>;
+    return {
+      selectedTimeframe: VALID_TIMEFRAMES.has(parsed.selectedTimeframe ?? '')
+        ? parsed.selectedTimeframe!
+        : DEFAULT_INSIGHTS_FILTERS.selectedTimeframe,
+      directionFilter: VALID_DIRECTIONS.has(parsed.directionFilter as DirectionFilter)
+        ? parsed.directionFilter as DirectionFilter
+        : DEFAULT_INSIGHTS_FILTERS.directionFilter,
+      disabledExchanges: readStringArray(parsed.disabledExchanges),
+      mode: VALID_MODES.has(parsed.mode as TakerOpportunityMode)
+        ? parsed.mode as TakerOpportunityMode
+        : DEFAULT_INSIGHTS_FILTERS.mode,
+      showAllMethods: parsed.showAllMethods === true,
+      sortBy: VALID_SORT_KEYS.has(parsed.sortBy as ProfitableOrderSortKey)
+        ? parsed.sortBy as ProfitableOrderSortKey
+        : DEFAULT_INSIGHTS_FILTERS.sortBy,
+      durationMin: readNullableNumber(parsed.durationMin),
+      durationMax: readNullableNumber(parsed.durationMax),
+      profitFiatMin: readNullableNumber(parsed.profitFiatMin),
+      profitFiatMax: readNullableNumber(parsed.profitFiatMax),
+    };
+  } catch {
+    return DEFAULT_INSIGHTS_FILTERS;
+  }
+}
+
+function clampNumericRange(
+  range: [number, number],
+  bounds: { min: number; max: number },
+): [number, number] {
+  const lo = Math.max(bounds.min, Math.min(range[0], bounds.max));
+  const hi = Math.max(bounds.min, Math.min(range[1], bounds.max));
+  return [Math.min(lo, hi), Math.max(lo, hi)];
+}
+
+function orderNetProfitFiat(order: PastProfitableOrder, mode: TakerOpportunityMode): number {
+  return pickScenario(order, mode).profit.avg_fiat ?? 0;
+}
+
+function profitFiatToCents(profit: number): number {
+  return Math.round(profit * 100);
+}
+
+function profitFiatFromCents(cents: number): number {
+  return cents / 100;
+}
+
+interface ProfitFiatBounds {
+  minCents: number;
+  maxCents: number;
+  sliderMaxCents: number;
+  hasData: boolean;
+}
+
+function computeProfitFiatBounds(
+  orders: PastProfitableOrder[],
+  mode: TakerOpportunityMode,
+): ProfitFiatBounds {
+  let min = Infinity;
+  let max = -Infinity;
+  for (const order of orders) {
+    const profit = orderNetProfitFiat(order, mode);
+    if (profit < min) min = profit;
+    if (profit > max) max = profit;
+  }
+  if (!Number.isFinite(min) || !Number.isFinite(max)) {
+    return { minCents: 0, maxCents: 0, sliderMaxCents: 0, hasData: false };
+  }
+  const minCents = Math.floor(min * 100);
+  const maxCents = Math.ceil(max * 100);
+  return {
+    minCents,
+    maxCents,
+    sliderMaxCents: minCents === maxCents ? maxCents + 1 : maxCents,
+    hasData: true,
+  };
+}
+
+function sortProfitableOrders(
+  orders: PastProfitableOrder[],
+  sortKey: ProfitableOrderSortKey,
+  mode: TakerOpportunityMode,
+): PastProfitableOrder[] {
+  const sorted = [...orders];
+  sorted.sort((a, b) => {
+    const scenarioA = pickScenario(a, mode);
+    const scenarioB = pickScenario(b, mode);
+    switch (sortKey) {
+      case 'last_seen_desc': {
+        const ta = parseUtcTimestamp(a.status.last_seen)?.getTime() ?? 0;
+        const tb = parseUtcTimestamp(b.status.last_seen)?.getTime() ?? 0;
+        return tb - ta;
+      }
+      case 'last_seen_asc': {
+        const ta = parseUtcTimestamp(a.status.last_seen)?.getTime() ?? 0;
+        const tb = parseUtcTimestamp(b.status.last_seen)?.getTime() ?? 0;
+        return ta - tb;
+      }
+      case 'net_btc_desc':
+        return (scenarioB.profit.avg_btc ?? 0) - (scenarioA.profit.avg_btc ?? 0);
+      case 'net_btc_asc':
+        return (scenarioA.profit.avg_btc ?? 0) - (scenarioB.profit.avg_btc ?? 0);
+      case 'net_fiat_desc':
+        return (scenarioB.profit.avg_fiat ?? 0) - (scenarioA.profit.avg_fiat ?? 0);
+      case 'net_fiat_asc':
+        return (scenarioA.profit.avg_fiat ?? 0) - (scenarioB.profit.avg_fiat ?? 0);
+      case 'volume_btc_desc':
+        return (scenarioB.trade_size_btc ?? 0) - (scenarioA.trade_size_btc ?? 0);
+      case 'net_pct_desc':
+        return (scenarioB.premium.avg_net_percent ?? 0) - (scenarioA.premium.avg_net_percent ?? 0);
+      case 'duration_desc': {
+        const durA = orderDurationMinutes(a);
+        const durB = orderDurationMinutes(b);
+        return durB - durA;
+      }
+      case 'payment_method_asc':
+        return (a.payment_method ?? '').localeCompare(b.payment_method ?? '', 'de');
+      case 'exchange_asc':
+        return a.exchange.localeCompare(b.exchange, 'de');
+      default:
+        return 0;
+    }
+  });
+  return sorted;
+}
+
+function profitableOrderSortOptions(fiat: string): { value: ProfitableOrderSortKey; label: string }[] {
+  return [
+    { value: 'last_seen_desc', label: 'Last seen (newest)' },
+    { value: 'last_seen_asc', label: 'Last seen (oldest)' },
+    { value: 'net_btc_desc', label: 'Net profit BTC (highest)' },
+    { value: 'net_btc_asc', label: 'Net profit BTC (lowest)' },
+    { value: 'net_fiat_desc', label: `Net profit ${fiat} (highest)` },
+    { value: 'net_fiat_asc', label: `Net profit ${fiat} (lowest)` },
+    { value: 'volume_btc_desc', label: 'Volume BTC (largest)' },
+    { value: 'net_pct_desc', label: 'Net premium % (highest)' },
+    { value: 'duration_desc', label: 'Duration (longest)' },
+    { value: 'payment_method_asc', label: 'Payment method (A–Z)' },
+    { value: 'exchange_asc', label: 'Exchange (A–Z)' },
+  ];
+}
+
+interface FilteredSummary {
+  premium_order_count: number;
+  total_net_profit_btc: number;
+  total_net_profit_fiat: number;
+  average_order_size_btc: number;
+  smallest_order_size_btc: number | null;
+  biggest_order_size_btc: number | null;
+}
+
+function computeFilteredSummary(orders: PastProfitableOrder[], mode: TakerOpportunityMode): FilteredSummary {
+  if (orders.length === 0) {
+    return {
+      premium_order_count: 0,
+      total_net_profit_btc: 0,
+      total_net_profit_fiat: 0,
+      average_order_size_btc: 0,
+      smallest_order_size_btc: null,
+      biggest_order_size_btc: null,
+    };
+  }
+
+  let totalProfitBtc = 0;
+  let totalProfitFiat = 0;
+  let totalSizeBtc = 0;
+  let smallest = Infinity;
+  let biggest = -Infinity;
+
+  for (const order of orders) {
+    const scenario = pickScenario(order, mode);
+    const profitBtc = scenario.profit.avg_btc ?? 0;
+    const profitFiat = scenario.profit.avg_fiat ?? 0;
+    const sizeBtc = scenario.trade_size_btc ?? 0;
+    totalProfitBtc += profitBtc;
+    totalProfitFiat += profitFiat;
+    totalSizeBtc += sizeBtc;
+    if (sizeBtc < smallest) smallest = sizeBtc;
+    if (sizeBtc > biggest) biggest = sizeBtc;
+  }
+
+  return {
+    premium_order_count: orders.length,
+    total_net_profit_btc: totalProfitBtc,
+    total_net_profit_fiat: totalProfitFiat,
+    average_order_size_btc: totalSizeBtc / orders.length,
+    smallest_order_size_btc: smallest === Infinity ? null : smallest,
+    biggest_order_size_btc: biggest === -Infinity ? null : biggest,
+  };
 }
 
 function formatOfferValue(value: string | number | boolean | null): string {
@@ -112,6 +396,79 @@ function PillGroup({ label, description, options, selected, onChange }: PillGrou
   );
 }
 
+function exchangeFilterLabel(name: string): string {
+  if (name === 'bisq') return 'Bisq v1';
+  if (name === 'bisq2') return 'Bisq v2';
+  if (name === 'hodlhodl') return 'HodlHodl';
+  if (name === 'robosats') return 'RoboSats';
+  if (name === 'peachbitcoin') return 'Peach';
+  return name;
+}
+
+interface ExchangeFilterGroupProps {
+  label: string;
+  description: string;
+  exchanges: string[];
+  counts: Record<string, number>;
+  disabled: Set<string>;
+  onToggle: (exchange: string) => void;
+  onEnableAll: () => void;
+  onDisableAll: () => void;
+}
+
+function ExchangeFilterGroup({
+  label,
+  description,
+  exchanges,
+  counts,
+  disabled,
+  onToggle,
+  onEnableAll,
+  onDisableAll,
+}: ExchangeFilterGroupProps) {
+  const base = 'rounded border px-2 py-0.5 text-[0.7rem] font-medium transition-colors';
+  const enabledCls = 'border-accent/60 bg-accent/10 text-accent';
+  const disabledCls = 'border-border bg-bg/40 text-muted line-through opacity-60 hover:opacity-80';
+
+  return (
+    <div className="flex flex-col gap-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
+        {exchanges.length > 0 && (
+          <div className="flex items-center gap-1.5">
+            <button type="button" onClick={onEnableAll} className="text-[0.6rem] font-medium text-muted hover:text-accent">
+              All
+            </button>
+            <button type="button" onClick={onDisableAll} className="text-[0.6rem] font-medium text-muted hover:text-accent">
+              None
+            </button>
+          </div>
+        )}
+      </div>
+      {exchanges.length === 0 ? (
+        <span className="text-[0.7rem] text-muted">No exchanges in this window</span>
+      ) : (
+        <div className="flex flex-wrap items-center gap-1" title={description}>
+          {exchanges.map(exchange => {
+            const isEnabled = !disabled.has(exchange);
+            return (
+              <button
+                key={exchange}
+                type="button"
+                onClick={() => onToggle(exchange)}
+                className={`${base} ${isEnabled ? enabledCls : disabledCls}`}
+              >
+                {exchangeFilterLabel(exchange)}
+                <span className="ml-1 text-[0.65rem] opacity-70">{counts[exchange] ?? 0}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface SelectGroupProps {
   label: string;
   description: string;
@@ -140,6 +497,85 @@ function SelectGroup({ label, description, options, selected, onChange }: Select
   );
 }
 
+interface DualRangeFilterProps {
+  label: string;
+  description: string;
+  min: number;
+  max: number;
+  value: [number, number];
+  onChange: (value: [number, number]) => void;
+  formatValue: (value: number) => string;
+  disabled?: boolean;
+  disabledMessage?: string;
+  step?: number;
+}
+
+function DualRangeFilter({
+  label,
+  description,
+  min,
+  max,
+  value,
+  onChange,
+  formatValue,
+  disabled,
+  disabledMessage = 'No data in this window',
+  step = 1,
+}: DualRangeFilterProps) {
+  const [lo, hi] = value;
+  const span = Math.max(max - min, step);
+  const loPct = ((lo - min) / span) * 100;
+  const hiPct = ((hi - min) / span) * 100;
+  const rangeInputClass =
+    'pointer-events-none absolute inset-0 h-full w-full appearance-none bg-transparent [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-accent [&::-moz-range-thumb]:bg-bg [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:w-3.5 [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-accent [&::-webkit-slider-thumb]:bg-bg [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-runnable-track]:bg-transparent [&::-moz-range-track]:bg-transparent';
+
+  if (disabled) {
+    return (
+      <div className="flex flex-col gap-1">
+        <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
+        <span className="text-[0.7rem] text-muted">{disabledMessage}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5" title={description}>
+      <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
+      <div className="flex justify-between gap-2 text-[0.65rem] text-muted mono-nums tabular-nums">
+        <span>{formatValue(lo)}</span>
+        <span>{formatValue(hi)}</span>
+      </div>
+      <div className="relative mx-0.5 h-6">
+        <div className="absolute top-1/2 h-1 w-full -translate-y-1/2 rounded bg-border" />
+        <div
+          className="absolute top-1/2 h-1 -translate-y-1/2 rounded bg-accent/60"
+          style={{ left: `${loPct}%`, right: `${100 - hiPct}%` }}
+        />
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={lo}
+          onChange={event => onChange([Math.min(Number(event.target.value), hi), hi])}
+          className={rangeInputClass}
+          style={{ zIndex: lo > max - step * 10 ? 5 : 3 }}
+        />
+        <input
+          type="range"
+          min={min}
+          max={max}
+          step={step}
+          value={hi}
+          onChange={event => onChange([lo, Math.max(Number(event.target.value), lo)])}
+          className={rangeInputClass}
+          style={{ zIndex: 4 }}
+        />
+      </div>
+    </div>
+  );
+}
+
 interface TradeRowMetricProps {
   label: string;
   value: string;
@@ -147,21 +583,131 @@ interface TradeRowMetricProps {
 }
 
 function TradeRowMetric({ label, value, valueClassName = 'text-text' }: TradeRowMetricProps) {
+  const full = `${label} ${value}`;
   return (
-    <span className="min-w-0 whitespace-nowrap text-right text-muted">
+    <span className="block min-w-0 truncate text-right text-muted" title={full}>
       <span className="mr-1">{label}</span>
       <span className={`mono-nums tabular-nums ${valueClassName}`}>{value}</span>
     </span>
   );
 }
 
+interface DetailItem {
+  label: string;
+  value: string;
+  valueClassName?: string;
+  mono?: boolean;
+}
+
+function CompactDetailGrid({ items }: { items: DetailItem[] }) {
+  return (
+    <div className="grid grid-cols-1 gap-x-4 gap-y-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+      {items.map((item, index) => (
+        <div key={`${item.label}-${index}`} className="min-w-0 flex items-baseline gap-1 text-[0.68rem] leading-snug">
+          <span className="shrink-0 text-muted">{item.label}:</span>
+          <span
+            className={`min-w-0 truncate ${item.mono ? 'mono-nums tabular-nums' : ''} ${item.valueClassName ?? 'text-text'}`}
+            title={item.value}
+          >
+            {item.value}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+const EXPANDED_OFFER_SKIP_KEYS = new Set([
+  'id',
+  'exchange',
+  'direction',
+  'payment_method',
+  'offer_id',
+  'first_seen',
+  'last_seen',
+  'duration',
+  'is_live',
+  'avg_net_premium_pct',
+  'avg_trade_cost_pct',
+  'best_route_cex',
+  'best_route_method',
+]);
+
+function buildExpandedDetailItems(
+  order: PastProfitableOrder,
+  activeScenario: ReturnType<typeof pickScenario>,
+  mode: TakerOpportunityMode,
+  fiat: string,
+  firstSeenLabel: string,
+  seenLabel: string,
+): DetailItem[] {
+  const netPct = activeScenario.premium.avg_net_percent;
+  const items: DetailItem[] = [
+    { label: 'Offer ID', value: order.offer_id || '—', mono: true },
+    { label: 'First seen', value: firstSeenLabel },
+    { label: 'Last seen', value: seenLabel },
+    {
+      label: 'Avg net %',
+      value: fmtPct(netPct),
+      valueClassName: (netPct ?? 0) > 0 ? 'text-green' : 'text-text',
+      mono: true,
+    },
+    {
+      label: 'Trade cost %',
+      value: fmtPct(activeScenario.premium.avg_trade_cost_percent),
+      mono: true,
+    },
+    {
+      label: 'Route',
+      value: `${activeScenario.route.cex} · ${activeScenario.route.settlement}`,
+    },
+  ];
+
+  if (mode === 'net_capped' && order.analysis.capped_volume?.cap_fiat != null) {
+    items.push({
+      label: 'Cap',
+      value: fmtFiat(order.analysis.capped_volume.cap_fiat, fiat),
+      mono: true,
+    });
+  }
+
+  for (const [key, value] of sortOfferEntries(order.offer)) {
+    if (EXPANDED_OFFER_SKIP_KEYS.has(key)) continue;
+    if (value == null || value === '') continue;
+    items.push({
+      label: humanizeKey(key),
+      value: formatOfferValue(value),
+      mono: typeof value === 'number',
+    });
+  }
+
+  return items;
+}
+
 export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNetCapped, orders, ordersAll, ordersNetCapped, ordersAllNetCapped, loading, maxFiatLimit }: Props) {
   const { timezone } = useTimezone();
+  const [initialFilters] = useState(readPersistedInsightsFilters);
   const [referenceNowMs] = useState(() => Date.now());
-  const [selectedTimeframe, setSelectedTimeframe] = useState('24h');
-  const [mode, setMode] = useState<TakerOpportunityMode>('net_full');
-  const [showAllMethods, setShowAllMethods] = useState(false);
+  const [selectedTimeframe, setSelectedTimeframe] = useState(initialFilters.selectedTimeframe);
+  const [directionFilter, setDirectionFilter] = useState<DirectionFilter>(initialFilters.directionFilter);
+  const [disabledExchanges, setDisabledExchanges] = useState<string[]>(initialFilters.disabledExchanges);
+  const [mode, setMode] = useState<TakerOpportunityMode>(initialFilters.mode);
+  const [showAllMethods, setShowAllMethods] = useState(initialFilters.showAllMethods);
+  const [sortBy, setSortBy] = useState<ProfitableOrderSortKey>(initialFilters.sortBy);
+  const [durationRange, setDurationRange] = useState<[number, number]>([0, 0]);
+  const [profitFiatRangeCents, setProfitFiatRangeCents] = useState<[number, number] | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
+  const persistedDurationRef = useRef({
+    min: initialFilters.durationMin,
+    max: initialFilters.durationMax,
+  });
+  const persistedProfitFiatRef = useRef({
+    minCents: initialFilters.profitFiatMin != null ? profitFiatToCents(initialFilters.profitFiatMin) : null,
+    maxCents: initialFilters.profitFiatMax != null ? profitFiatToCents(initialFilters.profitFiatMax) : null,
+  });
+  const durationBoundsInitializedRef = useRef(false);
+  const profitFiatBoundsInitializedRef = useRef(false);
+  const profitFiatModeRef = useRef(mode);
 
   const hasExcluded = (stats?.excluded_payment_methods.length ?? 0) > 0;
   const statsByMode = mode === 'net_capped'
@@ -181,32 +727,236 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
       ?? activeStats.timeframes[0]
       ?? null;
   const activeTimeframe = selected?.timeframe ?? selectedTimeframe;
-
   const cutoffMs = referenceNowMs - timeframeHours(activeTimeframe) * 60 * 60 * 1000;
-  const visibleOrders = activeOrders.filter(order => {
-    const lastSeen = parseUtcTimestamp(order.status.last_seen);
-    return lastSeen != null && lastSeen.getTime() >= cutoffMs;
-  });
+
+  const disabledExchangeSet = useMemo(() => new Set(disabledExchanges), [disabledExchanges]);
+
+  const exchangeFilterBase = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const order of activeOrders) {
+      const lastSeen = parseUtcTimestamp(order.status.last_seen);
+      if (lastSeen == null || lastSeen.getTime() < cutoffMs) continue;
+      if (directionFilter !== 'both' && order.direction !== directionFilter) continue;
+      counts[order.exchange] = (counts[order.exchange] ?? 0) + 1;
+    }
+    const exchanges = Object.keys(counts).sort((a, b) => a.localeCompare(b, 'de'));
+    return { counts, exchanges };
+  }, [activeOrders, cutoffMs, directionFilter]);
+
+  const ordersBeforeDurationFilter = useMemo(() => {
+    return activeOrders.filter(order => {
+      const lastSeen = parseUtcTimestamp(order.status.last_seen);
+      if (lastSeen == null || lastSeen.getTime() < cutoffMs) return false;
+      if (directionFilter !== 'both' && order.direction !== directionFilter) return false;
+      if (disabledExchangeSet.has(order.exchange)) return false;
+      return true;
+    });
+  }, [activeOrders, cutoffMs, directionFilter, disabledExchangeSet]);
+
+  const durationBounds = useMemo(() => {
+    let min = Infinity;
+    let max = -Infinity;
+    for (const order of ordersBeforeDurationFilter) {
+      const mins = orderDurationMinutes(order);
+      if (mins < min) min = mins;
+      if (mins > max) max = mins;
+    }
+    if (!Number.isFinite(min) || !Number.isFinite(max)) {
+      return { min: 0, max: 0, hasData: false };
+    }
+    return { min, max, hasData: true };
+  }, [ordersBeforeDurationFilter]);
+
+  useEffect(() => {
+    if (!durationBounds.hasData) return;
+    setDurationRange(prev => {
+      if (!durationBoundsInitializedRef.current) {
+        durationBoundsInitializedRef.current = true;
+        const { min, max } = persistedDurationRef.current;
+        if (min != null && max != null) {
+          return clampNumericRange([min, max], durationBounds);
+        }
+        return [durationBounds.min, durationBounds.max];
+      }
+      return clampNumericRange(prev, durationBounds);
+    });
+  }, [durationBounds.min, durationBounds.max, durationBounds.hasData]);
+
+  const ordersAfterDurationFilter = useMemo(() => {
+    const [lo, hi] = durationRange;
+    return ordersBeforeDurationFilter.filter(order => {
+      const mins = orderDurationMinutes(order);
+      return mins >= lo && mins <= hi;
+    });
+  }, [ordersBeforeDurationFilter, durationRange]);
+
+  const profitFiatBounds = useMemo(
+    () => computeProfitFiatBounds(ordersAfterDurationFilter, mode),
+    [ordersAfterDurationFilter, mode],
+  );
+
+  useEffect(() => {
+    if (profitFiatModeRef.current !== mode) {
+      profitFiatModeRef.current = mode;
+      profitFiatBoundsInitializedRef.current = false;
+      setProfitFiatRangeCents(null);
+    }
+  }, [mode]);
+
+  useEffect(() => {
+    if (!profitFiatBounds.hasData) {
+      setProfitFiatRangeCents(null);
+      return;
+    }
+    setProfitFiatRangeCents(prev => {
+      const bounds = { min: profitFiatBounds.minCents, max: profitFiatBounds.maxCents };
+      if (!profitFiatBoundsInitializedRef.current) {
+        profitFiatBoundsInitializedRef.current = true;
+        const { minCents, maxCents } = persistedProfitFiatRef.current;
+        if (minCents != null && maxCents != null) {
+          return clampNumericRange([minCents, maxCents], bounds);
+        }
+        return [profitFiatBounds.minCents, profitFiatBounds.maxCents];
+      }
+      if (prev == null) {
+        return [profitFiatBounds.minCents, profitFiatBounds.maxCents];
+      }
+      return clampNumericRange(prev, bounds);
+    });
+  }, [
+    profitFiatBounds.minCents,
+    profitFiatBounds.maxCents,
+    profitFiatBounds.hasData,
+  ]);
+
+  useLayoutEffect(() => {
+    const atFullDurationRange = durationBounds.hasData
+      && durationRange[0] === durationBounds.min
+      && durationRange[1] === durationBounds.max;
+    const atFullProfitRange = profitFiatBounds.hasData
+      && profitFiatRangeCents != null
+      && profitFiatRangeCents[0] === profitFiatBounds.minCents
+      && profitFiatRangeCents[1] === profitFiatBounds.maxCents;
+    const payload: PersistedInsightsFilters = {
+      selectedTimeframe,
+      directionFilter,
+      disabledExchanges,
+      mode,
+      showAllMethods,
+      sortBy,
+      durationMin: !durationBounds.hasData || atFullDurationRange ? null : durationRange[0],
+      durationMax: !durationBounds.hasData || atFullDurationRange ? null : durationRange[1],
+      profitFiatMin: !profitFiatBounds.hasData || atFullProfitRange || profitFiatRangeCents == null
+        ? null
+        : profitFiatFromCents(profitFiatRangeCents[0]),
+      profitFiatMax: !profitFiatBounds.hasData || atFullProfitRange || profitFiatRangeCents == null
+        ? null
+        : profitFiatFromCents(profitFiatRangeCents[1]),
+    };
+    localStorage.setItem(INSIGHTS_FILTERS_STORAGE_KEY, JSON.stringify(payload));
+  }, [
+    selectedTimeframe,
+    directionFilter,
+    disabledExchanges,
+    mode,
+    showAllMethods,
+    sortBy,
+    durationRange,
+    durationBounds.min,
+    durationBounds.max,
+    durationBounds.hasData,
+    profitFiatRangeCents,
+    profitFiatBounds.minCents,
+    profitFiatBounds.maxCents,
+    profitFiatBounds.hasData,
+  ]);
+
+  const filteredOrders = useMemo(() => {
+    if (profitFiatRangeCents == null) {
+      return ordersAfterDurationFilter;
+    }
+    const [lo, hi] = profitFiatRangeCents;
+    return ordersAfterDurationFilter.filter(order => {
+      const cents = profitFiatToCents(orderNetProfitFiat(order, mode));
+      return cents >= lo && cents <= hi;
+    });
+  }, [ordersAfterDurationFilter, profitFiatRangeCents, mode]);
+
+  const filteredSummary = useMemo(
+    () => computeFilteredSummary(filteredOrders, mode),
+    [filteredOrders, mode],
+  );
+
+  const sortedOrders = useMemo(
+    () => sortProfitableOrders(filteredOrders, sortBy, mode),
+    [filteredOrders, sortBy, mode],
+  );
+
+  const toggleExchangeFilter = useCallback((exchange: string) => {
+    setDisabledExchanges(prev =>
+      prev.includes(exchange) ? prev.filter(name => name !== exchange) : [...prev, exchange],
+    );
+  }, []);
+
+  const resetFilters = useCallback(() => {
+    setSelectedTimeframe(DEFAULT_INSIGHTS_FILTERS.selectedTimeframe);
+    setDirectionFilter(DEFAULT_INSIGHTS_FILTERS.directionFilter);
+    setDisabledExchanges([]);
+    setShowAllMethods(DEFAULT_INSIGHTS_FILTERS.showAllMethods);
+    setMode(DEFAULT_INSIGHTS_FILTERS.mode);
+    setSortBy(DEFAULT_INSIGHTS_FILTERS.sortBy);
+    setExpandedId(null);
+    persistedDurationRef.current = { min: null, max: null };
+    persistedProfitFiatRef.current = { minCents: null, maxCents: null };
+    profitFiatBoundsInitializedRef.current = false;
+    if (durationBounds.hasData) {
+      setDurationRange([durationBounds.min, durationBounds.max]);
+    }
+    if (profitFiatBounds.hasData) {
+      setProfitFiatRangeCents([profitFiatBounds.minCents, profitFiatBounds.maxCents]);
+      profitFiatBoundsInitializedRef.current = true;
+    } else {
+      setProfitFiatRangeCents(null);
+    }
+  }, [
+    durationBounds.hasData,
+    durationBounds.min,
+    durationBounds.max,
+    profitFiatBounds.hasData,
+    profitFiatBounds.minCents,
+    profitFiatBounds.maxCents,
+  ]);
 
   if (loading && !stats) {
-    return <div className="text-[0.8rem] text-muted">Loading taker opportunity statistics…</div>;
+    return (
+      <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
+        <LoadingSpinner label="Loading taker opportunities" />
+      </div>
+    );
   }
 
   if (!stats) {
-    return <div className="text-[0.8rem] text-muted">No taker opportunity statistics available yet.</div>;
+    return (
+      <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
+        <div className="flex flex-1 items-center justify-center px-3 text-[0.8rem] text-muted">
+          No taker opportunity statistics available yet.
+        </div>
+      </div>
+    );
   }
 
   const summaryRows = [
-    { label: 'Orders', value: (selected?.premium_order_count ?? 0).toLocaleString('de-DE'), className: 'text-text' },
-    { label: 'Net BTC', value: fmtBTC(selected?.total_net_profit_btc), className: 'text-green' },
-    { label: `Net ${fiat}`, value: fmtFiat(selected?.total_net_profit_fiat, fiat), className: 'text-text' },
-    { label: 'Avg Size', value: fmtBTC(selected?.average_order_size_btc), className: 'text-text' },
-    { label: 'Smallest', value: fmtBTC(selected?.smallest_order_size_btc), className: 'text-muted' },
-    { label: 'Biggest', value: fmtBTC(selected?.biggest_order_size_btc), className: 'text-muted' },
+    { label: 'Orders', value: filteredSummary.premium_order_count.toLocaleString('de-DE'), className: 'text-text' },
+    { label: 'Net BTC', value: fmtBTC(filteredSummary.total_net_profit_btc), className: 'text-green' },
+    { label: `Net ${fiat}`, value: fmtFiat(filteredSummary.total_net_profit_fiat, fiat), className: 'text-text' },
+    { label: 'Avg Size', value: fmtBTC(filteredSummary.average_order_size_btc), className: 'text-text' },
+    { label: 'Smallest', value: fmtBTC(filteredSummary.smallest_order_size_btc), className: 'text-muted' },
+    { label: 'Biggest', value: fmtBTC(filteredSummary.biggest_order_size_btc), className: 'text-muted' },
   ];
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col overflow-hidden">
+    <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
+      {loading && <LoadingSpinner label="Loading taker opportunities" />}
       <div className="flex flex-1 min-h-0 flex-col gap-3 lg:flex-row">
         <aside className="flex shrink-0 flex-col gap-3 rounded-lg border border-border bg-bg/20 p-3 lg:w-72 xl:w-80 lg:overflow-y-auto">
           <SelectGroup
@@ -215,6 +965,49 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
             options={(activeStats ?? stats).timeframes.map(r => ({ value: r.timeframe, label: labelForTimeframe(r.timeframe) }))}
             selected={selected?.timeframe ?? selectedTimeframe}
             onChange={setSelectedTimeframe}
+          />
+          <PillGroup
+            label="Direction"
+            description="Filter the profitable trades list by offer side"
+            options={[
+              { value: 'both', label: 'Both' },
+              { value: 'buy', label: 'Buy' },
+              { value: 'sell', label: 'Sell' },
+            ]}
+            selected={directionFilter}
+            onChange={v => setDirectionFilter(v as DirectionFilter)}
+          />
+          <ExchangeFilterGroup
+            label="Exchanges"
+            description="Click to include or exclude DEX exchanges from the profitable trades list"
+            exchanges={exchangeFilterBase.exchanges}
+            counts={exchangeFilterBase.counts}
+            disabled={disabledExchangeSet}
+            onToggle={toggleExchangeFilter}
+            onEnableAll={() => setDisabledExchanges([])}
+            onDisableAll={() => setDisabledExchanges([...exchangeFilterBase.exchanges])}
+          />
+          <DualRangeFilter
+            label="Duration"
+            description="Filter profitable trades by how long the offer was live"
+            min={durationBounds.min}
+            max={durationBounds.max}
+            value={durationRange}
+            onChange={setDurationRange}
+            formatValue={formatDurationMinutes}
+            disabled={!durationBounds.hasData}
+            disabledMessage="No duration data in this window"
+          />
+          <DualRangeFilter
+            label={`Net profit ${fiat}`}
+            description="Filter profitable trades by net profit per order in fiat"
+            min={profitFiatBounds.minCents}
+            max={profitFiatBounds.sliderMaxCents}
+            value={profitFiatRangeCents ?? [profitFiatBounds.minCents, profitFiatBounds.maxCents]}
+            onChange={setProfitFiatRangeCents}
+            formatValue={value => fmtFiat(profitFiatFromCents(value), fiat)}
+            disabled={!profitFiatBounds.hasData || profitFiatRangeCents == null}
+            disabledMessage="No profit data in this window"
           />
           {hasExcluded && (
             <PillGroup
@@ -239,6 +1032,14 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
             onChange={v => setMode(v as TakerOpportunityMode)}
           />
 
+          <button
+            type="button"
+            onClick={resetFilters}
+            className="w-full rounded-md border-none bg-red px-2.5 py-1.5 text-[0.72rem] font-semibold text-black transition-opacity hover:opacity-85"
+          >
+            ↺ Reset filters
+          </button>
+
           <div className="shrink-0 overflow-hidden rounded-lg border border-border bg-bg/20">
             <div className="border-b border-border bg-surface/70 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-wide text-muted">
               Backtesting summary
@@ -255,33 +1056,51 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
         </aside>
 
         <div className="min-h-0 flex-1 rounded-lg border border-border overflow-hidden flex flex-col">
-          <div className="flex items-center justify-between gap-2 border-b border-border bg-surface/70 px-3 py-2 text-[0.72rem]">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface/70 px-3 py-2 text-[0.72rem]">
             <span className="text-text font-medium">Profitable trades</span>
-            <span className="text-muted">{visibleOrders.length} in {labelForTimeframe(selected?.timeframe ?? selectedTimeframe).toLowerCase()}</span>
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+              <label className="flex items-center gap-1.5 text-muted">
+                <span className="shrink-0 uppercase tracking-wide text-[0.65rem] font-semibold">Sort</span>
+                <select
+                  title="Sort the profitable trades list"
+                  value={sortBy}
+                  onChange={event => setSortBy(event.target.value as ProfitableOrderSortKey)}
+                  className="max-w-[12rem] rounded border border-border bg-bg/60 px-2 py-1 text-[0.72rem] font-medium text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
+                >
+                  {profitableOrderSortOptions(fiat).map(option => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <span className="text-muted">{sortedOrders.length} in {labelForTimeframe(selected?.timeframe ?? selectedTimeframe).toLowerCase()}</span>
+            </div>
           </div>
-          <div className="min-h-0 flex-1 overflow-auto">
-            {visibleOrders.length === 0 ? (
+          <div className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+            {sortedOrders.length === 0 ? (
               <div className="px-3 py-4 text-[0.75rem] text-muted">No profitable closed trades in this window for the selected net mode.</div>
             ) : (
-              visibleOrders.map(order => {
+              sortedOrders.map(order => {
                 const isOpen = expandedId === order.id;
                 const activeScenario = pickScenario(order, mode);
                 const seenLabel = formatDateTimeLabel(order.status.last_seen ?? '', timezone);
                 const firstSeenLabel = formatDateTimeLabel(order.status.first_seen ?? '', timezone);
+                const paymentMethod = order.payment_method || 'Unknown method';
 
                 return (
                   <div key={order.id} className="border-b border-border last:border-0">
                     <button
                       type="button"
                       onClick={() => setExpandedId(isOpen ? null : order.id)}
-                      className={`w-max min-w-full bg-transparent border-none px-3 py-2 text-left transition-colors ${isOpen ? 'bg-bg/40' : 'hover:bg-white/5'}`}
+                      className={`w-full min-w-0 bg-transparent border-none px-3 py-2 text-left transition-colors ${isOpen ? 'bg-bg/40' : 'hover:bg-white/5'}`}
                     >
-                      <div className="grid min-w-[52rem] grid-cols-[minmax(12rem,1.35fr)_minmax(8.5rem,0.85fr)_minmax(6.5rem,0.65fr)_minmax(7.5rem,0.75fr)_minmax(8.5rem,0.85fr)_minmax(8rem,0.8fr)_1.5rem] items-center gap-3 text-[0.72rem]">
-                        <div className="flex min-w-0 items-center gap-2">
+                      <div className="grid w-full min-w-0 grid-cols-[minmax(0,1.35fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.75fr)_minmax(0,0.85fr)_minmax(0,0.8fr)_1.25rem] items-center gap-2 sm:gap-3 text-[0.72rem]">
+                        <div className="flex min-w-0 items-center gap-1.5 overflow-hidden sm:gap-2">
                           <span className="shrink-0 rounded border border-border bg-bg/50 px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase text-text">{order.exchange}</span>
                           <span className="shrink-0 rounded border border-border/70 px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase text-muted">{order.direction}</span>
-                          <span className="min-w-0 truncate font-medium text-text" title={order.payment_method || 'Unknown method'}>
-                            {order.payment_method || 'Unknown method'}
+                          <span className="min-w-0 truncate font-medium text-text" title={paymentMethod}>
+                            {paymentMethod}
                           </span>
                         </div>
                         <TradeRowMetric label="Last seen" value={seenLabel} />
@@ -289,45 +1108,22 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
                         <TradeRowMetric label="Size" value={fmtBTC(activeScenario.trade_size_btc)} />
                         <TradeRowMetric label="Net BTC" value={fmtBTC(activeScenario.profit.avg_btc)} valueClassName="text-green" />
                         <TradeRowMetric label={`Net ${fiat}`} value={fmtFiat(activeScenario.profit.avg_fiat, fiat)} />
-                        <span className="text-right text-muted">{isOpen ? '▲' : '▼'}</span>
+                        <span className="shrink-0 text-right text-muted">{isOpen ? '▲' : '▼'}</span>
                       </div>
                     </button>
 
                     {isOpen && (
-                      <div className="border-t border-border bg-bg/20 px-3 py-3 text-[0.72rem]">
-                        <div className="grid gap-3 lg:grid-cols-2">
-                          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                            <span className="text-muted">Offer ID</span>
-                            <span className="text-text break-all">{order.offer_id || '—'}</span>
-                            <span className="text-muted">First seen</span>
-                            <span className="text-text">{firstSeenLabel}</span>
-                            <span className="text-muted">Last seen</span>
-                            <span className="text-text">{seenLabel}</span>
-                            <span className="text-muted">Avg net %</span>
-                            <span className={(activeScenario.premium.avg_net_percent ?? 0) > 0 ? 'text-green' : 'text-text'}>
-                              {fmtPct(activeScenario.premium.avg_net_percent)}
-                            </span>
-                            <span className="text-muted">Avg trade cost %</span>
-                            <span className="text-text">{fmtPct(activeScenario.premium.avg_trade_cost_percent)}</span>
-                            <span className="text-muted">Route</span>
-                            <span className="text-text">{activeScenario.route.cex} via {activeScenario.route.settlement}</span>
-                            {mode === 'net_capped' && order.analysis.capped_volume?.cap_fiat != null && (
-                              <>
-                                <span className="text-muted">Cap</span>
-                                <span className="text-text">{fmtFiat(order.analysis.capped_volume.cap_fiat, fiat)}</span>
-                              </>
-                            )}
-                          </div>
-
-                          <div className="grid grid-cols-2 gap-x-3 gap-y-1">
-                            {sortOfferEntries(order.offer).map(([key, value]) => (
-                              <div key={key} className="contents">
-                                <span className="text-muted">{humanizeKey(key)}</span>
-                                <span className="text-text break-all">{formatOfferValue(value)}</span>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
+                      <div className="border-t border-border bg-bg/20 px-3 py-2">
+                        <CompactDetailGrid
+                          items={buildExpandedDetailItems(
+                            order,
+                            activeScenario,
+                            mode,
+                            fiat,
+                            firstSeenLabel,
+                            seenLabel,
+                          )}
+                        />
                       </div>
                     )}
                   </div>

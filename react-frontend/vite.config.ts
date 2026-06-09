@@ -5,6 +5,10 @@ import tailwindcss from '@tailwindcss/vite'
 
 const viteLogger = createLogger()
 
+// Host port 5000 is nginx HTTP → 301 to https://localhost:5443. Vite must proxy
+// dexMonitor API/WS to the TLS edge (self-signed cert) or browser fetches fail.
+const DEV_TLS_EDGE = 'https://localhost:5443'
+
 function gitInfo(): { hash: string; date: string } {
   // CI bakes these in as build args (the image is built without a .git dir);
   // the git fallback below covers the local dev server.
@@ -26,14 +30,24 @@ function shouldIgnoreWsProxyError(message: string): boolean {
   return isWsProxyNoise && isBrokenSocket
 }
 
-function quietWsProxy(target: string): ProxyOptions {
+function quietWsProxy(target: string, secure?: boolean): ProxyOptions {
   return {
     target,
     ws: true,
+    changeOrigin: true,
+    ...(secure !== undefined ? { secure } : {}),
     configure: (proxy) => {
       // Dev backends can drop websocket upgrades during restarts; avoid noisy duplicate logs.
       proxy.on('error', () => {})
     },
+  }
+}
+
+function httpsEdgeProxy(): ProxyOptions {
+  return {
+    target: DEV_TLS_EDGE,
+    secure: false,
+    changeOrigin: true,
   }
 }
 
@@ -55,15 +69,15 @@ export default defineConfig({
       '/ws/live_offers':        quietWsProxy('ws://localhost:5010'),
       '/api/live_offers':       'http://localhost:5010',
       '/api/trade_cost_config': 'http://localhost:5010',
-      '/api':                   'http://localhost:5000',
-      '/ws':                    quietWsProxy('ws://localhost:5000'),
+      '/api':                   httpsEdgeProxy(),
+      '/ws':                    quietWsProxy('wss://localhost:5443', false),
       // Grafana isn't exposed to the host in local dev; reach it through nginx
-      // (port 5000), which proxies the /grafana/ sub-path to the grafana
+      // (TLS edge on 5443), which proxies the /grafana/ sub-path to the grafana
       // container. Without these the dev server's SPA fallback serves
       // index.html for /grafana/ — the Metrics link just reopens the frontend.
       // The /grafana/api/live websocket must precede /grafana to match first.
-      '/grafana/api/live':      quietWsProxy('ws://localhost:5000'),
-      '/grafana':               'http://localhost:5000',
+      '/grafana/api/live':      quietWsProxy('wss://localhost:5443', false),
+      '/grafana':               httpsEdgeProxy(),
     },
   },
 })
