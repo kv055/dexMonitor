@@ -121,13 +121,12 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastProfitableOrders, generalStats, analyticsOverviewLoading, analyticsOrdersLoading, loadAnalytics }: {
+function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, loadAnalytics }: {
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
   pastOrderStatsNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsNetCapped'];
   pastOrderStatsAllNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsAllNetCapped'];
   pastProfitableOrders: ReturnType<typeof useDashboard>['pastProfitableOrders'];
-  generalStats: ReturnType<typeof useDashboard>['generalStats'];
   analyticsOverviewLoading: boolean;
   analyticsOrdersLoading: boolean;
   loadAnalytics: ReturnType<typeof useDashboard>['loadAnalytics'];
@@ -186,7 +185,6 @@ function AppShell() {
     pastOrderStatsNetCapped,
     pastOrderStatsAllNetCapped,
     pastProfitableOrders,
-    generalStats,
     ohlcData,
     lastUpdatedAt,
     error,
@@ -252,7 +250,6 @@ function AppShell() {
             pastOrderStatsNetCapped={pastOrderStatsNetCapped}
             pastOrderStatsAllNetCapped={pastOrderStatsAllNetCapped}
             pastProfitableOrders={pastProfitableOrders}
-            generalStats={generalStats}
             analyticsOverviewLoading={analyticsOverviewLoading}
             analyticsOrdersLoading={analyticsOrdersLoading}
             loadAnalytics={loadAnalytics}

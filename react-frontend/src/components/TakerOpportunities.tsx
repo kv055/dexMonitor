@@ -991,6 +991,8 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
     [filteredOrders, sortBy, mode],
   );
 
+  // TanStack Virtual returns refs that React Compiler cannot memoize; usage here is localized.
+  // eslint-disable-next-line react-hooks/incompatible-library -- scroll virtualization only
   const rowVirtualizer = useVirtualizer({
     count: sortedOrders.length,
     getScrollElement: () => tradesListRef.current,
