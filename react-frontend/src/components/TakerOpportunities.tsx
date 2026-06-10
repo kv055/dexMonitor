@@ -24,6 +24,7 @@ import {
   pastProfitableOrderAsOffer,
 } from '../utils/offerAccess';
 import { CostBreakdownPanel, OfferTimeMeta, SizeToggle } from './OfferBreakdownPanel';
+import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
 
 interface Props {
@@ -580,19 +581,34 @@ function DualRangeFilter({
   );
 }
 
+const PROFITABLE_TRADES_GRID_COLS =
+  'grid w-full min-w-0 grid-cols-[minmax(0,1.35fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.75fr)_minmax(0,0.85fr)_minmax(0,0.8fr)_1.25rem] items-center gap-2 sm:gap-3';
+
 interface TradeRowMetricProps {
-  label: string;
   value: string;
   valueClassName?: string;
 }
 
-function TradeRowMetric({ label, value, valueClassName = 'text-text' }: TradeRowMetricProps) {
-  const full = `${label} ${value}`;
+function TradeRowMetric({ value, valueClassName = 'text-text' }: TradeRowMetricProps) {
   return (
-    <span className="block min-w-0 truncate text-right text-muted" title={full}>
-      <span className="mr-1">{label}</span>
-      <span className={`mono-nums tabular-nums ${valueClassName}`}>{value}</span>
+    <span className={`block min-w-0 truncate text-right mono-nums tabular-nums ${valueClassName}`} title={value}>
+      {value}
     </span>
+  );
+}
+
+function ProfitableTradesHeader({ fiat }: { fiat: string }) {
+  const th = 'truncate text-[0.65rem] font-semibold uppercase tracking-wide text-muted';
+  return (
+    <div className={`${PROFITABLE_TRADES_GRID_COLS} shrink-0 border-b border-border bg-surface/70 px-3 py-1.5`}>
+      <span className={th}>Offer</span>
+      <span className={`${th} text-right`}>Last seen</span>
+      <span className={`${th} text-right`}>Duration</span>
+      <span className={`${th} text-right`}>Size</span>
+      <span className={`${th} text-right`}>Net BTC</span>
+      <span className={`${th} text-right`}>Net {fiat}</span>
+      <span className="shrink-0" aria-hidden />
+    </div>
   );
 }
 
@@ -1180,14 +1196,16 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
               <span className="text-muted">{sortedOrders.length} in {labelForTimeframe(selected?.timeframe ?? selectedTimeframe).toLowerCase()}</span>
             </div>
           </div>
-          <div ref={tradesListRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-            {sortedOrders.length === 0 ? (
-              <div className="px-3 py-4 text-[0.75rem] text-muted">No profitable closed trades in this window for the selected net mode.</div>
-            ) : (
-              <div
-                className="relative w-full"
-                style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
-              >
+          <div className="min-h-0 flex-1 flex flex-col overflow-hidden">
+            {sortedOrders.length > 0 && <ProfitableTradesHeader fiat={fiat} />}
+            <div ref={tradesListRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+              {sortedOrders.length === 0 ? (
+                <div className="px-3 py-4 text-[0.75rem] text-muted">No profitable closed trades in this window for the selected net mode.</div>
+              ) : (
+                <div
+                  className="relative w-full"
+                  style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
+                >
                 {rowVirtualizer.getVirtualItems().map(virtualRow => {
                   const order = sortedOrders[virtualRow.index];
                   const isOpen = expandedId === order.id;
@@ -1221,19 +1239,21 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
                         }}
                         className={`w-full min-w-0 bg-transparent border-none px-3 py-2 text-left transition-colors ${isOpen ? 'bg-bg/40' : 'hover:bg-white/5'}`}
                       >
-                        <div className="grid w-full min-w-0 grid-cols-[minmax(0,1.35fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.75fr)_minmax(0,0.85fr)_minmax(0,0.8fr)_1.25rem] items-center gap-2 sm:gap-3 text-[0.72rem]">
+                        <div className={`${PROFITABLE_TRADES_GRID_COLS} text-[0.72rem]`}>
                           <div className="flex min-w-0 items-center gap-1.5 overflow-hidden sm:gap-2">
-                            <span className="shrink-0 rounded border border-border bg-bg/50 px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase text-text">{order.exchange}</span>
-                            <span className="shrink-0 rounded border border-border/70 px-1.5 py-0.5 text-[0.65rem] font-semibold uppercase text-muted">{order.direction}</span>
+                            <ExchangeTag exchange={order.exchange} />
+                            <span className={`shrink-0 text-[0.65rem] font-semibold uppercase ${order.direction === 'buy' ? 'text-green' : 'text-red'}`}>
+                              {order.direction === 'buy' ? 'Bid' : 'Ask'}
+                            </span>
                             <span className="min-w-0 truncate font-medium text-text" title={paymentMethod}>
                               {paymentMethod}
                             </span>
                           </div>
-                          <TradeRowMetric label="Last seen" value={seenLabel} />
-                          <TradeRowMetric label="Duration" value={order.status.duration?.display || '—'} />
-                          <TradeRowMetric label="Size" value={fmtBTC(activeScenario.trade_size_btc)} />
-                          <TradeRowMetric label="Net BTC" value={fmtBTC(activeScenario.profit.avg_btc)} valueClassName="text-green" />
-                          <TradeRowMetric label={`Net ${fiat}`} value={fmtFiat(activeScenario.profit.avg_fiat, fiat)} />
+                          <TradeRowMetric value={seenLabel} />
+                          <TradeRowMetric value={order.status.duration?.display || '—'} />
+                          <TradeRowMetric value={fmtBTC(activeScenario.trade_size_btc)} />
+                          <TradeRowMetric value={fmtBTC(activeScenario.profit.avg_btc)} valueClassName="text-green" />
+                          <TradeRowMetric value={fmtFiat(activeScenario.profit.avg_fiat, fiat)} />
                           <span className="shrink-0 text-right text-muted">{isOpen ? '▲' : '▼'}</span>
                         </div>
                       </button>
@@ -1250,8 +1270,9 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
                     </div>
                   );
                 })}
-              </div>
-            )}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>

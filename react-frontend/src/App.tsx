@@ -14,7 +14,7 @@ import { ControlPanel } from './components/ControlPanel';
 import { OffersPreviewTable } from './components/OffersPreviewTable';
 import { OHLCChart } from './components/OHLCChart';
 import { DepthChart } from './components/DepthChart';
-import { GeneralStats } from './components/GeneralStats';
+// import { GeneralStats } from './components/GeneralStats';
 import { SnapshotLog } from './components/SnapshotLog';
 import { MmTransactionsLog } from './components/MmTransactionsLog';
 import { TakerOpportunities } from './components/TakerOpportunities';
@@ -57,7 +57,7 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, loadCore, extendOhlc, ref
   }, [filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadCore, refreshForCex]);
 
   return (
-    <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
+    <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
       {error && (
         <div className="bg-error border border-red rounded-lg px-3 py-2 text-red text-sm shrink-0">
           {error}
@@ -102,8 +102,8 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, loadCore, extendOhlc, ref
 
 function MmControllerView() {
   return (
-    <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
-      <div className="flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-2 gap-2 sm:gap-3">
+    <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
+      <div className="lg:flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-2 gap-2 sm:gap-3">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-52 xl:min-h-0 overflow-hidden">
           <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Snapshot Log</h3>
           <div className="relative flex-1 min-h-0">
@@ -140,12 +140,13 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
   }, [filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadAnalytics]);
 
   return (
-    <div className="flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
-      {/* Top — statistics */}
+    <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
+      {/* Top — statistics (temporarily hidden)
       <div className="lg:flex-none bg-surface border border-border rounded-lg px-2 py-1.5">
         <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-1 block">General Statistics</span>
         <GeneralStats stats={generalStats} loading={analyticsOverviewLoading} />
       </div>
+      */}
       <div className="lg:flex-1 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
         <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2">Taker Opportunities</span>
         <TakerOpportunities
@@ -165,7 +166,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
 
 function TradingView() {
   return (
-    <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-2 sm:gap-3 overflow-hidden">
+    <div className="lg:flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-2 sm:gap-3 lg:overflow-hidden">
       <TradingAccountsPanel />
       <div className="min-h-0 rounded-lg border border-border bg-surface p-3 flex flex-col">
         <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">Trade Flow Monitor</h3>
@@ -215,7 +216,7 @@ function AppShell() {
   return (
     <TimezoneProvider timezone={preferredTimezone}>
       <FiltersProvider offers={allOffers} loading={loading} groups={groups} excludedMethods={excludedMethods}>
-      <div className="h-screen overflow-hidden flex flex-col bg-bg text-text p-2 sm:p-3 gap-2 sm:gap-3">
+      <div className="min-h-dvh lg:h-dvh flex flex-col overflow-y-auto lg:overflow-hidden bg-bg text-text p-2 sm:p-3 gap-2 sm:gap-3">
         <Header
           activeTab={activeTab}
           onTabChange={setActiveTab}

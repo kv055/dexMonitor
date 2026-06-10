@@ -35,6 +35,7 @@ const PROVIDER_OPTIONS: ProviderOption[] = [
   { value: 'Huobi', label: 'Huobi' },
   { value: 'HodlHodl', label: 'HodlHodl' },
   { value: 'Bisq', label: 'Bisq' },
+  { value: 'Bisq2', label: 'Bisq2' },
   { value: 'Robosats', label: 'RoboSats' },
   { value: 'PayPal', label: 'PayPal' },
   { value: 'Revolut', label: 'Revolut' },
