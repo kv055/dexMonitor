@@ -95,7 +95,7 @@ export function MmTransactionsLog() {
 
   return (
     <div className="absolute inset-0 overflow-y-auto flex flex-col gap-0.5">
-      {loading && <LoadingSpinner size={22} label="Loading MM logs" />}
+      {loading && <LoadingSpinner size={88} label="Loading MM logs" />}
       {!loading && error && (
         <span className="text-red text-[0.75rem] px-1">{error}</span>
       )}

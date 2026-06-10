@@ -523,7 +523,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
         ))}
       </div>
 
-      {loading && <LoadingSpinner size={36} label="Loading chart data" />}
+      {loading && <LoadingSpinner size={120} label="Loading chart data" />}
       <div
         ref={divRef}
         className="flex-1 min-h-0"

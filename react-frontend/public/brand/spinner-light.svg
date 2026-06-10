@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="-30 -40 220 200" fill="none" overflow="visible">
+  <style>
+    @keyframes pendulum-swing { 0%, 100% { transform: rotate(-26deg); } 50% { transform: rotate(26deg); } }
+    @keyframes pendulum-counter { 0%, 100% { transform: rotate(26deg); } 50% { transform: rotate(-26deg); } }
+    @keyframes usd-swing { 0%, 100% { transform: rotate(90deg); } 50% { transform: rotate(-90deg); } }
+    @keyframes usd-counter { 0%, 100% { transform: rotate(-90deg); } 50% { transform: rotate(90deg); } }
+    @keyframes currency-cycle-0 { 0%, 25% { opacity: 1; } 25.01%, 100% { opacity: 0; } }
+    @keyframes currency-cycle-1 { 0%, 25% { opacity: 0; } 25.01%, 50% { opacity: 1; } 50.01%, 100% { opacity: 0; } }
+    @keyframes currency-cycle-2 { 0%, 50% { opacity: 0; } 50.01%, 75% { opacity: 1; } 75.01%, 100% { opacity: 0; } }
+    @keyframes currency-cycle-3 { 0%, 75% { opacity: 0; } 75.01%, 100% { opacity: 1; } }
+    @keyframes currency-fill { 0%, 100% { fill: #25c26b; } 25% { fill: #3b82f6; } 50% { fill: #e5484d; } 75% { fill: #a855f7; } }
+    @keyframes candle-left { 0%, 50% { fill: #e5484d; } 50.01%, 100% { fill: #25c26b; } }
+    @keyframes candle-right { 0%, 50% { fill: #25c26b; } 50.01%, 100% { fill: #e5484d; } }
+  </style>
+
+  <path d="M -20 60 A 100 100 0 0 1 180 60" stroke="#1a1612" stroke-width="1.4" stroke-linecap="round" fill="none" opacity="0.35"></path>
+
+  
+  <g style="transform-origin: 80px 60px; animation: usd-swing 2.6s cubic-bezier(.45,0,.55,1) infinite;">
+    <g style="transform-origin: 80px -40px; animation: usd-counter 2.6s cubic-bezier(.45,0,.55,1) infinite;">
+      <circle cx="80" cy="-40" r="14" style="animation: currency-fill 5.2s linear infinite;"></circle>
+           <circle cx="80" cy="-40" r="10" fill="none" stroke="#1a1612" stroke-width="1.4" opacity="0.55"></circle>
+           <text x="80" y="-40" text-anchor="middle" dominant-baseline="central" font-family="&#39;JetBrains Mono&#39;, ui-monospace, monospace" font-size="17" font-weight="700" fill="#1a1612" style="animation: currency-cycle-0 5.2s steps(1, end) infinite;">$</text><text x="80" y="-40" text-anchor="middle" dominant-baseline="central" font-family="&#39;JetBrains Mono&#39;, ui-monospace, monospace" font-size="17" font-weight="700" fill="#1a1612" style="animation: currency-cycle-1 5.2s steps(1, end) infinite;">€</text><text x="80" y="-40" text-anchor="middle" dominant-baseline="central" font-family="&#39;JetBrains Mono&#39;, ui-monospace, monospace" font-size="17" font-weight="700" fill="#1a1612" style="animation: currency-cycle-2 5.2s steps(1, end) infinite;">¥</text><text x="80" y="-40" text-anchor="middle" dominant-baseline="central" font-family="&#39;JetBrains Mono&#39;, ui-monospace, monospace" font-size="17" font-weight="700" fill="#1a1612" style="animation: currency-cycle-3 5.2s steps(1, end) infinite;">£</text>
+    </g>
+  </g>
+
+  
+  <path d="M 26 22 L 134 22" stroke="#1a1612" stroke-width="5" stroke-linecap="round"></path>
+  <path d="M 26 22 L 26 34" stroke="#1a1612" stroke-width="5" stroke-linecap="round"></path>
+  <path d="M 134 22 L 134 34" stroke="#1a1612" stroke-width="5" stroke-linecap="round"></path>
+  <path d="M 32 30 L 128 30" stroke="#1a1612" stroke-width="1.5" stroke-linecap="round" opacity="0.35"></path>
+  <circle cx="26" cy="22" r="3" fill="#1a1612"></circle>
+  <circle cx="134" cy="22" r="3" fill="#1a1612"></circle>
+
+  
+  <path d="M 8 100 Q 80 -8 152 100" stroke="#1a1612" stroke-width="1.5" stroke-linecap="round" stroke-dasharray="2 5" opacity="0.4"></path>
+  <line x1="14.12" y1="95.28" x2="9.52" y2="99.14" stroke="#1a1612" stroke-width="1.4" stroke-linecap="round" opacity="0.45"></line><line x1="24.72" y1="105.88" x2="20.86" y2="110.48" stroke="#1a1612" stroke-width="1.4" stroke-linecap="round" opacity="0.45"></line><line x1="37.00" y1="114.48" x2="34.00" y2="119.67" stroke="#1a1612" stroke-width="1.4" stroke-linecap="round" opacity="0.45"></line><line x1="50.59" y1="120.81" x2="48.53" y2="126.45" stroke="#1a1612" stroke-width="1.4" stroke-linecap="round" opacity="0.45"></line><line x1="65.07" y1="124.69" x2="64.02" y2="130.60" stroke="#1a1612" stroke-width="1.4" stroke-linecap="round" opacity="0.45"></line><line x1="80.00" y1="126.00" x2="80.00" y2="132.00" stroke="#1a1612" stroke-width="2.4" stroke-linecap="round" opacity="0.7"></line><line x1="94.93" y1="124.69" x2="95.98" y2="130.60" stroke="#1a1612" stroke-width="1.4" stroke-linecap="round" opacity="0.45"></line><line x1="109.41" y1="120.81" x2="111.47" y2="126.45" stroke="#1a1612" stroke-width="1.4" stroke-linecap="round" opacity="0.45"></line><line x1="123.00" y1="114.48" x2="126.00" y2="119.67" stroke="#1a1612" stroke-width="1.4" stroke-linecap="round" opacity="0.45"></line><line x1="135.28" y1="105.88" x2="139.14" y2="110.48" stroke="#1a1612" stroke-width="1.4" stroke-linecap="round" opacity="0.45"></line><line x1="145.88" y1="95.28" x2="150.48" y2="99.14" stroke="#1a1612" stroke-width="1.4" stroke-linecap="round" opacity="0.45"></line>
+
+  
+  <line x1="8" y1="90" x2="8" y2="140" stroke="#1a1612" stroke-width="1.8" stroke-linecap="round"></line>
+  <rect x="2" y="100" width="12" height="32" fill="#25c26b" stroke="#1a1612" stroke-width="1.5" style="animation: candle-left 2.6s steps(1, end) infinite;"></rect>
+  <line x1="152" y1="90" x2="152" y2="140" stroke="#1a1612" stroke-width="1.8" stroke-linecap="round"></line>
+  <rect x="146" y="100" width="12" height="32" fill="#e5484d" stroke="#1a1612" stroke-width="1.5" style="animation: candle-right 2.6s steps(1, end) infinite;"></rect>
+
+  
+  <g opacity="0.12"><line x1="80" y1="40" x2="44.32" y2="107.10" stroke="#1a1612" stroke-width="3" stroke-linecap="round"></line><circle cx="44.32" cy="113.10" r="10" fill="#1a1612"></circle></g>
+  <g opacity="0.12"><line x1="80" y1="40" x2="115.68" y2="107.10" stroke="#1a1612" stroke-width="3" stroke-linecap="round"></line><circle cx="115.68" cy="113.10" r="10" fill="#1a1612"></circle></g>
+  <g opacity="0.2"><line x1="80" y1="40" x2="61.61" y2="113.74" stroke="#1a1612" stroke-width="3" stroke-linecap="round"></line><circle cx="61.61" cy="119.74" r="10" fill="#1a1612"></circle></g>
+  <g opacity="0.2"><line x1="80" y1="40" x2="98.39" y2="113.74" stroke="#1a1612" stroke-width="3" stroke-linecap="round"></line><circle cx="98.39" cy="119.74" r="10" fill="#1a1612"></circle></g>
+
+  
+  <g style="animation: pendulum-swing 2.6s cubic-bezier(.45,0,.55,1) infinite; transform-origin: 80px 40px;">
+    <line x1="80" y1="40" x2="80" y2="110" stroke="#1a1612" stroke-width="4" stroke-linecap="round"></line>
+    <circle cx="80" cy="40" r="3.2" fill="#1a1612"></circle>
+    <g style="animation: pendulum-counter 2.6s cubic-bezier(.45,0,.55,1) infinite; transform-origin: 80px 122px;">
+      <circle cx="80" cy="122" r="14" fill="#ff6a13"></circle>
+      <circle cx="80" cy="122" r="10" fill="none" stroke="#1a1612" stroke-width="1.4" opacity="0.55"></circle>
+      <text x="80" y="122" text-anchor="middle" dominant-baseline="central" font-family="&#39;JetBrains Mono&#39;, ui-monospace, monospace" font-size="17" font-weight="700" fill="#1a1612">₿</text>
+    </g>
+  </g>
+
+  
+  <circle cx="80" cy="40" r="9" fill="#1a1612"></circle>
+  <line x1="89.00" y1="40.00" x2="93.00" y2="40.00" stroke="#1a1612" stroke-width="2" stroke-linecap="round"></line><line x1="87.79" y1="44.50" x2="91.26" y2="46.50" stroke="#1a1612" stroke-width="2" stroke-linecap="round"></line><line x1="84.50" y1="47.79" x2="86.50" y2="51.26" stroke="#1a1612" stroke-width="2" stroke-linecap="round"></line><line x1="80.00" y1="49.00" x2="80.00" y2="53.00" stroke="#1a1612" stroke-width="2" stroke-linecap="round"></line><line x1="75.50" y1="47.79" x2="73.50" y2="51.26" stroke="#1a1612" stroke-width="2" stroke-linecap="round"></line><line x1="72.21" y1="44.50" x2="68.74" y2="46.50" stroke="#1a1612" stroke-width="2" stroke-linecap="round"></line><line x1="71.00" y1="40.00" x2="67.00" y2="40.00" stroke="#1a1612" stroke-width="2" stroke-linecap="round"></line><line x1="72.21" y1="35.50" x2="68.74" y2="33.50" stroke="#1a1612" stroke-width="2" stroke-linecap="round"></line><line x1="75.50" y1="32.21" x2="73.50" y2="28.74" stroke="#1a1612" stroke-width="2" stroke-linecap="round"></line><line x1="80.00" y1="31.00" x2="80.00" y2="27.00" stroke="#1a1612" stroke-width="2" stroke-linecap="round"></line><line x1="84.50" y1="32.21" x2="86.50" y2="28.74" stroke="#1a1612" stroke-width="2" stroke-linecap="round"></line><line x1="87.79" y1="35.50" x2="91.26" y2="33.50" stroke="#1a1612" stroke-width="2" stroke-linecap="round"></line>
+  <circle cx="80" cy="40" r="3.5" fill="#ff6a13"></circle>
+</svg>

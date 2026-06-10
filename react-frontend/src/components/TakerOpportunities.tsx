@@ -1044,7 +1044,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   if (statsLoading && !stats) {
     return (
       <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
-        <LoadingSpinner label="Loading taker opportunities" />
+        <LoadingSpinner size={112} label="Loading taker opportunities" />
       </div>
     );
   }
@@ -1071,7 +1071,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   return (
     <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
       {ordersLoading && orders.length === 0 && (
-        <LoadingSpinner label="Loading profitable trades" />
+        <LoadingSpinner size={112} label="Loading profitable trades" />
       )}
       {ordersPending && orders.length > 0 && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 border-b border-border bg-surface/80 px-3 py-1 text-[0.68rem] text-muted">

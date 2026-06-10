@@ -72,7 +72,7 @@ export function OffersPreviewTable() {
 
         {/* Table — fills remaining height, scrolls vertically */}
         <div className="flex-1 min-h-0 overflow-y-auto">
-          {loading && offers.length === 0 && <LoadingSpinner label="Loading offers" />}
+          {loading && offers.length === 0 && <LoadingSpinner size={104} label="Loading offers" />}
           <table className="w-full border-collapse text-[0.72rem]">
             <thead>
               <tr>
@@ -183,7 +183,7 @@ export function OffersPreviewTable() {
         className="overflow-y-auto shrink-0 transition-all duration-300 ease-in-out"
         style={{ width: hasSelection ? '54%' : '100%' }}
       >
-        {loading && offers.length === 0 && <LoadingSpinner label="Loading offers" />}
+        {loading && offers.length === 0 && <LoadingSpinner size={104} label="Loading offers" />}
         <table className={`w-full border-collapse ${hasSelection ? 'text-[0.68rem]' : 'text-[0.72rem]'}`}>
           <thead>
             <tr>

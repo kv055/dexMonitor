@@ -284,7 +284,7 @@ function DepthChartInner() {
         </div>
       </div>
       <div ref={containerRef} className="flex-1 min-h-0 relative">
-        {loading && <LoadingSpinner label="Loading orderbook" />}
+        {loading && <LoadingSpinner size={104} label="Loading orderbook" />}
         <canvas
           ref={canvasRef}
           style={{

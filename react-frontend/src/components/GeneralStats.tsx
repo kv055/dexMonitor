@@ -349,7 +349,7 @@ function PaymentMethodsCard({ stats }: { stats: GeneralStatsData }) {
 
 export function GeneralStats({ stats, loading }: { stats: GeneralStatsData | null; loading: boolean }) {
   if (loading && !stats) {
-    return <div className="relative h-8"><LoadingSpinner label="Loading statistics" /></div>;
+    return <div className="relative min-h-32"><LoadingSpinner size={88} label="Loading statistics" /></div>;
   }
   if (!stats) {
     return <div className="text-sm text-muted">No statistics available.</div>;
