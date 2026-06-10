@@ -37,6 +37,10 @@ type Account struct {
 	Seeds []Seed `json:"seeds"`
 	// APIKeys is the apikeys value for the account.
 	APIKeys []APIKey `json:"api_keys"`
+	// AccountFileBackup is the latest Bisq UserPayload backup metadata, if any.
+	AccountFileBackup *AccountFileBackup `json:"account_file_backup"`
+	// LNDChannelBackup is the latest LND static channel backup metadata, if any.
+	LNDChannelBackup *LNDChannelBackup `json:"lnd_channel_backup"`
 }
 
 // TOTPSecret represents a totpsecret.
@@ -90,6 +94,40 @@ type Seed struct {
 	// WalletCreatedAt records the relevant time for the seed.
 	WalletCreatedAt *string `json:"wallet_created_at"`
 	// CreatedAt records the relevant time for the seed.
+	CreatedAt string `json:"created_at"`
+}
+
+// AccountFileBackup is metadata for the latest Bisq account file backup (UserPayload).
+type AccountFileBackup struct {
+	// ID identifies the backup row.
+	ID int64 `json:"id"`
+	// AccountID is the account associated with the backup.
+	AccountID int64 `json:"account_id"`
+	// FileName is the backed-up file name (e.g. UserPayload).
+	FileName string `json:"file_name"`
+	// FileSHA256 is the SHA-256 hash of the file contents.
+	FileSHA256 string `json:"file_sha256"`
+	// FileSizeBytes is the size of the backed-up file in bytes.
+	FileSizeBytes int64 `json:"file_size_bytes"`
+	// ModifiedAt is when the source file was last modified, if known.
+	ModifiedAt *string `json:"modified_at"`
+	// CreatedAt is when the backup row was stored.
+	CreatedAt string `json:"created_at"`
+}
+
+// LNDChannelBackup is metadata for the latest LND static channel backup.
+type LNDChannelBackup struct {
+	// ID identifies the backup row.
+	ID int64 `json:"id"`
+	// AccountID is the account associated with the backup.
+	AccountID int64 `json:"account_id"`
+	// BackupSHA256 is the SHA-256 hash of the backup blob.
+	BackupSHA256 string `json:"backup_sha256"`
+	// BackupSizeBytes is the size of the backup blob in bytes.
+	BackupSizeBytes int64 `json:"backup_size_bytes"`
+	// ChannelCount is the number of channels covered by the backup.
+	ChannelCount int `json:"channel_count"`
+	// CreatedAt is when the backup row was stored.
 	CreatedAt string `json:"created_at"`
 }
 
@@ -252,6 +290,12 @@ func (r Repository) List(ctx context.Context) ([]Account, error) {
 		return nil, err
 	}
 	if err := r.appendSeeds(ctx, accounts, accountIndex, accountIDs); err != nil {
+		return nil, err
+	}
+	if err := r.appendLatestAccountFileBackups(ctx, accounts, accountIndex, accountIDs); err != nil {
+		return nil, err
+	}
+	if err := r.appendLatestLNDChannelBackups(ctx, accounts, accountIndex, accountIDs); err != nil {
 		return nil, err
 	}
 	if err := r.appendAPIKeys(ctx, accounts, accountIndex, accountIDs); err != nil {
@@ -613,6 +657,60 @@ func (r Repository) appendSeeds(ctx context.Context, accounts []Account, account
 		item.CreatedAt = formatTime(createdAt)
 		if index, ok := accountIndex[item.AccountID]; ok {
 			accounts[index].Seeds = append(accounts[index].Seeds, item)
+		}
+	}
+	return rows.Err()
+}
+
+func (r Repository) appendLatestAccountFileBackups(ctx context.Context, accounts []Account, accountIndex map[int64]int, accountIDs []int64) error {
+	rows, err := r.DB.QueryContext(ctx, `
+		SELECT DISTINCT ON (account_id)
+			id, account_id, file_name, file_sha256, file_size_bytes, modified_at, created_at
+		FROM bisq_account_file_backups
+		WHERE account_id = ANY($1)
+		ORDER BY account_id, created_at DESC, id DESC
+	`, accountIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item AccountFileBackup
+		var modifiedAt sql.NullTime
+		var createdAt time.Time
+		if err := rows.Scan(&item.ID, &item.AccountID, &item.FileName, &item.FileSHA256, &item.FileSizeBytes, &modifiedAt, &createdAt); err != nil {
+			return err
+		}
+		item.ModifiedAt = nullTimePtr(modifiedAt)
+		item.CreatedAt = formatTime(createdAt)
+		if index, ok := accountIndex[item.AccountID]; ok {
+			accounts[index].AccountFileBackup = &item
+		}
+	}
+	return rows.Err()
+}
+
+func (r Repository) appendLatestLNDChannelBackups(ctx context.Context, accounts []Account, accountIndex map[int64]int, accountIDs []int64) error {
+	rows, err := r.DB.QueryContext(ctx, `
+		SELECT DISTINCT ON (account_id)
+			id, account_id, backup_sha256, backup_size_bytes, channel_count, created_at
+		FROM lnd_channel_backups
+		WHERE account_id = ANY($1)
+		ORDER BY account_id, created_at DESC, id DESC
+	`, accountIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item LNDChannelBackup
+		var createdAt time.Time
+		if err := rows.Scan(&item.ID, &item.AccountID, &item.BackupSHA256, &item.BackupSizeBytes, &item.ChannelCount, &createdAt); err != nil {
+			return err
+		}
+		item.CreatedAt = formatTime(createdAt)
+		if index, ok := accountIndex[item.AccountID]; ok {
+			accounts[index].LNDChannelBackup = &item
 		}
 	}
 	return rows.Err()

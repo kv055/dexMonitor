@@ -304,6 +304,25 @@ export interface TradingAPIKey {
   updated_at: string;
 }
 
+export interface TradingAccountFileBackup {
+  id: number;
+  account_id: number;
+  file_name: string;
+  file_sha256: string;
+  file_size_bytes: number;
+  modified_at: string | null;
+  created_at: string;
+}
+
+export interface TradingLNDChannelBackup {
+  id: number;
+  account_id: number;
+  backup_sha256: string;
+  backup_size_bytes: number;
+  channel_count: number;
+  created_at: string;
+}
+
 export interface TradingAccount {
   id: number;
   provider: string;
@@ -319,6 +338,8 @@ export interface TradingAccount {
   passkey_credentials: TradingPasskey[];
   seeds: TradingSeed[];
   api_keys: TradingAPIKey[];
+  account_file_backup: TradingAccountFileBackup | null;
+  lnd_channel_backup: TradingLNDChannelBackup | null;
 }
 
 export interface TradingAccountHealthCheckResult {

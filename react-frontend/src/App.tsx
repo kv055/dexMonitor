@@ -165,14 +165,16 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
 
 function TradingView() {
   return (
-    <div className="lg:flex-1 lg:min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-2 sm:gap-3 lg:overflow-hidden">
+    <div className="lg:flex-1 lg:min-h-0 lg:overflow-hidden">
       <TradingAccountsPanel />
+      {/* Trade Flow Monitor — temporarily disabled
       <div className="min-h-0 rounded-lg border border-border bg-surface p-3 flex flex-col">
         <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">Trade Flow Monitor</h3>
         <div className="flex flex-1 items-center justify-center text-sm text-muted">
           comming soon
         </div>
       </div>
+      */}
     </div>
   );
 }
