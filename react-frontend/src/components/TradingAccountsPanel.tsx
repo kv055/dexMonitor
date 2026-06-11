@@ -2,6 +2,8 @@ import { useCallback, useEffect, useMemo, useReducer, useState, type ReactNode, 
 import {
   createAccount,
   createAPIKey,
+  closeLNDChannel,
+  createLNDWalletAddress,
   createPasskey,
   createSeed,
   createTOTPSecret,
@@ -10,7 +12,13 @@ import {
   deletePasskey,
   deleteSeed,
   deleteTOTPSecret,
+  fetchCexBalances,
+  fetchCexDepositAddresses,
+  fetchCexHedgePositions,
+  fetchCexSpotTrades,
+  fetchLNDWalletStatus,
   fetchTradingAccounts,
+  openLNDChannel,
   runAccountHealthCheck,
   updateAccount,
   updateAPIKey,
@@ -19,30 +27,43 @@ import {
   updateTOTPSecret,
 } from '../utils/api';
 import type {
+  CexBalancesResponse,
+  CexDepositAddress,
+  CexHedgePosition,
+  CexHedgePositionsResponse,
+  CexSpotTrade,
+  LNDWalletStatus,
   TradingAccount,
 } from '../types';
 
 type ProviderOption = { value: string; label: string };
 
-const PROVIDER_OPTIONS: ProviderOption[] = [
-  { value: '', label: 'Please select provider' },
-  { value: 'Kraken', label: 'Kraken' },
-  { value: 'Coinbase', label: 'Coinbase' },
-  { value: 'Bitstamp', label: 'Bitstamp' },
-  { value: 'Binance', label: 'Binance' },
-  { value: 'ByBit', label: 'ByBit' },
-  { value: 'KuCoin', label: 'KuCoin' },
-  { value: 'Huobi', label: 'Huobi' },
-  { value: 'HodlHodl', label: 'HodlHodl' },
-  { value: 'Bisq', label: 'Bisq' },
-  { value: 'Bisq2', label: 'Bisq2' },
-  { value: 'Robosats', label: 'RoboSats' },
-  { value: 'PayPal', label: 'PayPal' },
-  { value: 'Revolut', label: 'Revolut' },
-  { value: 'WISE', label: 'WISE' },
-  { value: 'N26', label: 'N26' },
-  { value: 'LND wallet', label: 'LND wallet' },
+type ProviderDefinition = {
+  value: string;
+  label: string;
+  category: string;
+  creatable: boolean;
+};
+
+const LND_WALLET_PROVIDER = 'LND wallet';
+
+const PROVIDER_DEFINITIONS: ProviderDefinition[] = [
+  { value: 'PayPal', label: 'PayPal', category: 'Fiat Transmitter', creatable: true },
+  { value: 'Revolut', label: 'Revolut', category: 'Fiat Transmitter', creatable: true },
+  { value: 'WISE', label: 'WISE', category: 'Fiat Transmitter', creatable: true },
+  { value: 'N26', label: 'N26', category: 'Fiat Transmitter', creatable: true },
+  { value: 'HodlHodl', label: 'HodlHodl', category: 'DEX', creatable: true },
+  { value: 'Bisq', label: 'Bisq', category: 'DEX', creatable: false },
+  { value: 'Bisq2', label: 'Bisq2', category: 'DEX', creatable: false },
+  { value: 'Robosats', label: 'RoboSats', category: 'DEX', creatable: true },
+  { value: 'Peach', label: 'Peach Bitcoin', category: 'DEX', creatable: true },
+  { value: 'Kraken', label: 'Kraken', category: 'CEX', creatable: true },
+  { value: 'Coinbase', label: 'Coinbase', category: 'CEX', creatable: true },
+  { value: 'Binance', label: 'Binance', category: 'CEX', creatable: true },
+  { value: LND_WALLET_PROVIDER, label: 'LND wallet', category: 'Internal Infrastructure', creatable: false },
 ];
+
+const CREATABLE_PROVIDER_CATEGORIES = ['Fiat Transmitter', 'DEX', 'CEX'] as const;
 
 const CATEGORY_ORDER = ['Fiat Transmitter', 'DEX', 'CEX', 'Internal Infrastructure', 'Uncategorized'];
 
@@ -83,8 +104,52 @@ function formatAccountHeaderDate(value: string | null | undefined) {
 
 function providerLabel(value: string) {
   const normalized = value.trim().toLowerCase();
-  const match = PROVIDER_OPTIONS.find(option => option.value.toLowerCase() === normalized);
+  const match = PROVIDER_DEFINITIONS.find(option => option.value.toLowerCase() === normalized);
   return match?.label ?? value;
+}
+
+function groupedCreatableProviders() {
+  return CREATABLE_PROVIDER_CATEGORIES.map(category => ({
+    category,
+    providers: PROVIDER_DEFINITIONS.filter(provider => provider.creatable && provider.category === category),
+  })).filter(group => group.providers.length > 0);
+}
+
+function createPlaceholderAccount(provider: string, category: string, id: number): TradingAccount {
+  return {
+    id,
+    provider,
+    category,
+    email: null,
+    password: null,
+    phone: null,
+    is_healthy: false,
+    last_health_check: null,
+    created_at: '',
+    updated_at: '',
+    totp_secrets: [],
+    passkey_credentials: [],
+    seeds: [],
+    api_keys: [],
+    account_file_backup: null,
+    lnd_channel_backup: null,
+  };
+}
+
+function withInfrastructureAccounts(accounts: TradingAccount[]): TradingAccount[] {
+  const result = [...accounts];
+  const ensure = (provider: string, category: string, placeholderId: number) => {
+    const normalized = provider.trim().toLowerCase();
+    if (result.some(account => account.provider.trim().toLowerCase() === normalized)) {
+      return;
+    }
+    result.push(createPlaceholderAccount(provider, category, placeholderId));
+  };
+
+  ensure('Bisq', 'DEX', -1);
+  ensure('Bisq2', 'DEX', -2);
+  ensure(LND_WALLET_PROVIDER, 'Internal Infrastructure', 0);
+  return result;
 }
 
 function isRobosatsProvider(value: string) {
@@ -106,6 +171,38 @@ function isLndWalletProvider(value: string) {
   return normalized === 'lnd wallet' || normalized === 'lnd' || normalized === 'lnd_wallet';
 }
 
+function isCexAccount(account: TradingAccount) {
+  return account.category === 'CEX';
+}
+
+function providerDefinition(provider: string) {
+  const normalized = provider.trim().toLowerCase();
+  return PROVIDER_DEFINITIONS.find(option => option.value.toLowerCase() === normalized);
+}
+
+function providerCategoryFor(provider: string) {
+  return providerDefinition(provider)?.category ?? null;
+}
+
+function isFiatProvider(provider: string) {
+  return providerCategoryFor(provider) === 'Fiat Transmitter';
+}
+
+function usesAPIKeysAtCreate(provider: string) {
+  const definition = providerDefinition(provider);
+  if (!definition) {
+    return false;
+  }
+  if (definition.category === 'CEX') {
+    return true;
+  }
+  return definition.category === 'DEX' && definition.creatable;
+}
+
+function showContactFieldsForProvider(provider: string) {
+  return isFiatProvider(provider);
+}
+
 function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
@@ -117,12 +214,187 @@ function truncateHash(sha256: string) {
   return `${sha256.slice(0, 8)}…`;
 }
 
-function providerOptionsForValue(value: string): ProviderOption[] {
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed || PROVIDER_OPTIONS.some(option => option.value.toLowerCase() === trimmed)) {
-    return PROVIDER_OPTIONS;
+function truncatePubkey(pubkey: string) {
+  const trimmed = pubkey.trim();
+  if (trimmed.length <= 16) return trimmed;
+  return `${trimmed.slice(0, 8)}…${trimmed.slice(-8)}`;
+}
+
+function formatTokenAmount(value: number | undefined, digits = 8) {
+  if (value == null || !Number.isFinite(value)) return '—';
+  return value.toLocaleString(undefined, { maximumFractionDigits: digits });
+}
+
+function pickMainnetDepositAddress(addresses: CexDepositAddress[]) {
+  if (!addresses.length) {
+    return null;
   }
-  return [...PROVIDER_OPTIONS, { value: value.trim(), label: value }];
+  const mainnetHints = ['bitcoin', 'btc', 'mainnet', 'onchain', 'on-chain'];
+  for (const hint of mainnetHints) {
+    const match = addresses.find(entry => {
+      if (entry.asset.trim().toUpperCase() !== 'BTC') {
+        return false;
+      }
+      const network = entry.network.trim().toLowerCase();
+      const method = entry.method?.trim().toLowerCase() ?? '';
+      return network.includes(hint) || method.includes(hint);
+    });
+    if (match) {
+      return match;
+    }
+  }
+  return addresses.find(entry => entry.asset.trim().toUpperCase() === 'BTC') ?? addresses[0];
+}
+
+function formatCexBalanceSummary(balances: CexBalancesResponse | null | undefined) {
+  if (!balances) {
+    return null;
+  }
+  const parts: string[] = [];
+  if (balances.bitcoin) {
+    parts.push(`BTC ${formatTokenAmount(balances.bitcoin.available)}`);
+  }
+  for (const entry of balances.fiat) {
+    parts.push(`${entry.asset} ${formatTokenAmount(entry.available, 2)}`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+function cexSliceField(section: CexDataSectionKey): keyof CexAccountSlice {
+  switch (section) {
+    case 'cexDepositAddresses':
+      return 'depositAddresses';
+    case 'cexBalances':
+      return 'balances';
+    case 'cexHedging':
+      return 'hedgePositions';
+    case 'cexSpotTrades':
+      return 'spotTrades';
+  }
+}
+
+async function fetchCexSectionData(section: CexDataSectionKey, accountId: number) {
+  switch (section) {
+    case 'cexDepositAddresses':
+      return fetchCexDepositAddresses(accountId);
+    case 'cexBalances':
+      return fetchCexBalances(accountId);
+    case 'cexHedging':
+      return fetchCexHedgePositions(accountId);
+    case 'cexSpotTrades':
+      return fetchCexSpotTrades(accountId);
+  }
+}
+
+function renderCexSectionMessage(loading: boolean, error: string | null, emptyMessage: string, hasData: boolean) {
+  if (loading && !hasData) {
+    return <div className="text-[0.65rem] text-muted px-1">Loading…</div>;
+  }
+  if (error) {
+    return <div className="text-[0.65rem] text-red px-1">{error}</div>;
+  }
+  if (!hasData) {
+    return <div className="text-[0.65rem] text-muted px-1">{emptyMessage}</div>;
+  }
+  return null;
+}
+
+function renderHedgePositionCard(position: CexHedgePosition, label: string) {
+  return (
+    <ResourceCard key={`${label}-${position.transaction_id}`} title={`${label} #${position.transaction_id}`}>
+      <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
+        <div><span className="text-text">Direction:</span> {position.direction}</div>
+        <div><span className="text-text">Status:</span> {position.status}</div>
+        {position.venue ? <div><span className="text-text">Venue:</span> {position.venue}</div> : null}
+        {position.instrument ? <div><span className="text-text">Instrument:</span> {position.instrument}</div> : null}
+        {position.size_btc != null ? <div><span className="text-text">Size:</span> {formatTokenAmount(position.size_btc)} BTC</div> : null}
+        {position.fee != null ? <div><span className="text-text">Fee:</span> {formatTokenAmount(position.fee)}</div> : null}
+        {position.opened_at ? <div><span className="text-text">Opened:</span> {formatDate(position.opened_at)}</div> : null}
+        {position.closed_at ? <div><span className="text-text">Closed:</span> {formatDate(position.closed_at)}</div> : null}
+      </div>
+    </ResourceCard>
+  );
+}
+
+function formatSats(sats: number | undefined) {
+  const value = sats ?? 0;
+  if (value >= 100_000_000) {
+    return `${(value / 100_000_000).toFixed(8)} BTC`;
+  }
+  return `${value.toLocaleString()} sats`;
+}
+
+function channelHealthLabel(health: string) {
+  switch (health) {
+    case 'healthy':
+      return 'Healthy';
+    case 'inactive':
+      return 'Inactive';
+    case 'low_outbound':
+      return 'Low outbound';
+    default:
+      return health;
+  }
+}
+
+function channelHealthClass(health: string) {
+  switch (health) {
+    case 'healthy':
+      return 'border-green/40 bg-green/10 text-green';
+    case 'inactive':
+      return 'border-red/40 bg-red/10 text-red';
+    case 'low_outbound':
+      return 'border-yellow/40 bg-yellow/10 text-yellow';
+    default:
+      return 'border-border bg-surface text-muted';
+  }
+}
+
+function providerOptionsForValue(value: string): ProviderOption[] {
+  const options: ProviderOption[] = [
+    { value: '', label: 'Please select provider' },
+    ...PROVIDER_DEFINITIONS.map(provider => ({ value: provider.value, label: provider.label })),
+  ];
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed || options.some(option => option.value.toLowerCase() === trimmed)) {
+    return options;
+  }
+  return [...options, { value: value.trim(), label: value }];
+}
+
+function renderProviderSelectOptions(grouped: boolean, flatOptions: ProviderOption[]) {
+  if (grouped) {
+    return (
+      <>
+        <option value="" disabled hidden>
+          Please select provider
+        </option>
+        {groupedCreatableProviders().map(group => (
+          <optgroup key={group.category} label={group.category}>
+            {group.providers.map(provider => (
+              <option key={provider.value} value={provider.value}>
+                {provider.label}
+              </option>
+            ))}
+          </optgroup>
+        ))}
+      </>
+    );
+  }
+  return flatOptions.map(option => {
+    if (!option.value) {
+      return (
+        <option key="provider-placeholder" value="" disabled hidden>
+          {option.label}
+        </option>
+      );
+    }
+    return (
+      <option key={`${option.value}-${option.label}`} value={option.value}>
+        {option.label}
+      </option>
+    );
+  });
 }
 
 function categoryRank(category: string) {
@@ -153,13 +425,39 @@ interface AccountFormState {
   phone: string;
 }
 
-type AccountSectionKey = 'totp' | 'passkeys' | 'seeds' | 'apiKeys' | 'channelBackups';
+type AccountSectionKey =
+  | 'totp'
+  | 'passkeys'
+  | 'seeds'
+  | 'apiKeys'
+  | 'lndBackup'
+  | 'lightningManagement'
+  | 'walletAddresses'
+  | 'cexHedging'
+  | 'cexSpotTrades';
+
+type CexSectionSlice<T> = {
+  loading: boolean;
+  error: string | null;
+  data: T | null;
+};
+
+type CexAccountSlice = {
+  depositAddresses?: CexSectionSlice<CexDepositAddress[]>;
+  balances?: CexSectionSlice<CexBalancesResponse>;
+  hedgePositions?: CexSectionSlice<CexHedgePositionsResponse>;
+  spotTrades?: CexSectionSlice<CexSpotTrade[]>;
+};
+
+type CexCollapsibleSectionKey = 'cexHedging' | 'cexSpotTrades';
+type CexDataSectionKey = CexCollapsibleSectionKey | 'cexDepositAddresses' | 'cexBalances';
 type NewFormKey = 'totp' | 'passkeys' | 'seeds' | 'apiKeys';
 
 interface TradingPanelUiState {
   expandedId: number | null;
   showNewAccountForm: boolean;
   newAccount: AccountFormState;
+  newAccountAPIKey: APIKeyFormState;
   editingAccountId: number | null;
   editingAccount: AccountFormState;
   openSectionsByAccount: Record<number, Partial<Record<AccountSectionKey, boolean>>>;
@@ -224,6 +522,99 @@ function emptyAccountForm(): AccountFormState {
   return { provider: '', email: '', password: '', phone: '' };
 }
 
+function emptyAPIKeyForm(): APIKeyFormState {
+  return { name: '', api_key: '', api_secret: '', passphrase: '', is_active: true };
+}
+
+interface OpenChannelFormState {
+  nodePubkey: string;
+  peerHost: string;
+  localFundingAmountSat: string;
+  pushSat: string;
+  satPerVbyte: string;
+  private: boolean;
+}
+
+function emptyOpenChannelForm(): OpenChannelFormState {
+  return {
+    nodePubkey: '',
+    peerHost: '',
+    localFundingAmountSat: '100000',
+    pushSat: '0',
+    satPerVbyte: '2',
+    private: false,
+  };
+}
+
+function APIKeyDraftFields({
+  value,
+  onChange,
+  provider,
+}: {
+  value: APIKeyFormState;
+  onChange: (next: APIKeyFormState) => void;
+  provider: string;
+}) {
+  const isRobosats = isRobosatsProvider(provider);
+  const keyPlaceholder = isRobosats ? 'Robot token' : 'API key';
+
+  return (
+    <div className="grid gap-2 rounded-md border border-border bg-surface p-2">
+      <div className="text-xs font-semibold text-text">{isRobosats ? 'Robot Token' : 'API Keys'}</div>
+      <div className="grid gap-1.5 md:grid-cols-2">
+        <label className="grid gap-1 text-xs text-muted">
+          <span>Name</span>
+          <input
+            className={compactInputCls}
+            value={value.name}
+            onChange={e => onChange({ ...value, name: e.target.value })}
+            placeholder="Optional label"
+          />
+        </label>
+        <label className="grid gap-1 text-xs text-muted md:col-span-2">
+          <span>{isRobosats ? 'Token' : 'API key'}</span>
+          <textarea
+            className={textareaCls}
+            value={value.api_key}
+            onChange={e => onChange({ ...value, api_key: e.target.value })}
+            placeholder={keyPlaceholder}
+          />
+        </label>
+        {!isRobosats ? (
+          <>
+            <label className="grid gap-1 text-xs text-muted md:col-span-2">
+              <span>API secret</span>
+              <textarea
+                className={textareaCls}
+                value={value.api_secret}
+                onChange={e => onChange({ ...value, api_secret: e.target.value })}
+                placeholder="API secret"
+              />
+            </label>
+            <label className="grid gap-1 text-xs text-muted md:col-span-2">
+              <span>Passphrase</span>
+              <input
+                className={compactInputCls}
+                value={value.passphrase}
+                onChange={e => onChange({ ...value, passphrase: e.target.value })}
+                placeholder="Optional passphrase"
+              />
+            </label>
+          </>
+        ) : null}
+        <label className="flex items-center gap-2 text-xs text-muted">
+          <input
+            type="checkbox"
+            checked={value.is_active}
+            onChange={e => onChange({ ...value, is_active: e.target.checked })}
+          />
+          Active
+        </label>
+      </div>
+    </div>
+  );
+}
+
 function AccountEditor({
   value,
   onChange,
@@ -234,6 +625,8 @@ function AccountEditor({
   submitDisabled = false,
   showContactFields = true,
   showWalletPasswordOnly = false,
+  groupedProviders = false,
+  extraContent,
 }: {
   value: AccountFormState;
   onChange: (next: AccountFormState) => void;
@@ -244,6 +637,8 @@ function AccountEditor({
   submitDisabled?: boolean;
   showContactFields?: boolean;
   showWalletPasswordOnly?: boolean;
+  groupedProviders?: boolean;
+  extraContent?: ReactNode;
 }) {
   const options = useMemo(() => providerOptionsForValue(value.provider), [value.provider]);
   const fieldCls = compact
@@ -256,75 +651,74 @@ function AccountEditor({
 
   if (compact) {
     return (
-      <div className={`grid items-end gap-2 ${showContactFields ? 'md:grid-cols-[minmax(9rem,1.1fr)_minmax(9rem,1fr)_minmax(8rem,1fr)_minmax(7rem,0.8fr)_auto]' : showWalletPasswordOnly ? 'md:grid-cols-[minmax(9rem,1.1fr)_minmax(9rem,1fr)_auto]' : 'md:grid-cols-[minmax(9rem,1.1fr)_auto]'}`}>
-        <label className={labelCls}>
-          <span>Provider</span>
-          <select
-            className={fieldCls}
-            value={value.provider}
-            onChange={e => onChange({ ...value, provider: e.target.value })}
-          >
-            {options.map(option => (
-              <option key={option.value} value={option.value}>
-                {option.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        {showContactFields ? (
-          <>
+      <div className="grid gap-2">
+        <div className={`grid items-end gap-2 ${showContactFields ? 'md:grid-cols-[minmax(9rem,1.1fr)_minmax(9rem,1fr)_minmax(8rem,1fr)_minmax(7rem,0.8fr)_auto]' : showWalletPasswordOnly ? 'md:grid-cols-[minmax(9rem,1.1fr)_minmax(9rem,1fr)_auto]' : 'md:grid-cols-[minmax(9rem,1.1fr)_auto]'}`}>
+          <label className={labelCls}>
+            <span>Provider</span>
+            <select
+              className={fieldCls}
+              value={value.provider}
+              onChange={e => onChange({ ...value, provider: e.target.value })}
+            >
+              {renderProviderSelectOptions(groupedProviders, options)}
+            </select>
+          </label>
+          {showContactFields ? (
+            <>
+              <label className={labelCls}>
+                <span>Email</span>
+                <input
+                  className={fieldCls}
+                  value={value.email}
+                  onChange={e => onChange({ ...value, email: e.target.value })}
+                  placeholder="Optional"
+                />
+              </label>
+              <label className={labelCls}>
+                <span>Password</span>
+                <input
+                  className={fieldCls}
+                  type="password"
+                  value={value.password}
+                  onChange={e => onChange({ ...value, password: e.target.value })}
+                  placeholder="Optional"
+                />
+              </label>
+              <label className={labelCls}>
+                <span>Phone</span>
+                <input
+                  className={fieldCls}
+                  value={value.phone}
+                  onChange={e => onChange({ ...value, phone: e.target.value })}
+                  placeholder="Optional"
+                />
+              </label>
+            </>
+          ) : null}
+          {!showContactFields && showWalletPasswordOnly ? (
             <label className={labelCls}>
-              <span>Email</span>
-              <input
-                className={fieldCls}
-                value={value.email}
-                onChange={e => onChange({ ...value, email: e.target.value })}
-                placeholder="Optional"
-              />
-            </label>
-            <label className={labelCls}>
-              <span>Password</span>
+              <span>Wallet password</span>
               <input
                 className={fieldCls}
                 type="password"
                 value={value.password}
                 onChange={e => onChange({ ...value, password: e.target.value })}
-                placeholder="Optional"
+                placeholder="Required for LND"
               />
             </label>
-            <label className={labelCls}>
-              <span>Phone</span>
-              <input
-                className={fieldCls}
-                value={value.phone}
-                onChange={e => onChange({ ...value, phone: e.target.value })}
-                placeholder="Optional"
-              />
-            </label>
-          </>
-        ) : null}
-        {!showContactFields && showWalletPasswordOnly ? (
-          <label className={labelCls}>
-            <span>Wallet password</span>
-            <input
-              className={fieldCls}
-              type="password"
-              value={value.password}
-              onChange={e => onChange({ ...value, password: e.target.value })}
-              placeholder="Required for LND"
-            />
-          </label>
-        ) : null}
-        <div className="flex gap-1">
-          {onCancel ? (
-            <button type="button" className={compactButtonCls} onClick={onCancel}>
-              Cancel
-            </button>
           ) : null}
-          <button type="button" className={submitCls} disabled={submitDisabled} onClick={onSubmit}>
-            {submitLabel}
-          </button>
+          <div className="flex gap-1">
+            {onCancel ? (
+              <button type="button" className={compactButtonCls} onClick={onCancel}>
+                Cancel
+              </button>
+            ) : null}
+            <button type="button" className={submitCls} disabled={submitDisabled} onClick={onSubmit}>
+              {submitLabel}
+            </button>
+          </div>
         </div>
+        {extraContent}
       </div>
     );
   }
@@ -338,11 +732,7 @@ function AccountEditor({
           value={value.provider}
           onChange={e => onChange({ ...value, provider: e.target.value })}
         >
-          {options.map(option => (
-            <option key={option.value} value={option.value}>
-              {option.label}
-            </option>
-          ))}
+          {renderProviderSelectOptions(groupedProviders, options)}
         </select>
       </label>
       {showContactFields ? (
@@ -389,6 +779,7 @@ function AccountEditor({
           />
         </label>
       ) : null}
+      {extraContent ? <div className="md:col-span-4">{extraContent}</div> : null}
       <div className={`${showContactFields || showWalletPasswordOnly ? 'md:col-span-4' : 'md:col-span-1'} flex justify-end gap-1`}>
         {onCancel ? (
           <button type="button" className={buttonCls} onClick={onCancel}>
@@ -504,10 +895,21 @@ export function TradingAccountsPanel() {
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [lndWalletStatus, setLndWalletStatus] = useState<LNDWalletStatus | null>(null);
+  const [lndWalletLoading, setLndWalletLoading] = useState(false);
+  const [lndWalletError, setLndWalletError] = useState<string | null>(null);
+  const [lndWalletNotice, setLndWalletNotice] = useState<string | null>(null);
+  const [newAddressLabel, setNewAddressLabel] = useState('');
+  const [creatingAddress, setCreatingAddress] = useState(false);
+  const [openChannelForm, setOpenChannelForm] = useState<OpenChannelFormState>(emptyOpenChannelForm);
+  const [openingChannel, setOpeningChannel] = useState(false);
+  const [closingChannelPoint, setClosingChannelPoint] = useState<string | null>(null);
+  const [cexDataByAccount, setCexDataByAccount] = useState<Record<number, CexAccountSlice>>({});
   const [uiState, dispatchUi] = useReducer(tradingPanelUiReducer, undefined, () => ({
     expandedId: null,
     showNewAccountForm: false,
     newAccount: emptyAccountForm(),
+    newAccountAPIKey: emptyAPIKeyForm(),
     editingAccountId: null,
     editingAccount: emptyAccountForm(),
     openSectionsByAccount: {},
@@ -527,6 +929,7 @@ export function TradingAccountsPanel() {
     expandedId,
     showNewAccountForm,
     newAccount,
+    newAccountAPIKey,
     editingAccountId,
     editingAccount,
     openSectionsByAccount,
@@ -552,6 +955,19 @@ export function TradingAccountsPanel() {
   const setNewAccount = useCallback((value: SetStateAction<AccountFormState>) => {
     dispatchUi({ type: 'UPDATE', update: state => ({ ...state, newAccount: resolveState(value, state.newAccount) }) });
   }, []);
+  const setNewAccountAPIKey = useCallback((value: SetStateAction<APIKeyFormState>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, newAccountAPIKey: resolveState(value, state.newAccountAPIKey) }) });
+  }, []);
+  const resetNewAccountForm = useCallback(() => {
+    dispatchUi({
+      type: 'UPDATE',
+      update: state => ({
+        ...state,
+        newAccount: emptyAccountForm(),
+        newAccountAPIKey: emptyAPIKeyForm(),
+      }),
+    });
+  }, []);
   const setEditingAccountId = useCallback((value: SetStateAction<number | null>) => {
     dispatchUi({ type: 'UPDATE', update: state => ({ ...state, editingAccountId: resolveState(value, state.editingAccountId) }) });
   }, []);
@@ -573,6 +989,46 @@ export function TradingAccountsPanel() {
       }),
     });
   }, []);
+  const loadCexSection = useCallback(async (accountId: number, section: CexDataSectionKey) => {
+    const field = cexSliceField(section);
+    setCexDataByAccount(prev => ({
+      ...prev,
+      [accountId]: {
+        ...prev[accountId],
+        [field]: {
+          loading: true,
+          error: null,
+          data: prev[accountId]?.[field]?.data ?? null,
+        },
+      },
+    }));
+    try {
+      const data = await fetchCexSectionData(section, accountId);
+      setCexDataByAccount(prev => ({
+        ...prev,
+        [accountId]: {
+          ...prev[accountId],
+          [field]: { loading: false, error: null, data },
+        },
+      }));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to load CEX data';
+      setCexDataByAccount(prev => ({
+        ...prev,
+        [accountId]: {
+          ...prev[accountId],
+          [field]: { loading: false, error: message, data: null },
+        },
+      }));
+    }
+  }, []);
+  const toggleCexSection = useCallback((account: TradingAccount, section: CexCollapsibleSectionKey) => {
+    const willOpen = !openSectionsByAccount[account.id]?.[section];
+    toggleSection(account.id, section);
+    if (willOpen) {
+      void loadCexSection(account.id, section);
+    }
+  }, [loadCexSection, openSectionsByAccount, toggleSection]);
   const setShowNewForm = useCallback((accountId: number, section: NewFormKey, open: boolean) => {
     dispatchUi({
       type: 'UPDATE',
@@ -653,7 +1109,7 @@ export function TradingAccountsPanel() {
     setLoading(true);
     setError(null);
     try {
-      const next = await fetchTradingAccounts();
+      const next = withInfrastructureAccounts(await fetchTradingAccounts());
       setAccounts(next);
       setExpandedId(current => current != null && !next.some(account => account.id === current) ? null : current);
       dispatchUi({
@@ -676,6 +1132,87 @@ export function TradingAccountsPanel() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const expandedAccount = useMemo(
+    () => accounts.find(account => account.id === expandedId) ?? null,
+    [accounts, expandedId],
+  );
+
+  const loadLndWalletStatus = useCallback(async () => {
+    setLndWalletLoading(true);
+    setLndWalletError(null);
+    setLndWalletNotice(null);
+    try {
+      const status = await fetchLNDWalletStatus();
+      setLndWalletStatus(status);
+    } catch (err) {
+      setLndWalletStatus(null);
+      setLndWalletError(err instanceof Error ? err.message : 'Failed to load LND wallet status');
+    } finally {
+      setLndWalletLoading(false);
+    }
+  }, []);
+
+  const handleOpenChannel = useCallback(async () => {
+    setOpeningChannel(true);
+    setLndWalletError(null);
+    setLndWalletNotice(null);
+    try {
+      const result = await openLNDChannel({
+        node_pubkey: openChannelForm.nodePubkey.trim(),
+        peer_host: openChannelForm.peerHost.trim() || undefined,
+        local_funding_amount_sat: Number(openChannelForm.localFundingAmountSat),
+        push_sat: Number(openChannelForm.pushSat || 0),
+        sat_per_vbyte: Number(openChannelForm.satPerVbyte || 2),
+        private: openChannelForm.private,
+      });
+      setOpenChannelForm(emptyOpenChannelForm());
+      await loadLndWalletStatus();
+      setLndWalletNotice(`Channel opening submitted. Funding tx: ${result.funding_txid || 'pending'}`);
+    } catch (err) {
+      setLndWalletError(err instanceof Error ? err.message : 'Failed to open channel');
+    } finally {
+      setOpeningChannel(false);
+    }
+  }, [loadLndWalletStatus, openChannelForm]);
+
+  const handleCloseChannel = useCallback(async (channelPoint: string, force: boolean) => {
+    const label = force ? 'Force-close this channel?' : 'Cooperatively close this channel?';
+    if (!window.confirm(label)) {
+      return;
+    }
+    setClosingChannelPoint(channelPoint);
+    setLndWalletError(null);
+    setLndWalletNotice(null);
+    try {
+      const result = await closeLNDChannel({
+        channel_point: channelPoint,
+        force,
+        sat_per_vbyte: 2,
+      });
+      await loadLndWalletStatus();
+      setLndWalletNotice(`Channel close submitted. Closing tx: ${result.closing_txid || 'pending'}`);
+    } catch (err) {
+      setLndWalletError(err instanceof Error ? err.message : 'Failed to close channel');
+    } finally {
+      setClosingChannelPoint(null);
+    }
+  }, [loadLndWalletStatus]);
+
+  useEffect(() => {
+    if (!expandedAccount || !isLndWalletProvider(expandedAccount.provider)) {
+      return;
+    }
+    void loadLndWalletStatus();
+  }, [expandedAccount, loadLndWalletStatus]);
+
+  useEffect(() => {
+    if (!expandedAccount || !isCexAccount(expandedAccount)) {
+      return;
+    }
+    void loadCexSection(expandedAccount.id, 'cexDepositAddresses');
+    void loadCexSection(expandedAccount.id, 'cexBalances');
+  }, [expandedAccount, loadCexSection]);
 
   const withReload = async (fn: () => Promise<void>) => {
     try {
@@ -737,6 +1274,9 @@ export function TradingAccountsPanel() {
   };
 
   const renderTOTPSection = (account: TradingAccount) => {
+    if (isCexAccount(account)) {
+      return null;
+    }
     const draft = newTOTPByAccount[account.id] ?? { secret: '', is_active: true };
     const open = !!openSectionsByAccount[account.id]?.totp;
     const showNew = !!showNewFormByAccount[account.id]?.totp;
@@ -890,6 +1430,9 @@ export function TradingAccountsPanel() {
   };
 
   const renderPasskeysSection = (account: TradingAccount) => {
+    if (isCexAccount(account)) {
+      return null;
+    }
     const draft = newPasskeyByAccount[account.id] ?? {
       credential_id: '',
       rp_id: '',
@@ -1023,32 +1566,322 @@ export function TradingAccountsPanel() {
     );
   };
 
-  const renderChannelBackupSection = (account: TradingAccount) => {
+  const renderLNDBackupSection = (account: TradingAccount) => {
     const backup = account.lnd_channel_backup;
-    const open = openSectionsByAccount[account.id]?.channelBackups ?? !!backup;
+    const seed = account.seeds[0];
+    const open = openSectionsByAccount[account.id]?.lndBackup ?? true;
+    const backupItems = Number(!!account.password) + Number(!!seed) + Number(!!backup);
+
     return (
       <CollapsibleSection
-        title="Channel backups"
-        count={backup?.channel_count ?? 0}
+        title="Backup"
+        count={backupItems}
         open={open}
-        onToggle={() => toggleSection(account.id, 'channelBackups')}
+        onToggle={() => toggleSection(account.id, 'lndBackup')}
       >
         <p className="text-[0.65rem] text-muted leading-relaxed px-1">
-          Read-only metadata for the latest Lightning static channel backup stored in the database.
+          Disaster-recovery material stored for this wallet: password, aezeed seed, and static channel backup metadata.
         </p>
-        {backup ? (
-          <div className="rounded border border-border bg-bg px-2 py-1.5 grid gap-1 text-xs text-muted sm:grid-cols-2">
-            <div><span className="text-text">Backup ID:</span> {backup.id}</div>
-            <div><span className="text-text">Channels:</span> {backup.channel_count}</div>
-            <div><span className="text-text">Size:</span> {formatFileSize(backup.backup_size_bytes)}</div>
-            <div><span className="text-text">Backed up:</span> {formatDate(backup.created_at)}</div>
-            <div className="sm:col-span-2"><span className="text-text">SHA256:</span> {backup.backup_sha256}</div>
+        <div className="grid gap-1.5">
+          <SecretItem
+            title="Wallet password"
+            summary={account.password ? '••••••••' : 'Not set'}
+          >
+            {account.password ? (
+              <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-[0.65rem] text-text whitespace-pre-wrap break-all">
+                {account.password}
+              </pre>
+            ) : (
+              <div className="text-[0.65rem] text-muted">Set the wallet password in Account → Edit before starting mm-controller.</div>
+            )}
+          </SecretItem>
+
+          <SecretItem
+            title="Aezeed seed"
+            meta={seed ? formatDate(seed.created_at) : undefined}
+            summary={
+              seed
+                ? (seed.seed_phrase.length > 56 ? `${seed.seed_phrase.slice(0, 56)}…` : seed.seed_phrase)
+                : 'Not stored yet'
+            }
+          >
+            {seed ? (
+              <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-[0.65rem] text-text whitespace-pre-wrap break-all">
+                {seed.seed_phrase}
+              </pre>
+            ) : (
+              <div className="text-[0.65rem] text-muted">
+                No aezeed stored yet — set the wallet password and start mm-controller to generate one.
+              </div>
+            )}
+          </SecretItem>
+
+          <SecretItem
+            title="Channel backup"
+            meta={backup ? formatDate(backup.created_at) : undefined}
+            summary={
+              backup
+                ? `${backup.channel_count} channel${backup.channel_count === 1 ? '' : 's'} stored`
+                : 'No backup yet'
+            }
+          >
+            {backup ? (
+              <div className="rounded border border-border bg-surface px-2 py-1.5 grid gap-1 text-xs text-muted sm:grid-cols-2">
+                <div><span className="text-text">Channels:</span> {backup.channel_count}</div>
+                <div><span className="text-text">Backed up:</span> {formatDate(backup.created_at)}</div>
+                <div><span className="text-text">Size:</span> {formatFileSize(backup.backup_size_bytes)}</div>
+                <div className="sm:col-span-2"><span className="text-text">SHA256:</span> {backup.backup_sha256}</div>
+              </div>
+            ) : (
+              <div className="text-[0.65rem] text-muted">
+                No static channel backup in the database yet — mm-controller exports after LND starts.
+              </div>
+            )}
+          </SecretItem>
+        </div>
+      </CollapsibleSection>
+    );
+  };
+
+  const renderLightningManagementSection = (account: TradingAccount) => {
+    const open = openSectionsByAccount[account.id]?.lightningManagement ?? true;
+    const channelCount = lndWalletStatus?.channels.length ?? 0;
+    return (
+      <CollapsibleSection
+        title="Lightning management"
+        count={channelCount}
+        open={open}
+        onToggle={() => toggleSection(account.id, 'lightningManagement')}
+        actions={
+          <button
+            type="button"
+            className={compactButtonCls}
+            disabled={lndWalletLoading}
+            onClick={() => void loadLndWalletStatus()}
+          >
+            {lndWalletLoading ? '…' : 'Refresh'}
+          </button>
+        }
+      >
+        <p className="text-[0.65rem] text-muted leading-relaxed px-1">
+          Live channel and peer status from LND via mm-controller. Open or close channels below.
+        </p>
+        {lndWalletNotice ? (
+          <div className="text-[0.65rem] text-green px-1">{lndWalletNotice}</div>
+        ) : null}
+        {lndWalletError ? (
+          <div className="text-[0.65rem] text-red px-1">{lndWalletError}</div>
+        ) : null}
+        <SecretItem title="Open channel" summary="Expand to connect to a hub and fund a new channel">
+          <div className="grid gap-1.5 md:grid-cols-2">
+            <input
+              className={compactInputCls}
+              value={openChannelForm.nodePubkey}
+              onChange={e => setOpenChannelForm(prev => ({ ...prev, nodePubkey: e.target.value }))}
+              placeholder="Hub node pubkey"
+            />
+            <input
+              className={compactInputCls}
+              value={openChannelForm.peerHost}
+              onChange={e => setOpenChannelForm(prev => ({ ...prev, peerHost: e.target.value }))}
+              placeholder="Peer host (ip:9735)"
+            />
+            <input
+              className={compactInputCls}
+              value={openChannelForm.localFundingAmountSat}
+              onChange={e => setOpenChannelForm(prev => ({ ...prev, localFundingAmountSat: e.target.value }))}
+              placeholder="Local funding (sats)"
+            />
+            <input
+              className={compactInputCls}
+              value={openChannelForm.pushSat}
+              onChange={e => setOpenChannelForm(prev => ({ ...prev, pushSat: e.target.value }))}
+              placeholder="Push amount (sats)"
+            />
+            <input
+              className={compactInputCls}
+              value={openChannelForm.satPerVbyte}
+              onChange={e => setOpenChannelForm(prev => ({ ...prev, satPerVbyte: e.target.value }))}
+              placeholder="Fee rate (sat/vB)"
+            />
+            <label className="flex items-center gap-2 text-xs text-muted">
+              <input
+                type="checkbox"
+                checked={openChannelForm.private}
+                onChange={e => setOpenChannelForm(prev => ({ ...prev, private: e.target.checked }))}
+              />
+              Private channel
+            </label>
           </div>
-        ) : (
-          <div className="text-[0.65rem] text-muted px-1">
-            No channel backup stored yet — mm-controller exports backups after LND starts and on a periodic interval.
+          <div className="mt-1.5 flex justify-end">
+            <button
+              type="button"
+              className={compactPrimaryButtonCls}
+              disabled={openingChannel || !openChannelForm.nodePubkey.trim()}
+              onClick={() => void handleOpenChannel()}
+            >
+              {openingChannel ? 'Opening…' : 'Open channel'}
+            </button>
           </div>
-        )}
+        </SecretItem>
+        {lndWalletLoading && !lndWalletStatus ? (
+          <div className="text-[0.65rem] text-muted px-1">Loading Lightning status…</div>
+        ) : null}
+        {lndWalletStatus ? (
+          <div className="grid gap-2">
+            <div className="rounded border border-border bg-bg px-2 py-1.5 grid gap-1 text-xs text-muted sm:grid-cols-2">
+              <div><span className="text-text">Node:</span> {lndWalletStatus.node.alias || truncatePubkey(lndWalletStatus.node.identity_pubkey)}</div>
+              <div><span className="text-text">Peers:</span> {lndWalletStatus.node.num_peers}</div>
+              <div><span className="text-text">Chain sync:</span> {lndWalletStatus.node.synced_to_chain ? 'Synced' : 'Syncing'}</div>
+              <div><span className="text-text">Graph sync:</span> {lndWalletStatus.node.synced_to_graph ? 'Synced' : 'Syncing'}</div>
+              <div className="sm:col-span-2"><span className="text-text">Checked:</span> {formatDate(lndWalletStatus.checked_at)}</div>
+            </div>
+            {lndWalletStatus.channels.length === 0 ? (
+              <div className="text-[0.65rem] text-muted px-1">No open Lightning channels.</div>
+            ) : (
+              lndWalletStatus.channels.map(channel => {
+                const hubLabel = channel.remote_alias || truncatePubkey(channel.remote_pubkey);
+                return (
+                  <div key={channel.channel_point} className="rounded border border-border bg-surface px-2 py-1.5 grid gap-1.5">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span className="text-xs font-semibold text-text">{hubLabel}</span>
+                      <span className={`rounded-full border px-1.5 py-0.5 text-[0.65rem] font-medium ${channelHealthClass(channel.health)}`}>
+                        {channelHealthLabel(channel.health)}
+                      </span>
+                      {channel.private ? (
+                        <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted">Private</span>
+                      ) : null}
+                    </div>
+                    <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
+                      <div><span className="text-text">Hub pubkey:</span> {truncatePubkey(channel.remote_pubkey)}</div>
+                      <div><span className="text-text">Peer:</span> {channel.peer_address || '—'}</div>
+                      <div><span className="text-text">Capacity:</span> {formatSats(channel.capacity_sat)}</div>
+                      <div><span className="text-text">Local balance:</span> {formatSats(channel.local_balance_sat)}</div>
+                      <div><span className="text-text">Remote balance:</span> {formatSats(channel.remote_balance_sat)}</div>
+                      <div><span className="text-text">Active:</span> {channel.active ? 'Yes' : 'No'}</div>
+                    </div>
+                    <div className="flex flex-wrap gap-1 pt-0.5">
+                      <button
+                        type="button"
+                        className={compactButtonCls}
+                        disabled={closingChannelPoint === channel.channel_point}
+                        onClick={() => void handleCloseChannel(channel.channel_point, false)}
+                      >
+                        {closingChannelPoint === channel.channel_point ? 'Closing…' : 'Close'}
+                      </button>
+                      <button
+                        type="button"
+                        className={`${compactButtonCls} text-red`}
+                        disabled={closingChannelPoint === channel.channel_point}
+                        onClick={() => void handleCloseChannel(channel.channel_point, true)}
+                      >
+                        Force close
+                      </button>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+            {lndWalletStatus.pending_channels.length > 0 ? (
+              <div className="grid gap-1.5">
+                <div className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted px-1">Pending</div>
+                {lndWalletStatus.pending_channels.map((pending, index) => (
+                  <div key={`${pending.remote_pubkey}-${pending.state}-${index}`} className="rounded border border-border bg-bg px-2 py-1.5 text-xs text-muted">
+                    <div><span className="text-text">Hub:</span> {pending.remote_alias || truncatePubkey(pending.remote_pubkey)}</div>
+                    <div><span className="text-text">State:</span> {pending.state}</div>
+                    <div><span className="text-text">Capacity:</span> {formatSats(pending.capacity_sat)}</div>
+                  </div>
+                ))}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+      </CollapsibleSection>
+    );
+  };
+
+  const renderWalletAddressesSection = (account: TradingAccount) => {
+    const open = openSectionsByAccount[account.id]?.walletAddresses ?? true;
+    const onChainCount = lndWalletStatus?.addresses.filter(entry => entry.kind === 'onchain').length ?? 0;
+    return (
+      <CollapsibleSection
+        title="Wallet addresses"
+        count={onChainCount}
+        open={open}
+        onToggle={() => toggleSection(account.id, 'walletAddresses')}
+        actions={
+          <button
+            type="button"
+            className={compactButtonCls}
+            disabled={lndWalletLoading}
+            onClick={() => void loadLndWalletStatus()}
+          >
+            {lndWalletLoading ? '…' : 'Refresh'}
+          </button>
+        }
+      >
+        <p className="text-[0.65rem] text-muted leading-relaxed px-1">
+          Lightning node identity and on-chain deposit addresses from LND. Lightning payments use invoices, not static addresses.
+        </p>
+        <div className="grid gap-1.5 px-1 sm:grid-cols-[1fr_auto] sm:items-end">
+          <input
+            className={compactInputCls}
+            value={newAddressLabel}
+            onChange={e => setNewAddressLabel(e.target.value)}
+            placeholder="Optional label for new on-chain address"
+          />
+          <button
+            type="button"
+            className={compactPrimaryButtonCls}
+            disabled={creatingAddress || lndWalletLoading}
+            onClick={() => {
+              setCreatingAddress(true);
+              void (async () => {
+                try {
+                  await createLNDWalletAddress(newAddressLabel);
+                  setNewAddressLabel('');
+                  await loadLndWalletStatus();
+                } catch (err) {
+                  setLndWalletError(err instanceof Error ? err.message : 'Failed to create address');
+                } finally {
+                  setCreatingAddress(false);
+                }
+              })();
+            }}
+          >
+            {creatingAddress ? 'Creating…' : 'New on-chain address'}
+          </button>
+        </div>
+        {lndWalletLoading && !lndWalletStatus ? (
+          <div className="text-[0.65rem] text-muted px-1">Loading addresses…</div>
+        ) : null}
+        {lndWalletStatus ? (
+          <div className="grid gap-1.5">
+            {lndWalletStatus.addresses.length === 0 ? (
+              <div className="text-[0.65rem] text-muted px-1">No addresses returned from LND.</div>
+            ) : (
+              lndWalletStatus.addresses.map(entry => (
+                <div key={`${entry.kind}-${entry.address}`} className="rounded border border-border bg-bg px-2 py-1.5 grid gap-1 text-xs text-muted">
+                  <div className="flex flex-wrap items-center gap-2">
+                    <span className="text-text font-medium">
+                      {entry.kind === 'lightning' ? 'Lightning node' : 'On-chain'}
+                    </span>
+                    {entry.label ? (
+                      <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem]">{entry.label}</span>
+                    ) : null}
+                    {entry.is_internal ? (
+                      <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem]">Internal</span>
+                    ) : null}
+                  </div>
+                  <pre className="overflow-x-auto whitespace-pre-wrap break-all text-[0.65rem] text-text">{entry.address}</pre>
+                  {entry.kind === 'onchain' ? (
+                    <div><span className="text-text">Balance:</span> {formatSats(entry.balance_sat)}</div>
+                  ) : null}
+                </div>
+              ))
+            )}
+          </div>
+        ) : null}
       </CollapsibleSection>
     );
   };
@@ -1079,6 +1912,9 @@ export function TradingAccountsPanel() {
 
   const renderSeedsSection = (account: TradingAccount) => {
     const isLndWallet = isLndWalletProvider(account.provider);
+    if (isLndWallet || isCexAccount(account)) {
+      return null;
+    }
     const draft = newSeedByAccount[account.id] ?? { seed_phrase: '', wallet_created_at: '' };
     const open = !!openSectionsByAccount[account.id]?.seeds;
     const showNew = !isLndWallet && !!showNewFormByAccount[account.id]?.seeds;
@@ -1292,6 +2128,80 @@ export function TradingAccountsPanel() {
     );
   };
 
+  const renderCexHedgingSection = (account: TradingAccount) => {
+    const slice = cexDataByAccount[account.id]?.hedgePositions;
+    const open = !!openSectionsByAccount[account.id]?.cexHedging;
+    const positions = slice?.data;
+    const activeCount = positions?.active.length ?? 0;
+    const pastCount = positions?.past.length ?? 0;
+    return (
+      <CollapsibleSection
+        title="Hedging"
+        count={activeCount + pastCount || undefined}
+        open={open}
+        onToggle={() => toggleCexSection(account, 'cexHedging')}
+        actions={
+          <button type="button" className={compactButtonCls} disabled={slice?.loading} onClick={() => void loadCexSection(account.id, 'cexHedging')}>
+            {slice?.loading ? '…' : 'Refresh'}
+          </button>
+        }
+      >
+        <p className="text-[0.65rem] text-muted leading-relaxed px-1">
+          Hedge positions linked to MM transactions for this exchange.
+        </p>
+        {renderCexSectionMessage(
+          slice?.loading ?? false,
+          slice?.error ?? null,
+          'No hedge positions recorded yet.',
+          !!positions && (positions.active.length > 0 || positions.past.length > 0),
+        )}
+        {positions ? (
+          <div className="grid gap-2">
+            <div className="text-xs font-semibold text-text px-1">Active ({positions.active.length})</div>
+            {positions.active.length > 0
+              ? positions.active.map(position => renderHedgePositionCard(position, 'Active'))
+              : <div className="text-[0.65rem] text-muted px-1">No active hedge positions.</div>}
+            <div className="text-xs font-semibold text-text px-1 pt-1">Past ({positions.past.length})</div>
+            {positions.past.length > 0
+              ? positions.past.map(position => renderHedgePositionCard(position, 'Past'))
+              : <div className="text-[0.65rem] text-muted px-1">No past hedge positions.</div>}
+          </div>
+        ) : null}
+      </CollapsibleSection>
+    );
+  };
+
+  const renderCexSpotTradesSection = (account: TradingAccount) => {
+    const slice = cexDataByAccount[account.id]?.spotTrades;
+    const open = !!openSectionsByAccount[account.id]?.cexSpotTrades;
+    const trades = slice?.data ?? [];
+    return (
+      <CollapsibleSection
+        title="Spot Market Transactions"
+        count={trades.length || undefined}
+        open={open}
+        onToggle={() => toggleCexSection(account, 'cexSpotTrades')}
+        actions={
+          <button type="button" className={compactButtonCls} disabled={slice?.loading} onClick={() => void loadCexSection(account.id, 'cexSpotTrades')}>
+            {slice?.loading ? '…' : 'Refresh'}
+          </button>
+        }
+      >
+        {renderCexSectionMessage(slice?.loading ?? false, slice?.error ?? null, 'No spot trades returned yet.', trades.length > 0)}
+        {trades.map(trade => (
+          <ResourceCard key={trade.trade_id} title={`${trade.trade_type} ${trade.trading_pair}`} meta={formatDate(trade.timestamp)}>
+            <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
+              <div><span className="text-text">Price:</span> {formatTokenAmount(trade.price, 2)}</div>
+              <div><span className="text-text">Amount:</span> {formatTokenAmount(trade.amount)}</div>
+              <div><span className="text-text">Fee:</span> {formatTokenAmount(trade.fee, 8)}{trade.fee_asset ? ` ${trade.fee_asset}` : ''}</div>
+              <div><span className="text-text">Trade ID:</span> {trade.trade_id}</div>
+            </div>
+          </ResourceCard>
+        ))}
+      </CollapsibleSection>
+    );
+  };
+
   return (
     <div className="h-full min-h-0 overflow-hidden">
       <div className="h-full min-h-0 rounded-lg border border-border bg-surface p-3 flex flex-col gap-3 overflow-hidden">
@@ -1300,7 +2210,16 @@ export function TradingAccountsPanel() {
             <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">Accounts Management</h3>
           </div>
           <div className="flex items-center gap-1.5">
-            <button type="button" className={compactPrimaryButtonCls} onClick={() => setShowNewAccountForm(prev => !prev)}>
+            <button
+              type="button"
+              className={compactPrimaryButtonCls}
+              onClick={() => {
+                if (showNewAccountForm) {
+                  resetNewAccountForm();
+                }
+                setShowNewAccountForm(prev => !prev);
+              }}
+            >
               {showNewAccountForm ? 'Cancel' : 'Add Account'}
             </button>
             <button type="button" className={compactButtonCls} onClick={() => void load()}>
@@ -1312,14 +2231,49 @@ export function TradingAccountsPanel() {
         {showNewAccountForm ? (
           <AccountEditor
             value={newAccount}
-            onChange={setNewAccount}
+            onChange={next => {
+              if (next.provider !== newAccount.provider) {
+                setNewAccountAPIKey(emptyAPIKeyForm());
+              }
+              setNewAccount(next);
+            }}
             submitLabel="Add New Account"
             compact
-            submitDisabled={!newAccount.provider}
+            groupedProviders
+            showContactFields={showContactFieldsForProvider(newAccount.provider)}
+            submitDisabled={
+              !newAccount.provider
+              || (usesAPIKeysAtCreate(newAccount.provider) && !newAccountAPIKey.api_key.trim())
+            }
+            extraContent={
+              usesAPIKeysAtCreate(newAccount.provider) ? (
+                <APIKeyDraftFields
+                  provider={newAccount.provider}
+                  value={newAccountAPIKey}
+                  onChange={setNewAccountAPIKey}
+                />
+              ) : null
+            }
             onSubmit={() =>
               withReload(async () => {
-                await createAccount(newAccount);
-                setNewAccount(emptyAccountForm());
+                const usesAPIKeys = usesAPIKeysAtCreate(newAccount.provider);
+                const created = await createAccount({
+                  provider: newAccount.provider,
+                  email: showContactFieldsForProvider(newAccount.provider) ? newAccount.email : '',
+                  password: showContactFieldsForProvider(newAccount.provider) ? newAccount.password : '',
+                  phone: showContactFieldsForProvider(newAccount.provider) ? newAccount.phone : '',
+                });
+                if (usesAPIKeys && newAccountAPIKey.api_key.trim()) {
+                  const isRobosats = isRobosatsProvider(newAccount.provider);
+                  await createAPIKey(created.id, {
+                    name: newAccountAPIKey.name,
+                    api_key: newAccountAPIKey.api_key,
+                    api_secret: isRobosats ? null : newAccountAPIKey.api_secret || null,
+                    passphrase: isRobosats ? null : newAccountAPIKey.passphrase || null,
+                    is_active: newAccountAPIKey.is_active,
+                  });
+                }
+                resetNewAccountForm();
                 setShowNewAccountForm(false);
               })
             }
@@ -1339,19 +2293,25 @@ export function TradingAccountsPanel() {
           ) : null}
           {groupedAccounts.map(group => (
             <div key={group.category} className="grid gap-1.5">
-              <div className="flex items-center gap-2 py-0.5">
-                <div className="h-px flex-1 bg-border" />
-                <div className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted">
-                  {group.category}
+              {group.category !== 'Uncategorized' ? (
+                <div className="flex items-center gap-2 py-0.5">
+                  <div className="h-px flex-1 bg-border" />
+                  <div className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted">
+                    {group.category}
+                  </div>
+                  <div className="h-px flex-1 bg-border" />
                 </div>
-                <div className="h-px flex-1 bg-border" />
-              </div>
+              ) : null}
               {group.accounts.map(account => {
                 const expanded = expandedId === account.id;
                 const isEditingAccount = editingAccountId === account.id;
                 const isLocalWallet = isLocalWalletProvider(account.provider);
                 const accountHealthMessage = healthMessageByAccount[account.id];
                 const healthMessageHealthy = accountHealthMessage?.healthy === true;
+                const cexDepositSlice = cexDataByAccount[account.id]?.depositAddresses;
+                const cexBalancesSlice = cexDataByAccount[account.id]?.balances;
+                const cexMainnetDeposit = pickMainnetDepositAddress(cexDepositSlice?.data ?? []);
+                const cexBalanceSummary = formatCexBalanceSummary(cexBalancesSlice?.data);
                 return (
                   <div key={account.id} className="rounded-lg border border-border bg-bg">
                     <div className="flex items-center gap-2 px-2.5 py-1.5 min-w-0">
@@ -1371,7 +2331,7 @@ export function TradingAccountsPanel() {
                         >
                           {checkingHealthByAccount[account.id] ? '…' : 'Health'}
                         </button>
-                        {!isLocalWallet ? (
+                        {!isLocalWallet && !isCexAccount(account) ? (
                           <>
                             <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
                               {account.totp_secrets.length} TOTP
@@ -1381,11 +2341,11 @@ export function TradingAccountsPanel() {
                             </span>
                           </>
                         ) : null}
-                        <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
-                          {isLndWalletProvider(account.provider)
-                            ? `${account.seeds.length} Aezeed`
-                            : `${account.seeds.length} Seeds`}
-                        </span>
+                        {!isLndWalletProvider(account.provider) && !isCexAccount(account) ? (
+                          <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
+                            {`${account.seeds.length} Seeds`}
+                          </span>
+                        ) : null}
                         {isBisqProvider(account.provider) ? (
                           <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
                             {account.account_file_backup ? 'Account file' : 'No file'}
@@ -1393,9 +2353,7 @@ export function TradingAccountsPanel() {
                         ) : null}
                         {isLndWalletProvider(account.provider) ? (
                           <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
-                            {account.lnd_channel_backup
-                              ? `${account.lnd_channel_backup.channel_count} ch backup`
-                              : 'No ch backup'}
+                            Backup
                           </span>
                         ) : null}
                         {!isLocalWallet ? (
@@ -1440,9 +2398,11 @@ export function TradingAccountsPanel() {
                                   Edit
                                 </button>
                               ) : null}
-                              <button type="button" className={`${compactButtonCls} text-red`} onClick={() => withReload(async () => { await deleteAccount(account.id); })}>
-                                Delete
-                              </button>
+                              {!isLocalWalletProvider(account.provider) ? (
+                                <button type="button" className={`${compactButtonCls} text-red`} onClick={() => withReload(async () => { await deleteAccount(account.id); })}>
+                                  Delete
+                                </button>
+                              ) : null}
                             </div>
                           </div>
                           {isEditingAccount ? (
@@ -1451,7 +2411,7 @@ export function TradingAccountsPanel() {
                               onChange={setEditingAccount}
                               submitLabel="Save"
                               compact
-                              showContactFields={!isLocalWallet && !isLndWalletProvider(account.provider)}
+                              showContactFields={!isLocalWallet && !isLndWalletProvider(account.provider) && !isCexAccount(account)}
                               showWalletPasswordOnly={isLndWalletProvider(account.provider)}
                               onCancel={() => setEditingAccountId(null)}
                               onSubmit={() =>
@@ -1463,29 +2423,56 @@ export function TradingAccountsPanel() {
                             />
                           ) : (
                             <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
-                              <div><span className="text-text">Provider:</span> {providerLabel(account.provider)}</div>
-                              <div><span className="text-text">Category:</span> {account.category}</div>
                               <div><span className="text-text">Health:</span> <span className={account.is_healthy ? 'text-green' : 'text-red'}>{account.is_healthy ? 'Healthy' : 'Unhealthy'}</span></div>
                               <div><span className="text-text">Last check:</span> {formatDate(account.last_health_check)}</div>
-                              {!isLocalWallet ? (
+                              {isCexAccount(account) ? (
+                                <>
+                                  <div className="sm:col-span-2">
+                                    <span className="text-text">Deposit address:</span>{' '}
+                                    {cexDepositSlice?.loading && !cexMainnetDeposit ? (
+                                      <span>Loading…</span>
+                                    ) : cexDepositSlice?.error && !cexMainnetDeposit ? (
+                                      <span className="text-red">{cexDepositSlice.error}</span>
+                                    ) : cexMainnetDeposit ? (
+                                      <span className="font-mono text-[0.65rem] break-all text-text">{cexMainnetDeposit.address}</span>
+                                    ) : (
+                                      '—'
+                                    )}
+                                  </div>
+                                  <div className="sm:col-span-2">
+                                    <span className="text-text">Balance:</span>{' '}
+                                    {cexBalancesSlice?.loading && !cexBalanceSummary ? (
+                                      <span>Loading…</span>
+                                    ) : cexBalancesSlice?.error && !cexBalanceSummary ? (
+                                      <span className="text-red">{cexBalancesSlice.error}</span>
+                                    ) : cexBalanceSummary ? (
+                                      <span className="text-text">{cexBalanceSummary}</span>
+                                    ) : (
+                                      '—'
+                                    )}
+                                  </div>
+                                </>
+                              ) : null}
+                              {!isLocalWallet && !isCexAccount(account) ? (
                                 <>
                                   <div><span className="text-text">Email:</span> {account.email || '—'}</div>
                                   <div><span className="text-text">Password:</span> {account.password ? '••••••••' : '—'}</div>
                                   <div className="sm:col-span-2"><span className="text-text">Phone:</span> {account.phone || '—'}</div>
                                 </>
                               ) : null}
-                              {isLndWalletProvider(account.provider) ? (
-                                <div className="sm:col-span-2"><span className="text-text">Wallet password:</span> {account.password ? '••••••••' : '—'}</div>
-                              ) : null}
                             </div>
                           )}
                         </div>
 
                         {isBisqProvider(account.provider) ? renderAccountFileSection(account) : null}
-                        {!isLocalWallet ? renderTOTPSection(account) : null}
-                        {!isLocalWallet ? renderPasskeysSection(account) : null}
+                        {!isLocalWallet && !isCexAccount(account) ? renderTOTPSection(account) : null}
+                        {!isLocalWallet && !isCexAccount(account) ? renderPasskeysSection(account) : null}
                         {renderSeedsSection(account)}
-                        {isLndWalletProvider(account.provider) ? renderChannelBackupSection(account) : null}
+                        {isLndWalletProvider(account.provider) ? renderLNDBackupSection(account) : null}
+                        {isLndWalletProvider(account.provider) ? renderLightningManagementSection(account) : null}
+                        {isLndWalletProvider(account.provider) ? renderWalletAddressesSection(account) : null}
+                        {isCexAccount(account) ? renderCexHedgingSection(account) : null}
+                        {isCexAccount(account) ? renderCexSpotTradesSection(account) : null}
                         {!isLocalWallet ? renderAPIKeysSection(account) : null}
                       </div>
                     ) : null}

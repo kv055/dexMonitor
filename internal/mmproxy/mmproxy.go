@@ -38,12 +38,20 @@ func (p *Proxy) ForwardJSON(w http.ResponseWriter, r *http.Request, path string)
 	}
 	targetURL.RawQuery = r.URL.RawQuery
 
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), nil)
+	var body io.Reader
+	if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
+		body = r.Body
+	}
+
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), body)
 	if err != nil {
 		http.Error(w, "failed to create mm controller request", http.StatusInternalServerError)
 		return
 	}
 	req.Header.Set("Accept", "application/json")
+	if contentType := r.Header.Get("Content-Type"); contentType != "" {
+		req.Header.Set("Content-Type", contentType)
+	}
 
 	client := p.Client
 	if client == nil {

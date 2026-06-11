@@ -1,4 +1,12 @@
 import type {
+  CexBalancesResponse,
+  CexDepositAddress,
+  CexHedgePositionsResponse,
+  CexSpotTrade,
+  LNDCloseChannelResult,
+  LNDCreateAddressResult,
+  LNDOpenChannelResult,
+  LNDWalletStatus,
   TradingAccount,
   TradingAccountHealthCheckResult,
   TradingAPIKey,
@@ -133,4 +141,56 @@ export function updateAPIKey(id: number, payload: Omit<TradingAPIKey, 'id' | 'ac
 
 export function deleteAPIKey(id: number) {
   return request<{ ok: boolean }>(`/api/trading/api_keys/${id}`, { method: 'DELETE' });
+}
+
+export function fetchLNDWalletStatus() {
+  return request<LNDWalletStatus>('/api/mm-controller/lnd/wallet');
+}
+
+export function createLNDWalletAddress(label?: string) {
+  return request<LNDCreateAddressResult>('/api/mm-controller/lnd/addresses', {
+    method: 'POST',
+    body: JSON.stringify({ label: label?.trim() ?? '' }),
+  });
+}
+
+export function openLNDChannel(payload: {
+  node_pubkey: string;
+  peer_host?: string;
+  local_funding_amount_sat: number;
+  push_sat?: number;
+  sat_per_vbyte?: number;
+  private?: boolean;
+}) {
+  return request<LNDOpenChannelResult>('/api/mm-controller/lnd/channels/open', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function closeLNDChannel(payload: {
+  channel_point: string;
+  force?: boolean;
+  sat_per_vbyte?: number;
+}) {
+  return request<LNDCloseChannelResult>('/api/mm-controller/lnd/channels/close', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchCexDepositAddresses(accountId: number) {
+  return request<CexDepositAddress[]>(`/api/trading/accounts/${accountId}/cex/deposit-addresses`);
+}
+
+export function fetchCexBalances(accountId: number) {
+  return request<CexBalancesResponse>(`/api/trading/accounts/${accountId}/cex/balances`);
+}
+
+export function fetchCexHedgePositions(accountId: number) {
+  return request<CexHedgePositionsResponse>(`/api/trading/accounts/${accountId}/cex/hedge-positions`);
+}
+
+export function fetchCexSpotTrades(accountId: number, limit = 50) {
+  return request<CexSpotTrade[]>(`/api/trading/accounts/${accountId}/cex/spot-trades?limit=${limit}`);
 }

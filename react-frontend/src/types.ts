@@ -350,6 +350,79 @@ export interface TradingAccountHealthCheckResult {
   checked_at: string;
 }
 
+export interface LNDWalletNodeSummary {
+  identity_pubkey: string;
+  alias: string;
+  num_peers: number;
+  num_active_channels: number;
+  synced_to_chain: boolean;
+  synced_to_graph: boolean;
+  block_height: number;
+}
+
+export interface LNDWalletPeerSummary {
+  pub_key: string;
+  address: string;
+  inbound: boolean;
+  sync_type: string;
+}
+
+export interface LNDWalletChannelSummary {
+  remote_pubkey: string;
+  remote_alias: string;
+  peer_address: string;
+  capacity_sat: number;
+  local_balance_sat: number;
+  remote_balance_sat: number;
+  active: boolean;
+  private: boolean;
+  health: 'healthy' | 'inactive' | 'low_outbound' | string;
+  channel_point: string;
+  total_sent_sat: number;
+  total_received_sat: number;
+}
+
+export interface LNDWalletPendingChannelSummary {
+  remote_pubkey: string;
+  remote_alias: string;
+  capacity_sat: number;
+  local_balance_sat: number;
+  remote_balance_sat: number;
+  state: string;
+}
+
+export interface LNDWalletAddressEntry {
+  address: string;
+  kind: 'lightning' | 'onchain' | string;
+  label?: string;
+  balance_sat?: number;
+  is_internal?: boolean;
+}
+
+export interface LNDWalletStatus {
+  node: LNDWalletNodeSummary;
+  peers: LNDWalletPeerSummary[];
+  channels: LNDWalletChannelSummary[];
+  pending_channels: LNDWalletPendingChannelSummary[];
+  addresses: LNDWalletAddressEntry[];
+  checked_at: string;
+}
+
+export interface LNDCreateAddressResult {
+  address: string;
+  label: string;
+  kind: string;
+  created_at: string;
+}
+
+export interface LNDOpenChannelResult {
+  funding_txid: string;
+}
+
+export interface LNDCloseChannelResult {
+  closing_txid: string;
+}
+
 export interface PastOrderTimeframeStats {
   timeframe: string;
   hours: number;
@@ -498,4 +571,55 @@ export interface Filters {
   premiumMode: PremiumFilterMode;
   hours: string;
   cex: string;
+}
+
+export interface CexDepositAddress {
+  asset: string;
+  network: string;
+  address: string;
+  tag?: string;
+  method?: string;
+}
+
+export interface CexAssetBalance {
+  asset: string;
+  available: number;
+  total: number;
+  usd_value?: number;
+}
+
+export interface CexBalancesResponse {
+  bitcoin?: CexAssetBalance | null;
+  fiat: CexAssetBalance[];
+  source: string;
+}
+
+export interface CexHedgePosition {
+  transaction_id: number;
+  status: string;
+  direction: string;
+  venue?: string;
+  instrument?: string;
+  size_btc?: number;
+  fee?: number;
+  opened_at?: string;
+  closed_at?: string;
+  open_details?: unknown;
+  close_details?: unknown;
+}
+
+export interface CexHedgePositionsResponse {
+  active: CexHedgePosition[];
+  past: CexHedgePosition[];
+}
+
+export interface CexSpotTrade {
+  trade_id: string;
+  trading_pair: string;
+  trade_type: string;
+  price: number;
+  amount: number;
+  fee: number;
+  fee_asset?: string;
+  timestamp: string;
 }

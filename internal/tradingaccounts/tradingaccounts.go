@@ -231,7 +231,7 @@ func (r Repository) List(ctx context.Context) ([]Account, error) {
 		       provider,
 		       CASE
 		           WHEN lower(provider) IN ('wise', 'paypal', 'revolut', 'n26') THEN 'Fiat Transmitter'
-		           WHEN lower(provider) IN ('robosats', 'bisq', 'bisq2', 'hodlhodl') THEN 'DEX'
+		           WHEN lower(provider) IN ('robosats', 'bisq', 'bisq2', 'hodlhodl', 'peach', 'peach bitcoin', 'peachbitcoin') THEN 'DEX'
 		           WHEN lower(provider) IN ('kraken', 'coinbase', 'bitstamp', 'binance', 'bybit', 'kucoin', 'huobi') THEN 'CEX'
 		           WHEN lower(provider) IN ('lnd', 'lnd wallet', 'lnd_wallet') THEN 'Internal Infrastructure'
 		           ELSE 'Uncategorized'
@@ -765,6 +765,8 @@ func NormalizeProvider(value string) string {
 		return "Bisq2"
 	case "hodlhodl":
 		return "HodlHodl"
+	case "peach", "peach bitcoin", "peachbitcoin":
+		return "Peach"
 	case "kraken":
 		return "Kraken"
 	case "coinbase":

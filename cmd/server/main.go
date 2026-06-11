@@ -307,11 +307,19 @@ func main() {
 	mux.HandleFunc("GET /api/trade_cost_config", handleTradeCostConfig)
 	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
 	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
+	mux.HandleFunc("GET /api/mm-controller/lnd/wallet", handleMmControllerLNDWallet)
+	mux.HandleFunc("POST /api/mm-controller/lnd/addresses", handleMmControllerLNDCreateAddress)
+	mux.HandleFunc("POST /api/mm-controller/lnd/channels/open", handleMmControllerLNDOpenChannel)
+	mux.HandleFunc("POST /api/mm-controller/lnd/channels/close", handleMmControllerLNDCloseChannel)
 	mux.HandleFunc("GET /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("POST /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("PUT /api/trading/accounts/{id}", handleTradingAccountByID)
 	mux.HandleFunc("DELETE /api/trading/accounts/{id}", handleTradingAccountByID)
 	mux.HandleFunc("POST /api/trading/accounts/{id}/health_check", handleTradingAccountHealthCheck)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/deposit-addresses", handleTradingAccountCexDepositAddresses)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/balances", handleTradingAccountCexBalances)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/hedge-positions", handleTradingAccountCexHedgePositions)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/spot-trades", handleTradingAccountCexSpotTrades)
 	mux.HandleFunc("POST /api/trading/accounts/{id}/totp_secrets", handleTradingAccountTOTPSecrets)
 	mux.HandleFunc("POST /api/trading/accounts/{id}/passkey_credentials", handleTradingAccountPasskeys)
 	mux.HandleFunc("POST /api/trading/accounts/{id}/seeds", handleTradingAccountSeeds)
@@ -2209,6 +2217,22 @@ func handleMmControllerTransactionByID(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	forwardMMControllerJSON(w, r, "/api/transactions/"+url.PathEscape(id))
+}
+
+func handleMmControllerLNDWallet(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/lnd/wallet")
+}
+
+func handleMmControllerLNDCreateAddress(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/lnd/addresses")
+}
+
+func handleMmControllerLNDOpenChannel(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/lnd/channels/open")
+}
+
+func handleMmControllerLNDCloseChannel(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/lnd/channels/close")
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
