@@ -342,11 +342,18 @@ export interface TradingAccount {
   lnd_channel_backup: TradingLNDChannelBackup | null;
 }
 
+export interface TradingAccountKeyPermissionResult {
+  key_id: number;
+  name: string;
+  permissions: Record<string, boolean>;
+}
+
 export interface TradingAccountHealthCheckResult {
   account: TradingAccount;
   status: 'healthy' | 'unhealthy' | 'not_implemented';
   healthy: boolean | null;
   message: string;
+  keys?: TradingAccountKeyPermissionResult[];
   checked_at: string;
 }
 

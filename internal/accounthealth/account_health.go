@@ -10,6 +10,13 @@ import (
 	"time"
 )
 
+// KeyPermissionResult reports normalized permissions for one API key.
+type KeyPermissionResult struct {
+	KeyID       uint            `json:"key_id"`
+	Name        string          `json:"name"`
+	Permissions map[string]bool `json:"permissions"`
+}
+
 // MMControllerResponse represents a mmcontroller response.
 type MMControllerResponse struct {
 	// Provider is the provider value for the mmcontroller response.
@@ -20,6 +27,8 @@ type MMControllerResponse struct {
 	Healthy bool `json:"healthy"`
 	// Message carries a human-readable message for the mmcontroller response.
 	Message string `json:"message"`
+	// Keys reports per-key permission details for CEX providers.
+	Keys []KeyPermissionResult `json:"keys,omitempty"`
 	// CheckedAt records the relevant time for the mmcontroller response.
 	CheckedAt string `json:"checked_at"`
 }

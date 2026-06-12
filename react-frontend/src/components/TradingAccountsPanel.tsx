@@ -34,6 +34,7 @@ import type {
   CexSpotTrade,
   LNDWalletStatus,
   TradingAccount,
+  TradingAccountKeyPermissionResult,
 } from '../types';
 
 type ProviderOption = { value: string; label: string };
@@ -173,6 +174,49 @@ function isLndWalletProvider(value: string) {
 
 function isCexAccount(account: TradingAccount) {
   return account.category === 'CEX';
+}
+
+type AccountHealthMessage = {
+  message: string;
+  healthy: boolean | null;
+  keys?: TradingAccountKeyPermissionResult[];
+};
+
+function formatPermissionLabel(name: string) {
+  return name
+    .split('_')
+    .map(part => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ');
+}
+
+function APIKeyPermissionChips({ permissions }: { permissions: Record<string, boolean> }) {
+  const entries = Object.entries(permissions).sort(([left], [right]) => left.localeCompare(right));
+  if (entries.length === 0) {
+    return null;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {entries.map(([name, granted]) => (
+        <span
+          key={name}
+          className={`rounded-full border px-1.5 py-0.5 text-[0.65rem] whitespace-nowrap ${
+            granted
+              ? 'border-green/40 bg-green/10 text-green'
+              : 'border-red/40 bg-red/10 text-red'
+          }`}
+        >
+          {formatPermissionLabel(name)} {granted ? '✓' : '✗'}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function keyPermissionResult(
+  healthMessage: AccountHealthMessage | undefined,
+  keyId: number,
+): TradingAccountKeyPermissionResult | undefined {
+  return healthMessage?.keys?.find(entry => entry.key_id === keyId);
 }
 
 function providerDefinition(provider: string) {
@@ -471,7 +515,7 @@ interface TradingPanelUiState {
   newAPIKeyByAccount: Record<number, APIKeyFormState>;
   editingAPIKeyById: Record<number, APIKeyFormState>;
   checkingHealthByAccount: Record<number, boolean>;
-  healthMessageByAccount: Record<number, { message: string; healthy: boolean | null }>;
+  healthMessageByAccount: Record<number, AccountHealthMessage>;
 }
 
 type TradingPanelUiAction = {
@@ -826,6 +870,26 @@ function CollapsibleSection({
         {actions ? <div className="flex shrink-0 items-center gap-1" onClick={e => e.stopPropagation()}>{actions}</div> : null}
       </div>
       {open ? <div className="border-t border-border px-2 py-1.5 grid gap-1.5">{children}</div> : null}
+    </div>
+  );
+}
+
+function BackupField({
+  title,
+  meta,
+  children,
+}: {
+  title: string;
+  meta?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded border border-border bg-bg px-2 py-1.5 grid gap-1">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs font-medium text-text">{title}</span>
+        {meta ? <span className="text-[0.65rem] text-muted">{meta}</span> : null}
+      </div>
+      {children}
     </div>
   );
 }
@@ -1236,7 +1300,11 @@ export function TradingAccountsPanel() {
           ...state,
           healthMessageByAccount: {
             ...state.healthMessageByAccount,
-            [account.id]: { message: result.message, healthy: result.healthy },
+            [account.id]: {
+              message: result.message,
+              healthy: result.healthy,
+              keys: result.keys,
+            },
           },
         }),
       });
@@ -1583,10 +1651,7 @@ export function TradingAccountsPanel() {
           Disaster-recovery material stored for this wallet: password, aezeed seed, and static channel backup metadata.
         </p>
         <div className="grid gap-1.5">
-          <SecretItem
-            title="Wallet password"
-            summary={account.password ? '••••••••' : 'Not set'}
-          >
+          <BackupField title="Wallet password">
             {account.password ? (
               <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-[0.65rem] text-text whitespace-pre-wrap break-all">
                 {account.password}
@@ -1594,17 +1659,9 @@ export function TradingAccountsPanel() {
             ) : (
               <div className="text-[0.65rem] text-muted">Set the wallet password in Account → Edit before starting mm-controller.</div>
             )}
-          </SecretItem>
+          </BackupField>
 
-          <SecretItem
-            title="Aezeed seed"
-            meta={seed ? formatDate(seed.created_at) : undefined}
-            summary={
-              seed
-                ? (seed.seed_phrase.length > 56 ? `${seed.seed_phrase.slice(0, 56)}…` : seed.seed_phrase)
-                : 'Not stored yet'
-            }
-          >
+          <BackupField title="Aezeed seed" meta={seed ? formatDate(seed.created_at) : undefined}>
             {seed ? (
               <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-[0.65rem] text-text whitespace-pre-wrap break-all">
                 {seed.seed_phrase}
@@ -1614,17 +1671,9 @@ export function TradingAccountsPanel() {
                 No aezeed stored yet — set the wallet password and start mm-controller to generate one.
               </div>
             )}
-          </SecretItem>
+          </BackupField>
 
-          <SecretItem
-            title="Channel backup"
-            meta={backup ? formatDate(backup.created_at) : undefined}
-            summary={
-              backup
-                ? `${backup.channel_count} channel${backup.channel_count === 1 ? '' : 's'} stored`
-                : 'No backup yet'
-            }
-          >
+          <BackupField title="Channel backup" meta={backup ? formatDate(backup.created_at) : undefined}>
             {backup ? (
               <div className="rounded border border-border bg-surface px-2 py-1.5 grid gap-1 text-xs text-muted sm:grid-cols-2">
                 <div><span className="text-text">Channels:</span> {backup.channel_count}</div>
@@ -1637,7 +1686,7 @@ export function TradingAccountsPanel() {
                 No static channel backup in the database yet — mm-controller exports after LND starts.
               </div>
             )}
-          </SecretItem>
+          </BackupField>
         </div>
       </CollapsibleSection>
     );
@@ -2005,6 +2054,7 @@ export function TradingAccountsPanel() {
 
   const renderAPIKeysSection = (account: TradingAccount) => {
     const draft = newAPIKeyByAccount[account.id] ?? { name: '', api_key: '', api_secret: '', passphrase: '', is_active: true };
+    const accountHealthMessage = healthMessageByAccount[account.id];
     const isRobosats = isRobosatsProvider(account.provider);
     const sectionTitle = isRobosats ? 'Robot Token' : 'API Keys';
     const newTitle = isRobosats ? 'New Robot Token' : 'New API Key';
@@ -2025,6 +2075,7 @@ export function TradingAccountsPanel() {
         }
       >
         {account.api_keys.map(key => {
+          const permissionResult = keyPermissionResult(accountHealthMessage, key.id);
           const edit = editingAPIKeyById[key.id];
           const form = edit ?? {
             name: key.name,
@@ -2084,6 +2135,12 @@ export function TradingAccountsPanel() {
                   <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-text whitespace-pre-wrap break-all">{key.api_key}</pre>
                   {!isRobosats && key.api_secret ? <div><span className="text-text">Secret:</span> ••••••••</div> : null}
                   {!isRobosats && key.passphrase ? <div><span className="text-text">Passphrase:</span> ••••••••</div> : null}
+                  {permissionResult ? (
+                    <div className="grid gap-1 pt-0.5">
+                      <div className="text-text">Permissions</div>
+                      <APIKeyPermissionChips permissions={permissionResult.permissions} />
+                    </div>
+                  ) : null}
                   <div>Updated {formatDate(key.updated_at)}</div>
                 </div>
               )}
@@ -2329,7 +2386,7 @@ export function TradingAccountsPanel() {
                           disabled={!!checkingHealthByAccount[account.id]}
                           onClick={() => void triggerHealthCheck(account)}
                         >
-                          {checkingHealthByAccount[account.id] ? '…' : 'Health'}
+                          {checkingHealthByAccount[account.id] ? '…' : 'Healthcheck'}
                         </button>
                         {!isLocalWallet && !isCexAccount(account) ? (
                           <>
@@ -2374,9 +2431,11 @@ export function TradingAccountsPanel() {
                             : 'border-red/30 bg-red/5'
                         }`}
                       >
-                        <p className={`flex-1 text-xs leading-relaxed break-words ${healthMessageHealthy ? 'text-green' : 'text-red'}`}>
-                          {accountHealthMessage.message}
-                        </p>
+                        <div className="flex-1 min-w-0">
+                          <p className={`text-xs leading-relaxed break-words ${healthMessageHealthy ? 'text-green' : 'text-red'}`}>
+                            {accountHealthMessage.message}
+                          </p>
+                        </div>
                         <button
                           type="button"
                           className={`${compactButtonCls} shrink-0 px-1.5 ${healthMessageHealthy ? 'text-green' : 'text-red'}`}

@@ -24,10 +24,21 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (!res.ok) {
-    if (res.status === 502) {
-      throw new Error('API error: 502 (backend unreachable or overloaded)');
+    const raw = await res.text();
+    let message = raw.trim();
+    if (message) {
+      try {
+        const body = JSON.parse(message) as { error?: string };
+        if (body.error?.trim()) {
+          message = body.error.trim();
+        }
+      } catch {
+        // Keep plain-text error bodies as-is.
+      }
+    } else {
+      message = `API error: ${res.status}`;
     }
-    throw new Error(`API error: ${res.status}`);
+    throw new Error(message);
   }
   return res.json();
 }

@@ -36,7 +36,20 @@ func (p *Proxy) ForwardJSON(w http.ResponseWriter, r *http.Request, path string)
 		http.Error(w, "mm controller request path is invalid", http.StatusInternalServerError)
 		return
 	}
-	targetURL.RawQuery = r.URL.RawQuery
+	if incoming := strings.TrimSpace(r.URL.RawQuery); incoming != "" {
+		query, err := url.ParseQuery(incoming)
+		if err != nil {
+			http.Error(w, "mm controller request query is invalid", http.StatusBadRequest)
+			return
+		}
+		merged := targetURL.Query()
+		for key, values := range query {
+			for _, value := range values {
+				merged.Add(key, value)
+			}
+		}
+		targetURL.RawQuery = merged.Encode()
+	}
 
 	var body io.Reader
 	if r.Body != nil && r.Method != http.MethodGet && r.Method != http.MethodHead {
