@@ -157,6 +157,97 @@ function isRobosatsProvider(value: string) {
   return value.trim().toLowerCase() === 'robosats';
 }
 
+function isHodlHodlProvider(value: string) {
+  return value.trim().toLowerCase() === 'hodlhodl';
+}
+
+type APIKeyFormProfile = {
+  sectionTitle: string;
+  newTitle: string;
+  keyLabel: string;
+  keyPlaceholder: string;
+  secretLabel: string | null;
+  secretPlaceholder: string | null;
+  createLabel: string;
+  countLabel: string;
+  itemTitleFallback: string;
+  showName: boolean;
+  showSecret: boolean;
+  showPassphrase: boolean;
+  helpText: string | null;
+  emptyMessage: string;
+};
+
+function apiKeyFormProfile(provider: string): APIKeyFormProfile {
+  if (isRobosatsProvider(provider)) {
+    return {
+      sectionTitle: 'Robot Token',
+      newTitle: 'New Robot Token',
+      keyLabel: 'Token',
+      keyPlaceholder: 'Robot token',
+      secretLabel: null,
+      secretPlaceholder: null,
+      createLabel: 'Create Robot Token',
+      countLabel: 'Tokens',
+      itemTitleFallback: 'Robot token',
+      showName: false,
+      showSecret: false,
+      showPassphrase: false,
+      helpText: 'Paste the robot token from your RoboSats coordinator. No other credentials are required.',
+      emptyMessage: 'No robot tokens yet.',
+    };
+  }
+  if (isHodlHodlProvider(provider)) {
+    return {
+      sectionTitle: 'API Credentials',
+      newTitle: 'New API Credentials',
+      keyLabel: 'API key',
+      keyPlaceholder: 'HodlHodl API key',
+      secretLabel: 'Signature key',
+      secretPlaceholder: 'HodlHodl signature key',
+      createLabel: 'Create API Credentials',
+      countLabel: 'Credentials',
+      itemTitleFallback: 'API credentials',
+      showName: false,
+      showSecret: true,
+      showPassphrase: false,
+      helpText: 'Store your HodlHodl API key and signature key from Account → API. Login details, TOTP, and passkeys are not required here.',
+      emptyMessage: 'No API credentials yet.',
+    };
+  }
+  return {
+    sectionTitle: 'API Keys',
+    newTitle: 'New API Key',
+    keyLabel: 'API key',
+    keyPlaceholder: 'API key',
+    secretLabel: 'API secret',
+    secretPlaceholder: 'API secret',
+    createLabel: 'Create API Key',
+    countLabel: 'API Keys',
+    itemTitleFallback: 'API key',
+    showName: true,
+    showSecret: true,
+    showPassphrase: true,
+    helpText: null,
+    emptyMessage: 'No API keys yet.',
+  };
+}
+
+function apiKeyPayloadExtras(profile: APIKeyFormProfile, form: APIKeyFormState) {
+  return {
+    api_secret: profile.showSecret ? form.api_secret || null : null,
+    passphrase: profile.showPassphrase ? form.passphrase || null : null,
+  };
+}
+
+function showDexIdentitySections(provider: string) {
+  return !isLocalWalletProvider(provider)
+    && !isLndWalletProvider(provider)
+    && providerCategoryFor(provider) !== 'CEX'
+    && !isRobosatsProvider(provider)
+    && !isHodlHodlProvider(provider);
+}
+
 function isLocalWalletProvider(value: string) {
   const normalized = value.trim().toLowerCase();
   return normalized === 'bisq' || normalized === 'bisq2' || normalized === 'lnd wallet';
@@ -212,11 +303,28 @@ function APIKeyPermissionChips({ permissions }: { permissions: Record<string, bo
   );
 }
 
-function keyPermissionResult(
-  healthMessage: AccountHealthMessage | undefined,
-  keyId: number,
-): TradingAccountKeyPermissionResult | undefined {
-  return healthMessage?.keys?.find(entry => entry.key_id === keyId);
+function hasStoredAPIKeyPermissions(apiKeys: TradingAccount['api_keys']) {
+  return apiKeys.some(key => key.permissions && Object.keys(key.permissions).length > 0);
+}
+
+function healthCheckDisplayMessage(
+  message: string,
+  keys: TradingAccountKeyPermissionResult[] | undefined,
+  apiKeys: TradingAccount['api_keys'],
+) {
+  if (!keys?.length && !hasStoredAPIKeyPermissions(apiKeys)) {
+    return message;
+  }
+  const validatedMarker = ' validated.';
+  const markerIndex = message.indexOf(validatedMarker);
+  if (markerIndex >= 0) {
+    return message.slice(0, markerIndex + validatedMarker.length);
+  }
+  const keyDetailIndex = message.indexOf(' key "');
+  if (keyDetailIndex >= 0) {
+    return message.slice(0, keyDetailIndex);
+  }
+  return message;
 }
 
 function providerDefinition(provider: string) {
@@ -599,54 +707,58 @@ function APIKeyDraftFields({
   onChange: (next: APIKeyFormState) => void;
   provider: string;
 }) {
-  const isRobosats = isRobosatsProvider(provider);
-  const keyPlaceholder = isRobosats ? 'Robot token' : 'API key';
+  const profile = apiKeyFormProfile(provider);
 
   return (
     <div className="grid gap-2 rounded-md border border-border bg-surface p-2">
-      <div className="text-xs font-semibold text-text">{isRobosats ? 'Robot Token' : 'API Keys'}</div>
+      <div className="text-xs font-semibold text-text">{profile.sectionTitle}</div>
+      {profile.helpText ? (
+        <p className="text-[0.65rem] text-muted leading-relaxed">{profile.helpText}</p>
+      ) : null}
       <div className="grid gap-1.5 md:grid-cols-2">
-        <label className="grid gap-1 text-xs text-muted">
-          <span>Name</span>
-          <input
-            className={compactInputCls}
-            value={value.name}
-            onChange={e => onChange({ ...value, name: e.target.value })}
-            placeholder="Optional label"
-          />
-        </label>
+        {profile.showName ? (
+          <label className="grid gap-1 text-xs text-muted">
+            <span>Name</span>
+            <input
+              className={compactInputCls}
+              value={value.name}
+              onChange={e => onChange({ ...value, name: e.target.value })}
+              placeholder="Optional label"
+            />
+          </label>
+        ) : null}
         <label className="grid gap-1 text-xs text-muted md:col-span-2">
-          <span>{isRobosats ? 'Token' : 'API key'}</span>
+          <span>{profile.keyLabel}</span>
           <textarea
             className={textareaCls}
             value={value.api_key}
             onChange={e => onChange({ ...value, api_key: e.target.value })}
-            placeholder={keyPlaceholder}
+            placeholder={profile.keyPlaceholder}
           />
         </label>
-        {!isRobosats ? (
-          <>
-            <label className="grid gap-1 text-xs text-muted md:col-span-2">
-              <span>API secret</span>
-              <textarea
-                className={textareaCls}
-                value={value.api_secret}
-                onChange={e => onChange({ ...value, api_secret: e.target.value })}
-                placeholder="API secret"
-              />
-            </label>
-            <label className="grid gap-1 text-xs text-muted md:col-span-2">
-              <span>Passphrase</span>
-              <input
-                className={compactInputCls}
-                value={value.passphrase}
-                onChange={e => onChange({ ...value, passphrase: e.target.value })}
-                placeholder="Optional passphrase"
-              />
-            </label>
-          </>
+        {profile.showSecret ? (
+          <label className="grid gap-1 text-xs text-muted md:col-span-2">
+            <span>{profile.secretLabel}</span>
+            <textarea
+              className={textareaCls}
+              value={value.api_secret}
+              onChange={e => onChange({ ...value, api_secret: e.target.value })}
+              placeholder={profile.secretPlaceholder ?? undefined}
+            />
+          </label>
         ) : null}
-        <label className="flex items-center gap-2 text-xs text-muted">
+        {profile.showPassphrase ? (
+          <label className="grid gap-1 text-xs text-muted md:col-span-2">
+            <span>Passphrase</span>
+            <input
+              className={compactInputCls}
+              value={value.passphrase}
+              onChange={e => onChange({ ...value, passphrase: e.target.value })}
+              placeholder="Optional passphrase"
+            />
+          </label>
+        ) : null}
+        <label className={`flex items-center gap-2 text-xs text-muted ${!profile.showName ? 'md:col-span-2' : ''}`}>
           <input
             type="checkbox"
             checked={value.is_active}
@@ -898,6 +1010,7 @@ function SecretItem({
   title,
   meta,
   summary,
+  footer,
   children,
   actions,
   forceOpen = false,
@@ -905,6 +1018,7 @@ function SecretItem({
   title: string;
   meta?: string;
   summary?: string;
+  footer?: ReactNode;
   children: ReactNode;
   actions?: ReactNode;
   forceOpen?: boolean;
@@ -928,6 +1042,7 @@ function SecretItem({
       {!isOpen && summary ? (
         <div className="border-t border-border px-2 py-1 text-[0.65rem] text-muted truncate">{summary}</div>
       ) : null}
+      {footer ? <div className="border-t border-border px-2 py-1.5">{footer}</div> : null}
       {isOpen ? <div className="border-t border-border px-2 py-1.5 grid gap-1.5">{children}</div> : null}
     </div>
   );
@@ -1037,6 +1152,18 @@ export function TradingAccountsPanel() {
   }, []);
   const setEditingAccount = useCallback((value: SetStateAction<AccountFormState>) => {
     dispatchUi({ type: 'UPDATE', update: state => ({ ...state, editingAccount: resolveState(value, state.editingAccount) }) });
+  }, []);
+  const openSection = useCallback((accountId: number, section: AccountSectionKey) => {
+    dispatchUi({
+      type: 'UPDATE',
+      update: state => ({
+        ...state,
+        openSectionsByAccount: {
+          ...state.openSectionsByAccount,
+          [accountId]: { ...state.openSectionsByAccount[accountId], [section]: true },
+        },
+      }),
+    });
   }, []);
   const toggleSection = useCallback((accountId: number, section: AccountSectionKey) => {
     dispatchUi({
@@ -1308,6 +1435,10 @@ export function TradingAccountsPanel() {
           },
         }),
       });
+      if (result.keys && result.keys.length > 0 && account.api_keys.length > 0) {
+        setExpandedId(account.id);
+        openSection(account.id, 'apiKeys');
+      }
     } catch (err) {
       dispatchUi({
         type: 'UPDATE',
@@ -1342,7 +1473,7 @@ export function TradingAccountsPanel() {
   };
 
   const renderTOTPSection = (account: TradingAccount) => {
-    if (isCexAccount(account)) {
+    if (!showDexIdentitySections(account.provider)) {
       return null;
     }
     const draft = newTOTPByAccount[account.id] ?? { secret: '', is_active: true };
@@ -1498,7 +1629,7 @@ export function TradingAccountsPanel() {
   };
 
   const renderPasskeysSection = (account: TradingAccount) => {
-    if (isCexAccount(account)) {
+    if (!showDexIdentitySections(account.provider)) {
       return null;
     }
     const draft = newPasskeyByAccount[account.id] ?? {
@@ -1961,7 +2092,7 @@ export function TradingAccountsPanel() {
 
   const renderSeedsSection = (account: TradingAccount) => {
     const isLndWallet = isLndWalletProvider(account.provider);
-    if (isLndWallet || isCexAccount(account)) {
+    if (isLndWallet || isCexAccount(account) || !showDexIdentitySections(account.provider)) {
       return null;
     }
     const draft = newSeedByAccount[account.id] ?? { seed_phrase: '', wallet_created_at: '' };
@@ -2054,17 +2185,12 @@ export function TradingAccountsPanel() {
 
   const renderAPIKeysSection = (account: TradingAccount) => {
     const draft = newAPIKeyByAccount[account.id] ?? { name: '', api_key: '', api_secret: '', passphrase: '', is_active: true };
-    const accountHealthMessage = healthMessageByAccount[account.id];
-    const isRobosats = isRobosatsProvider(account.provider);
-    const sectionTitle = isRobosats ? 'Robot Token' : 'API Keys';
-    const newTitle = isRobosats ? 'New Robot Token' : 'New API Key';
-    const keyPlaceholder = isRobosats ? 'Robot token' : 'API key';
-    const createLabel = isRobosats ? 'Create Robot Token' : 'Create API Key';
+    const profile = apiKeyFormProfile(account.provider);
     const open = !!openSectionsByAccount[account.id]?.apiKeys;
     const showNew = !!showNewFormByAccount[account.id]?.apiKeys;
     return (
       <CollapsibleSection
-        title={sectionTitle}
+        title={profile.sectionTitle}
         count={account.api_keys.length}
         open={open}
         onToggle={() => toggleSection(account.id, 'apiKeys')}
@@ -2074,8 +2200,10 @@ export function TradingAccountsPanel() {
           </button>
         }
       >
+        {profile.helpText ? (
+          <p className="text-[0.65rem] text-muted leading-relaxed px-1">{profile.helpText}</p>
+        ) : null}
         {account.api_keys.map(key => {
-          const permissionResult = keyPermissionResult(accountHealthMessage, key.id);
           const edit = editingAPIKeyById[key.id];
           const form = edit ?? {
             name: key.name,
@@ -2084,13 +2212,23 @@ export function TradingAccountsPanel() {
             passphrase: key.passphrase ?? '',
             is_active: key.is_active,
           };
+          const itemTitle = profile.showName ? key.name : (key.name.trim() || profile.itemTitleFallback);
           return (
             <SecretItem
               key={key.id}
               forceOpen={!!edit}
-              title={key.name}
+              title={itemTitle}
               meta={key.is_active ? 'Active' : 'Inactive'}
               summary={key.api_key.length > 40 ? `${key.api_key.slice(0, 40)}…` : key.api_key}
+              footer={key.permissions && Object.keys(key.permissions).length > 0 ? (
+                <div className="grid gap-1">
+                  <div className="text-[0.65rem] text-text">
+                    Validation
+                    {key.permissions_checked_at ? ` · checked ${formatDate(key.permissions_checked_at)}` : ''}
+                  </div>
+                  <APIKeyPermissionChips permissions={key.permissions} />
+                </div>
+              ) : null}
               actions={
                 !edit ? (
                   <>
@@ -2103,17 +2241,25 @@ export function TradingAccountsPanel() {
               {edit ? (
                 <>
                   <div className="grid gap-1.5 md:grid-cols-2">
-                    <input className={compactInputCls} value={form.name} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, name: e.target.value } }))} placeholder="Name" />
-                    <label className="flex items-center gap-2 text-xs text-muted">
+                    {profile.showName ? (
+                      <input className={compactInputCls} value={form.name} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, name: e.target.value } }))} placeholder="Name" />
+                    ) : null}
+                    <label className={`flex items-center gap-2 text-xs text-muted ${!profile.showName ? 'md:col-span-2' : ''}`}>
                       <input type="checkbox" checked={form.is_active} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, is_active: e.target.checked } }))} />
                       Active
                     </label>
-                    <textarea className={`${textareaCls} md:col-span-2`} value={form.api_key} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, api_key: e.target.value } }))} placeholder={keyPlaceholder} />
-                    {!isRobosats ? (
-                      <>
-                        <textarea className={`${textareaCls} md:col-span-2`} value={form.api_secret} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, api_secret: e.target.value } }))} placeholder="API secret" />
-                        <input className={`${compactInputCls} md:col-span-2`} value={form.passphrase} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, passphrase: e.target.value } }))} placeholder="Passphrase" />
-                      </>
+                    <label className="grid gap-1 text-xs text-muted md:col-span-2">
+                      <span>{profile.keyLabel}</span>
+                      <textarea className={textareaCls} value={form.api_key} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, api_key: e.target.value } }))} placeholder={profile.keyPlaceholder} />
+                    </label>
+                    {profile.showSecret ? (
+                      <label className="grid gap-1 text-xs text-muted md:col-span-2">
+                        <span>{profile.secretLabel}</span>
+                        <textarea className={textareaCls} value={form.api_secret} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, api_secret: e.target.value } }))} placeholder={profile.secretPlaceholder ?? undefined} />
+                      </label>
+                    ) : null}
+                    {profile.showPassphrase ? (
+                      <input className={`${compactInputCls} md:col-span-2`} value={form.passphrase} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, passphrase: e.target.value } }))} placeholder="Passphrase" />
                     ) : null}
                   </div>
                   <div className="mt-1.5 flex gap-1">
@@ -2121,8 +2267,7 @@ export function TradingAccountsPanel() {
                       await updateAPIKey(key.id, {
                         name: form.name,
                         api_key: form.api_key,
-                        api_secret: isRobosats ? null : form.api_secret || null,
-                        passphrase: isRobosats ? null : form.passphrase || null,
+                        ...apiKeyPayloadExtras(profile, form),
                         is_active: form.is_active,
                       });
                       setEditingAPIKeyById(prev => { const next = { ...prev }; delete next[key.id]; return next; });
@@ -2133,14 +2278,8 @@ export function TradingAccountsPanel() {
               ) : (
                 <div className="grid gap-1 text-[0.65rem] text-muted">
                   <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-text whitespace-pre-wrap break-all">{key.api_key}</pre>
-                  {!isRobosats && key.api_secret ? <div><span className="text-text">Secret:</span> ••••••••</div> : null}
-                  {!isRobosats && key.passphrase ? <div><span className="text-text">Passphrase:</span> ••••••••</div> : null}
-                  {permissionResult ? (
-                    <div className="grid gap-1 pt-0.5">
-                      <div className="text-text">Permissions</div>
-                      <APIKeyPermissionChips permissions={permissionResult.permissions} />
-                    </div>
-                  ) : null}
+                  {profile.showSecret && key.api_secret ? <div><span className="text-text">{profile.secretLabel}:</span> ••••••••</div> : null}
+                  {profile.showPassphrase && key.passphrase ? <div><span className="text-text">Passphrase:</span> ••••••••</div> : null}
                   <div>Updated {formatDate(key.updated_at)}</div>
                 </div>
               )}
@@ -2148,19 +2287,27 @@ export function TradingAccountsPanel() {
           );
         })}
         {showNew ? (
-          <ResourceCard title={newTitle}>
+          <ResourceCard title={profile.newTitle}>
             <div className="grid gap-1.5 md:grid-cols-2">
-              <input className={compactInputCls} value={draft.name} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, name: e.target.value } }))} placeholder="Name" />
-              <label className="flex items-center gap-2 text-xs text-muted">
+              {profile.showName ? (
+                <input className={compactInputCls} value={draft.name} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, name: e.target.value } }))} placeholder="Name" />
+              ) : null}
+              <label className={`flex items-center gap-2 text-xs text-muted ${!profile.showName ? 'md:col-span-2' : ''}`}>
                 <input type="checkbox" checked={draft.is_active} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, is_active: e.target.checked } }))} />
                 Active
               </label>
-              <textarea className={`${textareaCls} md:col-span-2`} value={draft.api_key} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, api_key: e.target.value } }))} placeholder={keyPlaceholder} />
-              {!isRobosats ? (
-                <>
-                  <textarea className={`${textareaCls} md:col-span-2`} value={draft.api_secret} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, api_secret: e.target.value } }))} placeholder="API secret" />
-                  <input className={`${compactInputCls} md:col-span-2`} value={draft.passphrase} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, passphrase: e.target.value } }))} placeholder="Passphrase" />
-                </>
+              <label className="grid gap-1 text-xs text-muted md:col-span-2">
+                <span>{profile.keyLabel}</span>
+                <textarea className={textareaCls} value={draft.api_key} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, api_key: e.target.value } }))} placeholder={profile.keyPlaceholder} />
+              </label>
+              {profile.showSecret ? (
+                <label className="grid gap-1 text-xs text-muted md:col-span-2">
+                  <span>{profile.secretLabel}</span>
+                  <textarea className={textareaCls} value={draft.api_secret} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, api_secret: e.target.value } }))} placeholder={profile.secretPlaceholder ?? undefined} />
+                </label>
+              ) : null}
+              {profile.showPassphrase ? (
+                <input className={`${compactInputCls} md:col-span-2`} value={draft.passphrase} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, passphrase: e.target.value } }))} placeholder="Passphrase" />
               ) : null}
             </div>
             <div className="mt-1.5 flex justify-end">
@@ -2168,18 +2315,17 @@ export function TradingAccountsPanel() {
                 await createAPIKey(account.id, {
                   name: draft.name,
                   api_key: draft.api_key,
-                  api_secret: isRobosats ? null : draft.api_secret || null,
-                  passphrase: isRobosats ? null : draft.passphrase || null,
+                  ...apiKeyPayloadExtras(profile, draft),
                   is_active: draft.is_active,
                 });
                 setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { name: '', api_key: '', api_secret: '', passphrase: '', is_active: true } }));
                 setShowNewForm(account.id, 'apiKeys', false);
-              })}>{createLabel.replace('Create ', '')}</button>
+              })}>{profile.createLabel.replace('Create ', '')}</button>
             </div>
           </ResourceCard>
         ) : null}
         {!showNew && account.api_keys.length === 0 ? (
-          <div className="text-[0.65rem] text-muted px-1">No {isRobosats ? 'robot tokens' : 'API keys'} yet.</div>
+          <div className="text-[0.65rem] text-muted px-1">{profile.emptyMessage}</div>
         ) : null}
       </CollapsibleSection>
     );
@@ -2300,7 +2446,10 @@ export function TradingAccountsPanel() {
             showContactFields={showContactFieldsForProvider(newAccount.provider)}
             submitDisabled={
               !newAccount.provider
-              || (usesAPIKeysAtCreate(newAccount.provider) && !newAccountAPIKey.api_key.trim())
+              || (usesAPIKeysAtCreate(newAccount.provider) && (
+                !newAccountAPIKey.api_key.trim()
+                || (apiKeyFormProfile(newAccount.provider).showSecret && !newAccountAPIKey.api_secret.trim())
+              ))
             }
             extraContent={
               usesAPIKeysAtCreate(newAccount.provider) ? (
@@ -2321,12 +2470,11 @@ export function TradingAccountsPanel() {
                   phone: showContactFieldsForProvider(newAccount.provider) ? newAccount.phone : '',
                 });
                 if (usesAPIKeys && newAccountAPIKey.api_key.trim()) {
-                  const isRobosats = isRobosatsProvider(newAccount.provider);
+                  const profile = apiKeyFormProfile(newAccount.provider);
                   await createAPIKey(created.id, {
                     name: newAccountAPIKey.name,
                     api_key: newAccountAPIKey.api_key,
-                    api_secret: isRobosats ? null : newAccountAPIKey.api_secret || null,
-                    passphrase: isRobosats ? null : newAccountAPIKey.passphrase || null,
+                    ...apiKeyPayloadExtras(profile, newAccountAPIKey),
                     is_active: newAccountAPIKey.is_active,
                   });
                 }
@@ -2388,7 +2536,7 @@ export function TradingAccountsPanel() {
                         >
                           {checkingHealthByAccount[account.id] ? '…' : 'Healthcheck'}
                         </button>
-                        {!isLocalWallet && !isCexAccount(account) ? (
+                        {showDexIdentitySections(account.provider) ? (
                           <>
                             <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
                               {account.totp_secrets.length} TOTP
@@ -2398,7 +2546,7 @@ export function TradingAccountsPanel() {
                             </span>
                           </>
                         ) : null}
-                        {!isLndWalletProvider(account.provider) && !isCexAccount(account) ? (
+                        {showDexIdentitySections(account.provider) ? (
                           <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
                             {`${account.seeds.length} Seeds`}
                           </span>
@@ -2415,7 +2563,7 @@ export function TradingAccountsPanel() {
                         ) : null}
                         {!isLocalWallet ? (
                           <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
-                            {account.api_keys.length} {isRobosatsProvider(account.provider) ? 'Tokens' : 'API Keys'}
+                            {account.api_keys.length} {apiKeyFormProfile(account.provider).countLabel}
                           </span>
                         ) : null}
                         <button type="button" className={compactButtonCls} onClick={() => setExpandedId(expanded ? null : account.id)}>
@@ -2433,7 +2581,7 @@ export function TradingAccountsPanel() {
                       >
                         <div className="flex-1 min-w-0">
                           <p className={`text-xs leading-relaxed break-words ${healthMessageHealthy ? 'text-green' : 'text-red'}`}>
-                            {accountHealthMessage.message}
+                            {healthCheckDisplayMessage(accountHealthMessage.message, accountHealthMessage.keys, account.api_keys)}
                           </p>
                         </div>
                         <button
@@ -2452,7 +2600,7 @@ export function TradingAccountsPanel() {
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-semibold text-text">Account</span>
                             <div className="flex gap-1">
-                              {!isEditingAccount ? (
+                              {!isEditingAccount && showDexIdentitySections(account.provider) ? (
                                 <button type="button" className={compactButtonCls} onClick={() => startAccountEdit(account)}>
                                   Edit
                                 </button>
@@ -2470,7 +2618,7 @@ export function TradingAccountsPanel() {
                               onChange={setEditingAccount}
                               submitLabel="Save"
                               compact
-                              showContactFields={!isLocalWallet && !isLndWalletProvider(account.provider) && !isCexAccount(account)}
+                              showContactFields={showDexIdentitySections(account.provider)}
                               showWalletPasswordOnly={isLndWalletProvider(account.provider)}
                               onCancel={() => setEditingAccountId(null)}
                               onSubmit={() =>
@@ -2512,7 +2660,7 @@ export function TradingAccountsPanel() {
                                   </div>
                                 </>
                               ) : null}
-                              {!isLocalWallet && !isCexAccount(account) ? (
+                              {showDexIdentitySections(account.provider) ? (
                                 <>
                                   <div><span className="text-text">Email:</span> {account.email || '—'}</div>
                                   <div><span className="text-text">Password:</span> {account.password ? '••••••••' : '—'}</div>
@@ -2524,8 +2672,8 @@ export function TradingAccountsPanel() {
                         </div>
 
                         {isBisqProvider(account.provider) ? renderAccountFileSection(account) : null}
-                        {!isLocalWallet && !isCexAccount(account) ? renderTOTPSection(account) : null}
-                        {!isLocalWallet && !isCexAccount(account) ? renderPasskeysSection(account) : null}
+                        {showDexIdentitySections(account.provider) ? renderTOTPSection(account) : null}
+                        {showDexIdentitySections(account.provider) ? renderPasskeysSection(account) : null}
                         {renderSeedsSection(account)}
                         {isLndWalletProvider(account.provider) ? renderLNDBackupSection(account) : null}
                         {isLndWalletProvider(account.provider) ? renderLightningManagementSection(account) : null}

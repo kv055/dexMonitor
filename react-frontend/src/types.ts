@@ -300,6 +300,8 @@ export interface TradingAPIKey {
   api_secret: string | null;
   passphrase: string | null;
   is_active: boolean;
+  permissions?: Record<string, boolean> | null;
+  permissions_checked_at?: string | null;
   created_at: string;
   updated_at: string;
 }

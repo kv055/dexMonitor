@@ -3,6 +3,7 @@ package tradingaccounts
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -147,6 +148,10 @@ type APIKey struct {
 	Passphrase *string `json:"passphrase"`
 	// IsActive reports whether the apikey condition is true.
 	IsActive bool `json:"is_active"`
+	// Permissions stores normalized validation or permission flags from the latest health check.
+	Permissions map[string]bool `json:"permissions,omitempty"`
+	// PermissionsCheckedAt records when permissions were last fetched from the exchange.
+	PermissionsCheckedAt *string `json:"permissions_checked_at,omitempty"`
 	// CreatedAt records the relevant time for the apikey.
 	CreatedAt string `json:"created_at"`
 	// UpdatedAt records the relevant time for the apikey.
@@ -543,16 +548,23 @@ func (r Repository) GetAPIKey(ctx context.Context, id int64) (*APIKey, error) {
 	var item APIKey
 	var apiSecret, passphrase sql.NullString
 	var createdAt, updatedAt time.Time
+	var permissionsJSON []byte
+	var permissionsCheckedAt sql.NullTime
 	err := r.DB.QueryRowContext(ctx, `
-		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, created_at, updated_at
+		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, permissions, permissions_checked_at, created_at, updated_at
 		FROM api_keys
 		WHERE id = $1
-	`, id).Scan(&item.ID, &item.AccountID, &item.Name, &item.APIKey, &apiSecret, &passphrase, &item.IsActive, &createdAt, &updatedAt)
+	`, id).Scan(
+		&item.ID, &item.AccountID, &item.Name, &item.APIKey, &apiSecret, &passphrase, &item.IsActive,
+		&permissionsJSON, &permissionsCheckedAt, &createdAt, &updatedAt,
+	)
 	if err != nil {
 		return nil, err
 	}
 	item.APISecret = nullStringPtr(apiSecret)
 	item.Passphrase = nullStringPtr(passphrase)
+	item.Permissions = decodePermissionsJSON(permissionsJSON)
+	item.PermissionsCheckedAt = nullTimePtr(permissionsCheckedAt)
 	item.CreatedAt = formatTime(createdAt)
 	item.UpdatedAt = formatTime(updatedAt)
 	return &item, nil
@@ -718,7 +730,7 @@ func (r Repository) appendLatestLNDChannelBackups(ctx context.Context, accounts 
 
 func (r Repository) appendAPIKeys(ctx context.Context, accounts []Account, accountIndex map[int64]int, accountIDs []int64) error {
 	rows, err := r.DB.QueryContext(ctx, `
-		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, created_at, updated_at
+		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, permissions, permissions_checked_at, created_at, updated_at
 		FROM api_keys
 		WHERE account_id = ANY($1)
 		ORDER BY updated_at DESC, id DESC
@@ -730,12 +742,19 @@ func (r Repository) appendAPIKeys(ctx context.Context, accounts []Account, accou
 	for rows.Next() {
 		var item APIKey
 		var apiSecret, passphrase sql.NullString
+		var permissionsJSON []byte
+		var permissionsCheckedAt sql.NullTime
 		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&item.ID, &item.AccountID, &item.Name, &item.APIKey, &apiSecret, &passphrase, &item.IsActive, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(
+			&item.ID, &item.AccountID, &item.Name, &item.APIKey, &apiSecret, &passphrase, &item.IsActive,
+			&permissionsJSON, &permissionsCheckedAt, &createdAt, &updatedAt,
+		); err != nil {
 			return err
 		}
 		item.APISecret = nullStringPtr(apiSecret)
 		item.Passphrase = nullStringPtr(passphrase)
+		item.Permissions = decodePermissionsJSON(permissionsJSON)
+		item.PermissionsCheckedAt = nullTimePtr(permissionsCheckedAt)
 		item.CreatedAt = formatTime(createdAt)
 		item.UpdatedAt = formatTime(updatedAt)
 		if index, ok := accountIndex[item.AccountID]; ok {
@@ -743,6 +762,17 @@ func (r Repository) appendAPIKeys(ctx context.Context, accounts []Account, accou
 		}
 	}
 	return rows.Err()
+}
+
+func decodePermissionsJSON(raw []byte) map[string]bool {
+	if len(raw) == 0 {
+		return nil
+	}
+	var permissions map[string]bool
+	if err := json.Unmarshal(raw, &permissions); err != nil || len(permissions) == 0 {
+		return nil
+	}
+	return permissions
 }
 
 // NormalizeProvider returns the canonical provider name used by storage and UI code.
