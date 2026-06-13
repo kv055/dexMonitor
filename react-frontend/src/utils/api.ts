@@ -1,6 +1,7 @@
 import type {
   CexBalancesResponse,
   CexDepositAddress,
+  CexWithdrawalAddress,
   CexHedgePositionsResponse,
   CexSpotTrade,
   LNDCloseChannelResult,
@@ -47,8 +48,9 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
   return request<T>(path, init);
 }
 
-export async function apiPost<T>(path: string, body: unknown): Promise<T> {
+export async function apiPost<T>(path: string, body: unknown, init?: Omit<RequestInit, 'method' | 'body'>): Promise<T> {
   return request<T>(path, {
+    ...init,
     method: 'POST',
     body: JSON.stringify(body),
   });
@@ -192,6 +194,10 @@ export function closeLNDChannel(payload: {
 
 export function fetchCexDepositAddresses(accountId: number) {
   return request<CexDepositAddress[]>(`/api/trading/accounts/${accountId}/cex/deposit-addresses`);
+}
+
+export function fetchCexWithdrawalAddresses(accountId: number) {
+  return request<CexWithdrawalAddress[]>(`/api/trading/accounts/${accountId}/cex/withdrawal-addresses`);
 }
 
 export function fetchCexBalances(accountId: number) {

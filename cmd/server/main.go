@@ -317,6 +317,7 @@ func main() {
 	mux.HandleFunc("DELETE /api/trading/accounts/{id}", handleTradingAccountByID)
 	mux.HandleFunc("POST /api/trading/accounts/{id}/health_check", handleTradingAccountHealthCheck)
 	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/deposit-addresses", handleTradingAccountCexDepositAddresses)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/withdrawal-addresses", handleTradingAccountCexWithdrawalAddresses)
 	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/balances", handleTradingAccountCexBalances)
 	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/hedge-positions", handleTradingAccountCexHedgePositions)
 	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/spot-trades", handleTradingAccountCexSpotTrades)
@@ -346,8 +347,11 @@ func main() {
 
 	// tracing.WrapHandler outermost starts the server span and continues inbound
 	// trace context; RouteNamer innermost names the span by matched route.
+	// No CORS layer: the SPA is same-origin in prod (served by this process via
+	// nginx) and in dev (vite proxies /api), and these routes expose trading
+	// credentials — browsers must not be invited to call them cross-origin.
 	handler := tracing.WrapHandler(
-		corsMiddleware(metricsReg.Middleware(tracing.RouteNamer(mux))),
+		metricsReg.Middleware(tracing.RouteNamer(mux)),
 		serviceName,
 	)
 
@@ -369,21 +373,6 @@ func main() {
 	if err := srv.Shutdown(shutdownCtx); err != nil {
 		slog.Error("graceful shutdown failed", "err", err)
 	}
-}
-
-// --- Middleware ---
-
-func corsMiddleware(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
-		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
-		if r.Method == http.MethodOptions {
-			w.WriteHeader(http.StatusNoContent)
-			return
-		}
-		next.ServeHTTP(w, r)
-	})
 }
 
 // --- Handlers ---

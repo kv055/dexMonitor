@@ -198,7 +198,7 @@ function AppShell() {
     extendOhlc,
     initialLoadComplete,
   } = useDashboard();
-  const { liveOffers, refreshForCex } = useLiveOffers();
+  const { liveOffers, wssConnected, pollError, refreshForCex } = useLiveOffers();
   const { groups } = usePaymentMethodGroups();
   const { preferredTimezone, excludedMethods } = usePreferences();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
@@ -221,6 +221,8 @@ function AppShell() {
           activeTab={activeTab}
           onTabChange={setActiveTab}
           onOpenSettings={() => setSettingsOpen(true)}
+          wssConnected={wssConnected}
+          pollError={pollError}
         />
 
         <SettingsOverlay

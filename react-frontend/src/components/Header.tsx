@@ -7,6 +7,27 @@ interface Props {
   activeTab: Tab;
   onTabChange: (tab: Tab) => void;
   onOpenSettings: () => void;
+  /** WS connected to /ws/live_offers (true) or running on the polling fallback (false). */
+  wssConnected: boolean;
+  /** Last live-offers poll failure — data on screen may be stale until it clears. */
+  pollError: string | null;
+}
+
+function LiveStatusBadge({ wssConnected, pollError }: { wssConnected: boolean; pollError: string | null }) {
+  const status = wssConnected
+    ? { dot: 'bg-green', label: 'live', title: 'Live offers streaming over WebSocket' }
+    : pollError
+      ? { dot: 'bg-red', label: 'stale', title: `Live offers unavailable — showing last known data. ${pollError}` }
+      : { dot: 'bg-peach', label: 'polling', title: 'WebSocket unavailable — refreshing live offers every 15s' };
+  return (
+    <span
+      className="hidden sm:flex items-center gap-1 text-[0.7rem] font-mono opacity-70 whitespace-nowrap px-1.5"
+      title={status.title}
+    >
+      <span className={`inline-block h-1.5 w-1.5 rounded-full ${status.dot}`} />
+      {status.label}
+    </span>
+  );
 }
 
 const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
@@ -16,7 +37,7 @@ const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
   { id: 'trading', label: 'dex Trading', color: 'text-purple', disabled: false },
 ];
 
-export function Header({ activeTab, onTabChange, onOpenSettings }: Props) {
+export function Header({ activeTab, onTabChange, onOpenSettings, wssConnected, pollError }: Props) {
   const { theme, toggleTheme } = usePreferences();
 
   return (
@@ -29,6 +50,7 @@ export function Header({ activeTab, onTabChange, onOpenSettings }: Props) {
         />
 
         <div className="flex items-center gap-1 shrink-0 sm:order-3">
+          <LiveStatusBadge wssConnected={wssConnected} pollError={pollError} />
           <span
             className="hidden md:inline text-[0.7rem] font-mono opacity-60 whitespace-nowrap px-1.5"
             title={__COMMIT_DATE__ ? `Deployed commit ${__COMMIT_HASH__} (${new Date(__COMMIT_DATE__).toLocaleString()})` : `Deployed commit ${__COMMIT_HASH__}`}

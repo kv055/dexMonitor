@@ -206,6 +206,7 @@ export function useDashboard() {
   } | null>(null);
   const analyticsLoadRef = useRef<{
     key: string;
+    controller: AbortController;
     promise: Promise<void>;
   } | null>(null);
 
@@ -266,6 +267,12 @@ export function useDashboard() {
       return inFlight.promise;
     }
 
+    // Abort the superseded request — otherwise a slow response for the old
+    // filter set can land after this one and overwrite newer state.
+    inFlight?.controller.abort();
+
+    const controller = new AbortController();
+    const { signal } = controller;
     dispatch({ type: 'ANALYTICS_LOAD_START' });
 
     const { excludedQuery } = buildLoadQueries(params);
@@ -274,7 +281,9 @@ export function useDashboard() {
         const overview = await apiPost<AnalyticsOverviewResponse>(
           '/api/dashboard/analytics',
           buildAnalyticsBody(params, ['overview', 'taker_stats']),
+          { signal },
         );
+        if (signal.aborted) return;
         const generalStats = overview.general_stats_overview && overview.open_premiums && overview.past_premiums && overview.premium_lifetimes
           ? buildGeneralStatsData(
               overview.general_stats_overview,
@@ -301,7 +310,9 @@ export function useDashboard() {
         const ordersResponse = await apiPost<AnalyticsOrdersResponse>(
           '/api/dashboard/analytics',
           buildAnalyticsBody(params, ['taker_orders']),
+          { signal },
         );
+        if (signal.aborted) return;
         startTransition(() => {
           dispatch({
             type: 'ANALYTICS_ORDERS_SUCCESS',
@@ -309,6 +320,7 @@ export function useDashboard() {
           });
         });
       } catch (e: unknown) {
+        if (signal.aborted) return;
         const message = e instanceof Error ? e.message : String(e);
         dispatch({ type: 'ANALYTICS_LOAD_ERROR', error: `Failed to load analytics: ${message}` });
       } finally {
@@ -318,7 +330,7 @@ export function useDashboard() {
       }
     })();
 
-    analyticsLoadRef.current = { key, promise };
+    analyticsLoadRef.current = { key, controller, promise };
     return promise;
   }, []);
 
@@ -331,8 +343,10 @@ export function useDashboard() {
     try {
       const ohlc = await apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}&interval_min=${intervalMin}`);
       dispatch({ type: 'EXTEND_OHLC_SUCCESS', ohlcData: ohlc });
-    } catch {
-      // Fail silently — the existing candles remain intact
+    } catch (e) {
+      // No user-facing error — the existing candles remain intact — but keep
+      // a trace so transient extend failures are debuggable.
+      console.warn('[OHLC] extend failed', e);
     }
   }, []);
 

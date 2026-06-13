@@ -169,9 +169,14 @@ function readStringArray(value: unknown): string[] {
   return value.filter((item): item is string => typeof item === 'string');
 }
 
-function readNullableNumber(value: unknown): number | null {
+// Persisted bounds are clamped so corrupt/hand-edited localStorage values
+// can't wedge the range sliders or the filter logic.
+const PERSISTED_DURATION_BOUNDS = { min: 0, max: 1_000_000_000 };
+const PERSISTED_PROFIT_BOUNDS = { min: -1_000_000_000, max: 1_000_000_000 };
+
+function readNullableNumber(value: unknown, bounds: { min: number; max: number }): number | null {
   if (typeof value !== 'number' || !Number.isFinite(value)) return null;
-  return value;
+  return Math.min(bounds.max, Math.max(bounds.min, value));
 }
 
 function readPersistedInsightsFilters(): PersistedInsightsFilters {
@@ -194,10 +199,10 @@ function readPersistedInsightsFilters(): PersistedInsightsFilters {
       sortBy: VALID_SORT_KEYS.has(parsed.sortBy as ProfitableOrderSortKey)
         ? parsed.sortBy as ProfitableOrderSortKey
         : DEFAULT_INSIGHTS_FILTERS.sortBy,
-      durationMin: readNullableNumber(parsed.durationMin),
-      durationMax: readNullableNumber(parsed.durationMax),
-      profitFiatMin: readNullableNumber(parsed.profitFiatMin),
-      profitFiatMax: readNullableNumber(parsed.profitFiatMax),
+      durationMin: readNullableNumber(parsed.durationMin, PERSISTED_DURATION_BOUNDS),
+      durationMax: readNullableNumber(parsed.durationMax, PERSISTED_DURATION_BOUNDS),
+      profitFiatMin: readNullableNumber(parsed.profitFiatMin, PERSISTED_PROFIT_BOUNDS),
+      profitFiatMax: readNullableNumber(parsed.profitFiatMax, PERSISTED_PROFIT_BOUNDS),
     };
   } catch {
     return DEFAULT_INSIGHTS_FILTERS;

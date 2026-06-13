@@ -17,6 +17,7 @@ function buildTradeCostQuery(excludedCEXes: string[], feeTier: string, coupledHe
 export function useLiveOffers() {
   const [liveOffers, setLiveOffers] = useState<Offer[]>([]);
   const [wssConnected, setWssConnected] = useState(false);
+  const [pollError, setPollError] = useState<string | null>(null);
 
   const wsRef       = useRef<WebSocket | null>(null);
   const pollRef     = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -49,9 +50,15 @@ export function useLiveOffers() {
       if (sessionRef.current !== session || !mountedRef.current) return;
       try {
         const offers = await apiFetch<Offer[]>(`/api/live_offers?${buildQueryString()}`);
-        if (sessionRef.current === session && mountedRef.current) setLiveOffers(offers);
+        if (sessionRef.current === session && mountedRef.current) {
+          setLiveOffers(offers);
+          setPollError(null);
+        }
       } catch (e) {
         console.error('[LiveOffers] poll error', e);
+        if (sessionRef.current === session && mountedRef.current) {
+          setPollError(e instanceof Error ? e.message : String(e));
+        }
       }
     };
     poll();
@@ -70,7 +77,10 @@ export function useLiveOffers() {
       if (sessionRef.current !== session) { ws.close(); return; }
       everOpenRef.current = true;
       stopPolling();
-      if (mountedRef.current) setWssConnected(true);
+      if (mountedRef.current) {
+        setWssConnected(true);
+        setPollError(null);
+      }
     };
 
     ws.onmessage = (e) => {
@@ -138,5 +148,5 @@ export function useLiveOffers() {
     connect(session);
   }, [connect, stopPolling]);
 
-  return { liveOffers, wssConnected, refreshForCex };
+  return { liveOffers, wssConnected, pollError, refreshForCex };
 }
