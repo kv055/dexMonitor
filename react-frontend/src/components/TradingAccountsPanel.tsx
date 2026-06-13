@@ -16,6 +16,7 @@ import {
   fetchCexDepositAddresses,
   fetchCexHedgePositions,
   fetchCexSpotTrades,
+  fetchCexWithdrawalAddresses,
   fetchLNDWalletStatus,
   fetchTradingAccounts,
   openLNDChannel,
@@ -32,6 +33,7 @@ import type {
   CexHedgePosition,
   CexHedgePositionsResponse,
   CexSpotTrade,
+  CexWithdrawalAddress,
   LNDWalletStatus,
   TradingAccount,
   TradingAccountKeyPermissionResult,
@@ -422,6 +424,8 @@ function cexSliceField(section: CexDataSectionKey): keyof CexAccountSlice {
       return 'hedgePositions';
     case 'cexSpotTrades':
       return 'spotTrades';
+    case 'cexWithdrawalAddresses':
+      return 'withdrawalAddresses';
   }
 }
 
@@ -435,6 +439,8 @@ async function fetchCexSectionData(section: CexDataSectionKey, accountId: number
       return fetchCexHedgePositions(accountId);
     case 'cexSpotTrades':
       return fetchCexSpotTrades(accountId);
+    case 'cexWithdrawalAddresses':
+      return fetchCexWithdrawalAddresses(accountId);
   }
 }
 
@@ -586,7 +592,8 @@ type AccountSectionKey =
   | 'lightningManagement'
   | 'walletAddresses'
   | 'cexHedging'
-  | 'cexSpotTrades';
+  | 'cexSpotTrades'
+  | 'cexWithdrawalAddresses';
 
 type CexSectionSlice<T> = {
   loading: boolean;
@@ -599,9 +606,10 @@ type CexAccountSlice = {
   balances?: CexSectionSlice<CexBalancesResponse>;
   hedgePositions?: CexSectionSlice<CexHedgePositionsResponse>;
   spotTrades?: CexSectionSlice<CexSpotTrade[]>;
+  withdrawalAddresses?: CexSectionSlice<CexWithdrawalAddress[]>;
 };
 
-type CexCollapsibleSectionKey = 'cexHedging' | 'cexSpotTrades';
+type CexCollapsibleSectionKey = 'cexHedging' | 'cexSpotTrades' | 'cexWithdrawalAddresses';
 type CexDataSectionKey = CexCollapsibleSectionKey | 'cexDepositAddresses' | 'cexBalances';
 type NewFormKey = 'totp' | 'passkeys' | 'seeds' | 'apiKeys';
 
@@ -2405,6 +2413,43 @@ export function TradingAccountsPanel() {
     );
   };
 
+  const renderCexWithdrawalAddressesSection = (account: TradingAccount) => {
+    const slice = cexDataByAccount[account.id]?.withdrawalAddresses;
+    const open = !!openSectionsByAccount[account.id]?.cexWithdrawalAddresses;
+    const addresses = slice?.data ?? [];
+    return (
+      <CollapsibleSection
+        title="Withdrawal addresses"
+        count={addresses.length || undefined}
+        open={open}
+        onToggle={() => toggleCexSection(account, 'cexWithdrawalAddresses')}
+        actions={
+          <button type="button" className={compactButtonCls} disabled={slice?.loading} onClick={() => void loadCexSection(account.id, 'cexWithdrawalAddresses')}>
+            {slice?.loading ? '…' : 'Refresh'}
+          </button>
+        }
+      >
+        <p className="text-[0.65rem] text-muted leading-relaxed px-1">
+          Whitelisted BTC withdrawal addresses saved on the exchange, fetched with the account API keys.
+        </p>
+        {renderCexSectionMessage(slice?.loading ?? false, slice?.error ?? null, 'No whitelisted withdrawal addresses returned.', addresses.length > 0)}
+        {addresses.map((entry, idx) => (
+          <ResourceCard
+            key={`${entry.address}-${idx}`}
+            title={entry.label?.trim() || entry.address}
+            meta={entry.whitelisted ? 'Whitelisted' : undefined}
+          >
+            <div className="grid gap-1 text-xs text-muted">
+              <div className="font-mono text-[0.65rem] break-all text-text">{entry.address}</div>
+              {entry.network ? <div><span className="text-text">Network:</span> {entry.network}</div> : null}
+              {entry.tag ? <div><span className="text-text">Tag/Memo:</span> {entry.tag}</div> : null}
+            </div>
+          </ResourceCard>
+        ))}
+      </CollapsibleSection>
+    );
+  };
+
   return (
     <div className="h-full min-h-0 overflow-hidden">
       <div className="h-full min-h-0 rounded-lg border border-border bg-surface p-3 flex flex-col gap-3 overflow-hidden">
@@ -2600,7 +2645,7 @@ export function TradingAccountsPanel() {
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-semibold text-text">Account</span>
                             <div className="flex gap-1">
-                              {!isEditingAccount && showDexIdentitySections(account.provider) ? (
+                              {!isEditingAccount && (showDexIdentitySections(account.provider) || isLndWalletProvider(account.provider)) ? (
                                 <button type="button" className={compactButtonCls} onClick={() => startAccountEdit(account)}>
                                   Edit
                                 </button>
@@ -2618,12 +2663,17 @@ export function TradingAccountsPanel() {
                               onChange={setEditingAccount}
                               submitLabel="Save"
                               compact
+                              submitDisabled={isLndWalletProvider(account.provider) && !editingAccount.password.trim()}
                               showContactFields={showDexIdentitySections(account.provider)}
                               showWalletPasswordOnly={isLndWalletProvider(account.provider)}
                               onCancel={() => setEditingAccountId(null)}
                               onSubmit={() =>
                                 withReload(async () => {
-                                  await updateAccount(account.id, editingAccount);
+                                  if (account.id > 0) {
+                                    await updateAccount(account.id, editingAccount);
+                                  } else {
+                                    await createAccount(editingAccount);
+                                  }
                                   setEditingAccountId(null);
                                 })
                               }
@@ -2667,6 +2717,12 @@ export function TradingAccountsPanel() {
                                   <div className="sm:col-span-2"><span className="text-text">Phone:</span> {account.phone || '—'}</div>
                                 </>
                               ) : null}
+                              {isLndWalletProvider(account.provider) ? (
+                                <div>
+                                  <span className="text-text">Wallet password:</span>{' '}
+                                  {account.password ? '••••••••' : <span className="text-red">Not set</span>}
+                                </div>
+                              ) : null}
                             </div>
                           )}
                         </div>
@@ -2678,6 +2734,7 @@ export function TradingAccountsPanel() {
                         {isLndWalletProvider(account.provider) ? renderLNDBackupSection(account) : null}
                         {isLndWalletProvider(account.provider) ? renderLightningManagementSection(account) : null}
                         {isLndWalletProvider(account.provider) ? renderWalletAddressesSection(account) : null}
+                        {isCexAccount(account) ? renderCexWithdrawalAddressesSection(account) : null}
                         {isCexAccount(account) ? renderCexHedgingSection(account) : null}
                         {isCexAccount(account) ? renderCexSpotTradesSection(account) : null}
                         {!isLocalWallet ? renderAPIKeysSection(account) : null}

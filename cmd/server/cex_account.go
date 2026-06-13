@@ -10,6 +10,10 @@ func handleTradingAccountCexDepositAddresses(w http.ResponseWriter, r *http.Requ
 	forwardTradingAccountCexRequest(w, r, "/api/cex/deposit-addresses")
 }
 
+func handleTradingAccountCexWithdrawalAddresses(w http.ResponseWriter, r *http.Request) {
+	forwardTradingAccountCexRequest(w, r, "/api/cex/withdrawal-addresses")
+}
+
 func handleTradingAccountCexBalances(w http.ResponseWriter, r *http.Request) {
 	forwardTradingAccountCexRequest(w, r, "/api/cex/balances")
 }

@@ -590,6 +590,15 @@ export interface CexDepositAddress {
   method?: string;
 }
 
+export interface CexWithdrawalAddress {
+  asset: string;
+  network: string;
+  address: string;
+  tag?: string;
+  label?: string;
+  whitelisted?: boolean;
+}
+
 export interface CexAssetBalance {
   asset: string;
   available: number;
