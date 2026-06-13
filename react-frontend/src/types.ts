@@ -417,6 +417,20 @@ export interface LNDWalletStatus {
   checked_at: string;
 }
 
+export interface LNDWalletState {
+  lnd_reachable: boolean;
+  lnd_state: string;
+  wallet_exists: boolean;
+  password_set: boolean;
+  client_ready: boolean;
+  can_create: boolean;
+}
+
+export interface LNDWalletInitResult {
+  primary_address: string;
+  already_initialized?: boolean;
+}
+
 export interface LNDCreateAddressResult {
   address: string;
   label: string;

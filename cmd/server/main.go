@@ -308,6 +308,8 @@ func main() {
 	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
 	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
 	mux.HandleFunc("GET /api/mm-controller/lnd/wallet", handleMmControllerLNDWallet)
+	mux.HandleFunc("GET /api/mm-controller/lnd/wallet/state", handleMmControllerLNDWalletState)
+	mux.HandleFunc("POST /api/mm-controller/lnd/wallet/init", handleMmControllerLNDWalletInit)
 	mux.HandleFunc("POST /api/mm-controller/lnd/addresses", handleMmControllerLNDCreateAddress)
 	mux.HandleFunc("POST /api/mm-controller/lnd/channels/open", handleMmControllerLNDOpenChannel)
 	mux.HandleFunc("POST /api/mm-controller/lnd/channels/close", handleMmControllerLNDCloseChannel)
@@ -2210,6 +2212,14 @@ func handleMmControllerTransactionByID(w http.ResponseWriter, r *http.Request) {
 
 func handleMmControllerLNDWallet(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/lnd/wallet")
+}
+
+func handleMmControllerLNDWalletState(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/lnd/wallet/state")
+}
+
+func handleMmControllerLNDWalletInit(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/lnd/wallet/init")
 }
 
 func handleMmControllerLNDCreateAddress(w http.ResponseWriter, r *http.Request) {

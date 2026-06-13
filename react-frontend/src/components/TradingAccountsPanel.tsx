@@ -17,8 +17,10 @@ import {
   fetchCexHedgePositions,
   fetchCexSpotTrades,
   fetchCexWithdrawalAddresses,
+  fetchLNDWalletState,
   fetchLNDWalletStatus,
   fetchTradingAccounts,
+  initLNDWallet,
   openLNDChannel,
   runAccountHealthCheck,
   updateAccount,
@@ -34,6 +36,7 @@ import type {
   CexHedgePositionsResponse,
   CexSpotTrade,
   CexWithdrawalAddress,
+  LNDWalletState,
   LNDWalletStatus,
   TradingAccount,
   TradingAccountKeyPermissionResult,
@@ -1086,6 +1089,11 @@ export function TradingAccountsPanel() {
   const [lndWalletLoading, setLndWalletLoading] = useState(false);
   const [lndWalletError, setLndWalletError] = useState<string | null>(null);
   const [lndWalletNotice, setLndWalletNotice] = useState<string | null>(null);
+  const [lndWalletState, setLndWalletState] = useState<LNDWalletState | null>(null);
+  const [lndWalletStateLoading, setLndWalletStateLoading] = useState(false);
+  const [walletPassword, setWalletPassword] = useState('');
+  const [walletPasswordConfirm, setWalletPasswordConfirm] = useState('');
+  const [creatingWallet, setCreatingWallet] = useState(false);
   const [newAddressLabel, setNewAddressLabel] = useState('');
   const [creatingAddress, setCreatingAddress] = useState(false);
   const [openChannelForm, setOpenChannelForm] = useState<OpenChannelFormState>(emptyOpenChannelForm);
@@ -1343,12 +1351,39 @@ export function TradingAccountsPanel() {
     setLndWalletNotice(null);
     try {
       const status = await fetchLNDWalletStatus();
-      setLndWalletStatus(status);
+      // The mm-controller API serializes empty Go slices as null, but the type
+      // (and every render path below) assumes arrays. Normalize so a wallet with
+      // no channels/peers/addresses doesn't crash the panel.
+      setLndWalletStatus(
+        status
+          ? {
+              ...status,
+              peers: status.peers ?? [],
+              channels: status.channels ?? [],
+              pending_channels: status.pending_channels ?? [],
+              addresses: status.addresses ?? [],
+            }
+          : status,
+      );
     } catch (err) {
       setLndWalletStatus(null);
       setLndWalletError(err instanceof Error ? err.message : 'Failed to load LND wallet status');
     } finally {
       setLndWalletLoading(false);
+    }
+  }, []);
+
+  const loadLndWalletState = useCallback(async (): Promise<LNDWalletState | null> => {
+    setLndWalletStateLoading(true);
+    try {
+      const state = await fetchLNDWalletState();
+      setLndWalletState(state);
+      return state;
+    } catch {
+      setLndWalletState(null);
+      return null;
+    } finally {
+      setLndWalletStateLoading(false);
     }
   }, []);
 
@@ -1402,8 +1437,15 @@ export function TradingAccountsPanel() {
     if (!expandedAccount || !isLndWalletProvider(expandedAccount.provider)) {
       return;
     }
-    void loadLndWalletStatus();
-  }, [expandedAccount, loadLndWalletStatus]);
+    void (async () => {
+      const state = await loadLndWalletState();
+      if (state?.client_ready) {
+        await loadLndWalletStatus();
+      } else {
+        setLndWalletStatus(null);
+      }
+    })();
+  }, [expandedAccount, loadLndWalletState, loadLndWalletStatus]);
 
   useEffect(() => {
     if (!expandedAccount || !isCexAccount(expandedAccount)) {
@@ -1422,6 +1464,50 @@ export function TradingAccountsPanel() {
       setError(err instanceof Error ? err.message : 'Trading accounts request failed');
     }
   };
+
+  const handleCreateWallet = useCallback(
+    async (account: TradingAccount) => {
+      if (walletPassword.length < 8) {
+        setLndWalletError('Wallet password must be at least 8 characters.');
+        return;
+      }
+      if (walletPassword !== walletPasswordConfirm) {
+        setLndWalletError('Passwords do not match.');
+        return;
+      }
+      setCreatingWallet(true);
+      setLndWalletError(null);
+      setLndWalletNotice(null);
+      try {
+        // Save the password through the unified-api accounts path, then ask
+        // mm-controller to generate the wallet from it.
+        await updateAccount(account.id, {
+          provider: account.provider,
+          email: account.email ?? '',
+          password: walletPassword,
+          phone: account.phone ?? '',
+        });
+        const result = await initLNDWallet();
+        setWalletPassword('');
+        setWalletPasswordConfirm('');
+        setLndWalletNotice(
+          result.primary_address
+            ? `Wallet created. Primary deposit address: ${result.primary_address}`
+            : 'Wallet created.',
+        );
+        const state = await loadLndWalletState();
+        if (state?.client_ready) {
+          await loadLndWalletStatus();
+        }
+        await load();
+      } catch (err) {
+        setLndWalletError(err instanceof Error ? err.message : 'Failed to create wallet');
+      } finally {
+        setCreatingWallet(false);
+      }
+    },
+    [walletPassword, walletPasswordConfirm, loadLndWalletState, loadLndWalletStatus, load],
+  );
 
   const triggerHealthCheck = async (account: TradingAccount) => {
     setCheckingHealthByAccount(prev => ({ ...prev, [account.id]: true }));
@@ -1833,7 +1919,13 @@ export function TradingAccountsPanel() {
 
   const renderLightningManagementSection = (account: TradingAccount) => {
     const open = openSectionsByAccount[account.id]?.lightningManagement ?? true;
-    const channelCount = lndWalletStatus?.channels.length ?? 0;
+    const channelCount = lndWalletStatus?.channels?.length ?? 0;
+    const state = lndWalletState;
+    const stillLoading = lndWalletStateLoading && !state;
+    const showWizard = state?.can_create ?? false;
+    const showLockedNotice = !!state && state.wallet_exists && !state.client_ready;
+    const showUnreachable = !!state && !state.lnd_reachable && !state.wallet_exists && !state.can_create;
+    const showManagement = state?.client_ready ?? false;
     return (
       <CollapsibleSection
         title="Lightning management"
@@ -1851,15 +1943,74 @@ export function TradingAccountsPanel() {
           </button>
         }
       >
-        <p className="text-[0.65rem] text-muted leading-relaxed px-1">
-          Live channel and peer status from LND via mm-controller. Open or close channels below.
-        </p>
+        {showManagement ? (
+          <p className="text-[0.65rem] text-muted leading-relaxed px-1">
+            Live channel and peer status from LND via mm-controller. Open or close channels below.
+          </p>
+        ) : null}
         {lndWalletNotice ? (
           <div className="text-[0.65rem] text-green px-1">{lndWalletNotice}</div>
         ) : null}
         {lndWalletError ? (
           <div className="text-[0.65rem] text-red px-1">{lndWalletError}</div>
         ) : null}
+        {stillLoading ? (
+          <div className="text-[0.65rem] text-muted px-1">Checking wallet status…</div>
+        ) : null}
+        {showWizard ? (
+          <div className="grid gap-2 rounded border border-border bg-bg px-2 py-2">
+            <div className="text-xs font-semibold text-text">Create a new Lightning wallet</div>
+            <p className="text-[0.65rem] text-muted leading-relaxed">
+              No LND wallet exists yet. Choose a wallet password (min. 8 characters) — it
+              encrypts the wallet and is required to unlock it on every restart. mm-controller
+              generates a fresh 24-word seed and stores it under this account&apos;s backup.
+            </p>
+            <input
+              type="password"
+              autoComplete="new-password"
+              className={compactInputCls}
+              value={walletPassword}
+              onChange={e => setWalletPassword(e.target.value)}
+              placeholder="Wallet password"
+            />
+            <input
+              type="password"
+              autoComplete="new-password"
+              className={compactInputCls}
+              value={walletPasswordConfirm}
+              onChange={e => setWalletPasswordConfirm(e.target.value)}
+              placeholder="Confirm password"
+            />
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className={compactPrimaryButtonCls}
+                disabled={
+                  creatingWallet ||
+                  walletPassword.length < 8 ||
+                  walletPassword !== walletPasswordConfirm
+                }
+                onClick={() => void handleCreateWallet(account)}
+              >
+                {creatingWallet ? 'Creating…' : 'Create wallet'}
+              </button>
+            </div>
+          </div>
+        ) : null}
+        {showLockedNotice ? (
+          <div className="text-[0.65rem] text-red px-1 leading-relaxed">
+            A wallet already exists but mm-controller couldn&apos;t unlock it — the saved
+            password may not match the wallet. Update it under Account → Edit, then restart
+            mm-controller.
+          </div>
+        ) : null}
+        {showUnreachable ? (
+          <div className="text-[0.65rem] text-muted px-1">
+            LND is not reachable yet. Wait for the node to start, then refresh.
+          </div>
+        ) : null}
+        {showManagement ? (
+          <>
         <SecretItem title="Open channel" summary="Expand to connect to a hub and fund a new channel">
           <div className="grid gap-1.5 md:grid-cols-2">
             <input
@@ -1984,13 +2135,15 @@ export function TradingAccountsPanel() {
             ) : null}
           </div>
         ) : null}
+          </>
+        ) : null}
       </CollapsibleSection>
     );
   };
 
   const renderWalletAddressesSection = (account: TradingAccount) => {
     const open = openSectionsByAccount[account.id]?.walletAddresses ?? true;
-    const onChainCount = lndWalletStatus?.addresses.filter(entry => entry.kind === 'onchain').length ?? 0;
+    const onChainCount = lndWalletStatus?.addresses?.filter(entry => entry.kind === 'onchain').length ?? 0;
     return (
       <CollapsibleSection
         title="Wallet addresses"
@@ -2433,19 +2586,24 @@ export function TradingAccountsPanel() {
           Whitelisted BTC withdrawal addresses saved on the exchange, fetched with the account API keys.
         </p>
         {renderCexSectionMessage(slice?.loading ?? false, slice?.error ?? null, 'No whitelisted withdrawal addresses returned.', addresses.length > 0)}
-        {addresses.map((entry, idx) => (
-          <ResourceCard
-            key={`${entry.address}-${idx}`}
-            title={entry.label?.trim() || entry.address}
-            meta={entry.whitelisted ? 'Whitelisted' : undefined}
-          >
-            <div className="grid gap-1 text-xs text-muted">
-              <div className="font-mono text-[0.65rem] break-all text-text">{entry.address}</div>
-              {entry.network ? <div><span className="text-text">Network:</span> {entry.network}</div> : null}
-              {entry.tag ? <div><span className="text-text">Tag/Memo:</span> {entry.tag}</div> : null}
-            </div>
-          </ResourceCard>
-        ))}
+        {addresses.length > 0 ? (
+          <div className="grid">
+            {addresses.map((entry, idx) => (
+              <div
+                key={`${entry.address}-${idx}`}
+                className="flex flex-wrap items-baseline gap-x-1.5 px-1 py-0.5 text-[0.65rem] leading-tight border-b border-border/40 last:border-0"
+              >
+                {entry.label?.trim() ? (
+                  <span className="max-w-[40%] truncate text-text" title={entry.label}>{entry.label}</span>
+                ) : null}
+                <span className="font-mono break-all text-muted">{entry.address}</span>
+                {entry.network ? <span className="text-muted/60">{entry.network}</span> : null}
+                {entry.tag ? <span className="text-muted/60">tag:{entry.tag}</span> : null}
+                {entry.whitelisted === false ? <span className="text-yellow">unverified</span> : null}
+              </div>
+            ))}
+          </div>
+        ) : null}
       </CollapsibleSection>
     );
   };

@@ -7,6 +7,8 @@ import type {
   LNDCloseChannelResult,
   LNDCreateAddressResult,
   LNDOpenChannelResult,
+  LNDWalletInitResult,
+  LNDWalletState,
   LNDWalletStatus,
   TradingAccount,
   TradingAccountHealthCheckResult,
@@ -158,6 +160,16 @@ export function deleteAPIKey(id: number) {
 
 export function fetchLNDWalletStatus() {
   return request<LNDWalletStatus>('/api/mm-controller/lnd/wallet');
+}
+
+export function fetchLNDWalletState() {
+  return request<LNDWalletState>('/api/mm-controller/lnd/wallet/state');
+}
+
+export function initLNDWallet() {
+  return request<LNDWalletInitResult>('/api/mm-controller/lnd/wallet/init', {
+    method: 'POST',
+  });
 }
 
 export function createLNDWalletAddress(label?: string) {
