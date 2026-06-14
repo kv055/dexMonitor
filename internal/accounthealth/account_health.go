@@ -12,9 +12,9 @@ import (
 
 // KeyPermissionResult reports normalized permissions for one API key.
 type KeyPermissionResult struct {
-	KeyID       uint            `json:"key_id"`
-	Name        string          `json:"name"`
-	Permissions map[string]bool `json:"permissions"`
+	KeyID       uint              `json:"key_id"`
+	Name        string            `json:"name"`
+	Permissions map[string]string `json:"permissions"`
 }
 
 // MMControllerResponse represents a mmcontroller response.

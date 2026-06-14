@@ -148,8 +148,9 @@ type APIKey struct {
 	Passphrase *string `json:"passphrase"`
 	// IsActive reports whether the apikey condition is true.
 	IsActive bool `json:"is_active"`
-	// Permissions stores normalized validation or permission flags from the latest health check.
-	Permissions map[string]bool `json:"permissions,omitempty"`
+	// Permissions stores normalized tri-state permission status
+	// ("granted" | "denied" | "unsupported") from the latest health check.
+	Permissions map[string]string `json:"permissions,omitempty"`
 	// PermissionsCheckedAt records when permissions were last fetched from the exchange.
 	PermissionsCheckedAt *string `json:"permissions_checked_at,omitempty"`
 	// CreatedAt records the relevant time for the apikey.
@@ -764,12 +765,34 @@ func (r Repository) appendAPIKeys(ctx context.Context, accounts []Account, accou
 	return rows.Err()
 }
 
-func decodePermissionsJSON(raw []byte) map[string]bool {
+// decodePermissionsJSON reads the stored permissions JSONB into the tri-state
+// schema. It tolerates legacy rows whose values were booleans (written before the
+// schema change) by coercing true→"granted" and false→"denied".
+func decodePermissionsJSON(raw []byte) map[string]string {
 	if len(raw) == 0 {
 		return nil
 	}
-	var permissions map[string]bool
-	if err := json.Unmarshal(raw, &permissions); err != nil || len(permissions) == 0 {
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &values); err != nil || len(values) == 0 {
+		return nil
+	}
+	permissions := make(map[string]string, len(values))
+	for name, value := range values {
+		var status string
+		if err := json.Unmarshal(value, &status); err == nil {
+			permissions[name] = status
+			continue
+		}
+		var granted bool
+		if err := json.Unmarshal(value, &granted); err == nil {
+			if granted {
+				permissions[name] = "granted"
+			} else {
+				permissions[name] = "denied"
+			}
+		}
+	}
+	if len(permissions) == 0 {
 		return nil
 	}
 	return permissions

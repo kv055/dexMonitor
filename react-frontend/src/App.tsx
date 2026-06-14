@@ -14,6 +14,9 @@ import { ControlPanel } from './components/ControlPanel';
 import { OffersPreviewTable } from './components/OffersPreviewTable';
 import { OHLCChart } from './components/OHLCChart';
 import { DepthChart } from './components/DepthChart';
+import { TradeTracingPanel } from './components/TradeTracingPanel';
+import { buildOfferKeys } from './utils/offerIdentity';
+import { isOfferLive } from './utils/offerAccess';
 // import { GeneralStats } from './components/GeneralStats';
 import { SnapshotLog } from './components/SnapshotLog';
 import { MmTransactionsLog } from './components/MmTransactionsLog';
@@ -46,8 +49,19 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, loadCore, extendOhlc, ref
   refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
   allowOhlcExtend: boolean;
 }) {
-  const { filters } = useFilters();
+  const { filters, filteredOffers, selectedOfferKey } = useFilters();
   const { excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit } = usePreferences();
+
+  // Resolve the selected offer (same key scheme as OffersPreviewTable). When a live
+  // order is selected/expanded, the orderbook slot becomes the Trade Tracing panel.
+  const selectedLiveOffer = useMemo(() => {
+    if (selectedOfferKey == null) return null;
+    const keys = buildOfferKeys(filteredOffers);
+    const idx = keys.indexOf(selectedOfferKey);
+    if (idx < 0) return null;
+    const offer = filteredOffers[idx];
+    return offer && isOfferLive(offer) ? offer : null;
+  }, [selectedOfferKey, filteredOffers]);
 
   useEffect(() => {
     refreshForCex(filters.cex, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
@@ -93,7 +107,7 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, loadCore, extendOhlc, ref
           </div>
         </div>
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-56 sm:min-h-64 lg:min-h-0">
-          <DepthChart />
+          {selectedLiveOffer ? <TradeTracingPanel offer={selectedLiveOffer} /> : <DepthChart />}
         </div>
       </div>
     </div>

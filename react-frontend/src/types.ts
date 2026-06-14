@@ -300,7 +300,7 @@ export interface TradingAPIKey {
   api_secret: string | null;
   passphrase: string | null;
   is_active: boolean;
-  permissions?: Record<string, boolean> | null;
+  permissions?: Record<string, string | boolean> | null;
   permissions_checked_at?: string | null;
   created_at: string;
   updated_at: string;
@@ -347,7 +347,7 @@ export interface TradingAccount {
 export interface TradingAccountKeyPermissionResult {
   key_id: number;
   name: string;
-  permissions: Record<string, boolean>;
+  permissions: Record<string, string | boolean>;
 }
 
 export interface TradingAccountHealthCheckResult {
@@ -654,4 +654,21 @@ export interface CexSpotTrade {
   fee: number;
   fee_asset?: string;
   timestamp: string;
+}
+
+export interface CexSpotBuyRequest {
+  provider: string;
+  btc_amount: number;
+  fiat_currency: string;
+}
+
+export interface CexSpotBuyResult {
+  provider: string;
+  pair: string;
+  side: string;
+  requested_btc: number;
+  order_id: string;
+  status: string;
+  submitted_at: string;
+  raw?: unknown;
 }

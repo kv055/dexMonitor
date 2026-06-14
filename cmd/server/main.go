@@ -313,6 +313,7 @@ func main() {
 	mux.HandleFunc("POST /api/mm-controller/lnd/addresses", handleMmControllerLNDCreateAddress)
 	mux.HandleFunc("POST /api/mm-controller/lnd/channels/open", handleMmControllerLNDOpenChannel)
 	mux.HandleFunc("POST /api/mm-controller/lnd/channels/close", handleMmControllerLNDCloseChannel)
+	mux.HandleFunc("POST /api/mm-controller/cex/spot-buy", handleMmControllerCexSpotBuy)
 	mux.HandleFunc("GET /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("POST /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("PUT /api/trading/accounts/{id}", handleTradingAccountByID)
@@ -2232,6 +2233,10 @@ func handleMmControllerLNDOpenChannel(w http.ResponseWriter, r *http.Request) {
 
 func handleMmControllerLNDCloseChannel(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/lnd/channels/close")
+}
+
+func handleMmControllerCexSpotBuy(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/cex/spot-buy")
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {

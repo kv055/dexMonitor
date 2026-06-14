@@ -285,25 +285,51 @@ function formatPermissionLabel(name: string) {
     .join(' ');
 }
 
-function APIKeyPermissionChips({ permissions }: { permissions: Record<string, boolean> }) {
-  const entries = Object.entries(permissions).sort(([left], [right]) => left.localeCompare(right));
+type PermStatus = 'granted' | 'denied' | 'unsupported';
+
+// Canonical CEX permission order — mirrors accounthealth.CanonicalCEXPermissions.
+const CANONICAL_PERMISSIONS = ['spot_trading', 'read_balances', 'withdraw', 'hedge_positions'];
+
+// Coerce a stored permission value to a tri-state status. Legacy rows stored
+// booleans (true→granted, false→denied) before the tri-state schema existed.
+function toPermStatus(value: string | boolean): PermStatus {
+  if (typeof value === 'boolean') return value ? 'granted' : 'denied';
+  if (value === 'granted' || value === 'denied' || value === 'unsupported') return value;
+  return value ? 'granted' : 'denied';
+}
+
+const PERM_STYLES: Record<PermStatus, { cls: string; mark: string; title?: string }> = {
+  granted: { cls: 'border-green/40 bg-green/10 text-green', mark: '✓' },
+  denied: { cls: 'border-red/40 bg-red/10 text-red', mark: '✗' },
+  unsupported: { cls: 'border-border bg-surface text-muted', mark: '—', title: 'Not reported by this exchange' },
+};
+
+function APIKeyPermissionChips({ permissions }: { permissions: Record<string, string | boolean> }) {
+  const entries = Object.entries(permissions).sort(([left], [right]) => {
+    const li = CANONICAL_PERMISSIONS.indexOf(left);
+    const ri = CANONICAL_PERMISSIONS.indexOf(right);
+    if (li !== -1 || ri !== -1) {
+      return (li === -1 ? Infinity : li) - (ri === -1 ? Infinity : ri);
+    }
+    return left.localeCompare(right);
+  });
   if (entries.length === 0) {
     return null;
   }
   return (
     <div className="flex flex-wrap gap-1">
-      {entries.map(([name, granted]) => (
-        <span
-          key={name}
-          className={`rounded-full border px-1.5 py-0.5 text-[0.65rem] whitespace-nowrap ${
-            granted
-              ? 'border-green/40 bg-green/10 text-green'
-              : 'border-red/40 bg-red/10 text-red'
-          }`}
-        >
-          {formatPermissionLabel(name)} {granted ? '✓' : '✗'}
-        </span>
-      ))}
+      {entries.map(([name, value]) => {
+        const style = PERM_STYLES[toPermStatus(value)];
+        return (
+          <span
+            key={name}
+            title={style.title}
+            className={`rounded-full border px-1.5 py-0.5 text-[0.65rem] whitespace-nowrap ${style.cls}`}
+          >
+            {formatPermissionLabel(name)} {style.mark}
+          </span>
+        );
+      })}
     </div>
   );
 }

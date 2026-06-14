@@ -5,8 +5,12 @@ import tailwindcss from '@tailwindcss/vite'
 
 const viteLogger = createLogger()
 
-// Host port 5000 is nginx HTTP → 301 to https://localhost:5443. Vite must proxy
-// dexMonitor API/WS to the TLS edge (self-signed cert) or browser fetches fail.
+// dexmonitor is exposed on 127.0.0.1:5002 for local dev (docker-compose ports).
+// Proxying /api directly bypasses nginx basic-auth, which the Vite proxy cannot
+// satisfy without embedding plaintext credentials in this file.
+// Grafana is not exposed to the host separately, so it still goes through the
+// nginx TLS edge on 5443 (Grafana manages its own auth — no htpasswd there).
+const DEV_DEXMONITOR = 'http://localhost:5002'
 const DEV_TLS_EDGE = 'https://localhost:5443'
 
 function gitInfo(): { hash: string; date: string } {
@@ -69,8 +73,8 @@ export default defineConfig({
       '/ws/live_offers':        quietWsProxy('ws://localhost:5010'),
       '/api/live_offers':       'http://localhost:5010',
       '/api/trade_cost_config': 'http://localhost:5010',
-      '/api':                   httpsEdgeProxy(),
-      '/ws':                    quietWsProxy('wss://localhost:5443', false),
+      '/api':                   DEV_DEXMONITOR,
+      '/ws':                    quietWsProxy(`ws://localhost:5002`),
       // Grafana isn't exposed to the host in local dev; reach it through nginx
       // (TLS edge on 5443), which proxies the /grafana/ sub-path to the grafana
       // container. Without these the dev server's SPA fallback serves
