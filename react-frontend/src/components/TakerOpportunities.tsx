@@ -73,7 +73,11 @@ function timeframeHours(timeframe: string): number {
 type DirectionFilter = 'both' | 'buy' | 'sell';
 
 function pickScenario(order: PastProfitableOrder, mode: TakerOpportunityMode) {
-  if (mode === 'net_capped' && order.analysis.capped_volume && (order.analysis.capped_volume.profit.avg_btc ?? 0) > 0) {
+  // In capped mode, always use the server-computed capped scenario when present.
+  // (Orders below the cap have capped_volume == null and keep their full value.)
+  // Orders that turn net-negative once capped are dropped by isProfitableInMode,
+  // rather than misleadingly falling back to their full-size profit here.
+  if (mode === 'net_capped' && order.analysis.capped_volume) {
     return order.analysis.capped_volume;
   }
   return order.analysis.full_volume;
@@ -377,7 +381,7 @@ function computeFilteredSummary(orders: PastProfitableOrder[], mode: TakerOpport
 interface PillGroupProps {
   label: string;
   description: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; disabled?: boolean; title?: string }[];
   selected: string;
   onChange: (v: string) => void;
 }
@@ -386,6 +390,7 @@ function PillGroup({ label, description, options, selected, onChange }: PillGrou
   const base = 'rounded border px-2 py-0.5 text-[0.7rem] font-medium transition-colors';
   const active = 'border-accent/60 bg-accent/10 text-accent';
   const inactive = 'border-border bg-bg/40 text-muted hover:text-text';
+  const disabledCls = 'border-border bg-bg/40 text-muted opacity-40 cursor-not-allowed';
   return (
     <div className="flex flex-col gap-1">
       <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
@@ -394,9 +399,10 @@ function PillGroup({ label, description, options, selected, onChange }: PillGrou
           <button
             key={o.value}
             type="button"
-            title={description}
-            onClick={() => onChange(o.value)}
-            className={`${base} ${selected === o.value ? active : inactive}`}
+            title={o.title ?? description}
+            disabled={o.disabled}
+            onClick={() => { if (!o.disabled) onChange(o.value); }}
+            className={`${base} ${o.disabled ? disabledCls : selected === o.value ? active : inactive}`}
           >
             {o.label}
           </button>
@@ -715,7 +721,10 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
   const { timezone } = useTimezone();
   const offer = pastProfitableOrderAsOffer(order);
   const refPrice = getRefPrice(offer);
-  const costBreakdown = getDisplayCostBreakdown(offer, showCapped);
+  // The control-panel mode can request the capped view for an offer that has no
+  // capped scenario (e.g. it sits below the cap); fall back to the full breakdown.
+  const showCappedEffective = showCapped && hasCappedScenario(offer);
+  const costBreakdown = getDisplayCostBreakdown(offer, showCappedEffective);
 
   return (
     <div className="flex flex-col gap-3">
@@ -745,7 +754,7 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
         <div className="flex flex-col gap-3">
           {hasCappedScenario(offer) && (
             <SizeToggle
-              showCapped={showCapped}
+              showCapped={showCappedEffective}
               onToggle={onToggleCapped}
               cappedBtc={getCappedTradeSizeBtc(offer)}
               refPrice={refPrice}
@@ -753,9 +762,9 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
           )}
           <CostBreakdownPanel
             bd={costBreakdown}
-            abortCost={getDisplayAbortCost(offer, showCapped)}
+            abortCost={getDisplayAbortCost(offer, showCappedEffective)}
             priceDiffPct={getRawPremiumPercent(offer)}
-            netPremiumPct={getNetPremiumPercent(offer, showCapped)}
+            netPremiumPct={getNetPremiumPercent(offer, showCappedEffective)}
             refPrice={refPrice}
           />
         </div>
@@ -809,6 +818,22 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
     }
     return list;
   }, [deferredOrders, mode, showAllMethods, hasExcluded, excludedMethods]);
+
+  // Capped mode is only meaningful when the global Max Position Size is set.
+  const capAvailable = maxFiatLimit != null && maxFiatLimit > 0;
+  // If the cap is cleared (or never set) while capped mode is selected, fall back
+  // to full mode so the toggle is never greyed-out-but-active.
+  useEffect(() => {
+    if (!capAvailable && mode === 'net_capped') {
+      setMode('net_full');
+    }
+  }, [capAvailable, mode]);
+
+  // Keep an expanded row's breakdown in sync with the control-panel mode, so
+  // switching Net Full/Capped updates an already-open calculation in place.
+  useEffect(() => {
+    setExpandedShowCapped(mode === 'net_capped');
+  }, [mode]);
 
   const fiat = activeStats?.fiat_currency || 'EUR';
   const selected = !activeStats
@@ -1152,7 +1177,12 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
             description="Net full uses full order size. Net capped applies your max fiat position limit where needed."
             options={[
               { value: 'net_full', label: 'Net Full' },
-              { value: 'net_capped', label: maxFiatLimit != null && maxFiatLimit > 0 ? `Net Capped €${maxFiatLimit.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : 'Net Capped' },
+              {
+                value: 'net_capped',
+                label: maxFiatLimit != null && maxFiatLimit > 0 ? `Net Capped €${maxFiatLimit.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : 'Net Capped',
+                disabled: !capAvailable,
+                title: capAvailable ? undefined : 'Set a Max Position Size (Fiat) in Settings to enable capped mode',
+              },
             ]}
             selected={mode}
             onChange={v => setMode(v as TakerOpportunityMode)}
