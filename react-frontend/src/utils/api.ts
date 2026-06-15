@@ -5,6 +5,8 @@ import type {
   CexHedgePositionsResponse,
   CexSpotBuyRequest,
   CexSpotBuyResult,
+  CexHedgeOpenRequest,
+  CexHedgeOpenResult,
   CexSpotTrade,
   LNDCloseChannelResult,
   LNDCreateAddressResult,
@@ -228,4 +230,8 @@ export function fetchCexSpotTrades(accountId: number, limit = 50) {
 
 export function cexSpotBuy(payload: CexSpotBuyRequest) {
   return apiPost<CexSpotBuyResult>('/api/mm-controller/cex/spot-buy', payload);
+}
+
+export function cexHedgeOpen(payload: CexHedgeOpenRequest) {
+  return apiPost<CexHedgeOpenResult>('/api/mm-controller/cex/hedge-open', payload);
 }

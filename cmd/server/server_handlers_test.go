@@ -531,6 +531,36 @@ func TestPastOfferAnalysisUsesStoredUncappedCosts(t *testing.T) {
 	}
 }
 
+func TestPastOfferFullVolumeRecomputesHedgeWhenStoredAbsent(t *testing.T) {
+	oldEstimators := tradeCostEstimators
+	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
+	// Estimator carries a live hedge estimate; route is kraken (matches the fixture).
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{
+		"kraken": fixedCostEstimatorWithHedge("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.0001, 0.0009),
+	}
+
+	// Simulate an offer snapshotted before the hedge_* columns were populated: stored hedge is
+	// empty, but avg_trade_cost_btc still reflects the hedge. The full-volume breakdown must
+	// recompute the hedge so the "Hedge cost" row reappears (regression guard).
+	offer := storedPastOfferFixture("buy")
+	offer["hedge_open_fee_btc"] = 0.0
+	offer["hedge_close_fee_btc"] = 0.0
+	offer["hedge_funding_fee_btc"] = 0.0
+	offer["hedge_fee_sum_btc"] = 0.0
+	offer["hedge_venue"] = ""
+	offer["hedge_instrument"] = ""
+
+	full := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 10_000, nil).Analysis.FullVolume
+
+	if full.Costs.Hedge.FeeSumBTC <= 0 {
+		t.Fatalf("full-volume hedge fee_sum_btc = %v, want > 0 (recomputed from estimator)", full.Costs.Hedge.FeeSumBTC)
+	}
+	assertFloat(t, full.Costs.Hedge.FeeSumBTC, 0.0009)
+	if full.Costs.Hedge.Venue != "coinbase_futures" {
+		t.Fatalf("hedge venue = %q, want coinbase_futures (recomputed)", full.Costs.Hedge.Venue)
+	}
+}
+
 func TestPastOfferCappedAnalysisKeepsStoredRouteAndFixedTransferCosts(t *testing.T) {
 	oldEstimators := tradeCostEstimators
 	t.Cleanup(func() { tradeCostEstimators = oldEstimators })

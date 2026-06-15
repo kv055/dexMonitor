@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
-import type { Offer, CexSpotBuyResult } from '../types';
+import type { Offer, CexSpotBuyResult, CexHedgeOpenResult } from '../types';
 import { ExchangeTag } from './ExchangeTag';
 import { premiumClass } from '../utils/formatters';
-import { cexSpotBuy } from '../utils/api';
+import { cexSpotBuy, cexHedgeOpen } from '../utils/api';
 import {
   getBtcMax,
   getBtcMin,
@@ -12,10 +12,17 @@ import {
 } from '../utils/offerAccess';
 
 type Unit = 'btc' | 'fiat';
+type Tab = 'spot' | 'hedge' | 'wallet';
 
 interface SubmitState {
   phase: 'idle' | 'submitting' | 'done' | 'error';
   result?: CexSpotBuyResult;
+  error?: string;
+}
+
+interface HedgeState {
+  phase: 'idle' | 'submitting' | 'done' | 'error';
+  result?: CexHedgeOpenResult;
   error?: string;
 }
 
@@ -36,15 +43,6 @@ function clamp(value: number, min: number | null, max: number | null): number {
   if (min != null && v < min) v = min;
   if (max != null && v > max) v = max;
   return v;
-}
-
-function StatusBox({ title, children }: { title: string; children: React.ReactNode }) {
-  return (
-    <div className="flex-1 min-w-0 bg-bg border border-border rounded-md p-2.5 flex flex-col gap-1.5">
-      <h4 className="text-[0.6rem] uppercase tracking-widest font-semibold text-muted">{title}</h4>
-      <div className="flex-1 min-h-0 text-[0.72rem]">{children}</div>
-    </div>
-  );
 }
 
 function HeaderFact({ label, children }: { label: string; children: React.ReactNode }) {
@@ -73,7 +71,9 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
   const [unit, setUnit] = useState<Unit>('btc');
   const [draft, setDraft] = useState<string>(() => fmtBtc(defaultBtc));
   const [submit, setSubmit] = useState<SubmitState>({ phase: 'idle' });
+  const [hedgeSubmit, setHedgeSubmit] = useState<HedgeState>({ phase: 'idle' });
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>('spot');
 
   // Canonical BTC amount derived from the current input + unit.
   const amountBtc = useMemo(() => {
@@ -104,15 +104,43 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
   async function runTrade() {
     setConfirmOpen(false);
     setSubmit({ phase: 'submitting' });
+    setHedgeSubmit({ phase: 'idle' });
+    setActiveTab('spot');
+
+    let spotResult: CexSpotBuyResult;
     try {
-      const result = await cexSpotBuy({
+      spotResult = await cexSpotBuy({
         provider: routeCex,
         btc_amount: clampedBtc,
         fiat_currency: fiatCurrency,
       });
-      setSubmit({ phase: 'done', result });
+      setSubmit({ phase: 'done', result: spotResult });
     } catch (err) {
       setSubmit({ phase: 'error', error: err instanceof Error ? err.message : String(err) });
+      return;
+    }
+
+    // Spot succeeded — auto-trigger the hedge leg if the offer has a hedge breakdown.
+    const hedgeVenue = bd?.hedge?.venue;
+    if (!hedgeVenue) return;
+
+    const hedgeRatio = bd?.hedge?.position?.hedge_ratio ?? 1.0;
+    const leverage  = bd?.hedge?.position?.leverage_used ?? 1.0;
+    const side      = bd?.hedge?.side ?? (isAsk ? 'long' : 'short');
+    const btcNotional = clampedBtc * hedgeRatio;
+
+    setHedgeSubmit({ phase: 'submitting' });
+    setActiveTab('hedge');
+    try {
+      const hedgeResult = await cexHedgeOpen({
+        venue:        hedgeVenue,
+        side,
+        btc_notional: btcNotional,
+        leverage,
+      });
+      setHedgeSubmit({ phase: 'done', result: hedgeResult });
+    } catch (err) {
+      setHedgeSubmit({ phase: 'error', error: err instanceof Error ? err.message : String(err) });
     }
   }
 
@@ -126,27 +154,29 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
       </div>
 
       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-3">
-        {/* Trade facts */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2 bg-bg border border-border rounded-md p-2.5">
-          <HeaderFact label="Direction">{isAsk ? 'Sell on DEX' : 'Buy on DEX'}</HeaderFact>
-          <HeaderFact label="DEX"><ExchangeTag exchange={offer.exchange} /></HeaderFact>
-          <HeaderFact label="Best CEX">{cexLabel}</HeaderFact>
-          <HeaderFact label="Payment">{offer.payment_method ?? '—'}</HeaderFact>
-          <HeaderFact label="Net premium">
-            <span className={premiumClass(netPremium)}>{netPremium != null ? `${netPremium.toFixed(2)}%` : '—'}</span>
-          </HeaderFact>
-          <HeaderFact label="Ref price">{refPrice != null ? fmtFiat(refPrice, fiatCurrency) : '—'}</HeaderFact>
-        </div>
+        {/* Order summary + volume selector — single card */}
+        <div className="bg-bg border border-border rounded-md px-2.5 pt-2.5 pb-2 flex flex-col gap-2">
+          {/* Facts grid */}
+          <div className="grid grid-cols-3 gap-x-3 gap-y-1.5">
+            <HeaderFact label="Direction">{isAsk ? 'Sell on DEX' : 'Buy on DEX'}</HeaderFact>
+            <HeaderFact label="DEX"><ExchangeTag exchange={offer.exchange} /></HeaderFact>
+            <HeaderFact label="Best CEX">{cexLabel}</HeaderFact>
+            <HeaderFact label="Payment">{offer.payment_method ?? '—'}</HeaderFact>
+            <HeaderFact label="Net premium">
+              <span className={premiumClass(netPremium)}>{netPremium != null ? `${netPremium.toFixed(2)}%` : '—'}</span>
+            </HeaderFact>
+            <HeaderFact label="Ref price">{refPrice != null ? fmtFiat(refPrice, fiatCurrency) : '—'}</HeaderFact>
+          </div>
 
-        {/* Volume selector */}
-        <div className="bg-bg border border-border rounded-md p-2.5 flex flex-col gap-2">
-          <div className="flex items-center justify-between">
-            <span className="text-[0.6rem] uppercase tracking-widest font-semibold text-muted">Trade volume</span>
-            <div className="flex items-center gap-1">
+          <div className="border-t border-border" />
+
+          {/* Input row: unit toggles | number field | start button */}
+          <div className="flex items-center gap-1.5">
+            <div className="flex items-center shrink-0">
               <button
                 type="button"
                 onClick={() => toggleUnit('btc')}
-                className={`text-[0.63rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${unit === 'btc' ? 'border-accent/60 text-accent bg-accent/10' : 'border-border text-muted hover:border-muted/60'}`}
+                className={`text-[0.63rem] px-1.5 py-0.5 rounded-l-md border-y border-l font-medium transition-colors ${unit === 'btc' ? 'border-accent/60 text-accent bg-accent/10' : 'border-border text-muted hover:border-muted/60'}`}
               >
                 BTC
               </button>
@@ -154,74 +184,118 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
                 type="button"
                 onClick={() => toggleUnit('fiat')}
                 disabled={!canUseFiat}
-                className={`text-[0.63rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${unit === 'fiat' ? 'border-accent/60 text-accent bg-accent/10' : 'border-border text-muted hover:border-muted/60'} ${!canUseFiat ? 'opacity-40 cursor-not-allowed' : ''}`}
+                className={`text-[0.63rem] px-1.5 py-0.5 rounded-r-md border font-medium transition-colors ${unit === 'fiat' ? 'border-accent/60 text-accent bg-accent/10' : 'border-border text-muted hover:border-muted/60'} ${!canUseFiat ? 'opacity-40 cursor-not-allowed' : ''}`}
               >
                 {fiatCurrency}
               </button>
             </div>
-          </div>
-
-          <div className="flex items-center gap-2">
             <input
               type="text"
               inputMode="decimal"
               value={draft}
               onChange={e => setDraft(e.target.value)}
-              className="flex-1 min-w-0 bg-surface border border-border rounded-md px-2.5 py-1.5 text-[0.85rem] text-text mono-nums focus:outline-none focus:border-accent/60"
+              className="flex-1 min-w-0 bg-surface border border-border rounded-md px-2 py-1 text-[0.82rem] text-text mono-nums focus:outline-none focus:border-accent/60"
               placeholder={unit === 'btc' ? '0.0' : '0'}
             />
-            <span className="text-[0.7rem] text-muted shrink-0">{unit === 'btc' ? 'BTC' : fiatCurrency}</span>
+            <button
+              type="button"
+              disabled={!canTrade}
+              onClick={() => setConfirmOpen(true)}
+              className={`shrink-0 rounded-md px-3 py-1 text-[0.73rem] font-semibold transition-colors ${canTrade ? 'bg-green/15 border border-green/50 text-green hover:bg-green/25' : 'bg-surface border border-border text-muted cursor-not-allowed'}`}
+            >
+              {submit.phase === 'submitting' ? 'Submitting…' : 'Start trade'}
+            </button>
           </div>
 
-          <div className="flex items-center justify-between text-[0.62rem] text-muted">
+          {/* Hint row */}
+          <div className="flex items-center justify-between text-[0.61rem] text-muted -mt-1">
             <span>
               {unit === 'btc'
                 ? (estFiat != null ? `≈ ${fmtFiat(estFiat, fiatCurrency)}` : '—')
                 : `≈ ${fmtBtc(clampedBtc)} BTC`}
+              {outOfBounds && <span className="text-accent ml-1">(clamped)</span>}
             </span>
             <span>
               {btcMin != null || btcMax != null
-                ? `Limits ${btcMin != null ? fmtBtc(btcMin) : '0'}–${btcMax != null ? fmtBtc(btcMax) : '∞'} BTC`
+                ? `${btcMin != null ? fmtBtc(btcMin) : '0'}–${btcMax != null ? fmtBtc(btcMax) : '∞'} BTC`
                 : ''}
             </span>
           </div>
-          {outOfBounds && (
-            <span className="text-[0.62rem] text-accent">Amount clamped to offer limits ({fmtBtc(clampedBtc)} BTC).</span>
-          )}
-
-          <button
-            type="button"
-            disabled={!canTrade}
-            onClick={() => setConfirmOpen(true)}
-            className={`mt-0.5 w-full rounded-md py-2 text-[0.78rem] font-semibold transition-colors ${canTrade ? 'bg-green/15 border border-green/50 text-green hover:bg-green/25' : 'bg-surface border border-border text-muted cursor-not-allowed'}`}
-          >
-            {submit.phase === 'submitting' ? 'Submitting…' : `Start trade${routeCex ? ` on ${cexLabel}` : ''}`}
-          </button>
         </div>
 
-        {/* Trade-tracing boxes */}
-        <div className="flex flex-col sm:flex-row gap-2">
-          <StatusBox title="Spot Trade CEX">
-            {submit.phase === 'idle' && <span className="text-muted">Idle — submit a trade to begin.</span>}
-            {submit.phase === 'submitting' && <span className="text-accent">Placing market buy on {cexLabel}…</span>}
-            {submit.phase === 'error' && <span className="text-red break-words">{submit.error}</span>}
-            {submit.phase === 'done' && submit.result && (
-              <div className="flex flex-col gap-1 text-text">
-                <div className="flex justify-between gap-2"><span className="text-muted">Status</span><span className="text-green font-medium">{submit.result.status || 'submitted'}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-muted">Pair</span><span className="mono-nums">{submit.result.pair}</span></div>
-                <div className="flex justify-between gap-2"><span className="text-muted">BTC</span><span className="mono-nums">{fmtBtc(submit.result.requested_btc)}</span></div>
-                {submit.result.order_id && (
-                  <div className="flex justify-between gap-2"><span className="text-muted">Order</span><span className="mono-nums truncate max-w-[10rem]" title={submit.result.order_id}>{submit.result.order_id}</span></div>
+        {/* Tabbed status card */}
+        <div className="flex-1 min-h-0 bg-bg border border-border rounded-md flex flex-col">
+          {/* Tab bar */}
+          <div className="flex items-center gap-0 border-b border-border shrink-0">
+            {([
+              { id: 'spot'   as Tab, label: 'Spot',   dot: submit.phase },
+              { id: 'hedge'  as Tab, label: 'Hedge',  dot: hedgeSubmit.phase },
+              { id: 'wallet' as Tab, label: 'Wallet', dot: 'idle' as const },
+            ] satisfies { id: Tab; label: string; dot: string }[]).map(({ id, label, dot }) => (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActiveTab(id)}
+                className={`relative flex items-center gap-1.5 px-3 py-2 text-[0.65rem] font-semibold tracking-wide transition-colors border-b-2 -mb-px ${activeTab === id ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'}`}
+              >
+                {label}
+                {dot === 'submitting' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-accent animate-pulse" />
                 )}
-              </div>
+                {dot === 'done' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-green" />
+                )}
+                {dot === 'error' && (
+                  <span className="w-1.5 h-1.5 rounded-full bg-red" />
+                )}
+              </button>
+            ))}
+          </div>
+
+          {/* Tab content */}
+          <div className="flex-1 min-h-0 overflow-y-auto p-2.5 text-[0.72rem]">
+            {activeTab === 'spot' && (
+              <>
+                {submit.phase === 'idle' && <span className="text-muted">Submit a trade to begin.</span>}
+                {submit.phase === 'submitting' && <span className="text-accent">Placing market buy on {cexLabel}…</span>}
+                {submit.phase === 'error' && <span className="text-red wrap-break-word">{submit.error}</span>}
+                {submit.phase === 'done' && submit.result && (
+                  <div className="flex flex-col gap-1.5 text-text">
+                    <div className="flex justify-between gap-2"><span className="text-muted">Status</span><span className="text-green font-medium">{submit.result.status || 'submitted'}</span></div>
+                    <div className="flex justify-between gap-2"><span className="text-muted">Pair</span><span className="mono-nums">{submit.result.pair}</span></div>
+                    <div className="flex justify-between gap-2"><span className="text-muted">BTC</span><span className="mono-nums">{fmtBtc(submit.result.requested_btc)}</span></div>
+                    {submit.result.order_id && (
+                      <div className="flex justify-between gap-2"><span className="text-muted">Order</span><span className="mono-nums truncate max-w-40" title={submit.result.order_id}>{submit.result.order_id}</span></div>
+                    )}
+                  </div>
+                )}
+              </>
             )}
-          </StatusBox>
-          <StatusBox title="Hedge Trade CEX">
-            <span className="text-muted">Pending — not yet wired.</span>
-          </StatusBox>
-          <StatusBox title="Wallet">
-            <span className="text-muted">Pending — not yet wired.</span>
-          </StatusBox>
+            {activeTab === 'hedge' && (
+              <>
+                {hedgeSubmit.phase === 'idle' && submit.phase === 'idle' && <span className="text-muted">Awaiting spot trade.</span>}
+                {hedgeSubmit.phase === 'idle' && submit.phase !== 'idle' && !bd?.hedge?.venue && <span className="text-muted">No hedge venue in offer breakdown.</span>}
+                {hedgeSubmit.phase === 'idle' && submit.phase === 'done' && !!bd?.hedge?.venue && <span className="text-muted">Hedge not triggered.</span>}
+                {hedgeSubmit.phase === 'submitting' && <span className="text-accent">Opening {bd?.hedge?.side ?? ''} on {bd?.hedge?.venue ?? ''}…</span>}
+                {hedgeSubmit.phase === 'error' && <span className="text-red wrap-break-word">{hedgeSubmit.error}</span>}
+                {hedgeSubmit.phase === 'done' && hedgeSubmit.result && (
+                  <div className="flex flex-col gap-1.5 text-text">
+                    <div className="flex justify-between gap-2"><span className="text-muted">Status</span><span className="text-green font-medium">{hedgeSubmit.result.status || 'submitted'}</span></div>
+                    <div className="flex justify-between gap-2"><span className="text-muted">Venue</span><span className="mono-nums">{hedgeSubmit.result.venue}</span></div>
+                    <div className="flex justify-between gap-2"><span className="text-muted">Instrument</span><span className="mono-nums">{hedgeSubmit.result.instrument}</span></div>
+                    <div className="flex justify-between gap-2"><span className="text-muted">Side</span><span className="mono-nums">{hedgeSubmit.result.side}</span></div>
+                    <div className="flex justify-between gap-2"><span className="text-muted">BTC</span><span className="mono-nums">{fmtBtc(hedgeSubmit.result.btc_notional)}</span></div>
+                    {hedgeSubmit.result.order_id && (
+                      <div className="flex justify-between gap-2"><span className="text-muted">Order</span><span className="mono-nums truncate max-w-40" title={hedgeSubmit.result.order_id}>{hedgeSubmit.result.order_id}</span></div>
+                    )}
+                  </div>
+                )}
+              </>
+            )}
+            {activeTab === 'wallet' && (
+              <span className="text-muted">Pending — not yet wired.</span>
+            )}
+          </div>
         </div>
       </div>
 

@@ -314,6 +314,7 @@ func main() {
 	mux.HandleFunc("POST /api/mm-controller/lnd/channels/open", handleMmControllerLNDOpenChannel)
 	mux.HandleFunc("POST /api/mm-controller/lnd/channels/close", handleMmControllerLNDCloseChannel)
 	mux.HandleFunc("POST /api/mm-controller/cex/spot-buy", handleMmControllerCexSpotBuy)
+	mux.HandleFunc("POST /api/mm-controller/cex/hedge-open", handleMmControllerCexHedgeOpen)
 	mux.HandleFunc("GET /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("POST /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("PUT /api/trading/accounts/{id}", handleTradingAccountByID)
@@ -1701,24 +1702,35 @@ func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct,
 	if isAsk {
 		withdrawalBTC = 0
 	}
+	routeCEX := offerString(o, "best_route_cex")
+
+	// Recompute the hedge live (mirrors buildStoredCappedBreakdown) so the row survives even
+	// when the stored hedge_* columns are NULL/0 — e.g. offers snapshotted before hedge was
+	// persisted. Fall back to the stored columns when no estimator is available.
 	hedge := tradecost.HedgeBreakdown{}
-	hedge = tradecost.HedgeBreakdown{
-		OpenFeeBTC:      tradecost.Round8(offerFloat(o, "hedge_open_fee_btc")),
-		CloseFeeBTC:     tradecost.Round8(offerFloat(o, "hedge_close_fee_btc")),
-		FundingFeeBTC:   tradecost.Round8(offerFloat(o, "hedge_funding_fee_btc")),
-		FeeSumBTC:       tradecost.Round8(offerFloat(o, "hedge_fee_sum_btc")),
-		Side:            hedgeSideForOfferDirection(direction),
-		Venue:           offerString(o, "hedge_venue"),
-		Instrument:      offerString(o, "hedge_instrument"),
-		TransferMinutes: int(offerFloat(o, "hedge_transfer_minutes")),
+	if est := tradeCostEstimators[routeCEX]; est != nil {
+		hedge = est.EstimateHedgeBreakdownForDirection(
+			btcSize, refPrice, offerFloat(o, "hedge_transfer_minutes"), true, direction)
 	}
 	if hedge.FeeSumBTC == 0 {
-		hedge.FeeSumBTC = tradecost.Round8(hedge.OpenFeeBTC + hedge.CloseFeeBTC + hedge.FundingFeeBTC)
+		hedge = tradecost.HedgeBreakdown{
+			OpenFeeBTC:      tradecost.Round8(offerFloat(o, "hedge_open_fee_btc")),
+			CloseFeeBTC:     tradecost.Round8(offerFloat(o, "hedge_close_fee_btc")),
+			FundingFeeBTC:   tradecost.Round8(offerFloat(o, "hedge_funding_fee_btc")),
+			FeeSumBTC:       tradecost.Round8(offerFloat(o, "hedge_fee_sum_btc")),
+			Side:            hedgeSideForOfferDirection(direction),
+			Venue:           offerString(o, "hedge_venue"),
+			Instrument:      offerString(o, "hedge_instrument"),
+			TransferMinutes: int(offerFloat(o, "hedge_transfer_minutes")),
+		}
+		if hedge.FeeSumBTC == 0 {
+			hedge.FeeSumBTC = tradecost.Round8(hedge.OpenFeeBTC + hedge.CloseFeeBTC + hedge.FundingFeeBTC)
+		}
+		hedge.OpenFeePct = pct(hedge.OpenFeeBTC)
+		hedge.CloseFeePct = pct(hedge.CloseFeeBTC)
+		hedge.FundingFeePct = pct(hedge.FundingFeeBTC)
+		hedge.FeeSumPct = pct(hedge.FeeSumBTC)
 	}
-	hedge.OpenFeePct = pct(hedge.OpenFeeBTC)
-	hedge.CloseFeePct = pct(hedge.CloseFeeBTC)
-	hedge.FundingFeePct = pct(hedge.FundingFeeBTC)
-	hedge.FeeSumPct = pct(hedge.FeeSumBTC)
 	if tradeCostBTC == 0 {
 		tradeCostBTC = offerFloat(o, "trade_cost_btc")
 	}
@@ -1736,7 +1748,7 @@ func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct,
 	}
 	return tradecost.CostBreakdown{
 		BTCAmount:          tradecost.Round8(btcSize),
-		RouteCEX:           offerString(o, "best_route_cex"),
+		RouteCEX:           routeCEX,
 		RouteDEX:           offerString(o, "exchange"),
 		RouteMethod:        offerString(o, "best_route_method"),
 		TradeDirection:     tradeDir,
@@ -2237,6 +2249,10 @@ func handleMmControllerLNDCloseChannel(w http.ResponseWriter, r *http.Request) {
 
 func handleMmControllerCexSpotBuy(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/cex/spot-buy")
+}
+
+func handleMmControllerCexHedgeOpen(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/cex/hedge-open")
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {

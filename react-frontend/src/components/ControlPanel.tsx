@@ -591,118 +591,110 @@ function TimeframeDropdown({ value, onChange, inputCls }: TimeframeDropdownProps
   );
 }
 
+const labelCls = "text-[0.6rem] text-muted uppercase tracking-wide whitespace-nowrap";
+
 export function ControlPanel({ onRefresh, lastUpdatedAt }: Props) {
   const { filters, setFilters, resetFilters } = useFilters();
   const { timezone } = useTimezone();
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const inputCls = "bg-bg text-text border border-border rounded-md px-2 py-0.5 text-[0.8rem] cursor-pointer outline-none focus:border-accent transition-colors";
+  const inputCls = "bg-bg text-text border border-border rounded-md px-2 py-0.5 text-[0.8rem] cursor-pointer outline-none focus:border-accent transition-colors w-full";
   const disabledInputCls = `${inputCls} opacity-45 cursor-not-allowed`;
   const lastUpdated = lastUpdatedAt ? `Updated ${formatTimeOnly(lastUpdatedAt, timezone)}` : '';
 
   return (
-    <div ref={panelRef} className="relative flex flex-col gap-1">
-      {/* Row 1: market config + timeframe + actions */}
-      <div className="flex flex-wrap items-end gap-x-2 gap-y-1">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Currency</span>
-          <select className={disabledInputCls} disabled defaultValue="EUR">
-            <option value="EUR">EUR — Euro</option>
-            <option value="USD">USD — US Dollar</option>
-            <option value="GBP">GBP — British Pound</option>
-            <option value="CHF">CHF — Swiss Franc</option>
-            <option value="CZK">CZK — Czech Koruna</option>
-          </select>
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Ref Price</span>
-          <select
-            className={disabledInputCls}
-            value={filters.cex}
-            disabled
-            onChange={e => setFilters({ cex: e.target.value })}
-          >
-            <option value="kraken">BTC/EUR — Kraken</option>
-            <option value="binance">BTC/EUR — Binance</option>
-            <option value="bitstamp">BTC/EUR — Bitstamp</option>
-            <option value="coinbase">BTC/EUR — Coinbase</option>
-          </select>
-        </div>
-        <div className="w-px h-5 bg-border self-end mb-0.5 mx-1" />
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Timeframe</span>
-          <TimeframeDropdown
-            value={filters.hours}
-            onChange={v => setFilters({ hours: v })}
-            inputCls={inputCls}
+    <div ref={panelRef} className="relative flex flex-col gap-2.5 min-w-0">
+
+      {/* Config + Timeframe: label | control */}
+      <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1">
+        <span className={labelCls}>Currency</span>
+        <select className={disabledInputCls} disabled defaultValue="EUR">
+          <option value="EUR">EUR — Euro</option>
+          <option value="USD">USD — US Dollar</option>
+          <option value="GBP">GBP — British Pound</option>
+          <option value="CHF">CHF — Swiss Franc</option>
+          <option value="CZK">CZK — Czech Koruna</option>
+        </select>
+
+        <span className={labelCls}>Ref Price</span>
+        <select className={disabledInputCls} value={filters.cex} disabled onChange={e => setFilters({ cex: e.target.value })}>
+          <option value="kraken">BTC/EUR — Kraken</option>
+          <option value="binance">BTC/EUR — Binance</option>
+          <option value="bitstamp">BTC/EUR — Bitstamp</option>
+          <option value="coinbase">BTC/EUR — Coinbase</option>
+        </select>
+
+        <span className={labelCls}>Timeframe</span>
+        <TimeframeDropdown value={filters.hours} onChange={v => setFilters({ hours: v })} inputCls={inputCls} />
+      </div>
+
+      <div className="border-t border-border" />
+
+      {/* Filters: label | control */}
+      <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1">
+        <span className={labelCls}>Side</span>
+        <DirectionDropdown value={filters.direction} onChange={v => setFilters({ direction: v })} inputCls={inputCls} />
+
+        <span className={labelCls}>Exchange</span>
+        <ExchangeDropdown value={filters.exchange} onChange={v => setFilters({ exchange: v })} inputCls={inputCls} />
+
+        <span className={labelCls}>Payment</span>
+        <PaymentDropdown value={filters.payment} onChange={v => setFilters({ payment: v })} inputCls={inputCls} containerRef={panelRef} />
+
+        <span className={labelCls}>Status</span>
+        <StatusDropdown value={filters.status} onChange={v => setFilters({ status: v })} inputCls={inputCls} />
+
+        <span className={labelCls}>Premium</span>
+        <PremiumModeDropdown
+          value={filters.premiumMode}
+          premiumOnly={filters.premiumOnly}
+          onChange={(v, premiumOnly) => setFilters({ premiumMode: v, ...(premiumOnly == null ? {} : { premiumOnly }) })}
+          inputCls={inputCls}
+        />
+
+        <span className={labelCls}>Range %</span>
+        <div className="flex items-center gap-1 min-w-0">
+          <input
+            type="number"
+            className={`${inputCls} min-w-0`}
+            placeholder="Min"
+            step="0.1"
+            value={filters.premiumMin}
+            onChange={e => setFilters({ premiumMin: e.target.value })}
+          />
+          <span className="text-muted text-[0.8rem] shrink-0">–</span>
+          <input
+            type="number"
+            className={`${inputCls} min-w-0`}
+            placeholder="Max"
+            step="0.1"
+            value={filters.premiumMax}
+            onChange={e => setFilters({ premiumMax: e.target.value })}
           />
         </div>
-        <div className="flex items-end gap-1.5">
-          <span className="text-[0.75rem] text-muted pb-0.5">{lastUpdated}</span>
-          <button onClick={resetFilters} className="bg-red text-black border-none rounded-md px-2.5 py-0.5 text-[0.78rem] font-semibold cursor-pointer whitespace-nowrap hover:opacity-85 transition-opacity">
+      </div>
+
+      <div className="border-t border-border" />
+
+      {/* Actions */}
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[0.72rem] text-muted truncate">{lastUpdated}</span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <button
+            onClick={resetFilters}
+            className="bg-red text-black border-none rounded-md px-2.5 py-0.5 text-[0.78rem] font-semibold cursor-pointer hover:opacity-85 transition-opacity"
+          >
             ↺ Reset
           </button>
-          <button onClick={onRefresh} className="bg-accent text-black border-none rounded-md px-2.5 py-0.5 text-[0.78rem] font-semibold cursor-pointer whitespace-nowrap hover:opacity-85 transition-opacity">
+          <button
+            onClick={onRefresh}
+            className="bg-accent text-black border-none rounded-md px-2.5 py-0.5 text-[0.78rem] font-semibold cursor-pointer hover:opacity-85 transition-opacity"
+          >
             ↻ Refresh
           </button>
         </div>
       </div>
 
-      {/* Row 2: filters */}
-      <div className="border-t border-border pt-1 grid grid-cols-2 sm:grid-cols-3 items-end gap-x-2 gap-y-0.5 w-full sm:w-fit">
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Side</span>
-          <DirectionDropdown
-            value={filters.direction}
-            onChange={v => setFilters({ direction: v })}
-            inputCls={inputCls}
-          />
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Exchange</span>
-          <ExchangeDropdown
-            value={filters.exchange}
-            onChange={v => setFilters({ exchange: v })}
-            inputCls={inputCls}
-          />
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Payment</span>
-          <PaymentDropdown
-            value={filters.payment}
-            onChange={v => setFilters({ payment: v })}
-            inputCls={inputCls}
-            containerRef={panelRef}
-          />
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Status</span>
-          <StatusDropdown
-            value={filters.status}
-            onChange={v => setFilters({ status: v })}
-            inputCls={inputCls}
-          />
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Premium Type</span>
-          <PremiumModeDropdown
-            value={filters.premiumMode}
-            premiumOnly={filters.premiumOnly}
-            onChange={(v, premiumOnly) => setFilters({ premiumMode: v, ...(premiumOnly == null ? {} : { premiumOnly }) })}
-            inputCls={inputCls}
-          />
-        </div>
-        <div className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] text-muted uppercase tracking-wide">Premium %</span>
-          <div className="flex gap-1 items-center">
-            <input type="number" className={`${inputCls} w-14`} placeholder="Min" step="0.1"
-              value={filters.premiumMin} onChange={e => setFilters({ premiumMin: e.target.value })} />
-            <span className="text-muted text-[0.8rem]">–</span>
-            <input type="number" className={`${inputCls} w-14`} placeholder="Max" step="0.1"
-              value={filters.premiumMax} onChange={e => setFilters({ premiumMax: e.target.value })} />
-          </div>
-        </div>
-      </div>
     </div>
   );
 }

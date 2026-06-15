@@ -126,6 +126,12 @@ export function useLiveOffers() {
   // Called by MonitorView when filters.cex or trade cost settings change.
   // Reconnects WS so the server pushes a fresh snapshot with updated query params.
   const refreshForCex = useCallback((cex: string, excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null) => {
+    // refreshForCex is only ever called from MonitorView's mount effect, so the tree is
+    // mounted. Under React StrictMode the parent (AppShell) mount effect that resets
+    // mountedRef to true runs AFTER this child effect, so without this connect() would see
+    // a stale mountedRef === false (left over from the strict unmount cleanup) and bail —
+    // leaving no WebSocket and no polling. Assert mounted here so connect() proceeds.
+    mountedRef.current = true;
     const refreshKey = JSON.stringify({ cex, excludedCEXes, feeTier, coupledHedge, maxFiatLimit });
     if (
       refreshKey === lastRefreshKeyRef.current

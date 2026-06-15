@@ -672,3 +672,21 @@ export interface CexSpotBuyResult {
   submitted_at: string;
   raw?: unknown;
 }
+
+export interface CexHedgeOpenRequest {
+  venue: string;        // "kraken_futures" | "coinbase_futures" | "binance_futures"
+  side: string;         // "short" | "long"
+  btc_notional: number;
+  leverage: number;
+}
+
+export interface CexHedgeOpenResult {
+  venue: string;
+  instrument: string;
+  side: string;
+  btc_notional: number;
+  order_id: string;
+  status: string;
+  submitted_at: string;
+  raw?: unknown;
+}

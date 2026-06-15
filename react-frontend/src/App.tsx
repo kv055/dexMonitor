@@ -82,7 +82,9 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, loadCore, extendOhlc, ref
       <div className="lg:flex-2 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_3fr] gap-2 sm:gap-3">
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
           <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Control Panel</h3>
-          <ControlPanel onRefresh={() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit)} lastUpdatedAt={lastUpdatedAt} />
+          <div className="overflow-y-auto min-h-0">
+            <ControlPanel onRefresh={() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit)} lastUpdatedAt={lastUpdatedAt} />
+          </div>
         </div>
 
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
