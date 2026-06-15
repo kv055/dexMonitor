@@ -73,6 +73,24 @@ function offer(
       dex_fee_btc: btcAmount * 0.0035,
       total_cost_pct: tradeCost,
       total_cost_btc: btcAmount * (tradeCost / 100),
+      capital: (() => {
+        const depositPct = exchange === 'bisq' ? 0.15 : 0;
+        const depositBtc = depositPct > 0 ? Math.max(btcAmount * depositPct, 0.001) : 0;
+        const depositEur = depositBtc * refPrice;
+        const spotEur = btcAmount * refPrice;
+        return {
+          btc_amount: btcAmount,
+          btc_price_eur: refPrice,
+          spot_notional_eur: spotEur,
+          hedge_collateral_eur: 0,
+          security_deposit_pct: depositPct,
+          security_deposit_side: direction === 'sell' ? 'buyer' : 'seller',
+          security_deposit_btc: depositBtc,
+          security_deposit_eur: depositEur,
+          total_eur: spotEur + depositEur,
+          deposit_estimated: depositPct > 0,
+        };
+      })(),
     },
     abort_cost: {
       btc_amount: btcAmount,

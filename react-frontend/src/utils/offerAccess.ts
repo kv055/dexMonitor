@@ -145,6 +145,7 @@ export function getDisplayCostBreakdown(offer: Offer, capped = false): CostBreak
     dex_fee_btc: dexFeeBTC,
     total_cost_pct: totalPct,
     total_cost_btc: totalBTC,
+    capital: scenario.capital ?? null,
   };
 }
 

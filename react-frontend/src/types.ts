@@ -50,6 +50,24 @@ export interface CostBreakdown {
   dex_fee_btc: number;
   total_cost_pct: number;
   total_cost_btc: number;
+  capital?: CapitalRequirement | null;
+}
+
+// CapitalRequirement is the capital that must be committed to execute the trade,
+// distinct from the fees consumed by it. Broken out into the spot leg (EUR to
+// buy BTC on the CEX), the perp hedge collateral, and the DEX security deposit,
+// plus the grand total. EUR figures are 0 when the ref price is unknown.
+export interface CapitalRequirement {
+  btc_amount: number;
+  btc_price_eur: number;
+  spot_notional_eur: number;
+  hedge_collateral_eur: number;
+  security_deposit_pct: number;
+  security_deposit_side: string;  // "buyer" | "seller" | ""
+  security_deposit_btc: number;
+  security_deposit_eur: number;
+  total_eur: number;
+  deposit_estimated: boolean;     // true while using the configured %, not the real per-offer value
 }
 
 export interface AbortCostBreakdown {
@@ -179,6 +197,7 @@ export interface LiveOfferScenario {
   profit: LiveOfferProfit;
   costs: LiveOfferScenarioCosts;
   abort_cost?: AbortCostBreakdown | null;
+  capital?: CapitalRequirement | null;
 }
 
 export interface LiveOfferAnalysis {

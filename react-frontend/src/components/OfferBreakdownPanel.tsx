@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { formatDuration, formatTime, premiumClass } from '../utils/formatters';
-import type { AbortCostBreakdown, BTCNetworkFeeDetail as BTCDetail, CostBreakdown } from '../types';
+import type { AbortCostBreakdown, BTCNetworkFeeDetail as BTCDetail, CapitalRequirement, CostBreakdown } from '../types';
 
 function fmt8(n: number): string {
   return n.toFixed(8).replace(/\.?0+$/, '') || '0';
@@ -348,6 +348,45 @@ function AbortCostSection({ abortCost, refPrice }: {
   );
 }
 
+function CapitalRequiredSection({ capital }: { capital: CapitalRequirement | null | undefined }) {
+  if (!capital || capital.total_eur <= 0) return null;
+
+  const hasDeposit = capital.security_deposit_btc > 0;
+  const depositSide = capital.security_deposit_side
+    ? capital.security_deposit_side.charAt(0).toUpperCase() + capital.security_deposit_side.slice(1)
+    : '';
+
+  return (
+    <div className="rounded-lg border border-blue/30 bg-blue/5 px-3 py-2.5 flex flex-col gap-1.5 text-[0.72rem]">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Capital required</span>
+        <span className="mono-nums font-bold text-[0.95rem] text-text">{fmtEurAmount(capital.total_eur)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-muted">Spot notional (CEX buy)</span>
+        <span className="text-text mono-nums">{fmtEurAmount(capital.spot_notional_eur)}</span>
+      </div>
+      <div className="flex items-center justify-between gap-3">
+        <span className="text-muted">Hedge collateral</span>
+        <span className="text-text mono-nums">{fmtEurAmount(capital.hedge_collateral_eur)}</span>
+      </div>
+      {hasDeposit && (
+        <div className="flex items-start justify-between gap-3">
+          <span className="text-muted flex items-center gap-1.5">
+            Security deposit
+            {depositSide && <span className="text-[0.6rem] text-muted">({depositSide} · {fmtRatioPct(capital.security_deposit_pct)})</span>}
+            {capital.deposit_estimated && <Badge label="est." colorCls="text-muted" />}
+          </span>
+          <span className="text-right">
+            <div className="text-text mono-nums">{fmtEurAmount(capital.security_deposit_eur)}</div>
+            <div className="text-[0.64rem] text-muted mono-nums">{fmt8(capital.security_deposit_btc)} BTC</div>
+          </span>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct, refPrice }: {
   bd: CostBreakdown;
   abortCost: AbortCostBreakdown | null;
@@ -513,6 +552,8 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
           </span>
         </div>
       </div>
+
+      <CapitalRequiredSection capital={bd.capital} />
 
       <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
     </div>
