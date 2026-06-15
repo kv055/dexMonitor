@@ -342,6 +342,21 @@ export interface TradingAccount {
   api_keys: TradingAPIKey[];
   account_file_backup: TradingAccountFileBackup | null;
   lnd_channel_backup: TradingLNDChannelBackup | null;
+  bank_accounts: TradingBankAccount[];
+}
+
+export interface TradingBankAccount {
+  id: number;
+  account_id: number;
+  label: string | null;
+  owner_name: string;
+  currency: string;
+  country: string | null;
+  scheme: string;
+  details: Record<string, string>;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface TradingAccountKeyPermissionResult {

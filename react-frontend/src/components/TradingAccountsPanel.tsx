@@ -6,9 +6,11 @@ import {
   createLNDWalletAddress,
   createPasskey,
   createSeed,
+  createBankAccount,
   createTOTPSecret,
   deleteAccount,
   deleteAPIKey,
+  deleteBankAccount,
   deletePasskey,
   deleteSeed,
   deleteTOTPSecret,
@@ -25,6 +27,7 @@ import {
   runAccountHealthCheck,
   updateAccount,
   updateAPIKey,
+  updateBankAccount,
   updatePasskey,
   updateSeed,
   updateTOTPSecret,
@@ -40,6 +43,7 @@ import type {
   LNDWalletStatus,
   TradingAccount,
   TradingAccountKeyPermissionResult,
+  TradingBankAccount,
 } from '../types';
 
 type ProviderOption = { value: string; label: string };
@@ -69,9 +73,9 @@ const PROVIDER_DEFINITIONS: ProviderDefinition[] = [
   { value: LND_WALLET_PROVIDER, label: 'LND wallet', category: 'Internal Infrastructure', creatable: false },
 ];
 
-const CREATABLE_PROVIDER_CATEGORIES = ['Fiat Transmitter', 'DEX', 'CEX'] as const;
+const CREATABLE_PROVIDER_CATEGORIES = ['Fiat Transmitter', 'DEX', 'CEX', 'Bank'] as const;
 
-const CATEGORY_ORDER = ['Fiat Transmitter', 'DEX', 'CEX', 'Internal Infrastructure', 'Uncategorized'];
+const CATEGORY_ORDER = ['Fiat Transmitter', 'DEX', 'CEX', 'Bank', 'Internal Infrastructure', 'Uncategorized'];
 
 const inputCls =
   'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent';
@@ -139,11 +143,19 @@ function createPlaceholderAccount(provider: string, category: string, id: number
     api_keys: [],
     account_file_backup: null,
     lnd_channel_backup: null,
+    bank_accounts: [],
   };
 }
 
 function withInfrastructureAccounts(accounts: TradingAccount[]): TradingAccount[] {
-  const result = [...accounts];
+  // 'Internal Infrastructure' is not stored in the DB (not in the CHECK constraint),
+  // so force it on any LND wallet row that comes back with the wrong category.
+  const result = accounts.map(account =>
+    isLndWalletProvider(account.provider) && account.category !== 'Internal Infrastructure'
+      ? { ...account, category: 'Internal Infrastructure' }
+      : account,
+  );
+
   const ensure = (provider: string, category: string, placeholderId: number) => {
     const normalized = provider.trim().toLowerCase();
     if (result.some(account => account.provider.trim().toLowerCase() === normalized)) {
@@ -607,9 +619,21 @@ function HealthBadge({ account, compact = false }: { account: TradingAccount; co
 
 interface AccountFormState {
   provider: string;
+  category: string;
   email: string;
   password: string;
   phone: string;
+}
+
+interface BankAccountFormState {
+  label: string;
+  owner_name: string;
+  currency: string;
+  country: string;
+  scheme: string;
+  iban: string;
+  bic: string;
+  is_active: boolean;
 }
 
 type AccountSectionKey =
@@ -659,6 +683,8 @@ interface TradingPanelUiState {
   editingSeedById: Record<number, SeedFormState>;
   newAPIKeyByAccount: Record<number, APIKeyFormState>;
   editingAPIKeyById: Record<number, APIKeyFormState>;
+  newBankAccountByAccount: Record<number, BankAccountFormState>;
+  editingBankAccountById: Record<number, BankAccountFormState>;
   checkingHealthByAccount: Record<number, boolean>;
   healthMessageByAccount: Record<number, AccountHealthMessage>;
 }
@@ -708,7 +734,15 @@ interface APIKeyFormState {
 }
 
 function emptyAccountForm(): AccountFormState {
-  return { provider: '', email: '', password: '', phone: '' };
+  return { provider: '', category: '', email: '', password: '', phone: '' };
+}
+
+function emptyBankAccountForm(): BankAccountFormState {
+  return { label: '', owner_name: '', currency: 'EUR', country: 'DE', scheme: 'iban_bic', iban: '', bic: '', is_active: true };
+}
+
+function isBankAccount(account: TradingAccount) {
+  return account.category === 'Bank';
 }
 
 function emptyAPIKeyForm(): APIKeyFormState {
@@ -819,6 +853,7 @@ function AccountEditor({
   showContactFields = true,
   showWalletPasswordOnly = false,
   groupedProviders = false,
+  freeFormProvider = false,
   extraContent,
 }: {
   value: AccountFormState;
@@ -831,6 +866,7 @@ function AccountEditor({
   showContactFields?: boolean;
   showWalletPasswordOnly?: boolean;
   groupedProviders?: boolean;
+  freeFormProvider?: boolean;
   extraContent?: ReactNode;
 }) {
   const options = useMemo(() => providerOptionsForValue(value.provider), [value.provider]);
@@ -848,13 +884,22 @@ function AccountEditor({
         <div className={`grid items-end gap-2 ${showContactFields ? 'md:grid-cols-[minmax(9rem,1.1fr)_minmax(9rem,1fr)_minmax(8rem,1fr)_minmax(7rem,0.8fr)_auto]' : showWalletPasswordOnly ? 'md:grid-cols-[minmax(9rem,1.1fr)_minmax(9rem,1fr)_auto]' : 'md:grid-cols-[minmax(9rem,1.1fr)_auto]'}`}>
           <label className={labelCls}>
             <span>Provider</span>
-            <select
-              className={fieldCls}
-              value={value.provider}
-              onChange={e => onChange({ ...value, provider: e.target.value })}
-            >
-              {renderProviderSelectOptions(groupedProviders, options)}
-            </select>
+            {freeFormProvider ? (
+              <input
+                className={fieldCls}
+                value={value.provider}
+                onChange={e => onChange({ ...value, provider: e.target.value })}
+                placeholder="Bank name (e.g. N26, Sparkasse)"
+              />
+            ) : (
+              <select
+                className={fieldCls}
+                value={value.provider}
+                onChange={e => onChange({ ...value, provider: e.target.value })}
+              >
+                {renderProviderSelectOptions(groupedProviders, options)}
+              </select>
+            )}
           </label>
           {showContactFields ? (
             <>
@@ -920,13 +965,22 @@ function AccountEditor({
     <div className="grid gap-3 md:grid-cols-4">
       <label className={labelCls}>
         <span>Provider</span>
-        <select
-          className={fieldCls}
-          value={value.provider}
-          onChange={e => onChange({ ...value, provider: e.target.value })}
-        >
-          {renderProviderSelectOptions(groupedProviders, options)}
-        </select>
+        {freeFormProvider ? (
+          <input
+            className={fieldCls}
+            value={value.provider}
+            onChange={e => onChange({ ...value, provider: e.target.value })}
+            placeholder="Bank name (e.g. N26, Sparkasse)"
+          />
+        ) : (
+          <select
+            className={fieldCls}
+            value={value.provider}
+            onChange={e => onChange({ ...value, provider: e.target.value })}
+          >
+            {renderProviderSelectOptions(groupedProviders, options)}
+          </select>
+        )}
       </label>
       {showContactFields ? (
         <>
@@ -1143,6 +1197,8 @@ export function TradingAccountsPanel() {
     editingSeedById: {},
     newAPIKeyByAccount: {},
     editingAPIKeyById: {},
+    newBankAccountByAccount: {},
+    editingBankAccountById: {},
     checkingHealthByAccount: {},
     healthMessageByAccount: {},
   }));
@@ -1163,6 +1219,8 @@ export function TradingAccountsPanel() {
     editingSeedById,
     newAPIKeyByAccount,
     editingAPIKeyById,
+    newBankAccountByAccount,
+    editingBankAccountById,
     checkingHealthByAccount,
     healthMessageByAccount,
   } = uiState;
@@ -1306,6 +1364,12 @@ export function TradingAccountsPanel() {
   }, []);
   const setEditingAPIKeyById = useCallback((value: SetStateAction<Record<number, APIKeyFormState>>) => {
     dispatchUi({ type: 'UPDATE', update: state => ({ ...state, editingAPIKeyById: resolveState(value, state.editingAPIKeyById) }) });
+  }, []);
+  const setNewBankAccountByAccount = useCallback((value: SetStateAction<Record<number, BankAccountFormState>>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, newBankAccountByAccount: resolveState(value, state.newBankAccountByAccount) }) });
+  }, []);
+  const setEditingBankAccountById = useCallback((value: SetStateAction<Record<number, BankAccountFormState>>) => {
+    dispatchUi({ type: 'UPDATE', update: state => ({ ...state, editingBankAccountById: resolveState(value, state.editingBankAccountById) }) });
   }, []);
   const setCheckingHealthByAccount = useCallback((value: SetStateAction<Record<number, boolean>>) => {
     dispatchUi({ type: 'UPDATE', update: state => ({ ...state, checkingHealthByAccount: resolveState(value, state.checkingHealthByAccount) }) });
@@ -1586,6 +1650,7 @@ export function TradingAccountsPanel() {
     setEditingAccountId(account.id);
     setEditingAccount({
       provider: account.provider,
+      category: account.category,
       email: account.email ?? '',
       password: account.password ?? '',
       phone: account.phone ?? '',
@@ -2279,7 +2344,7 @@ export function TradingAccountsPanel() {
 
   const renderSeedsSection = (account: TradingAccount) => {
     const isLndWallet = isLndWalletProvider(account.provider);
-    if (isLndWallet || isCexAccount(account) || !showDexIdentitySections(account.provider)) {
+    if (isLndWallet || isCexAccount(account) || isBankAccount(account) || account.category === 'Fiat Transmitter' || !showDexIdentitySections(account.provider)) {
       return null;
     }
     const draft = newSeedByAccount[account.id] ?? { seed_phrase: '', wallet_created_at: '' };
@@ -2365,6 +2430,114 @@ export function TradingAccountsPanel() {
           <div className="text-[0.65rem] text-muted px-1">
             {isLndWallet ? 'No aezeed stored yet — set the wallet password and start mm-controller to generate one.' : 'No seeds yet.'}
           </div>
+        ) : null}
+      </CollapsibleSection>
+    );
+  };
+
+  const renderBankAccountsSection = (account: TradingAccount) => {
+    if (!isBankAccount(account)) return null;
+    const draft = newBankAccountByAccount[account.id] ?? emptyBankAccountForm();
+    const showNew = !!showNewFormByAccount[account.id]?.seeds;
+    return (
+      <CollapsibleSection
+        title="Bank Accounts"
+        count={account.bank_accounts.length}
+        open={!!openSectionsByAccount[account.id]?.seeds}
+        onToggle={() => toggleSection(account.id, 'seeds')}
+        actions={
+          <button type="button" className={compactButtonCls} onClick={() => setShowNewForm(account.id, 'seeds', !showNew)}>
+            {showNew ? 'Cancel' : 'Add'}
+          </button>
+        }
+      >
+        {account.bank_accounts.map((ba: TradingBankAccount) => {
+          const edit = editingBankAccountById[ba.id];
+          const form: BankAccountFormState = edit ?? {
+            label: ba.label ?? '',
+            owner_name: ba.owner_name,
+            currency: ba.currency,
+            country: ba.country ?? '',
+            scheme: ba.scheme,
+            iban: ba.details.iban ?? '',
+            bic: ba.details.bic ?? '',
+            is_active: ba.is_active,
+          };
+          return (
+            <ResourceCard key={ba.id} title={ba.label ?? `Account #${ba.id}`}>
+              {edit ? (
+                <div className="grid gap-1.5">
+                  <input className={compactInputCls} value={form.label} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, label: e.target.value } }))} placeholder="Label (optional)" />
+                  <input className={compactInputCls} value={form.owner_name} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, owner_name: e.target.value } }))} placeholder="Owner name" />
+                  <div className="grid gap-1.5 md:grid-cols-2">
+                    <input className={compactInputCls} value={form.iban} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, iban: e.target.value } }))} placeholder="IBAN" />
+                    <input className={compactInputCls} value={form.bic} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, bic: e.target.value } }))} placeholder="BIC" />
+                    <input className={compactInputCls} value={form.currency} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, currency: e.target.value.toUpperCase() } }))} placeholder="Currency (EUR)" />
+                    <input className={compactInputCls} value={form.country} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, country: e.target.value.toUpperCase() } }))} placeholder="Country (DE)" />
+                  </div>
+                  <label className="flex items-center gap-2 text-xs text-muted">
+                    <input type="checkbox" checked={form.is_active} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, is_active: e.target.checked } }))} />
+                    Active
+                  </label>
+                  <div className="flex gap-1">
+                    <button type="button" className={compactButtonCls} onClick={() => withReload(async () => {
+                      await updateBankAccount(ba.id, { ...form, scheme: 'iban_bic', details: { iban: form.iban, bic: form.bic }, label: form.label || null, country: form.country || null });
+                      setEditingBankAccountById(prev => { const next = { ...prev }; delete next[ba.id]; return next; });
+                    })}>Save</button>
+                    <button type="button" className={compactButtonCls} onClick={() => setEditingBankAccountById(prev => { const next = { ...prev }; delete next[ba.id]; return next; })}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <div className="grid gap-1 text-xs text-muted">
+                  <div><span className="text-text">Owner:</span> {ba.owner_name}</div>
+                  <div><span className="text-text">IBAN:</span> {ba.details.iban ?? '—'}</div>
+                  <div><span className="text-text">BIC:</span> {ba.details.bic ?? '—'}</div>
+                  <div><span className="text-text">Currency:</span> {ba.currency}{ba.country ? ` · ${ba.country}` : ''}</div>
+                  <div><span className="text-text">Active:</span> {ba.is_active ? 'Yes' : 'No'}</div>
+                  <div className="flex gap-1 mt-1">
+                    <button type="button" className={compactButtonCls} onClick={() => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: form }))}>Edit</button>
+                    <button type="button" className={`${compactButtonCls} text-red`} onClick={() => withReload(async () => { await deleteBankAccount(ba.id); })}>Del</button>
+                  </div>
+                </div>
+              )}
+            </ResourceCard>
+          );
+        })}
+        {showNew ? (
+          <ResourceCard title="New Bank Account">
+            <div className="grid gap-1.5">
+              <input className={compactInputCls} value={draft.label} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, label: e.target.value } }))} placeholder="Label (optional)" />
+              <input className={compactInputCls} value={draft.owner_name} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, owner_name: e.target.value } }))} placeholder="Owner name" />
+              <div className="grid gap-1.5 md:grid-cols-2">
+                <input className={compactInputCls} value={draft.iban} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, iban: e.target.value } }))} placeholder="IBAN" />
+                <input className={compactInputCls} value={draft.bic} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, bic: e.target.value } }))} placeholder="BIC" />
+                <input className={compactInputCls} value={draft.currency} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, currency: e.target.value.toUpperCase() } }))} placeholder="Currency (EUR)" />
+                <input className={compactInputCls} value={draft.country} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, country: e.target.value.toUpperCase() } }))} placeholder="Country (DE)" />
+              </div>
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <input type="checkbox" checked={draft.is_active} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, is_active: e.target.checked } }))} />
+                Active
+              </label>
+            </div>
+            <div className="mt-1.5 flex justify-end">
+              <button type="button" className={compactButtonCls} onClick={() => withReload(async () => {
+                await createBankAccount(account.id, {
+                  label: draft.label || null,
+                  owner_name: draft.owner_name,
+                  currency: draft.currency,
+                  country: draft.country || null,
+                  scheme: 'iban_bic',
+                  details: { iban: draft.iban, bic: draft.bic },
+                  is_active: draft.is_active,
+                });
+                setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: emptyBankAccountForm() }));
+                setShowNewForm(account.id, 'seeds', false);
+              })}>Create</button>
+            </div>
+          </ResourceCard>
+        ) : null}
+        {account.bank_accounts.length === 0 && !showNew ? (
+          <div className="text-[0.65rem] text-muted px-1">No bank accounts yet.</div>
         ) : null}
       </CollapsibleSection>
     );
@@ -2661,18 +2834,34 @@ export function TradingAccountsPanel() {
         </div>
 
         {showNewAccountForm ? (
+          <div className="grid gap-2">
+            <label className="grid min-w-0 gap-1 text-xs text-muted w-40">
+              <span>Category</span>
+              <select
+                className={compactInputCls}
+                value={newAccount.category}
+                onChange={e => setNewAccount({ ...emptyAccountForm(), category: e.target.value })}
+              >
+                <option value="">Auto-detect</option>
+                <option value="Fiat Transmitter">Fiat Transmitter</option>
+                <option value="DEX">DEX</option>
+                <option value="CEX">CEX</option>
+                <option value="Bank">Bank</option>
+              </select>
+            </label>
           <AccountEditor
             value={newAccount}
             onChange={next => {
               if (next.provider !== newAccount.provider) {
                 setNewAccountAPIKey(emptyAPIKeyForm());
               }
-              setNewAccount(next);
+              setNewAccount({ ...next, category: newAccount.category });
             }}
             submitLabel="Add New Account"
             compact
             groupedProviders
-            showContactFields={showContactFieldsForProvider(newAccount.provider)}
+            freeFormProvider={newAccount.category === 'Bank'}
+            showContactFields={newAccount.category === 'Bank' || showContactFieldsForProvider(newAccount.provider)}
             submitDisabled={
               !newAccount.provider
               || (usesAPIKeysAtCreate(newAccount.provider) && (
@@ -2694,9 +2883,10 @@ export function TradingAccountsPanel() {
                 const usesAPIKeys = usesAPIKeysAtCreate(newAccount.provider);
                 const created = await createAccount({
                   provider: newAccount.provider,
-                  email: showContactFieldsForProvider(newAccount.provider) ? newAccount.email : '',
-                  password: showContactFieldsForProvider(newAccount.provider) ? newAccount.password : '',
-                  phone: showContactFieldsForProvider(newAccount.provider) ? newAccount.phone : '',
+                  category: newAccount.category || undefined,
+                  email: newAccount.email,
+                  password: newAccount.password,
+                  phone: newAccount.phone,
                 });
                 if (usesAPIKeys && newAccountAPIKey.api_key.trim()) {
                   const profile = apiKeyFormProfile(newAccount.provider);
@@ -2712,6 +2902,7 @@ export function TradingAccountsPanel() {
               })
             }
           />
+          </div>
         ) : null}
 
         {error ? (
@@ -2775,7 +2966,7 @@ export function TradingAccountsPanel() {
                             </span>
                           </>
                         ) : null}
-                        {showDexIdentitySections(account.provider) ? (
+                        {showDexIdentitySections(account.provider) && !isBankAccount(account) && account.category !== 'Fiat Transmitter' ? (
                           <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
                             {`${account.seeds.length} Seeds`}
                           </span>
@@ -2790,7 +2981,7 @@ export function TradingAccountsPanel() {
                             Backup
                           </span>
                         ) : null}
-                        {!isLocalWallet ? (
+                        {!isLocalWallet && !isBankAccount(account) && account.category !== 'Fiat Transmitter' ? (
                           <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
                             {account.api_keys.length} {apiKeyFormProfile(account.provider).countLabel}
                           </span>
@@ -2921,7 +3112,8 @@ export function TradingAccountsPanel() {
                         {isCexAccount(account) ? renderCexWithdrawalAddressesSection(account) : null}
                         {isCexAccount(account) ? renderCexHedgingSection(account) : null}
                         {isCexAccount(account) ? renderCexSpotTradesSection(account) : null}
-                        {!isLocalWallet ? renderAPIKeysSection(account) : null}
+                        {renderBankAccountsSection(account)}
+                        {!isLocalWallet && !isBankAccount(account) && account.category !== 'Fiat Transmitter' ? renderAPIKeysSection(account) : null}
                       </div>
                     ) : null}
                   </div>

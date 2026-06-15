@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"strings"
 	"time"
+
+	"commons/accounts"
 )
 
 // Account is a stored trading-account profile and its credential metadata.
@@ -42,6 +44,52 @@ type Account struct {
 	AccountFileBackup *AccountFileBackup `json:"account_file_backup"`
 	// LNDChannelBackup is the latest LND static channel backup metadata, if any.
 	LNDChannelBackup *LNDChannelBackup `json:"lnd_channel_backup"`
+	// BankAccounts is the list of payable bank accounts under this login.
+	BankAccounts []BankAccount `json:"bank_accounts"`
+}
+
+// BankAccount is a payable bank account linked to an online-banking login.
+type BankAccount struct {
+	// ID identifies the bank account.
+	ID int64 `json:"id"`
+	// AccountID is the parent account.
+	AccountID int64 `json:"account_id"`
+	// Label is an optional human-readable name.
+	Label *string `json:"label"`
+	// OwnerName is the account holder name.
+	OwnerName string `json:"owner_name"`
+	// Currency is the ISO 4217 currency code.
+	Currency string `json:"currency"`
+	// Country is the ISO 3166-1 alpha-2 country code.
+	Country *string `json:"country"`
+	// Scheme identifies the payment scheme (e.g. iban_bic, us_ach).
+	Scheme string `json:"scheme"`
+	// Details holds scheme-specific fields (iban, bic, routing_number, …).
+	Details map[string]string `json:"details"`
+	// IsActive reports whether this bank account is active.
+	IsActive bool `json:"is_active"`
+	// CreatedAt records when the row was created.
+	CreatedAt string `json:"created_at"`
+	// UpdatedAt records when the row was last updated.
+	UpdatedAt string `json:"updated_at"`
+}
+
+// BankAccountPayload is the editable payload for bank account create/update.
+type BankAccountPayload struct {
+	// Label is an optional human-readable name.
+	Label string `json:"label"`
+	// OwnerName is the account holder name.
+	OwnerName string `json:"owner_name"`
+	// Currency is the ISO 4217 currency code.
+	Currency string `json:"currency"`
+	// Country is the ISO 3166-1 alpha-2 country code.
+	Country string `json:"country"`
+	// Scheme identifies the payment scheme.
+	Scheme string `json:"scheme"`
+	// Details holds scheme-specific fields.
+	Details map[string]string `json:"details"`
+	// IsActive reports whether this bank account is active.
+	IsActive bool `json:"is_active"`
 }
 
 // TOTPSecret represents a totpsecret.
@@ -163,6 +211,8 @@ type APIKey struct {
 type AccountPayload struct {
 	// Provider is the provider value for the account payload.
 	Provider string `json:"provider"`
+	// Category overrides the derived category (required for Bank accounts).
+	Category string `json:"category"`
 	// Email is the email value for the account payload.
 	Email string `json:"email"`
 	// Password is the password value for the account payload.
@@ -235,13 +285,7 @@ func (r Repository) List(ctx context.Context) ([]Account, error) {
 	rows, err := r.DB.QueryContext(ctx, `
 		SELECT id,
 		       provider,
-		       CASE
-		           WHEN lower(provider) IN ('wise', 'paypal', 'revolut', 'n26') THEN 'Fiat Transmitter'
-		           WHEN lower(provider) IN ('robosats', 'bisq', 'bisq2', 'hodlhodl', 'peach', 'peach bitcoin', 'peachbitcoin') THEN 'DEX'
-		           WHEN lower(provider) IN ('kraken', 'coinbase', 'bitstamp', 'binance', 'bybit', 'kucoin', 'huobi') THEN 'CEX'
-		           WHEN lower(provider) IN ('lnd', 'lnd wallet', 'lnd_wallet') THEN 'Internal Infrastructure'
-		           ELSE 'Uncategorized'
-		       END AS category,
+		       COALESCE(category, 'Uncategorized') AS category,
 		       email,
 		       password,
 		       phone,
@@ -278,6 +322,7 @@ func (r Repository) List(ctx context.Context) ([]Account, error) {
 		account.PasskeyCredentials = []Passkey{}
 		account.Seeds = []Seed{}
 		account.APIKeys = []APIKey{}
+		account.BankAccounts = []BankAccount{}
 		accounts = append(accounts, account)
 		accountIDs = append(accountIDs, account.ID)
 		accountIndex[account.ID] = len(accounts) - 1
@@ -307,6 +352,9 @@ func (r Repository) List(ctx context.Context) ([]Account, error) {
 	if err := r.appendAPIKeys(ctx, accounts, accountIndex, accountIDs); err != nil {
 		return nil, err
 	}
+	if err := r.appendBankAccounts(ctx, accounts, accountIndex, accountIDs); err != nil {
+		return nil, err
+	}
 
 	return accounts, nil
 }
@@ -328,26 +376,36 @@ func (r Repository) Get(ctx context.Context, id int64) (*Account, error) {
 // Create creates value.
 func (r Repository) Create(ctx context.Context, payload AccountPayload) (int64, error) {
 	provider := NormalizeProvider(payload.Provider)
+	category := strings.TrimSpace(payload.Category)
+	if category == "" {
+		category = accounts.CategoryForProvider(provider)
+	}
 	var id int64
 	err := r.DB.QueryRowContext(ctx, `
-		INSERT INTO accounts (provider, email, password, phone)
-		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''))
+		INSERT INTO accounts (provider, category, email, password, phone)
+		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''))
 		RETURNING id
-	`, provider, strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone)).Scan(&id)
+	`, provider, category, strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone)).Scan(&id)
 	return id, err
 }
 
 // Update replaces an account and its nested credentials.
 func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload) error {
+	provider := NormalizeProvider(payload.Provider)
+	category := strings.TrimSpace(payload.Category)
+	if category == "" {
+		category = accounts.CategoryForProvider(provider)
+	}
 	_, err := r.DB.ExecContext(ctx, `
 		UPDATE accounts
 		SET provider = $2,
-		    email = NULLIF($3, ''),
-		    password = NULLIF($4, ''),
-		    phone = NULLIF($5, ''),
+		    category = NULLIF($3, ''),
+		    email = NULLIF($4, ''),
+		    password = NULLIF($5, ''),
+		    phone = NULLIF($6, ''),
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
-	`, id, NormalizeProvider(payload.Provider), strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone))
+	`, id, provider, category, strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone))
 	return err
 }
 
@@ -763,6 +821,118 @@ func (r Repository) appendAPIKeys(ctx context.Context, accounts []Account, accou
 		}
 	}
 	return rows.Err()
+}
+
+// CreateBankAccount creates a bank account under the given account.
+func (r Repository) CreateBankAccount(ctx context.Context, accountID int64, payload BankAccountPayload) (int64, error) {
+	detailsJSON, err := json.Marshal(payload.Details)
+	if err != nil {
+		return 0, err
+	}
+	var id int64
+	err = r.DB.QueryRowContext(ctx, `
+		INSERT INTO bank_accounts (account_id, label, owner_name, currency, country, scheme, details, is_active)
+		VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), $6, $7, $8)
+		RETURNING id
+	`, accountID, strings.TrimSpace(payload.Label), strings.TrimSpace(payload.OwnerName),
+		strings.ToUpper(strings.TrimSpace(payload.Currency)), strings.ToUpper(strings.TrimSpace(payload.Country)),
+		strings.TrimSpace(payload.Scheme), detailsJSON, payload.IsActive).Scan(&id)
+	return id, err
+}
+
+// UpdateBankAccount replaces a bank account.
+func (r Repository) UpdateBankAccount(ctx context.Context, id int64, payload BankAccountPayload) error {
+	detailsJSON, err := json.Marshal(payload.Details)
+	if err != nil {
+		return err
+	}
+	_, err = r.DB.ExecContext(ctx, `
+		UPDATE bank_accounts
+		SET label      = NULLIF($2, ''),
+		    owner_name = $3,
+		    currency   = $4,
+		    country    = NULLIF($5, ''),
+		    scheme     = $6,
+		    details    = $7,
+		    is_active  = $8,
+		    updated_at = CURRENT_TIMESTAMP
+		WHERE id = $1
+	`, id, strings.TrimSpace(payload.Label), strings.TrimSpace(payload.OwnerName),
+		strings.ToUpper(strings.TrimSpace(payload.Currency)), strings.ToUpper(strings.TrimSpace(payload.Country)),
+		strings.TrimSpace(payload.Scheme), detailsJSON, payload.IsActive)
+	return err
+}
+
+// DeleteBankAccount removes a bank account.
+func (r Repository) DeleteBankAccount(ctx context.Context, id int64) error {
+	_, err := r.DB.ExecContext(ctx, `DELETE FROM bank_accounts WHERE id = $1`, id)
+	return err
+}
+
+// GetBankAccount retrieves a single bank account by id.
+func (r Repository) GetBankAccount(ctx context.Context, id int64) (*BankAccount, error) {
+	var item BankAccount
+	var label, country sql.NullString
+	var detailsJSON []byte
+	var createdAt, updatedAt time.Time
+	err := r.DB.QueryRowContext(ctx, `
+		SELECT id, account_id, label, owner_name, currency, country, scheme, details, is_active, created_at, updated_at
+		FROM bank_accounts
+		WHERE id = $1
+	`, id).Scan(&item.ID, &item.AccountID, &label, &item.OwnerName, &item.Currency, &country,
+		&item.Scheme, &detailsJSON, &item.IsActive, &createdAt, &updatedAt)
+	if err != nil {
+		return nil, err
+	}
+	item.Label = nullStringPtr(label)
+	item.Country = nullStringPtr(country)
+	item.Details = decodeBankDetailsJSON(detailsJSON)
+	item.CreatedAt = formatTime(createdAt)
+	item.UpdatedAt = formatTime(updatedAt)
+	return &item, nil
+}
+
+func (r Repository) appendBankAccounts(ctx context.Context, accs []Account, accountIndex map[int64]int, accountIDs []int64) error {
+	rows, err := r.DB.QueryContext(ctx, `
+		SELECT id, account_id, label, owner_name, currency, country, scheme, details, is_active, created_at, updated_at
+		FROM bank_accounts
+		WHERE account_id = ANY($1)
+		ORDER BY created_at ASC, id ASC
+	`, accountIDs)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var item BankAccount
+		var label, country sql.NullString
+		var detailsJSON []byte
+		var createdAt, updatedAt time.Time
+		if err := rows.Scan(&item.ID, &item.AccountID, &label, &item.OwnerName, &item.Currency, &country,
+			&item.Scheme, &detailsJSON, &item.IsActive, &createdAt, &updatedAt); err != nil {
+			return err
+		}
+		item.Label = nullStringPtr(label)
+		item.Country = nullStringPtr(country)
+		item.Details = decodeBankDetailsJSON(detailsJSON)
+		item.CreatedAt = formatTime(createdAt)
+		item.UpdatedAt = formatTime(updatedAt)
+		if index, ok := accountIndex[item.AccountID]; ok {
+			accs[index].BankAccounts = append(accs[index].BankAccounts, item)
+		}
+	}
+	return rows.Err()
+}
+
+func decodeBankDetailsJSON(raw []byte) map[string]string {
+	if len(raw) == 0 {
+		return map[string]string{}
+	}
+	var m map[string]string
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return map[string]string{}
+	}
+	return m
 }
 
 // decodePermissionsJSON reads the stored permissions JSONB into the tri-state

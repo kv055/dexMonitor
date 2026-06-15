@@ -337,6 +337,9 @@ func main() {
 	mux.HandleFunc("DELETE /api/trading/seeds/{id}", handleTradingSeedByID)
 	mux.HandleFunc("PUT /api/trading/api_keys/{id}", handleTradingAPIKeyByID)
 	mux.HandleFunc("DELETE /api/trading/api_keys/{id}", handleTradingAPIKeyByID)
+	mux.HandleFunc("POST /api/trading/accounts/{id}/bank_accounts", handleTradingAccountBankAccounts)
+	mux.HandleFunc("PUT /api/trading/bank_accounts/{id}", handleTradingBankAccountByID)
+	mux.HandleFunc("DELETE /api/trading/bank_accounts/{id}", handleTradingBankAccountByID)
 	mux.HandleFunc("GET /health", handleHealth)
 
 	// Internal: snapshot tool pushes live offer data after each run
@@ -2281,6 +2284,8 @@ type tradingTOTPSecretPayload = tradingaccounts.TOTPSecretPayload
 type tradingPasskeyPayload = tradingaccounts.PasskeyPayload
 type tradingSeedPayload = tradingaccounts.SeedPayload
 type tradingAPIKeyPayload = tradingaccounts.APIKeyPayload
+type tradingBankAccount = tradingaccounts.BankAccount
+type tradingBankAccountPayload = tradingaccounts.BankAccountPayload
 
 func handleTradingAccounts(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
@@ -2616,6 +2621,68 @@ func loadTradingSeedByID(ctx context.Context, id int64) (*tradingSeed, error) {
 
 func loadTradingAPIKeyByID(ctx context.Context, id int64) (*tradingAPIKey, error) {
 	return tradingAccounts().GetAPIKey(ctx, id)
+}
+
+func handleTradingAccountBankAccounts(w http.ResponseWriter, r *http.Request) {
+	accountID, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var payload tradingBankAccountPayload
+	if err := decodeJSON(r, &payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	id, err := tradingAccounts().CreateBankAccount(r.Context(), accountID, payload)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	row, err := loadTradingBankAccountByID(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, row)
+}
+
+func handleTradingBankAccountByID(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var payload tradingBankAccountPayload
+		if err := decodeJSON(r, &payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := tradingAccounts().UpdateBankAccount(r.Context(), id, payload); err != nil {
+			writeError(w, err)
+			return
+		}
+		row, err := loadTradingBankAccountByID(r.Context(), id)
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, row)
+	case http.MethodDelete:
+		if err := tradingAccounts().DeleteBankAccount(r.Context(), id); err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func loadTradingBankAccountByID(ctx context.Context, id int64) (*tradingBankAccount, error) {
+	return tradingAccounts().GetBankAccount(ctx, id)
 }
 
 func decodeJSON(r *http.Request, dest any) error {

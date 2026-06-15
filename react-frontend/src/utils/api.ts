@@ -20,6 +20,7 @@ import type {
   TradingPasskey,
   TradingSeed,
   TradingTOTPSecret,
+  TradingBankAccount,
 } from '../types';
 
 const API_BASE = '';
@@ -66,14 +67,14 @@ export function fetchTradingAccounts() {
   return request<TradingAccount[]>('/api/trading/accounts');
 }
 
-export function createAccount(payload: { provider: string; email: string; password: string; phone: string }) {
+export function createAccount(payload: { provider: string; category?: string; email: string; password: string; phone: string }) {
   return request<TradingAccount>('/api/trading/accounts', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-export function updateAccount(id: number, payload: { provider: string; email: string; password: string; phone: string }) {
+export function updateAccount(id: number, payload: { provider: string; category?: string; email: string; password: string; phone: string }) {
   return request<TradingAccount>(`/api/trading/accounts/${id}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
@@ -160,6 +161,24 @@ export function updateAPIKey(id: number, payload: Omit<TradingAPIKey, 'id' | 'ac
 
 export function deleteAPIKey(id: number) {
   return request<{ ok: boolean }>(`/api/trading/api_keys/${id}`, { method: 'DELETE' });
+}
+
+export function createBankAccount(accountId: number, payload: Omit<TradingBankAccount, 'id' | 'account_id' | 'created_at' | 'updated_at'>) {
+  return request<TradingBankAccount>(`/api/trading/accounts/${accountId}/bank_accounts`, {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function updateBankAccount(id: number, payload: Omit<TradingBankAccount, 'id' | 'account_id' | 'created_at' | 'updated_at'>) {
+  return request<TradingBankAccount>(`/api/trading/bank_accounts/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteBankAccount(id: number) {
+  return request<{ ok: boolean }>(`/api/trading/bank_accounts/${id}`, { method: 'DELETE' });
 }
 
 export function fetchLNDWalletStatus() {
