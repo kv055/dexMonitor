@@ -179,10 +179,10 @@ func TestServeDistStaticSetsCacheControlHeaders(t *testing.T) {
 		t.Fatalf("mkdir brand: %v", err)
 	}
 	for path, content := range map[string]string{
-		filepath.Join(assetsDir, "app.js"): "console.log('app')",
+		filepath.Join(assetsDir, "app.js"):  "console.log('app')",
 		filepath.Join(brandDir, "logo.svg"): "<svg/>",
-		filepath.Join(root, "favicon.ico"): "ico",
-		filepath.Join(root, "index.html"): "<!doctype html><html></html>",
+		filepath.Join(root, "favicon.ico"):  "ico",
+		filepath.Join(root, "index.html"):   "<!doctype html><html></html>",
 	} {
 		if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 			t.Fatalf("write %s: %v", path, err)
@@ -561,6 +561,71 @@ func TestPastOfferFullVolumeRecomputesHedgeWhenStoredAbsent(t *testing.T) {
 	}
 }
 
+func TestPastOfferFullVolumeUsesHistoricalHedgePositionWhenPersisted(t *testing.T) {
+	oldEstimators := tradeCostEstimators
+	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
+	// Even with a live estimator available, the real persisted averages should
+	// win over a live-recomputed-at-today's-price guess.
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{
+		"kraken": fixedCostEstimatorWithHedge("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.0001, 0.0009),
+	}
+
+	offer := storedPastOfferFixture("buy")
+	agg := pastLifecycleAggregate{
+		AvgHedgeNotionalEUR:         50,
+		AvgLeverageUsed:             5,
+		AvgRecommendedCollateralEUR: 15,
+	}
+
+	full := buildPastOfferAPI(offer, agg, 0, nil, "", 10_000, nil).Analysis.FullVolume
+
+	pos := full.Costs.Hedge.Position
+	if pos == nil {
+		t.Fatal("expected hedge position to be populated from persisted averages")
+	}
+	if !pos.Historical {
+		t.Fatal("expected position.Historical = true for a past offer")
+	}
+	assertFloat(t, pos.HedgeNotionalEUR, 50)
+	assertFloat(t, pos.LeverageUsed, 5)
+	assertFloat(t, pos.RecommendedCollateralEUR, 15)
+	assertFloat(t, pos.BTCPriceEUR, 100) // avg_ref_price from the fixture
+}
+
+func TestPastOfferCappedHedgePositionScalesWithTradeSize(t *testing.T) {
+	oldEstimators := tradeCostEstimators
+	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
+	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{
+		"kraken": fixedCostEstimatorWithHedge("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.0001, 0.0009),
+	}
+
+	offer := storedPastOfferFixture("buy")
+	offer["btc_max"] = 1.0
+	agg := pastLifecycleAggregate{
+		AvgHedgeNotionalEUR:         50,
+		AvgLeverageUsed:             5,
+		AvgRecommendedCollateralEUR: 15,
+	}
+
+	// maxFiatLimitEUR=5 with avg_ref_price=100 caps the trade at 0.05 BTC —
+	// 1/20th of the full 1.0 BTC size.
+	got := buildPastOfferAPI(offer, agg, 0, nil, "", 5, nil)
+	if got.Analysis.CappedVolume == nil {
+		t.Fatal("expected capped volume scenario")
+	}
+
+	pos := got.Analysis.CappedVolume.Costs.Hedge.Position
+	if pos == nil {
+		t.Fatal("expected capped hedge position to be populated from persisted averages")
+	}
+	if !pos.Historical {
+		t.Fatal("expected position.Historical = true for a past offer")
+	}
+	assertFloat(t, pos.HedgeNotionalEUR, 2.5)          // 50 * (0.05/1.0)
+	assertFloat(t, pos.RecommendedCollateralEUR, 0.75) // 15 * (0.05/1.0)
+	assertFloat(t, pos.LeverageUsed, 5)                // leverage doesn't scale with size
+}
+
 func TestPastOfferCappedAnalysisKeepsStoredRouteAndFixedTransferCosts(t *testing.T) {
 	oldEstimators := tradeCostEstimators
 	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
@@ -638,8 +703,8 @@ func TestPastCappedCostVariesBySizeThroughProportionalAndFixedComponents(t *test
 	offer["hedge_open_fee_btc"] = 0.0
 	offer["hedge_close_fee_btc"] = 0.0
 	offer["hedge_funding_fee_btc"] = 0.0
-	larger := buildCappedPastBreakdown(offer, 1, 0.10, 100, 5)
-	smaller := buildCappedPastBreakdown(offer, 1, 0.05, 100, 5)
+	larger := buildCappedPastBreakdown(offer, 1, 0.10, 100, 5, 0, 0, 0)
+	smaller := buildCappedPastBreakdown(offer, 1, 0.05, 100, 5, 0, 0, 0)
 
 	assertFloat(t, larger.TotalCostBTC, 0.0022)
 	assertFloat(t, smaller.TotalCostBTC, 0.0016)

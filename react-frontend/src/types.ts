@@ -111,6 +111,12 @@ export interface HedgePositionDetail {
   free_collateral_after_stress_eur: number;
   liquidation_move_pct: number;
   btc_price_eur: number;
+  // True when this position was reconstructed from persisted per-cycle
+  // averages for a closed offer rather than freshly simulated for a live
+  // one. Only hedge_ratio, leverage_used, hedge_notional_eur,
+  // recommended_collateral_eur, and btc_price_eur are meaningful then — the
+  // rest were never persisted and are exactly 0, not real measurements.
+  historical?: boolean;
 }
 
 export interface LiveOfferStatus {

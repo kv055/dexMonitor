@@ -125,13 +125,18 @@ func computeNetPremiumFieldsWithConfirmations(premiumPct float64, btcSize float6
 	return computeNetPremiumFieldsFull(premiumPct, btcSize, 0, dexExchange, direction, requiredConfirmations, nil, "", true)
 }
 
+// computeNetPremiumFieldsFull's LiveOffer (this service's own live-offer hub)
+// has no real per-offer security deposit field — this path isn't reachable
+// for browser traffic in production (nginx routes /ws/live_offers and
+// /api/live_offers to unified-api), so the flat dexSecurityDepositPct
+// estimate is used unconditionally here.
 func computeNetPremiumFieldsFull(premiumPct float64, btcSize float64, refPriceEUR float64, dexExchange string, direction string, requiredConfirmations int, excludedCEXes []string, feeTier string, coupledHedge bool) (float64, float64, tradecost.CostBreakdown) {
 	if tradeRouteOptimizer == nil || premiumPct <= 0 {
 		return 0, 0, tradecost.CostBreakdown{}
 	}
 
 	requiredConfirmations = tradecost.ResolveRequiredConfirmations(direction, requiredConfirmations)
-	bd := tradeRouteOptimizer.BestBreakdownFull(btcSize, refPriceEUR, dexExchange, direction, requiredConfirmations, excludedCEXes, feeTier, coupledHedge)
+	bd := tradeRouteOptimizer.BestBreakdownFull(btcSize, refPriceEUR, dexExchange, direction, requiredConfirmations, excludedCEXes, feeTier, coupledHedge, nil)
 	if bd.RouteCEX == "" {
 		return 0, 0, tradecost.CostBreakdown{}
 	}

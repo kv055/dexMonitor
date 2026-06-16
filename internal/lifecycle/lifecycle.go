@@ -52,6 +52,15 @@ type PastAggregate struct {
 	AvgBTCAmount float64
 	// AvgNetworkPct is a percentage value.
 	AvgNetworkPct float64
+	// AvgHedgeNotionalEUR is the average perp hedge notional in EUR across the
+	// offer's lifecycle samples.
+	AvgHedgeNotionalEUR float64
+	// AvgLeverageUsed is the average leverage assumed for hedge sizing across
+	// the offer's lifecycle samples.
+	AvgLeverageUsed float64
+	// AvgRecommendedCollateralEUR is the average recommended hedge collateral
+	// in EUR across the offer's lifecycle samples.
+	AvgRecommendedCollateralEUR float64
 	// Samples is the samples value for the past aggregate.
 	Samples []PastSample
 }
@@ -150,7 +159,10 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 		        AVG(net_premium_pct) AS avg_net_pct,
 		        AVG(net_premium_btc) AS avg_profit_btc,
 		        AVG(net_premium_btc * ref_price) AS avg_profit_fiat,
-		        AVG(btc_amount) AS avg_btc_amount
+		        AVG(btc_amount) AS avg_btc_amount,
+		        AVG(hedge_notional_eur) AS avg_hedge_notional_eur,
+		        AVG(leverage_used) AS avg_leverage_used,
+		        AVG(recommended_collateral_eur) AS avg_recommended_collateral_eur
 		   FROM order_lifecycle
 		  WHERE offer_db_id IN (%s)
 		  GROUP BY offer_db_id`,
@@ -166,11 +178,13 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 		var count int
 		var avgPrice, avgRefPrice, avgPremium sql.NullFloat64
 		var avgTradeCostPct, avgTradeCostBTC, avgNetPct, avgProfitBTC, avgProfitFiat, avgBTCAmount sql.NullFloat64
+		var avgHedgeNotionalEUR, avgLeverageUsed, avgRecommendedCollateralEUR sql.NullFloat64
 		if err := rows.Scan(
 			&offerID, &count,
 			&avgPrice, &avgRefPrice, &avgPremium,
 			&avgTradeCostPct, &avgTradeCostBTC, &avgNetPct,
 			&avgProfitBTC, &avgProfitFiat, &avgBTCAmount,
+			&avgHedgeNotionalEUR, &avgLeverageUsed, &avgRecommendedCollateralEUR,
 		); err != nil {
 			continue
 		}
@@ -201,6 +215,15 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 		}
 		if avgBTCAmount.Valid {
 			agg.AvgBTCAmount = tradecost.Round8(avgBTCAmount.Float64)
+		}
+		if avgHedgeNotionalEUR.Valid {
+			agg.AvgHedgeNotionalEUR = tradecost.Round2(avgHedgeNotionalEUR.Float64)
+		}
+		if avgLeverageUsed.Valid {
+			agg.AvgLeverageUsed = tradecost.Round4(avgLeverageUsed.Float64)
+		}
+		if avgRecommendedCollateralEUR.Valid {
+			agg.AvgRecommendedCollateralEUR = tradecost.Round2(avgRecommendedCollateralEUR.Float64)
 		}
 		result[offerID] = agg
 	}

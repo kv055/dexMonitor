@@ -1392,7 +1392,10 @@ func addPastOfferCostFieldsFull(o map[string]any, requiredConfirmations int, exc
 
 	o["trade_cost_percent"] = storedTradeCostPct
 	o["net_premium_percent"] = netPremium
-	o["cost_breakdown"] = buildStoredPastBreakdown(o, btcSize, refPrice, storedTradeCostPct, storedTradeCostBTC, netPremium, estimatedProfitBTC)
+	// agg (real historical hedge averages) isn't available in this stats-only
+	// path; this cost_breakdown isn't what's served to the frontend (see
+	// buildPastOfferAPI below for that), so the live-recomputed estimate is fine here.
+	o["cost_breakdown"] = buildStoredPastBreakdown(o, btcSize, refPrice, storedTradeCostPct, storedTradeCostBTC, netPremium, estimatedProfitBTC, 0, 0, 0)
 
 	var btcSizeCapped float64
 	var estimatedProfitBTCCapped float64
@@ -1400,7 +1403,7 @@ func addPastOfferCostFieldsFull(o map[string]any, requiredConfirmations int, exc
 	if maxFiatLimitEUR > 0 && refPrice > 0 {
 		btcCap := maxFiatLimitEUR / refPrice
 		if btcSize > btcCap {
-			bdCapped := buildCappedPastBreakdown(o, btcSize, btcCap, refPrice, priceDiff)
+			bdCapped := buildCappedPastBreakdown(o, btcSize, btcCap, refPrice, priceDiff, 0, 0, 0)
 			btcSizeCapped = btcCap
 			estimatedProfitBTCCapped = bdCapped.EstimatedProfitBTC
 			hasCap = true
@@ -1475,7 +1478,8 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 	if btcMaxPtr != nil && *btcMaxPtr > 0 {
 		fullTradeSizeBTC = *btcMaxPtr
 	}
-	fullRep := buildStoredPastBreakdown(o, fullTradeSizeBTC, avgRefPrice, avgTradeCostPct, avgTradeCostBTC, avgNetPercent, avgProfitBTC)
+	fullRep := buildStoredPastBreakdown(o, fullTradeSizeBTC, avgRefPrice, avgTradeCostPct, avgTradeCostBTC, avgNetPercent, avgProfitBTC,
+		agg.AvgHedgeNotionalEUR, agg.AvgLeverageUsed, agg.AvgRecommendedCollateralEUR)
 	if avgNetworkPct == 0 {
 		avgNetworkPct = tradecost.Round4(fullRep.NetworkFeePct)
 	}
@@ -1504,7 +1508,8 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 	if maxFiatLimitEUR > 0 && avgRefPrice > 0 {
 		cappedTradeSizeBTC := tradecost.Round8(maxFiatLimitEUR / avgRefPrice)
 		if cappedTradeSizeBTC > 0 && fullTradeSizeBTC > cappedTradeSizeBTC {
-			cappedRep := buildCappedPastBreakdown(o, fullTradeSizeBTC, cappedTradeSizeBTC, avgRefPrice, avgPremiumPercent)
+			cappedRep := buildCappedPastBreakdown(o, fullTradeSizeBTC, cappedTradeSizeBTC, avgRefPrice, avgPremiumPercent,
+				agg.AvgHedgeNotionalEUR, agg.AvgLeverageUsed, agg.AvgRecommendedCollateralEUR)
 			var cappedAvgTradeCostPct, cappedAvgNetPct, cappedAvgProfitBTC, cappedAvgProfitFiat, cappedAvgTradeCostBTC, cappedAvgNetworkPct float64
 			if opts != nil && opts.cappedMemo != nil {
 				avg := opts.cappedMemo.get(o, agg, fullTradeSizeBTC)
@@ -1689,7 +1694,7 @@ func hedgeSideForOfferDirection(direction string) string {
 	return "short"
 }
 
-func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct, tradeCostBTC, netPremiumPct, profitBTC float64) tradecost.CostBreakdown {
+func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct, tradeCostBTC, netPremiumPct, profitBTC, avgHedgeNotionalEUR, avgLeverageUsed, avgRecommendedCollateralEUR float64) tradecost.CostBreakdown {
 	if btcSize <= 0 {
 		return tradecost.CostBreakdown{}
 	}
@@ -1734,6 +1739,20 @@ func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct,
 		hedge.FundingFeePct = pct(hedge.FundingFeeBTC)
 		hedge.FeeSumPct = pct(hedge.FeeSumBTC)
 	}
+	// The real, measured collateral requirement beats the live-recomputed
+	// estimate above: it reflects what this offer's hedge actually needed
+	// while it was live, not what it would cost to hedge at today's price.
+	if avgRecommendedCollateralEUR > 0 {
+		hedge.Position = &tradecost.HedgePositionDetail{
+			Side:                     hedge.Side,
+			HedgeRatio:               1.0,
+			LeverageUsed:             tradecost.Round4(avgLeverageUsed),
+			HedgeNotionalEUR:         tradecost.Round2(avgHedgeNotionalEUR),
+			RecommendedCollateralEUR: tradecost.Round2(avgRecommendedCollateralEUR),
+			BTCPriceEUR:              tradecost.Round2(refPrice),
+			Historical:               true,
+		}
+	}
 	if tradeCostBTC == 0 {
 		tradeCostBTC = offerFloat(o, "trade_cost_btc")
 	}
@@ -1773,7 +1792,7 @@ func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct,
 	}
 }
 
-func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refPrice, premiumPct float64) tradecost.CostBreakdown {
+func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refPrice, premiumPct, avgHedgeNotionalEUR, avgLeverageUsed, avgRecommendedCollateralEUR float64) tradecost.CostBreakdown {
 	if cappedBTCSize <= 0 {
 		return tradecost.CostBreakdown{}
 	}
@@ -1792,6 +1811,14 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 			return 0
 		}
 		return cappedBTCSize * (offerFloat(o, key) / fullBTCSize)
+	}
+	// scaleSize scales a full-size historical figure (e.g. notional) down to
+	// the capped trade size, same proportional approach as scaleStored.
+	scaleSize := func(v float64) float64 {
+		if fullBTCSize <= 0 {
+			return 0
+		}
+		return cappedBTCSize * (v / fullBTCSize)
 	}
 
 	takerBTC := scaleStored("cex_taker_fee_btc")
@@ -1820,6 +1847,21 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 		hedge.CloseFeePct = pct(hedge.CloseFeeBTC)
 		hedge.FundingFeePct = pct(hedge.FundingFeeBTC)
 		hedge.FeeSumPct = pct(hedge.FeeSumBTC)
+	}
+	// Scale the real measured full-size collateral down to the capped size —
+	// notional scales linearly with trade size; leverage is a ratio and
+	// doesn't scale. Beats the live-recomputed estimate above for the same
+	// reason as the full-volume breakdown.
+	if avgRecommendedCollateralEUR > 0 {
+		hedge.Position = &tradecost.HedgePositionDetail{
+			Side:                     hedge.Side,
+			HedgeRatio:               1.0,
+			LeverageUsed:             tradecost.Round4(avgLeverageUsed),
+			HedgeNotionalEUR:         tradecost.Round2(scaleSize(avgHedgeNotionalEUR)),
+			RecommendedCollateralEUR: tradecost.Round2(scaleSize(avgRecommendedCollateralEUR)),
+			BTCPriceEUR:              tradecost.Round2(refPrice),
+			Historical:               true,
+		}
 	}
 
 	withdrawalBTC := 0.0
@@ -1873,7 +1915,7 @@ func recomputeCappedLifecycleAverages(o map[string]any, samples []pastLifecycleS
 		if btcCap <= 0 {
 			continue
 		}
-		bd := buildCappedPastBreakdown(o, fullBTCSize, btcCap, sample.RefPrice, sample.PremiumPct)
+		bd := buildCappedPastBreakdown(o, fullBTCSize, btcCap, sample.RefPrice, sample.PremiumPct, 0, 0, 0)
 		count++
 		sumTradeCostPct += bd.TotalCostPct
 		sumNetPct += bd.EstimatedProfitPct

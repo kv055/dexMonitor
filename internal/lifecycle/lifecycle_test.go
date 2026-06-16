@@ -42,7 +42,10 @@ CREATE TABLE order_lifecycle (
 	trade_cost_btc REAL,
 	net_premium_pct REAL,
 	net_premium_btc REAL,
-	btc_amount REAL
+	btc_amount REAL,
+	hedge_notional_eur REAL,
+	leverage_used REAL,
+	recommended_collateral_eur REAL
 );
 `
 
@@ -205,6 +208,37 @@ func TestLoadPastAggregatesComputesAveragesWithoutSamples(t *testing.T) {
 	}
 	assertFloat(t, got.AvgPremiumPercent, 7.5)
 	assertFloat(t, got.AvgNetPercent, 6)
+}
+
+func TestLoadPastAggregatesComputesHedgePositionAverages(t *testing.T) {
+	db := openTestDB(t)
+	offerID := insertOffer(t, db)
+	repo := NewRepository(db)
+
+	for _, row := range []struct {
+		notional, leverage, collateral float64
+	}{
+		{50, 5, 15},
+		{60, 5, 17},
+	} {
+		if _, err := db.Exec(
+			`INSERT INTO order_lifecycle
+				(offer_db_id, price, ref_price, premium_pct, hedge_notional_eur, leverage_used, recommended_collateral_eur)
+			 VALUES (?, 105, 100, 5, ?, ?, ?)`,
+			offerID, row.notional, row.leverage, row.collateral,
+		); err != nil {
+			t.Fatalf("insert lifecycle: %v", err)
+		}
+	}
+
+	agg, err := repo.LoadPastAggregates(context.Background(), []int64{offerID})
+	if err != nil {
+		t.Fatalf("LoadPastAggregates: %v", err)
+	}
+	got := agg[offerID]
+	assertFloat(t, got.AvgHedgeNotionalEUR, 55)
+	assertFloat(t, got.AvgLeverageUsed, 5)
+	assertFloat(t, got.AvgRecommendedCollateralEUR, 16)
 }
 
 func TestLoadPastSamplesReturnsRefPriceRows(t *testing.T) {

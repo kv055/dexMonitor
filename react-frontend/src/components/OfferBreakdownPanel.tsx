@@ -206,7 +206,9 @@ function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
         <>
           <div className="mt-1 pt-1.5 border-t border-border/80 flex items-center gap-1.5 mb-0.5 pl-0.5">
             <Badge label="position" colorCls="text-blue" />
-            <span className="text-[0.6rem] text-muted">live hedge sizing</span>
+            <span className="text-[0.6rem] text-muted">
+              {position.historical ? 'historical avg — measured while live' : 'live hedge sizing'}
+            </span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted">Hedge ratio</span>
@@ -225,35 +227,41 @@ function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
             <span className="text-text mono-nums">{fmtEurAmount(position.hedge_notional_eur)}</span>
           </div>
           <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Initial margin</span>
-            <span className="text-text mono-nums">{fmtEurAmount(position.initial_margin_eur)}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
             <span className="text-muted">Recommended collateral</span>
             <span className="text-text mono-nums">{fmtEurAmount(position.recommended_collateral_eur)}</span>
           </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Stress move</span>
-            <span className="text-text mono-nums">{fmtRatioPct(position.stress_move_pct)}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Stress loss</span>
-            <span className="text-text mono-nums">{fmtEurAmount(position.stress_loss_eur)}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Maintenance requirement</span>
-            <span className="text-text mono-nums">{fmtEurAmount(position.maintenance_requirement_eur)}</span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Free collateral after stress</span>
-            <span className={`mono-nums ${position.free_collateral_after_stress_eur < 0 ? 'text-red' : 'text-text'}`}>
-              {fmtEurAmount(position.free_collateral_after_stress_eur)}
-            </span>
-          </div>
-          <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Liquidation move</span>
-            <span className="text-text mono-nums">{fmtRatioPct(position.liquidation_move_pct)}</span>
-          </div>
+          {/* The remaining fields were never persisted historically — only show
+              them for a freshly-simulated live position, not a reconstructed one. */}
+          {!position.historical && (
+            <>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted">Initial margin</span>
+                <span className="text-text mono-nums">{fmtEurAmount(position.initial_margin_eur)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted">Stress move</span>
+                <span className="text-text mono-nums">{fmtRatioPct(position.stress_move_pct)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted">Stress loss</span>
+                <span className="text-text mono-nums">{fmtEurAmount(position.stress_loss_eur)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted">Maintenance requirement</span>
+                <span className="text-text mono-nums">{fmtEurAmount(position.maintenance_requirement_eur)}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted">Free collateral after stress</span>
+                <span className={`mono-nums ${position.free_collateral_after_stress_eur < 0 ? 'text-red' : 'text-text'}`}>
+                  {fmtEurAmount(position.free_collateral_after_stress_eur)}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted">Liquidation move</span>
+                <span className="text-text mono-nums">{fmtRatioPct(position.liquidation_move_pct)}</span>
+              </div>
+            </>
+          )}
         </>
       )}
     </div>
