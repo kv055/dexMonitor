@@ -725,6 +725,7 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
   // capped scenario (e.g. it sits below the cap); fall back to the full breakdown.
   const showCappedEffective = showCapped && hasCappedScenario(offer);
   const costBreakdown = getDisplayCostBreakdown(offer, showCappedEffective);
+  const offerPrice = getOfferPrice(offer);
 
   return (
     <div className="flex flex-col gap-3">
