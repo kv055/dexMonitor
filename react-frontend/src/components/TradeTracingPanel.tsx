@@ -1,14 +1,20 @@
 import { useMemo, useState } from 'react';
-import type { Offer, CexSpotBuyResult, CexHedgeOpenResult } from '../types';
+import type { Offer, CexSpotBuyResult, CexHedgeOpenResult, CexTradeflowResult, HedgePositionUpdate, PreTradeCheckReport, WithdrawalTrackResult } from '../types';
 import { ExchangeTag } from './ExchangeTag';
 import { premiumClass } from '../utils/formatters';
-import { cexSpotBuy, cexHedgeOpen } from '../utils/api';
+import { cexTradeflow, cexPreTradeCheck } from '../utils/api';
+import { useHedgeStream } from '../hooks/useHedgeStream';
+import { useWithdrawalTrack } from '../hooks/useWithdrawalTrack';
+import { CapitalRequiredSection, AbortCostSection, SizeToggle } from './OfferBreakdownPanel';
 import {
   getBtcMax,
   getBtcMin,
+  getCappedTradeSizeBtc,
+  getDisplayAbortCost,
   getDisplayCostBreakdown,
   getNetPremiumPercent,
   getRefPrice,
+  hasCappedScenario,
 } from '../utils/offerAccess';
 
 type Unit = 'btc' | 'fiat';
@@ -23,6 +29,19 @@ interface SubmitState {
 interface HedgeState {
   phase: 'idle' | 'submitting' | 'done' | 'error';
   result?: CexHedgeOpenResult;
+  error?: string;
+}
+
+interface WalletState {
+  phase: 'idle' | 'submitting' | 'done' | 'error';
+  result?: CexTradeflowResult['withdrawal'];
+  transactionId?: number;
+  error?: string;
+}
+
+interface ChecksState {
+  phase: 'idle' | 'running' | 'done' | 'error';
+  report?: PreTradeCheckReport;
   error?: string;
 }
 
@@ -45,6 +64,60 @@ function clamp(value: number, min: number | null, max: number | null): number {
   return v;
 }
 
+function cexStatusLabel(status: string | undefined): string {
+  if (!status) return '—';
+  return status.replace(/_/g, ' ');
+}
+
+// LiveWithdrawalStatus renders polled CEX withdrawal + mempool confirmation state.
+function LiveWithdrawalStatus({
+  track,
+  loading,
+  error,
+}: {
+  track: WithdrawalTrackResult | null;
+  loading: boolean;
+  error: string | null;
+}) {
+  return (
+    <div className="mt-3 pt-3 border-t border-border flex flex-col gap-1.5 text-text">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[0.6rem] uppercase tracking-wide text-muted">Live withdrawal</span>
+        <span className="text-[0.62rem] text-muted">{loading ? 'updating…' : track ? 'live' : 'waiting…'}</span>
+      </div>
+      {error && <span className="text-red text-[0.68rem] wrap-break-word">{error}</span>}
+      {!track && !error && <span className="text-muted">Awaiting first status update…</span>}
+      {track && (
+        <>
+          <div className="flex justify-between gap-2"><span className="text-muted">CEX status</span><span className="mono-nums">{cexStatusLabel(track.cex_status)}</span></div>
+          {track.tx_hash && (
+            <div className="flex justify-between gap-2">
+              <span className="text-muted">Tx hash</span>
+              <a
+                className="mono-nums truncate max-w-40 text-accent hover:underline"
+                href={`https://mempool.space/tx/${track.tx_hash}`}
+                target="_blank"
+                rel="noreferrer"
+                title={track.tx_hash}
+              >
+                {track.tx_hash}
+              </a>
+            </div>
+          )}
+          {track.mempool && (
+            <>
+              <div className="flex justify-between gap-2"><span className="text-muted">On-chain</span><span className="mono-nums">{track.mempool.status_label}</span></div>
+              {track.mempool.confirmed && (
+                <div className="flex justify-between gap-2"><span className="text-muted">Confirmations</span><span className="mono-nums">{track.mempool.confirmations}</span></div>
+              )}
+            </>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 function HeaderFact({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-0.5">
@@ -54,16 +127,65 @@ function HeaderFact({ label, children }: { label: string; children: React.ReactN
   );
 }
 
+// LiveHedgePosition renders the streamed risk view of the open hedge. `position`
+// comes from useHedgeStream; `socketConnected` is the browser↔server link, while
+// `position.connected` is the upstream exchange feed health.
+function LiveHedgePosition({ position, socketConnected }: { position: HedgePositionUpdate | null; socketConnected: boolean }) {
+  const upstreamUp = position?.connected ?? false;
+  const dotClass = upstreamUp ? 'bg-green' : socketConnected ? 'bg-amber-400' : 'bg-red';
+  const statusText = upstreamUp ? 'live' : socketConnected ? 'connecting…' : 'disconnected';
+  const cur = position?.currency || 'USD';
+
+  return (
+    <div className="mt-3 pt-3 border-t border-border flex flex-col gap-1.5 text-text">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[0.6rem] uppercase tracking-wide text-muted">Live position</span>
+        <span className="flex items-center gap-1.5 text-[0.62rem] text-muted">
+          <span className={`inline-block w-1.5 h-1.5 rounded-full ${dotClass}`} />
+          {statusText}
+          {position?.error && <span className="text-red truncate max-w-32" title={position.error}>· {position.error}</span>}
+        </span>
+      </div>
+      {!position ? (
+        <span className="text-muted">Awaiting first update…</span>
+      ) : (
+        <>
+          <div className="flex justify-between gap-2"><span className="text-muted">Side</span><span className="mono-nums">{position.side}</span></div>
+          <div className="flex justify-between gap-2"><span className="text-muted">Size</span><span className="mono-nums">{fmtBtc(position.size_btc)} BTC</span></div>
+          <div className="flex justify-between gap-2"><span className="text-muted">Entry</span><span className="mono-nums">{fmtFiat(position.entry_price, cur)}</span></div>
+          <div className="flex justify-between gap-2"><span className="text-muted">Mark</span><span className="mono-nums">{fmtFiat(position.mark_price, cur)}</span></div>
+          {position.liquidation_price != null && position.liquidation_price > 0 && (
+            <div className="flex justify-between gap-2"><span className="text-muted">Liquidation</span><span className="mono-nums">{fmtFiat(position.liquidation_price, cur)}</span></div>
+          )}
+          <div className="flex justify-between gap-2"><span className="text-muted">Unrealized PnL</span><span className={`mono-nums ${position.unrealized_pnl >= 0 ? 'text-green' : 'text-red'}`}>{fmtFiat(position.unrealized_pnl, cur)}</span></div>
+          <div className="flex justify-between gap-2"><span className="text-muted">Margin</span><span className="mono-nums">{fmtFiat(position.margin, cur)}</span></div>
+          {position.funding_rate != null && position.funding_rate !== 0 && (
+            <div className="flex justify-between gap-2"><span className="text-muted">Funding</span><span className="mono-nums">{(position.funding_rate * 100).toFixed(4)}%</span></div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
 export function TradeTracingPanel({ offer }: { offer: Offer }) {
-  const bd = getDisplayCostBreakdown(offer);
+  const hasCapped = hasCappedScenario(offer);
+  // Default to the capped scenario when one actually applies (the offer's
+  // full size exceeds the fiat cap); otherwise there's nothing to cap, so
+  // fall back to the max position size.
+  const [showCapped, setShowCapped] = useState(() => hasCapped);
+
+  const bd = getDisplayCostBreakdown(offer, showCapped);
+  const abortCost = getDisplayAbortCost(offer, showCapped);
   const refPrice = getRefPrice(offer);
   const fiatCurrency = offer.pricing?.fiat_currency ?? 'EUR';
   const isAsk = offer.direction === 'sell';
   const routeCex = bd?.route_cex ?? '';
   const cexLabel = routeCex ? routeCex.charAt(0).toUpperCase() + routeCex.slice(1) : '—';
-  const netPremium = getNetPremiumPercent(offer, false);
+  const netPremium = getNetPremiumPercent(offer, showCapped);
   const btcMin = getBtcMin(offer);
   const btcMax = getBtcMax(offer);
+  const cappedBtc = getCappedTradeSizeBtc(offer);
 
   const defaultBtc = bd?.btc_amount ?? btcMax ?? btcMin ?? 0;
   const canUseFiat = refPrice != null && refPrice > 0;
@@ -72,8 +194,34 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
   const [draft, setDraft] = useState<string>(() => fmtBtc(defaultBtc));
   const [submit, setSubmit] = useState<SubmitState>({ phase: 'idle' });
   const [hedgeSubmit, setHedgeSubmit] = useState<HedgeState>({ phase: 'idle' });
+  const [walletSubmit, setWalletSubmit] = useState<WalletState>({ phase: 'idle' });
   const [confirmOpen, setConfirmOpen] = useState(false);
+  const [checks, setChecks] = useState<ChecksState>({ phase: 'idle' });
+  const [expectedLndAddress, setExpectedLndAddress] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('preview');
+
+  // Only stream the live hedge position while the Hedge tab is open, so merely
+  // previewing an offer doesn't spin up the upstream exchange feeds. Prefer the
+  // venue from an opened hedge, falling back to the offer's breakdown venue.
+  const liveHedgeVenue = activeTab === 'hedge'
+    ? (hedgeSubmit.result?.venue ?? bd?.hedge?.venue ?? null)
+    : null;
+  const { position: livePosition, connected: liveSocketConnected } = useHedgeStream(liveHedgeVenue);
+
+  const walletTrackActive = activeTab === 'wallet' && walletSubmit.phase === 'done' && !!walletSubmit.result?.withdrawal_id;
+  const walletProvider = walletSubmit.result?.provider ?? routeCex;
+  const { track: withdrawalTrack, loading: withdrawalTrackLoading, error: withdrawalTrackError } = useWithdrawalTrack(
+    walletTrackActive,
+    walletProvider,
+    walletSubmit.result?.withdrawal_id ?? null,
+    walletSubmit.result?.client_request_id ?? null,
+  );
+
+  const receivingAddress =
+    walletSubmit.result?.wallet_address
+    ?? expectedLndAddress
+    ?? checks.report?.lnd_withdraw_address
+    ?? null;
 
   // Canonical BTC amount derived from the current input + unit.
   const amountBtc = useMemo(() => {
@@ -99,48 +247,107 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
     setUnit(next);
   }
 
-  const canTrade = !!routeCex && clampedBtc > 0 && submit.phase !== 'submitting';
+  // Switches which precomputed scenario (max position size vs. the
+  // fiat-capped size) is previewed, and resets the volume box to that
+  // scenario's size — same convention as toggleUnit above.
+  function toggleSize(capped: boolean) {
+    if (capped === showCapped) return;
+    setShowCapped(capped);
+    const sizeBd = getDisplayCostBreakdown(offer, capped);
+    const nextBtc = sizeBd?.btc_amount ?? btcMax ?? btcMin ?? 0;
+    if (unit === 'fiat' && canUseFiat) {
+      setDraft(nextBtc > 0 ? (nextBtc * refPrice!).toFixed(2) : '');
+    } else {
+      setDraft(nextBtc > 0 ? fmtBtc(nextBtc) : '');
+    }
+  }
+
+  const canTrade = !!routeCex && clampedBtc > 0 && !!bd?.capital && !!bd?.hedge?.venue && submit.phase !== 'submitting';
+  const checksPassed = checks.phase === 'done' && !!checks.report?.ok;
+
+  // Opening the confirm dialog immediately kicks off the (read-only) pre-trade checks
+  // so their results are shown in the same card before the operator confirms.
+  function openConfirm() {
+    setConfirmOpen(true);
+    void runPreTradeChecks();
+  }
+
+  function closeConfirm() {
+    setConfirmOpen(false);
+    setChecks({ phase: 'idle' });
+  }
+
+  async function runPreTradeChecks() {
+    setChecks({ phase: 'running' });
+    try {
+      const report = await cexPreTradeCheck({
+        provider: routeCex,
+        fiat_currency: fiatCurrency,
+        required_capital_eur: bd?.capital?.total_eur ?? 0,
+      });
+      setChecks({ phase: 'done', report });
+      if (report.lnd_withdraw_address) {
+        setExpectedLndAddress(report.lnd_withdraw_address);
+      }
+    } catch (err) {
+      setChecks({ phase: 'error', error: err instanceof Error ? err.message : String(err) });
+    }
+  }
 
   async function runTrade() {
-    setConfirmOpen(false);
-    setSubmit({ phase: 'submitting' });
-    setHedgeSubmit({ phase: 'idle' });
-    setActiveTab('spot');
-
-    let spotResult: CexSpotBuyResult;
-    try {
-      spotResult = await cexSpotBuy({
-        provider: routeCex,
-        btc_amount: clampedBtc,
-        fiat_currency: fiatCurrency,
-      });
-      setSubmit({ phase: 'done', result: spotResult });
-    } catch (err) {
-      setSubmit({ phase: 'error', error: err instanceof Error ? err.message : String(err) });
-      return;
-    }
-
-    // Spot succeeded — auto-trigger the hedge leg if the offer has a hedge breakdown.
     const hedgeVenue = bd?.hedge?.venue;
     if (!hedgeVenue) return;
 
+    setConfirmOpen(false);
+    setChecks({ phase: 'idle' });
+    setSubmit({ phase: 'submitting' });
+    setHedgeSubmit({ phase: 'submitting' });
+    setWalletSubmit({ phase: 'submitting' });
+    setActiveTab('spot');
+
     const hedgeRatio = bd?.hedge?.position?.hedge_ratio ?? 1.0;
-    const leverage  = bd?.hedge?.position?.leverage_used ?? 1.0;
-    const side      = bd?.hedge?.side ?? (isAsk ? 'long' : 'short');
+    const leverage = bd?.hedge?.position?.leverage_used ?? 1.0;
+    const side = bd?.hedge?.side ?? (isAsk ? 'long' : 'short');
     const btcNotional = clampedBtc * hedgeRatio;
 
-    setHedgeSubmit({ phase: 'submitting' });
-    setActiveTab('hedge');
+    const fiatAmount = estFiat ?? (refPrice != null ? refPrice * clampedBtc : 0);
+
     try {
-      const hedgeResult = await cexHedgeOpen({
-        venue:        hedgeVenue,
-        side,
-        btc_notional: btcNotional,
+      const result = await cexTradeflow({
+        provider: routeCex,
+        market_side: 'bid',
+        btc_amount: clampedBtc,
+        fiat_currency: fiatCurrency,
+        required_capital_eur: bd?.capital?.total_eur ?? 0,
+        hedge_venue: hedgeVenue,
+        hedge_side: side,
+        hedge_notional_btc: btcNotional,
         leverage,
+        offer_id: offer.offer_id ?? undefined,
+        dex: offer.exchange,
+        fiat_amount: fiatAmount > 0 ? fiatAmount : undefined,
+        selected_offer: {
+          offer_id: offer.offer_id,
+          exchange: offer.exchange,
+          direction: offer.direction,
+          price: offer.price,
+          btc_min: offer.btc_min,
+          btc_max: offer.btc_max,
+        },
       });
-      setHedgeSubmit({ phase: 'done', result: hedgeResult });
+      setSubmit({ phase: 'done', result: result.spot_buy });
+      setHedgeSubmit({ phase: 'done', result: result.hedge });
+      setWalletSubmit({
+        phase: 'done',
+        result: result.withdrawal,
+        transactionId: result.transaction_id,
+      });
+      setActiveTab('spot');
     } catch (err) {
-      setHedgeSubmit({ phase: 'error', error: err instanceof Error ? err.message : String(err) });
+      const message = err instanceof Error ? err.message : String(err);
+      setSubmit({ phase: 'error', error: message });
+      setHedgeSubmit({ phase: 'error', error: message });
+      setWalletSubmit({ phase: 'error', error: message });
     }
   }
 
@@ -161,7 +368,7 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
             { id: 'preview' as Tab, label: 'Preview', dot: 'idle' as const },
             { id: 'spot'    as Tab, label: 'Spot',    dot: submit.phase },
             { id: 'hedge'   as Tab, label: 'Hedge',   dot: hedgeSubmit.phase },
-            { id: 'wallet'  as Tab, label: 'Wallet',  dot: 'idle' as const },
+            { id: 'wallet'  as Tab, label: 'Wallet',  dot: walletSubmit.phase },
           ] satisfies { id: Tab; label: string; dot: string }[]).map(({ id, label, dot }) => (
             <button
               key={id}
@@ -201,6 +408,15 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
 
               <div className="border-t border-border" />
 
+              {hasCapped && (
+                <SizeToggle
+                  showCapped={showCapped}
+                  onToggle={toggleSize}
+                  cappedBtc={cappedBtc}
+                  refPrice={refPrice}
+                />
+              )}
+
               {/* Input row: unit toggles | number field | start button */}
               <div className="flex items-center gap-1.5">
                 <div className="flex items-center shrink-0">
@@ -231,7 +447,7 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
                 <button
                   type="button"
                   disabled={!canTrade}
-                  onClick={() => setConfirmOpen(true)}
+                  onClick={openConfirm}
                   className={`shrink-0 rounded-md px-3 py-1 text-[0.73rem] font-semibold transition-colors ${canTrade ? 'bg-green/15 border border-green/50 text-green hover:bg-green/25' : 'bg-surface border border-border text-muted cursor-not-allowed'}`}
                 >
                   {submit.phase === 'submitting' ? 'Submitting…' : 'Start trade'}
@@ -252,6 +468,9 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
                     : ''}
                 </span>
               </div>
+
+              {bd && <CapitalRequiredSection capital={bd.capital} />}
+              <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
             </div>
           )}
           {activeTab === 'spot' && (
@@ -266,6 +485,19 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
                   <div className="flex justify-between gap-2"><span className="text-muted">BTC</span><span className="mono-nums">{fmtBtc(submit.result.requested_btc)}</span></div>
                   {submit.result.order_id && (
                     <div className="flex justify-between gap-2"><span className="text-muted">Order</span><span className="mono-nums truncate max-w-40" title={submit.result.order_id}>{submit.result.order_id}</span></div>
+                  )}
+                  {submit.result.execution && (
+                    <>
+                      <div className="flex justify-between gap-2"><span className="text-muted">Avg. rate</span><span className="mono-nums">{fmtFiat(submit.result.execution.average_rate, fiatCurrency)}</span></div>
+                      <div className="flex justify-between gap-2"><span className="text-muted">Filled BTC</span><span className="mono-nums">{fmtBtc(submit.result.execution.filled_btc)}</span></div>
+                      <div className="flex justify-between gap-2"><span className="text-muted">Filled {fiatCurrency}</span><span className="mono-nums">{fmtFiat(submit.result.execution.filled_fiat, fiatCurrency)}</span></div>
+                      {(submit.result.execution.fees ?? []).map(fee => (
+                        <div key={fee.asset} className="flex justify-between gap-2"><span className="text-muted">Fee ({fee.asset})</span><span className="mono-nums">{fmtBtc(fee.amount)} {fee.asset}</span></div>
+                      ))}
+                      {submit.result.execution.poll_incomplete && (
+                        <div className="flex justify-between gap-2"><span className="text-accent">Note</span><span className="text-accent text-[0.7rem] text-right">Fill details incomplete — order may still be settling</span></div>
+                      )}
+                    </>
                   )}
                 </div>
               )}
@@ -290,17 +522,69 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
                   )}
                 </div>
               )}
+              {liveHedgeVenue && (
+                <LiveHedgePosition position={livePosition} socketConnected={liveSocketConnected} />
+              )}
             </>
           )}
           {activeTab === 'wallet' && (
-            <span className="text-muted">Pending — not yet wired.</span>
+            <>
+              {walletSubmit.phase === 'idle' && submit.phase === 'idle' && !receivingAddress && (
+                <span className="text-muted">Submit a trade to begin.</span>
+              )}
+              {walletSubmit.phase === 'idle' && receivingAddress && (
+                <div className="flex flex-col gap-1.5 text-text">
+                  <div className="flex justify-between gap-2"><span className="text-muted">Receiving address</span><span className="mono-nums truncate max-w-40" title={receivingAddress}>{receivingAddress}</span></div>
+                  {submit.phase === 'idle' && <span className="text-muted text-[0.68rem]">From pre-trade whitelist check.</span>}
+                </div>
+              )}
+              {walletSubmit.phase === 'submitting' && (
+                <div className="flex flex-col gap-1.5 text-text">
+                  <span className="text-accent">Initiating CEX withdrawal to LND wallet…</span>
+                  {receivingAddress && (
+                    <div className="flex justify-between gap-2"><span className="text-muted">Receiving address</span><span className="mono-nums truncate max-w-40" title={receivingAddress}>{receivingAddress}</span></div>
+                  )}
+                </div>
+              )}
+              {walletSubmit.phase === 'error' && <span className="text-red wrap-break-word">{walletSubmit.error}</span>}
+              {walletSubmit.phase === 'done' && walletSubmit.result && (
+                <div className="flex flex-col gap-1.5 text-text">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted">Status</span>
+                    <span className="text-green font-medium">{cexStatusLabel(withdrawalTrack?.cex_status ?? walletSubmit.result.cex_status ?? 'submitted')}</span>
+                  </div>
+                  <div className="flex justify-between gap-2"><span className="text-muted">Amount</span><span className="mono-nums">{fmtBtc(walletSubmit.result.amount_btc)} BTC</span></div>
+                  {walletSubmit.result.withdrawal_id && (
+                    <div className="flex justify-between gap-2"><span className="text-muted">Withdrawal</span><span className="mono-nums truncate max-w-40" title={walletSubmit.result.withdrawal_id}>{walletSubmit.result.withdrawal_id}</span></div>
+                  )}
+                  {walletSubmit.transactionId != null && walletSubmit.transactionId > 0 && (
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted">Transaction</span>
+                      <span className="mono-nums">#{walletSubmit.transactionId}</span>
+                    </div>
+                  )}
+                  {walletSubmit.transactionId != null && walletSubmit.transactionId > 0 && (
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted">DEX relay</span>
+                      <span className="text-muted text-[0.68rem]">Pending ≥1 conf, then auto-relay</span>
+                    </div>
+                  )}
+                  {receivingAddress && (
+                    <div className="flex justify-between gap-2"><span className="text-muted">LND address</span><span className="mono-nums truncate max-w-40" title={receivingAddress}>{receivingAddress}</span></div>
+                  )}
+                </div>
+              )}
+              {walletTrackActive && (
+                <LiveWithdrawalStatus track={withdrawalTrack} loading={withdrawalTrackLoading} error={withdrawalTrackError} />
+              )}
+            </>
           )}
         </div>
       </div>
 
       {/* Confirmation dialog */}
       {confirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={() => setConfirmOpen(false)}>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closeConfirm}>
           <div className="bg-surface border border-border rounded-lg p-4 w-full max-w-sm flex flex-col gap-3" onClick={e => e.stopPropagation()}>
             <h3 className="text-[0.8rem] font-semibold text-text">Confirm market buy</h3>
             <p className="text-[0.72rem] text-muted">
@@ -311,9 +595,37 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
               <div className="flex justify-between gap-2"><span className="text-muted">Amount</span><span className="text-text mono-nums">{fmtBtc(clampedBtc)} BTC</span></div>
               <div className="flex justify-between gap-2"><span className="text-muted">Est. cost</span><span className="text-text mono-nums">{estFiat != null ? fmtFiat(estFiat, fiatCurrency) : '—'}</span></div>
             </div>
+
+            {/* Pre-trade checks — all run to completion before the buy can be confirmed. */}
+            <div className="bg-bg border border-border rounded-md p-2.5 flex flex-col gap-1.5 text-[0.74rem]">
+              <span className="text-[0.6rem] uppercase tracking-wide text-muted">Pre-trade checks</span>
+              {checks.phase === 'running' && <span className="text-accent">Running pre-trade checks…</span>}
+              {checks.phase === 'error' && <span className="text-red wrap-break-word">{checks.error}</span>}
+              {checks.phase === 'done' && checks.report && checks.report.checks.map(c => (
+                <div key={c.name} className="flex flex-col gap-0.5">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted">{c.label}</span>
+                    <span className={c.passed ? 'text-green font-medium' : 'text-red font-medium'}>{c.passed ? '✓ pass' : '✗ fail'}</span>
+                  </div>
+                  {!c.passed && c.message && <span className="text-red text-[0.68rem] wrap-break-word">{c.message}</span>}
+                </div>
+              ))}
+              {checks.phase === 'done' && checks.report && !checks.report.ok && (
+                <span className="text-red text-[0.68rem]">Resolve the failed check(s) above before trading.</span>
+              )}
+            </div>
+
             <div className="flex items-center justify-end gap-2">
-              <button type="button" onClick={() => setConfirmOpen(false)} className="text-[0.72rem] px-3 py-1.5 rounded-md border border-border text-muted hover:border-muted/60">Cancel</button>
-              <button type="button" onClick={runTrade} className="text-[0.72rem] px-3 py-1.5 rounded-md border border-green/50 bg-green/15 text-green font-semibold hover:bg-green/25">Confirm buy</button>
+              <button type="button" onClick={closeConfirm} className="text-[0.72rem] px-3 py-1.5 rounded-md border border-border text-muted hover:border-muted/60">Cancel</button>
+              <button
+                type="button"
+                onClick={runTrade}
+                disabled={!checksPassed}
+                title={checksPassed ? undefined : 'All pre-trade checks must pass first'}
+                className={`text-[0.72rem] px-3 py-1.5 rounded-md border font-semibold transition-colors ${checksPassed ? 'border-green/50 bg-green/15 text-green hover:bg-green/25' : 'border-border bg-surface text-muted cursor-not-allowed'}`}
+              >
+                {checks.phase === 'running' ? 'Checking…' : 'Confirm buy'}
+              </button>
             </div>
           </div>
         </div>

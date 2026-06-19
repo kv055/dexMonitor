@@ -272,7 +272,7 @@ function NetworkFeeDetail({ bd }: { bd: CostBreakdown }) {
   if (bd.network_fee_method === 'onchain' && bd.network_fee_detail) {
     return (
       <tr>
-        <td colSpan={4} className="pt-0 pb-2">
+        <td colSpan={3} className="pt-0 pb-2">
           <OnchainFeeDetail d={bd.network_fee_detail} conf={bd.network_fee_confidence} />
         </td>
       </tr>
@@ -281,7 +281,7 @@ function NetworkFeeDetail({ bd }: { bd: CostBreakdown }) {
   if (bd.network_fee_method === 'lightning') {
     return (
       <tr>
-        <td colSpan={4} className="pt-0 pb-2">
+        <td colSpan={3} className="pt-0 pb-2">
           <LightningFeeDetail conf={bd.network_fee_confidence} />
         </td>
       </tr>
@@ -294,7 +294,7 @@ function HedgeDetailRow({ bd }: { bd: CostBreakdown }) {
   if (bd.hedge.fee_sum_btc <= 0) return null;
   return (
     <tr>
-      <td colSpan={4} className="pt-0 pb-2">
+      <td colSpan={3} className="pt-0 pb-2">
         <HedgeFeeDetail bd={bd} />
       </td>
     </tr>
@@ -336,7 +336,7 @@ export function SizeToggle({ showCapped, onToggle, cappedBtc, refPrice }: {
   );
 }
 
-function AbortCostSection({ abortCost, refPrice }: {
+export function AbortCostSection({ abortCost, refPrice }: {
   abortCost: AbortCostBreakdown | null;
   refPrice: number | null;
 }) {
@@ -356,7 +356,7 @@ function AbortCostSection({ abortCost, refPrice }: {
   );
 }
 
-function CapitalRequiredSection({ capital }: { capital: CapitalRequirement | null | undefined }) {
+export function CapitalRequiredSection({ capital }: { capital: CapitalRequirement | null | undefined }) {
   if (!capital || capital.total_eur <= 0) return null;
 
   const hasDeposit = capital.security_deposit_btc > 0;
@@ -395,16 +395,21 @@ function CapitalRequiredSection({ capital }: { capital: CapitalRequirement | nul
   );
 }
 
-export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct, refPrice }: {
+export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct, refPrice, showCapitalAndAbort = true }: {
   bd: CostBreakdown;
   abortCost: AbortCostBreakdown | null;
   priceDiffPct: number | null;
   netPremiumPct: number | null;
   refPrice: number | null;
+  // Live offers show these in the Trade Tracing panel's Preview tab instead
+  // (where the trader is actually about to act on them); past offers have no
+  // Trade Tracing panel, so they keep showing both here.
+  showCapitalAndAbort?: boolean;
 }) {
   type BreakdownRow = { label: string; btc: number; pct: number; expandable?: 'network' | 'hedge' };
   const [networkFeeOpen, setNetworkFeeOpen] = useState(false);
   const [hedgeFeeOpen, setHedgeFeeOpen] = useState(false);
+  const [amountUnit, setAmountUnit] = useState<'btc' | 'fiat'>('fiat');
   const hasNetworkFeeDetail = bd.network_fee_method === 'onchain'
     ? !!bd.network_fee_detail
     : bd.network_fee_method === 'lightning';
@@ -480,8 +485,15 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
         <thead>
           <tr className="border-b border-border">
             <th className="text-left text-muted font-normal pb-1.5 pr-3 text-[0.63rem] uppercase tracking-wide">Component</th>
-            <th className="text-right text-muted font-normal pb-1.5 pr-3 text-[0.63rem] uppercase tracking-wide">BTC</th>
-            <th className="text-right text-muted font-normal pb-1.5 pr-3 text-[0.63rem] uppercase tracking-wide">Fiat</th>
+            <th className="text-right font-normal pb-1.5 pr-3 text-[0.63rem]">
+              <span className="inline-flex items-center gap-0.5">
+                <button type="button" onClick={() => setAmountUnit('btc')}
+                  className={`px-1.5 py-px rounded transition-colors ${amountUnit === 'btc' ? 'text-accent font-semibold' : 'text-muted hover:text-text'}`}>BTC</button>
+                <span className="text-border">|</span>
+                <button type="button" onClick={() => setAmountUnit('fiat')}
+                  className={`px-1.5 py-px rounded transition-colors ${amountUnit === 'fiat' ? 'text-accent font-semibold' : 'text-muted hover:text-text'}`}>Fiat</button>
+              </span>
+            </th>
             <th className="text-right text-muted font-normal pb-1.5 text-[0.63rem] uppercase tracking-wide">% of trade</th>
           </tr>
         </thead>
@@ -510,8 +522,9 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
                       </span>
                     ) : r.label}
                   </td>
-                  <td className="pr-3 py-1 text-right text-text mono-nums">{fmt8(r.btc)}</td>
-                  <td className="pr-3 py-1 text-right text-text mono-nums">{fmtFiatAmount(fiatValue(r.btc))}</td>
+                  <td className="pr-3 py-1 text-right text-text mono-nums">
+                    {amountUnit === 'btc' ? fmt8(r.btc) : fmtFiatAmount(fiatValue(r.btc))}
+                  </td>
                   <td className="py-1 text-right text-text mono-nums rounded-r">{fmtPct(r.pct)}</td>
                 </tr>
                 {isNetworkFee && networkFeeOpen && <NetworkFeeDetail bd={bd} />}
@@ -521,13 +534,13 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
           })}
           <tr className="border-t border-border">
             <td className="pr-3 pt-2.5 pb-1 font-semibold text-text">Total cost</td>
-            <td className="pr-3 pt-2.5 pb-1 text-right font-semibold text-text mono-nums">{fmt8(bd.total_cost_btc)}</td>
-            <td className="pr-3 pt-2.5 pb-1 text-right font-semibold text-text mono-nums">{fmtFiatAmount(fiatValue(bd.total_cost_btc))}</td>
+            <td className="pr-3 pt-2.5 pb-1 text-right font-semibold text-text mono-nums">
+              {amountUnit === 'btc' ? fmt8(bd.total_cost_btc) : fmtFiatAmount(fiatValue(bd.total_cost_btc))}
+            </td>
             <td className="pt-2.5 pb-1 text-right font-semibold text-red mono-nums">{fmtPct(bd.total_cost_pct)}</td>
           </tr>
           <tr>
             <td className="pr-3 py-1 text-muted">DEX premium</td>
-            <td className="pr-3 py-1 text-right text-muted">—</td>
             <td className="pr-3 py-1 text-right text-muted">—</td>
             <td className={`py-1 text-right font-medium mono-nums ${premiumClass(priceDiffPct)}`}>
               {priceDiffPct != null ? fmtPct(priceDiffPct) : '—'}
@@ -535,7 +548,6 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
           </tr>
           <tr className="border-t border-border">
             <td className="pr-3 pt-2.5 font-bold text-text text-[0.75rem]">Net premium</td>
-            <td className="pr-3 pt-2.5 text-right text-muted">—</td>
             <td className="pr-3 pt-2.5 text-right text-muted">—</td>
             <td className={`pt-2.5 text-right font-bold text-[0.82rem] mono-nums ${netCls}`}>
               {netPremiumPct != null ? fmtPct(netPremiumPct) : '—'}
@@ -561,9 +573,12 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
         </div>
       </div>
 
-      <CapitalRequiredSection capital={bd.capital} />
-
-      <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
+      {showCapitalAndAbort && (
+        <>
+          <CapitalRequiredSection capital={bd.capital} />
+          <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
+        </>
+      )}
     </div>
   );
 }

@@ -3,11 +3,12 @@ import type {
   CexDepositAddress,
   CexWithdrawalAddress,
   CexHedgePositionsResponse,
-  CexSpotBuyRequest,
-  CexSpotBuyResult,
-  CexHedgeOpenRequest,
-  CexHedgeOpenResult,
+  CexPreTradeCheckRequest,
+  PreTradeCheckReport,
+  CexTradeflowRequest,
+  CexTradeflowResult,
   CexSpotTrade,
+  WithdrawalTrackResult,
   LNDCloseChannelResult,
   LNDCreateAddressResult,
   LNDOpenChannelResult,
@@ -247,10 +248,25 @@ export function fetchCexSpotTrades(accountId: number, limit = 50) {
   return request<CexSpotTrade[]>(`/api/trading/accounts/${accountId}/cex/spot-trades?limit=${limit}`);
 }
 
-export function cexSpotBuy(payload: CexSpotBuyRequest) {
-  return apiPost<CexSpotBuyResult>('/api/mm-controller/cex/spot-buy', payload);
+export function cexPreTradeCheck(payload: CexPreTradeCheckRequest) {
+  return apiPost<PreTradeCheckReport>('/api/mm-controller/cex/pre-trade-check', payload);
 }
 
-export function cexHedgeOpen(payload: CexHedgeOpenRequest) {
-  return apiPost<CexHedgeOpenResult>('/api/mm-controller/cex/hedge-open', payload);
+export function cexTradeflow(payload: CexTradeflowRequest) {
+  return apiPost<CexTradeflowResult>('/api/mm-controller/cex/tradeflow', payload);
+}
+
+export function cexWithdrawalTrack(
+  provider: string,
+  withdrawalId: string,
+  clientRequestId?: string,
+) {
+  const params = new URLSearchParams({
+    provider,
+    withdrawal_id: withdrawalId,
+  });
+  if (clientRequestId) {
+    params.set('client_request_id', clientRequestId);
+  }
+  return request<WithdrawalTrackResult>(`/api/mm-controller/cex/withdrawal-track?${params}`);
 }

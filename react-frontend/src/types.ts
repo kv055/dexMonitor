@@ -696,10 +696,74 @@ export interface CexSpotTrade {
   timestamp: string;
 }
 
-export interface CexSpotBuyRequest {
+export interface CexTradeflowRequest {
   provider: string;
+  market_side: string;
   btc_amount: number;
   fiat_currency: string;
+  required_capital_eur: number;
+  hedge_venue: string;
+  hedge_side: string;
+  hedge_notional_btc: number;
+  leverage: number;
+  offer_id?: string;
+  dex?: string;
+  fiat_amount?: number;
+  transaction_id?: number;
+  selected_offer?: Record<string, unknown>;
+}
+
+export interface CexTradeflowResult {
+  spot_buy: CexSpotBuyResult;
+  hedge: CexHedgeOpenResult;
+  withdrawal: {
+    provider: string;
+    withdrawal_id: string;
+    client_request_id?: string;
+    wallet_address: string;
+    amount_btc: number;
+    cex_status?: string;
+  };
+  transaction_id?: number;
+}
+
+export interface MempoolTxStatus {
+  txid: string;
+  confirmed: boolean;
+  confirmations: number;
+  block_height?: number;
+  status_label: string;
+}
+
+export interface WithdrawalTrackResult {
+  provider: string;
+  withdrawal_id: string;
+  cex_status: string;
+  cex_status_code: number;
+  tx_hash?: string;
+  address?: string;
+  amount_btc?: string;
+  updated_at: string;
+  mempool?: MempoolTxStatus;
+}
+
+export interface FeeLine {
+  asset: string;
+  amount: number;
+}
+
+// ExecutionDetail is the normalized fill/cost/fee summary for a market-buy order,
+// translated server-side from whatever the CEX's own API returned. average_rate and
+// filled_fiat are always in the trade's quote currency; fees are reported separately
+// since the fee asset can diverge from the quote currency (e.g. Binance's BNB
+// fee-discount program).
+export interface ExecutionDetail {
+  filled_btc: number;
+  average_rate: number;
+  filled_fiat: number;
+  fees?: FeeLine[];
+  order_status: string;
+  poll_incomplete?: boolean;
 }
 
 export interface CexSpotBuyResult {
@@ -710,14 +774,31 @@ export interface CexSpotBuyResult {
   order_id: string;
   status: string;
   submitted_at: string;
+  execution?: ExecutionDetail;
   raw?: unknown;
 }
 
-export interface CexHedgeOpenRequest {
-  venue: string;        // "kraken_futures" | "coinbase_futures" | "binance_futures"
-  side: string;         // "short" | "long"
-  btc_notional: number;
-  leverage: number;
+// PreTradeCheckResult is the outcome of one named pre-trade check.
+export interface PreTradeCheckResult {
+  name: string;      // stable id, e.g. "permissions" | "capital" | "whitelist"
+  label: string;     // human-readable name
+  passed: boolean;
+  message?: string;  // failure detail when passed is false
+}
+
+// PreTradeCheckReport is the full result of running every bid-side pre-trade check.
+// `ok` is true only when every check passed. The checks always run to completion
+// server-side, so a failure of one does not suppress the others' results.
+export interface PreTradeCheckReport {
+  ok: boolean;
+  checks: PreTradeCheckResult[];
+  lnd_withdraw_address?: string;
+}
+
+export interface CexPreTradeCheckRequest {
+  provider: string;
+  fiat_currency: string;
+  required_capital_eur: number;
 }
 
 export interface CexHedgeOpenResult {
@@ -729,4 +810,24 @@ export interface CexHedgeOpenResult {
   status: string;
   submitted_at: string;
   raw?: unknown;
+}
+
+// HedgePositionUpdate is one live snapshot of a perpetual hedge position, normalized
+// server-side from each futures venue's native feed. Prices/PnL/margin are in
+// `currency` (the venue's quote currency, typically USD/USDT).
+export interface HedgePositionUpdate {
+  venue: string;              // kraken_futures | binance_futures | coinbase_futures
+  instrument: string;         // PI_XBTUSD | BTCUSDT | BTC-PERP
+  side: string;               // long | short | flat
+  size_btc: number;
+  entry_price: number;
+  mark_price: number;
+  liquidation_price?: number;
+  unrealized_pnl: number;
+  margin: number;
+  funding_rate?: number;
+  currency: string;
+  updated_at: string;         // RFC3339
+  connected: boolean;         // upstream feed health
+  error?: string;             // last upstream error, if any
 }

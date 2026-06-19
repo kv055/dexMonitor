@@ -161,6 +161,7 @@ export function OffersPreviewTable() {
                     priceDiffPct={getRawPremiumPercent(selectedOffer)}
                     netPremiumPct={getNetPremiumPercent(selectedOffer, showCapped)}
                     refPrice={getRefPrice(selectedOffer)}
+                    showCapitalAndAbort={!isOfferLive(selectedOffer)}
                   />
                 </div>
               ) : (
@@ -299,6 +300,7 @@ export function OffersPreviewTable() {
                   priceDiffPct={getRawPremiumPercent(selectedOffer)}
                   netPremiumPct={getNetPremiumPercent(selectedOffer, showCapped)}
                   refPrice={getRefPrice(selectedOffer)}
+                  showCapitalAndAbort={!isOfferLive(selectedOffer)}
                 />
               </div>
             ) : (

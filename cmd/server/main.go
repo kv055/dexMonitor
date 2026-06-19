@@ -313,8 +313,10 @@ func main() {
 	mux.HandleFunc("POST /api/mm-controller/lnd/addresses", handleMmControllerLNDCreateAddress)
 	mux.HandleFunc("POST /api/mm-controller/lnd/channels/open", handleMmControllerLNDOpenChannel)
 	mux.HandleFunc("POST /api/mm-controller/lnd/channels/close", handleMmControllerLNDCloseChannel)
-	mux.HandleFunc("POST /api/mm-controller/cex/spot-buy", handleMmControllerCexSpotBuy)
-	mux.HandleFunc("POST /api/mm-controller/cex/hedge-open", handleMmControllerCexHedgeOpen)
+	mux.HandleFunc("POST /api/mm-controller/cex/pre-trade-check", handleMmControllerCexPreTradeCheck)
+	mux.HandleFunc("POST /api/mm-controller/cex/tradeflow", handleMmControllerCexTradeflow)
+	mux.HandleFunc("GET /api/mm-controller/cex/withdrawal-track", handleMmControllerCexWithdrawalTrack)
+	mux.HandleFunc("GET /ws/cex/hedge-stream", handleMmControllerHedgeStreamWS)
 	mux.HandleFunc("GET /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("POST /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("PUT /api/trading/accounts/{id}", handleTradingAccountByID)
@@ -2292,12 +2294,16 @@ func handleMmControllerLNDCloseChannel(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/lnd/channels/close")
 }
 
-func handleMmControllerCexSpotBuy(w http.ResponseWriter, r *http.Request) {
-	forwardMMControllerJSON(w, r, "/api/cex/spot-buy")
+func handleMmControllerCexPreTradeCheck(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/cex/pre-trade-check")
 }
 
-func handleMmControllerCexHedgeOpen(w http.ResponseWriter, r *http.Request) {
-	forwardMMControllerJSON(w, r, "/api/cex/hedge-open")
+func handleMmControllerCexTradeflow(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/cex/tradeflow")
+}
+
+func handleMmControllerCexWithdrawalTrack(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/cex/withdrawal-track")
 }
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -3104,6 +3110,19 @@ func forwardMMControllerJSON(w http.ResponseWriter, r *http.Request, path string
 		mmProxy = mmproxy.New(mmControllerAPIURL)
 	}
 	mmProxy.ForwardJSON(w, r, path)
+}
+
+func forwardMMControllerWebSocket(w http.ResponseWriter, r *http.Request, path string) {
+	if mmProxy == nil {
+		mmProxy = mmproxy.New(mmControllerAPIURL)
+	}
+	mmProxy.ForwardWebSocket(w, r, path)
+}
+
+// handleMmControllerHedgeStreamWS relays the live hedge-position WebSocket stream from
+// mm-controller to the browser, carrying through the ?venue= query parameter.
+func handleMmControllerHedgeStreamWS(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerWebSocket(w, r, "/ws/cex/hedge-stream")
 }
 
 func queryIntPtr(r *http.Request, key string) *int {
