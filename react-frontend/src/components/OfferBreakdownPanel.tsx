@@ -272,7 +272,7 @@ function NetworkFeeDetail({ bd }: { bd: CostBreakdown }) {
   if (bd.network_fee_method === 'onchain' && bd.network_fee_detail) {
     return (
       <tr>
-        <td colSpan={3} className="pt-0 pb-2">
+        <td colSpan={4} className="pt-0 pb-2">
           <OnchainFeeDetail d={bd.network_fee_detail} conf={bd.network_fee_confidence} />
         </td>
       </tr>
@@ -281,7 +281,7 @@ function NetworkFeeDetail({ bd }: { bd: CostBreakdown }) {
   if (bd.network_fee_method === 'lightning') {
     return (
       <tr>
-        <td colSpan={3} className="pt-0 pb-2">
+        <td colSpan={4} className="pt-0 pb-2">
           <LightningFeeDetail conf={bd.network_fee_confidence} />
         </td>
       </tr>
@@ -294,7 +294,7 @@ function HedgeDetailRow({ bd }: { bd: CostBreakdown }) {
   if (bd.hedge.fee_sum_btc <= 0) return null;
   return (
     <tr>
-      <td colSpan={3} className="pt-0 pb-2">
+      <td colSpan={4} className="pt-0 pb-2">
         <HedgeFeeDetail bd={bd} />
       </td>
     </tr>
@@ -395,18 +395,19 @@ export function CapitalRequiredSection({ capital }: { capital: CapitalRequiremen
   );
 }
 
-export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct, refPrice, showCapitalAndAbort = true }: {
+export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct, refPrice, offerPrice, showCapitalAndAbort = true }: {
   bd: CostBreakdown;
   abortCost: AbortCostBreakdown | null;
   priceDiffPct: number | null;
   netPremiumPct: number | null;
   refPrice: number | null;
+  offerPrice?: number | null;
   // Live offers show these in the Trade Tracing panel's Preview tab instead
   // (where the trader is actually about to act on them); past offers have no
   // Trade Tracing panel, so they keep showing both here.
   showCapitalAndAbort?: boolean;
 }) {
-  type BreakdownRow = { label: string; btc: number; pct: number; expandable?: 'network' | 'hedge' };
+  type BreakdownRow = { label: string; btc: number; pct: number; expandable?: 'network' | 'hedge'; cumulative: number };
   const [networkFeeOpen, setNetworkFeeOpen] = useState(false);
   const [hedgeFeeOpen, setHedgeFeeOpen] = useState(false);
   const [amountUnit, setAmountUnit] = useState<'btc' | 'fiat'>('fiat');
@@ -419,7 +420,7 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
   const networkFeeLabel = `BTC network fee${numTxs > 1 ? ` ×${numTxs} txs` : ''}`;
 
   const withdrawalRows: BreakdownRow[] = !isAsk
-    ? [{ label: 'CEX withdrawal', btc: bd.withdrawal_fee_btc, pct: bd.withdrawal_fee_pct }]
+    ? [{ label: 'CEX withdrawal', btc: bd.withdrawal_fee_btc, pct: bd.withdrawal_fee_pct, cumulative: 0 }]
     : [];
   const hedgeRows: BreakdownRow[] = bd.hedge.fee_sum_btc > 0
     ? [{
@@ -427,16 +428,22 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
       btc: bd.hedge.fee_sum_btc,
       pct: bd.hedge.fee_sum_pct,
       expandable: 'hedge',
+      cumulative: 0,
     }]
     : [];
 
   const rows: BreakdownRow[] = [
-    { label: 'CEX taker fee', btc: bd.cex_taker_fee_btc, pct: bd.cex_taker_fee_pct },
+    { label: 'CEX taker fee', btc: bd.cex_taker_fee_btc, pct: bd.cex_taker_fee_pct, cumulative: 0 },
     ...withdrawalRows,
-    { label: networkFeeLabel, btc: bd.network_fee_btc, pct: bd.network_fee_pct, ...(hasNetworkFeeDetail ? { expandable: 'network' as const } : {}) },
+    { label: networkFeeLabel, btc: bd.network_fee_btc, pct: bd.network_fee_pct, cumulative: 0, ...(hasNetworkFeeDetail ? { expandable: 'network' as const } : {}) },
     ...hedgeRows,
-    { label: 'DEX platform fee', btc: bd.dex_fee_btc, pct: bd.dex_fee_pct },
+    { label: 'DEX platform fee', btc: bd.dex_fee_btc, pct: bd.dex_fee_pct, cumulative: 0 },
   ];
+  let running = bd.btc_amount;
+  for (const r of rows) {
+    running += r.btc;
+    r.cumulative = running;
+  }
   const routeCex = bd.route_cex || '—';
   const routeDex = bd.route_dex || '—';
   const routeMethod = bd.route_method || bd.network_fee_method || '—';
@@ -494,10 +501,21 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
                   className={`px-1.5 py-px rounded transition-colors ${amountUnit === 'fiat' ? 'text-accent font-semibold' : 'text-muted hover:text-text'}`}>Fiat</button>
               </span>
             </th>
-            <th className="text-right text-muted font-normal pb-1.5 text-[0.63rem] uppercase tracking-wide">% of trade</th>
+            <th className="text-right text-muted font-normal pb-1.5 pr-3 text-[0.63rem] uppercase tracking-wide">% of trade</th>
+            <th className="text-right text-muted font-normal pb-1.5 text-[0.63rem] uppercase tracking-wide">Example</th>
           </tr>
         </thead>
         <tbody>
+          <tr className="bg-grid/40">
+            <td className="pr-3 py-1 text-text font-medium rounded-l">Asset bought</td>
+            <td className="pr-3 py-1 text-right text-text mono-nums">
+              {amountUnit === 'btc' ? fmt8(bd.btc_amount) : fmtFiatAmount(fiatValue(bd.btc_amount))}
+            </td>
+            <td className="pr-3 py-1 text-right text-muted">—</td>
+            <td className="py-1 text-right text-text mono-nums font-medium rounded-r">
+              {amountUnit === 'btc' ? fmt8(bd.btc_amount) : fmtFiatAmount(fiatValue(bd.btc_amount))}
+            </td>
+          </tr>
           {rows.map((r, i) => {
             const isNetworkFee = r.expandable === 'network';
             const isHedgeFee = r.expandable === 'hedge';
@@ -505,7 +523,7 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
             return (
               <React.Fragment key={r.label}>
                 <tr
-                  className={`${i % 2 === 0 ? 'bg-grid/40' : ''} ${isExpandable ? 'cursor-pointer hover:brightness-110' : ''}`}
+                  className={`${i % 2 !== 0 ? 'bg-grid/40' : ''} ${isExpandable ? 'cursor-pointer hover:brightness-110' : ''}`}
                   onClick={
                     isNetworkFee
                       ? () => setNetworkFeeOpen(o => !o)
@@ -525,7 +543,10 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
                   <td className="pr-3 py-1 text-right text-text mono-nums">
                     {amountUnit === 'btc' ? fmt8(r.btc) : fmtFiatAmount(fiatValue(r.btc))}
                   </td>
-                  <td className="py-1 text-right text-text mono-nums rounded-r">{fmtPct(r.pct)}</td>
+                  <td className="pr-3 py-1 text-right text-text mono-nums">{fmtPct(r.pct)}</td>
+                  <td className="py-1 text-right text-text mono-nums rounded-r">
+                    {amountUnit === 'btc' ? fmt8(r.cumulative) : fmtFiatAmount(fiatValue(r.cumulative))}
+                  </td>
                 </tr>
                 {isNetworkFee && networkFeeOpen && <NetworkFeeDetail bd={bd} />}
                 {isHedgeFee && hedgeFeeOpen && <HedgeDetailRow bd={bd} />}
@@ -537,20 +558,31 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
             <td className="pr-3 pt-2.5 pb-1 text-right font-semibold text-text mono-nums">
               {amountUnit === 'btc' ? fmt8(bd.total_cost_btc) : fmtFiatAmount(fiatValue(bd.total_cost_btc))}
             </td>
-            <td className="pt-2.5 pb-1 text-right font-semibold text-red mono-nums">{fmtPct(bd.total_cost_pct)}</td>
+            <td className="pr-3 pt-2.5 pb-1 text-right font-semibold text-red mono-nums">{fmtPct(bd.total_cost_pct)}</td>
+            <td className="pt-2.5 pb-1 text-right font-semibold text-text mono-nums">
+              {amountUnit === 'btc'
+                ? fmt8(bd.btc_amount + bd.total_cost_btc)
+                : fmtFiatAmount(fiatValue(bd.btc_amount + bd.total_cost_btc))}
+            </td>
           </tr>
           <tr>
             <td className="pr-3 py-1 text-muted">DEX premium</td>
             <td className="pr-3 py-1 text-right text-muted">—</td>
-            <td className={`py-1 text-right font-medium mono-nums ${premiumClass(priceDiffPct)}`}>
+            <td className={`pr-3 py-1 text-right font-medium mono-nums ${premiumClass(priceDiffPct)}`}>
               {priceDiffPct != null ? fmtPct(priceDiffPct) : '—'}
             </td>
+            <td className="py-1 text-right text-muted">—</td>
           </tr>
           <tr className="border-t border-border">
             <td className="pr-3 pt-2.5 font-bold text-text text-[0.75rem]">Net premium</td>
             <td className="pr-3 pt-2.5 text-right text-muted">—</td>
-            <td className={`pt-2.5 text-right font-bold text-[0.82rem] mono-nums ${netCls}`}>
+            <td className={`pr-3 pt-2.5 text-right font-bold text-[0.82rem] mono-nums ${netCls}`}>
               {netPremiumPct != null ? fmtPct(netPremiumPct) : '—'}
+            </td>
+            <td className={`pt-2.5 text-right font-bold text-[0.82rem] mono-nums ${profitCls}`}>
+              {profitBtc != null
+                ? (amountUnit === 'btc' ? fmtSignedBtc(profitBtc) : fmtFiatAmount(fiatValue(profitBtc)))
+                : '—'}
             </td>
           </tr>
         </tbody>
@@ -571,6 +603,22 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
             {profitPct != null ? fmtPct(profitPct) : '—'}
           </span>
         </div>
+        {offerPrice != null && (
+          <div className="mt-2 pt-2 border-t border-border/60 text-[0.64rem] text-muted mono-nums flex flex-col gap-0.5">
+            <div>
+              {fmt8(bd.btc_amount)} BTC @ {fmtEurAmount(offerPrice)} = {fmtEurAmount(bd.btc_amount * offerPrice)}
+            </div>
+            <div>
+              <span>{fmtEurAmount(bd.btc_amount * offerPrice)}</span>
+              <span className="mx-1">−</span>
+              <span>{fmtEurAmount(fiatValue(bd.btc_amount + bd.total_cost_btc))}</span>
+              <span className="mx-1">=</span>
+              <span className={`font-semibold ${profitCls}`}>
+                {fmtFiatAmount(bd.btc_amount * offerPrice - (fiatValue(bd.btc_amount + bd.total_cost_btc) ?? 0))}
+              </span>
+            </div>
+          </div>
+        )}
       </div>
 
       {showCapitalAndAbort && (

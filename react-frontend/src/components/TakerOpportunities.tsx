@@ -766,6 +766,7 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
             priceDiffPct={getRawPremiumPercent(offer)}
             netPremiumPct={getNetPremiumPercent(offer, showCappedEffective)}
             refPrice={refPrice}
+            offerPrice={offerPrice}
           />
         </div>
       ) : (
