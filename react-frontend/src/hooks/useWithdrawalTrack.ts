@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import type { WithdrawalTrackResult } from '../types';
 import { cexWithdrawalTrack } from '../utils/api';
 
@@ -38,9 +38,6 @@ export function useWithdrawalTrack(
   useEffect(() => {
     mountedRef.current = true;
     if (!active || !provider || !withdrawalId) {
-      setTrack(null);
-      setLoading(false);
-      setError(null);
       return;
     }
 
@@ -62,13 +59,10 @@ export function useWithdrawalTrack(
       } catch (err) {
         if (!mountedRef.current || stopped) return;
         setError(err instanceof Error ? err.message : String(err));
-      } finally {
-        if (!mountedRef.current || stopped) return;
-        setLoading(false);
-        if (!stopped) {
-          timerRef.current = setTimeout(() => void poll(), POLL_INTERVAL_MS);
-        }
       }
+      if (!mountedRef.current || stopped) return;
+      setLoading(false);
+      timerRef.current = setTimeout(() => void poll(), POLL_INTERVAL_MS);
     };
 
     void poll();
@@ -80,5 +74,10 @@ export function useWithdrawalTrack(
     };
   }, [active, provider, withdrawalId, clientRequestId]);
 
-  return { track, loading, error };
+  return useMemo(() => {
+    if (!active || !provider || !withdrawalId) {
+      return { track: null, loading: false, error: null };
+    }
+    return { track, loading, error };
+  }, [active, provider, withdrawalId, track, loading, error]);
 }

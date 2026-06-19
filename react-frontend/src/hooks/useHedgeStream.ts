@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import type { HedgePositionUpdate } from '../types';
 
 const RECONNECT_DELAY_MS = 5_000;
@@ -23,8 +23,6 @@ export function useHedgeStream(venue: string | null | undefined): {
   useEffect(() => {
     mountedRef.current = true;
     if (!venue) {
-      setPosition(null);
-      setConnected(false);
       return;
     }
 
@@ -69,5 +67,8 @@ export function useHedgeStream(venue: string | null | undefined): {
     };
   }, [venue]);
 
-  return { position, connected };
+  return useMemo(() => {
+    if (!venue) return { position: null, connected: false };
+    return { position, connected };
+  }, [venue, position, connected]);
 }
