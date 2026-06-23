@@ -143,8 +143,6 @@ type GeneralStatsResponse struct {
 	BestBidPremiumPct *float64 `json:"best_bid_premium_pct"`
 	// AvgBidPremiumPct is a percentage value.
 	AvgBidPremiumPct *float64 `json:"avg_bid_premium_pct"`
-	// OpenPremiums is the open premiums value for the general stats response.
-	OpenPremiums OpenPremiumStats `json:"open_premiums"`
 	// AvgOfferLifetimeMs records the relevant time for the general stats response.
 	AvgOfferLifetimeMs *int64 `json:"avg_offer_lifetime_ms"`
 	// AvgOfferLifetimeMsByExchange records the relevant time for the general stats response.
@@ -155,24 +153,6 @@ type GeneralStatsResponse struct {
 	PaymentMethodCounts []Count `json:"payment_method_counts"`
 	// PastPremiums is the past premiums value for the general stats response.
 	PastPremiums []PastPremiumTimeframeStats `json:"past_premiums"`
-}
-
-// OpenPremiumModeStats summarizes live premiums for one pricing mode.
-type OpenPremiumModeStats struct {
-	// AvgAskPremiumPct is a percentage value.
-	AvgAskPremiumPct *float64 `json:"avg_ask_premium_pct"`
-	// AvgBidPremiumPct is a percentage value.
-	AvgBidPremiumPct *float64 `json:"avg_bid_premium_pct"`
-}
-
-// OpenPremiumStats groups live premium summaries by pricing mode.
-type OpenPremiumStats struct {
-	// Raw preserves additional source data for the open premium stats.
-	Raw OpenPremiumModeStats `json:"raw"`
-	// NetFull is the net full value for the open premium stats.
-	NetFull OpenPremiumModeStats `json:"net_full"`
-	// NetCapped is the net capped value for the open premium stats.
-	NetCapped OpenPremiumModeStats `json:"net_capped"`
 }
 
 // PremiumLifetimeStats represents a premium lifetime stats.

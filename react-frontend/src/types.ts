@@ -560,17 +560,6 @@ export interface GeneralStatsOverviewData {
   payment_method_counts: NamedCount[];
 }
 
-export interface OpenPremiumModeStats {
-  avg_ask_premium_pct: number | null;
-  avg_bid_premium_pct: number | null;
-}
-
-export interface OpenPremiumStats {
-  raw: OpenPremiumModeStats;
-  net_full: OpenPremiumModeStats;
-  net_capped: OpenPremiumModeStats;
-}
-
 export interface PremiumLifetimeStats {
   avg_offer_lifetime_ms: number | null;
   avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[];
@@ -591,7 +580,6 @@ export interface GeneralStatsData {
   avg_ask_premium_pct: number | null;
   best_bid_premium_pct: number | null;
   avg_bid_premium_pct: number | null;
-  open_premiums?: OpenPremiumStats;
   premium_lifetimes?: PremiumLifetimeModes;
   avg_offer_lifetime_ms: number | null;
   avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[];

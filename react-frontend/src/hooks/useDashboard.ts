@@ -7,7 +7,6 @@ import type {
   PastOrderStats,
   GeneralStatsData,
   GeneralStatsOverviewData,
-  OpenPremiumStats,
   PremiumLifetimeModes,
   PastPremiumTimeframeStats,
   PastProfitableOrder,
@@ -48,17 +47,15 @@ function loadCoreKey(params: LoadParams): string {
 
 function buildGeneralStatsData(
   overview: GeneralStatsOverviewData,
-  openPremiums: OpenPremiumStats,
   pastPremiums: PastPremiumTimeframeStats[],
   premiumLifetimes: PremiumLifetimeModes,
 ): GeneralStatsData {
   return {
     ...overview,
     best_ask_premium_pct: null,
-    avg_ask_premium_pct: openPremiums.raw.avg_ask_premium_pct,
+    avg_ask_premium_pct: null,
     best_bid_premium_pct: null,
-    avg_bid_premium_pct: openPremiums.raw.avg_bid_premium_pct,
-    open_premiums: openPremiums,
+    avg_bid_premium_pct: null,
     premium_lifetimes: premiumLifetimes,
     avg_offer_lifetime_ms: premiumLifetimes.raw.avg_offer_lifetime_ms,
     avg_offer_lifetime_ms_by_exchange: premiumLifetimes.raw.avg_offer_lifetime_ms_by_exchange,
@@ -68,7 +65,6 @@ function buildGeneralStatsData(
 
 type AnalyticsOverviewResponse = {
   general_stats_overview?: GeneralStatsOverviewData;
-  open_premiums?: OpenPremiumStats;
   past_premiums?: PastPremiumTimeframeStats[];
   premium_lifetimes?: PremiumLifetimeModes;
   past_order_stats_all?: PastOrderStats;
@@ -284,10 +280,9 @@ export function useDashboard() {
           { signal },
         );
         if (signal.aborted) return;
-        const generalStats = overview.general_stats_overview && overview.open_premiums && overview.past_premiums && overview.premium_lifetimes
+        const generalStats = overview.general_stats_overview && overview.past_premiums && overview.premium_lifetimes
           ? buildGeneralStatsData(
               overview.general_stats_overview,
-              overview.open_premiums,
               overview.past_premiums,
               overview.premium_lifetimes,
             )

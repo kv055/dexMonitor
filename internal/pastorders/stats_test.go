@@ -140,9 +140,6 @@ func TestBuildGeneralStatsDoesNotOwnPremiumSections(t *testing.T) {
 	if len(stats.PastPremiums) != 0 {
 		t.Fatalf("past premiums len = %d, want 0", len(stats.PastPremiums))
 	}
-	if stats.OpenPremiums.Raw.AvgAskPremiumPct != nil || stats.OpenPremiums.Raw.AvgBidPremiumPct != nil {
-		t.Fatalf("open premiums = %#v, want empty", stats.OpenPremiums)
-	}
 	if stats.PremiumLifetimes.Raw.AvgOfferLifetimeMs != nil || len(stats.PremiumLifetimes.Raw.AvgOfferLifetimeMsByExchange) != 0 {
 		t.Fatalf("premium lifetimes = %#v, want empty", stats.PremiumLifetimes)
 	}

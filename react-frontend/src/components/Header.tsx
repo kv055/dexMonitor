@@ -1,5 +1,6 @@
 
 import { usePreferences } from '../hooks/usePreferences';
+import { useAuth } from '../hooks/useAuth';
 
 export type Tab = 'monitor' | 'insights' | 'mmcontroller' | 'trading';
 
@@ -39,6 +40,7 @@ const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
 
 export function Header({ activeTab, onTabChange, onOpenSettings, wssConnected, pollError }: Props) {
   const { theme, toggleTheme } = usePreferences();
+  const { username, logout } = useAuth();
 
   return (
     <header className="bg-surface border border-border rounded-lg px-2 py-1.5 sm:px-3 sm:py-1 flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-1.5 shrink-0 min-w-0">
@@ -90,6 +92,14 @@ export function Header({ activeTab, onTabChange, onOpenSettings, wssConnected, p
             title="Settings"
           >
             ⚙️
+          </button>
+          <button
+            type="button"
+            className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 cursor-pointer hover:bg-bg"
+            onClick={() => { void logout(); }}
+            title={username ? `Log out (${username})` : 'Log out'}
+          >
+            🚪
           </button>
         </div>
       </div>

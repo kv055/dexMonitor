@@ -25,13 +25,12 @@ type dashboardAnalyticsParams struct {
 
 type dashboardAnalyticsResponse struct {
 	GeneralStatsOverview       pastorders.GeneralStatsOverview        `json:"general_stats_overview,omitempty"`
-	OpenPremiums               pastorders.OpenPremiumStats            `json:"open_premiums,omitempty"`
 	PastPremiums               []pastorders.PastPremiumTimeframeStats `json:"past_premiums,omitempty"`
 	PremiumLifetimes           pastorders.PremiumLifetimeModes        `json:"premium_lifetimes,omitempty"`
 	PastOrderStatsAll          pastorders.StatsResponse               `json:"past_order_stats_all,omitempty"`
 	PastOrderStats             pastorders.StatsResponse               `json:"past_order_stats,omitempty"`
 	PastOrderStatsAllNetCapped pastorders.StatsResponse               `json:"past_order_stats_all_net_capped,omitempty"`
-	PastOrderStatsNetCapped   pastorders.StatsResponse               `json:"past_order_stats_net_capped,omitempty"`
+	PastOrderStatsNetCapped    pastorders.StatsResponse               `json:"past_order_stats_net_capped,omitempty"`
 	PastProfitableOrders       []pastProfitableOrderAPI               `json:"past_profitable_orders,omitempty"`
 }
 
@@ -111,17 +110,6 @@ func (p dashboardAnalyticsParams) cacheKey() string {
 	return strings.Join(parts, "|")
 }
 
-func (p dashboardAnalyticsParams) liveSub() liveSubscription {
-	return liveSubscription{
-		cex:                   p.Cex,
-		requiredConfirmations: p.Confirmations,
-		excludedCEXes:         strings.Join(p.ExcludeCEXes, ","),
-		feeTier:               p.FeeTier,
-		coupledHedge:          p.CoupledHedge,
-		maxFiatLimitEUR:       p.MaxFiatLimitEUR,
-	}
-}
-
 func loadGeneralStatsContextForParams(p dashboardAnalyticsParams) (generalStatsContext, error) {
 	key := p.cacheKey()
 	now := time.Now()
@@ -196,7 +184,6 @@ func loadGeneralStatsContextUncachedForParams(p dashboardAnalyticsParams) (gener
 	return generalStatsContext{
 		hours:                  p.Hours,
 		excludedPaymentMethods: p.ExcludePaymentMethods,
-		sub:                    p.liveSub(),
 		offers:                 offers,
 		generalOffers:          generalOffers,
 		closedOfferIDs:         closedOfferIDs,

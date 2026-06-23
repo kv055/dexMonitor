@@ -13,8 +13,8 @@ import (
 const analyticsResultCacheTTL = 10 * time.Minute
 
 const (
-	analyticsSectionOverview   = "overview"
-	analyticsSectionTakerStats = "taker_stats"
+	analyticsSectionOverview    = "overview"
+	analyticsSectionTakerStats  = "taker_stats"
 	analyticsSectionTakerOrders = "taker_orders"
 )
 
@@ -146,7 +146,6 @@ func filterDashboardAnalyticsResponse(full dashboardAnalyticsResponse, p dashboa
 	filtered := dashboardAnalyticsResponse{}
 	if p.wantsSection(analyticsSectionOverview) {
 		filtered.GeneralStatsOverview = full.GeneralStatsOverview
-		filtered.OpenPremiums = full.OpenPremiums
 		filtered.PastPremiums = full.PastPremiums
 		filtered.PremiumLifetimes = full.PremiumLifetimes
 	}
@@ -292,7 +291,6 @@ func (bc *analyticsBuildContext) buildTakerAnalytics() takerAnalyticsResult {
 func (bc *analyticsBuildContext) applyOverviewSections(resp *dashboardAnalyticsResponse, p dashboardAnalyticsParams) {
 	opts := &pastAnalyticsOpts{cappedMemo: bc.cappedMemo}
 	resp.GeneralStatsOverview = bc.generalCtx.overview()
-	resp.OpenPremiums = bc.generalCtx.openPremiums()
 	resp.PastPremiums, resp.PremiumLifetimes = buildPastPremiumAndLifetimeStats(
 		bc.generalCtx.offers,
 		bc.lifecycleAgg,
@@ -431,13 +429,13 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 }
 
 type pastTakerQueryParams struct {
-	ExcludePaymentMethods []string
-	ExcludeCEXes          []string
-	FeeTier               string
-	MaxFiatLimitEUR       float64
-	Confirmations         int
-	Fiat                  string
-	PremiumMode           takerOpportunityMode
+	ExcludePaymentMethods  []string
+	ExcludeCEXes           []string
+	FeeTier                string
+	MaxFiatLimitEUR        float64
+	Confirmations          int
+	Fiat                   string
+	PremiumMode            takerOpportunityMode
 	ApplyPaymentExclusions bool
 }
 

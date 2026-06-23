@@ -33,6 +33,12 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   }
   const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
   if (!res.ok) {
+    // A session expired (or was never there) mid-use: tell the app to drop to the
+    // login screen. The auth endpoints themselves 401 by design (e.g. /api/auth/me
+    // when anonymous), so they are excluded to avoid a redirect loop.
+    if (res.status === 401 && !path.startsWith('/api/auth/')) {
+      window.dispatchEvent(new Event('auth:unauthorized'));
+    }
     const raw = await res.text();
     let message = raw.trim();
     if (message) {
@@ -62,6 +68,38 @@ export async function apiPost<T>(path: string, body: unknown, init?: Omit<Reques
     method: 'POST',
     body: JSON.stringify(body),
   });
+}
+
+// --- Auth (app login / session) ---
+
+export interface AuthUser {
+  username: string;
+}
+
+export function authMe() {
+  return request<AuthUser>('/api/auth/me');
+}
+
+export function authLogin(username: string, password: string) {
+  return request<AuthUser>('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function authRegister(username: string, password: string) {
+  return request<AuthUser>('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ username, password }),
+  });
+}
+
+export function authLogout() {
+  return request<{ ok: boolean }>('/api/auth/logout', { method: 'POST' });
+}
+
+export function authRegistrationAvailable() {
+  return request<{ available: boolean }>('/api/auth/registration_available');
 }
 
 export function fetchTradingAccounts() {

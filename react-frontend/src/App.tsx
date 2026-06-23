@@ -5,8 +5,12 @@ import { usePaymentMethodGroups } from './hooks/usePaymentMethodGroups';
 import { FiltersProvider } from './context/FiltersContext';
 import { TimezoneProvider } from './context/TimezoneContext';
 import { PreferencesProvider } from './context/PreferencesContext';
+import { AuthProvider } from './context/AuthContext';
 import { useFilters } from './hooks/useFilters';
 import { usePreferences } from './hooks/usePreferences';
+import { useAuth } from './hooks/useAuth';
+import { LoginPage } from './components/LoginPage';
+import { LoadingSpinner } from './components/LoadingSpinner';
 import { Header } from './components/Header';
 import type { Tab } from './components/Header';
 import { SettingsOverlay } from './components/SettingsOverlay';
@@ -285,10 +289,30 @@ function AppShell() {
   );
 }
 
+// AuthGate decides what to render based on session state: a brand spinner while
+// the initial /api/auth/me is in flight, the login page when anonymous, and the
+// full dashboard once authenticated.
+function AuthGate() {
+  const { status } = useAuth();
+  if (status === 'loading') {
+    return (
+      <div className="relative min-h-dvh bg-bg">
+        <LoadingSpinner label="Loading…" />
+      </div>
+    );
+  }
+  if (status === 'anon') {
+    return <LoginPage />;
+  }
+  return <AppShell />;
+}
+
 export default function App() {
   return (
     <PreferencesProvider>
-      <AppShell />
+      <AuthProvider>
+        <AuthGate />
+      </AuthProvider>
     </PreferencesProvider>
   );
 }

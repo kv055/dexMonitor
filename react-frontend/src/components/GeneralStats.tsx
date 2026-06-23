@@ -178,7 +178,7 @@ function LifetimeCard({ stats }: { stats: GeneralStatsData }) {
 
 function PremiumsCard({ stats }: { stats: GeneralStatsData }) {
   const [mode, setMode] = useState<'raw' | 'net_full' | 'net_capped'>('raw');
-  const selected = stats.open_premiums?.[mode] ?? {
+  const selected = {
     avg_ask_premium_pct: mode === 'raw' ? stats.avg_ask_premium_pct : null,
     avg_bid_premium_pct: mode === 'raw' ? stats.avg_bid_premium_pct : null,
   };

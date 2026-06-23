@@ -8,12 +8,12 @@ import (
 )
 
 type tradingAccountHealthCheckResult struct {
-	Account   *tradingAccount                        `json:"account"`
-	Status    string                                 `json:"status"`
-	Healthy   *bool                                  `json:"healthy"`
-	Message   string                                 `json:"message"`
-	Keys      []accounthealth.KeyPermissionResult    `json:"keys,omitempty"`
-	CheckedAt string                                 `json:"checked_at"`
+	Account   *tradingAccount                     `json:"account"`
+	Status    string                              `json:"status"`
+	Healthy   *bool                               `json:"healthy"`
+	Message   string                              `json:"message"`
+	Keys      []accounthealth.KeyPermissionResult `json:"keys,omitempty"`
+	CheckedAt string                              `json:"checked_at"`
 }
 
 func handleTradingAccountHealthCheck(w http.ResponseWriter, r *http.Request) {

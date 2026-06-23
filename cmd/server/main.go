@@ -21,9 +21,9 @@ import (
 
 	"commons/logging"
 	"commons/metrics"
-	"commons/prices"
 	"commons/tracing"
 	"commons/tradecost"
+	"dexmonitor/internal/auth"
 	"dexmonitor/internal/lifecycle"
 	"dexmonitor/internal/mmproxy"
 	"dexmonitor/internal/ohlc"
@@ -44,28 +44,15 @@ var (
 	frontendDir         string
 	mmControllerAPIURL  string
 	unifiedAPIURL       string
+	sessionCookieSecure bool
 	db                  *sql.DB
 	pmService           *paymentmethods.Service
-	priceManager        *prices.Manager
 	lifecycleRepo       lifecycle.Repository
 	ohlcService         *ohlc.Service
 	snapshotLogRepo     snapshotlog.Repository
 	mmProxy             *mmproxy.Proxy
 	tradingAccountRepo  tradingaccounts.Repository
 )
-
-var (
-	cexPricesMu sync.RWMutex
-	cexPrices   = map[string]float64{}
-)
-
-var (
-	snapshotPriceCacheMu  sync.Mutex
-	snapshotPriceCacheVal float64
-	snapshotPriceCacheAt  time.Time
-)
-
-const snapshotPriceCacheTTL = 30 * time.Second
 
 // dashboardCacheTTL deduplicates parallel general_stats and lifecycle aggregate loads.
 const dashboardCacheTTL = 30 * time.Second
@@ -108,63 +95,6 @@ func coreTablesReady() bool {
 	return count == 2
 }
 
-func getCexPrice(cex string) float64 {
-	var p float64
-	if priceManager != nil {
-		p = priceManager.Get(cex)
-	} else {
-		cexPricesMu.RLock()
-		p = cexPrices[cex]
-		cexPricesMu.RUnlock()
-	}
-	if p > 0 {
-		return p
-	}
-	// Live feed (WS) hasn't produced a price yet — fall back to the most recent
-	// BTC price the snapshot tool stored. This keeps lifecycle writes working
-	// even if the dexMonitor server can't reach the CEX WS endpoint at all
-	// (firewall, TLS, DNS, etc. on the VPS).
-	return latestSnapshotPrice()
-}
-
-// latestSnapshotPrice returns the most recent btc_price from the snapshots
-// table, cached briefly so that frequent lookups don't hammer the DB.
-// Returns 0 if no snapshot has been written yet or the DB query fails.
-func latestSnapshotPrice() float64 {
-	snapshotPriceCacheMu.Lock()
-	defer snapshotPriceCacheMu.Unlock()
-	if time.Since(snapshotPriceCacheAt) < snapshotPriceCacheTTL {
-		return snapshotPriceCacheVal
-	}
-	snapshotPriceCacheAt = time.Now()
-	if db == nil {
-		snapshotPriceCacheVal = 0
-		return 0
-	}
-	var price float64
-	err := db.QueryRow(`SELECT btc_price FROM snapshots ORDER BY timestamp DESC LIMIT 1`).Scan(&price)
-	if err != nil {
-		if err != sql.ErrNoRows {
-			fmt.Printf("[priceFallback] snapshots query error: %v\n", err)
-		}
-		snapshotPriceCacheVal = 0
-		return 0
-	}
-	snapshotPriceCacheVal = price
-	return price
-}
-
-func setCexPrice(cex string, p float64) {
-	if priceManager != nil {
-		priceManager.Set(cex, p)
-		return
-	}
-	cexPricesMu.Lock()
-	cexPrices[cex] = p
-	cexPricesMu.Unlock()
-	hub.broadcastForCex(cex)
-}
-
 // --- Init & Main ---
 
 func init() {
@@ -198,6 +128,11 @@ func init() {
 	if unifiedAPIURL == "" {
 		unifiedAPIURL = "http://localhost:5010"
 	}
+
+	// Session cookie Secure attribute: default true (prod is HTTPS). Set
+	// SESSION_COOKIE_SECURE=false only for local HTTP dev, where browsers drop
+	// Secure cookies served over http:// and the login session would never persist.
+	sessionCookieSecure = !strings.EqualFold(os.Getenv("SESSION_COOKIE_SECURE"), "false")
 }
 
 func main() {
@@ -225,6 +160,7 @@ func main() {
 	snapshotLogRepo = snapshotlog.NewRepository(db)
 	mmProxy = mmproxy.New(mmControllerAPIURL)
 	tradingAccountRepo = tradingaccounts.NewRepository(db)
+	authSvc := auth.New(db, auth.Config{CookieSecure: sessionCookieSecure})
 
 	tradeCostEstimators = make(map[string]*tradecost.TradeCostEstimator, len(supportedCEXes))
 	for _, c := range supportedCEXes {
@@ -236,45 +172,11 @@ func main() {
 	}
 	tradeRouteOptimizer = tradecost.NewOptimizer(supportedCEXes, tradeCostEstimators)
 
-	// Start WebSocket price feeds for all supported CEX exchanges
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	priceManager = prices.NewManager(supportedCEXes)
-	priceManager.SetUpdateCallback(func(cex string) {
-		hub.broadcastForCex(cex)
-	})
 
-	// Metrics registry — created before the feeds start so price-feed health is
-	// reported from the first connection.
+	// Metrics registry.
 	metricsReg := metrics.NewServiceRegistry("dexmonitor")
-	priceManager.SetMetrics(prices.NewMetrics(metricsReg.Registry))
-
-	priceManager.Start(ctx)
-
-	// Visibility aid: 30s after startup, log live feed prices so an operator can
-	// immediately tell whether the WS feeds connected. The fallback to the
-	// snapshots table keeps the system working without this, but a silent feed
-	// outage is exactly what masked the empty-lifecycle bug before.
-	go func() {
-		select {
-		case <-time.After(30 * time.Second):
-		case <-ctx.Done():
-			return
-		}
-		parts := make([]string, 0, len(supportedCEXes))
-		var defaultMissing bool
-		for _, c := range supportedCEXes {
-			p := priceManager.Get(c)
-			parts = append(parts, fmt.Sprintf("%s=%.2f", c, p))
-			if c == defaultCEX && p <= 0 {
-				defaultMissing = true
-			}
-		}
-		slog.InfoContext(ctx, "price feeds post-start prices", "prices", strings.Join(parts, " "))
-		if defaultMissing {
-			slog.WarnContext(ctx, "default price feed has no price after 30s — lifecycle writes will fall back to snapshots table", "cex", defaultCEX)
-		}
-	}()
 
 	// Payment method grouping service — loads once at startup, refreshes every hour.
 	if svc, err := paymentmethods.NewService(db); err != nil {
@@ -286,25 +188,25 @@ func main() {
 
 	mux := http.NewServeMux()
 
+	// Auth (login/session). Registered before the API + static routes; these
+	// endpoints are intentionally exempt from the requireSession gate below.
+	authSvc.RegisterRoutes(mux)
+
 	// API
 	mux.HandleFunc("GET /api/past_offers", handlePastOffers)
 	mux.HandleFunc("GET /api/past_offers/{id}/lifecycle", handlePastOfferLifecycle)
 	mux.HandleFunc("GET /api/past_order_stats", handlePastOrderStats)
 	mux.HandleFunc("GET /api/past_profitable_orders", handlePastProfitableOrders)
 	mux.HandleFunc("GET /api/general_stats/overview", handleGeneralStatsOverview)
-	mux.HandleFunc("GET /api/general_stats/open_premiums", handleGeneralStatsOpenPremiums)
 	mux.HandleFunc("GET /api/general_stats/past_premiums", handleGeneralStatsPastPremiums)
 	mux.HandleFunc("GET /api/general_stats/lifetimes", handleGeneralStatsLifetimes)
 	mux.HandleFunc("GET /api/general_stats/payment_methods", handleGeneralStatsPaymentMethods)
 	mux.HandleFunc("POST /api/dashboard/analytics", handleDashboardAnalytics)
-	mux.HandleFunc("GET /api/live_offers", handleLiveOffersREST)
-	mux.HandleFunc("GET /ws/live_offers", handleLiveOffersWS)
 	mux.HandleFunc("GET /api/stats", handleStats)
 	mux.HandleFunc("GET /api/ohlc", handleOHLC)
 	mux.HandleFunc("GET /api/snapshot-log", handleSnapshotLog)
 	mux.HandleFunc("GET /api/snapshot-log/{id}", handleSnapshotLogDetail)
 	mux.HandleFunc("GET /api/payment_method_groups", handlePaymentMethodGroups)
-	mux.HandleFunc("GET /api/trade_cost_config", handleTradeCostConfig)
 	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
 	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
 	mux.HandleFunc("GET /api/mm-controller/lnd/wallet", handleMmControllerLNDWallet)
@@ -344,9 +246,6 @@ func main() {
 	mux.HandleFunc("DELETE /api/trading/bank_accounts/{id}", handleTradingBankAccountByID)
 	mux.HandleFunc("GET /health", handleHealth)
 
-	// Internal: snapshot tool pushes live offer data after each run
-	mux.HandleFunc("POST /internal/live_offers", handleInternalLiveOffers)
-
 	mux.Handle("GET /metrics", metricsReg.Handler())
 
 	// Static frontend: full Vite dist tree (assets/, brand/, favicon.svg, …).
@@ -359,8 +258,16 @@ func main() {
 	// No CORS layer: the SPA is same-origin in prod (served by this process via
 	// nginx) and in dev (vite proxies /api), and these routes expose trading
 	// credentials — browsers must not be invited to call them cross-origin.
+	// LoadAndSave loads the session into the request context (and writes the
+	// Set-Cookie on the way out); it must wrap the gate, which reads the session
+	// to require login for /api/* and /ws/* (auth endpoints excepted, see
+	// auth.Protected). RouteNamer stays innermost so spans are named by the matched route.
 	handler := tracing.WrapHandler(
-		metricsReg.Middleware(tracing.RouteNamer(mux)),
+		metricsReg.Middleware(
+			authSvc.LoadAndSave(
+				authSvc.Gate(auth.Protected)(tracing.RouteNamer(mux)),
+			),
+		),
 		serviceName,
 	)
 
@@ -439,26 +346,6 @@ func handleOffers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, offers)
-}
-
-// handleLiveOffersREST is the REST fallback for /ws/live_offers.
-func handleLiveOffersREST(w http.ResponseWriter, r *http.Request) {
-	sub := liveSubscription{
-		cex:                   queryCex(r),
-		requiredConfirmations: queryConfirmations(r),
-		excludedCEXes:         strings.Join(queryExcludedCEXes(r), ","),
-		feeTier:               queryFeeTier(r),
-		coupledHedge:          queryCoupledHedge(r),
-		maxFiatLimitEUR:       queryMaxFiatLimitEUR(r),
-	}
-	payload := hub.computePayload(getCexPrice(sub.cex), sub)
-	if payload == nil {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte("[]"))
-		return
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(payload)
 }
 
 // handlePastOffers serves closed offers (is_live=0) from the DB.
@@ -702,7 +589,6 @@ func handlePastProfitableOrders(w http.ResponseWriter, r *http.Request) {
 type generalStatsContext struct {
 	hours                  int
 	excludedPaymentMethods []string
-	sub                    liveSubscription
 	offers                 []map[string]any
 	generalOffers          []pastorders.Offer
 	closedOfferIDs         []int64
@@ -756,14 +642,6 @@ func loadGeneralStatsContextUncached(r *http.Request) (generalStatsContext, erro
 	}
 	cutoff := time.Now().Add(-time.Duration(historyHours) * time.Hour)
 	excludedPaymentMethods := queryExcludedPaymentMethods(r)
-	sub := liveSubscription{
-		cex:                   queryCex(r),
-		requiredConfirmations: queryConfirmations(r),
-		excludedCEXes:         strings.Join(queryExcludedCEXes(r), ","),
-		feeTier:               queryFeeTier(r),
-		coupledHedge:          queryCoupledHedge(r),
-		maxFiatLimitEUR:       queryMaxFiatLimitEUR(r),
-	}
 
 	rows, err := db.Query(
 		rebind("SELECT * FROM offers WHERE last_seen >= ? ORDER BY last_seen DESC"),
@@ -807,7 +685,6 @@ func loadGeneralStatsContextUncached(r *http.Request) (generalStatsContext, erro
 	return generalStatsContext{
 		hours:                  hours,
 		excludedPaymentMethods: excludedPaymentMethods,
-		sub:                    sub,
 		offers:                 offers,
 		generalOffers:          generalOffers,
 		closedOfferIDs:         closedOfferIDs,
@@ -821,10 +698,6 @@ func (ctx generalStatsContext) overview() pastorders.GeneralStatsOverview {
 
 func (ctx generalStatsContext) premiumSummary() pastorders.GeneralStatsPremiumSummary {
 	return pastorders.BuildGeneralStatsPremiumSummary(ctx.generalOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
-}
-
-func (ctx generalStatsContext) openPremiums() pastorders.OpenPremiumStats {
-	return buildOpenPremiumStats(ctx.sub, ctx.excludedPaymentMethods)
 }
 
 func (ctx generalStatsContext) pastPremiums(r *http.Request, lifecycleAgg map[int64]pastLifecycleAggregate) []pastorders.PastPremiumTimeframeStats {
@@ -842,15 +715,6 @@ func handleGeneralStatsOverview(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, ctx.overview())
-}
-
-func handleGeneralStatsOpenPremiums(w http.ResponseWriter, r *http.Request) {
-	ctx, err := loadGeneralStatsContext(r)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, ctx.openPremiums())
 }
 
 func handleGeneralStatsPastPremiums(w http.ResponseWriter, r *http.Request) {
@@ -884,78 +748,6 @@ func handleGeneralStatsPaymentMethods(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, ctx.overview().PaymentMethodCounts)
-}
-
-func buildOpenPremiumStats(sub liveSubscription, excludedPaymentMethods []string) pastorders.OpenPremiumStats {
-	price := getCexPrice(sub.cex)
-	offers := hub.computeOutOffers(price, sub)
-	excluded := make(map[string]struct{}, len(excludedPaymentMethods))
-	for _, method := range excludedPaymentMethods {
-		excluded[method] = struct{}{}
-	}
-
-	type acc struct {
-		sumAsk float64
-		cntAsk int
-		sumBid float64
-		cntBid int
-	}
-	rawAcc := acc{}
-	netFullAcc := acc{}
-	netCappedAcc := acc{}
-
-	addPositive := func(a *acc, direction string, value float64) {
-		if value <= 0 {
-			return
-		}
-		if direction == "sell" {
-			a.sumAsk += value
-			a.cntAsk++
-			return
-		}
-		if direction == "buy" {
-			a.sumBid += value
-			a.cntBid++
-		}
-	}
-
-	for _, offer := range offers {
-		if offer.PaymentMethod != nil {
-			if _, skip := excluded[*offer.PaymentMethod]; skip {
-				continue
-			}
-		}
-		addPositive(&rawAcc, offer.Direction, offer.PriceDiffPct)
-		addPositive(&netFullAcc, offer.Direction, offer.NetPremiumPct)
-		capped := offer.NetPremiumPct
-		if offer.NetPremiumPctCapped != nil {
-			capped = *offer.NetPremiumPctCapped
-		}
-		addPositive(&netCappedAcc, offer.Direction, capped)
-	}
-
-	toMode := func(a acc) pastorders.OpenPremiumModeStats {
-		var askPtr *float64
-		var bidPtr *float64
-		if a.cntAsk > 0 {
-			v := tradecost.Round4(a.sumAsk / float64(a.cntAsk))
-			askPtr = &v
-		}
-		if a.cntBid > 0 {
-			v := tradecost.Round4(a.sumBid / float64(a.cntBid))
-			bidPtr = &v
-		}
-		return pastorders.OpenPremiumModeStats{
-			AvgAskPremiumPct: askPtr,
-			AvgBidPremiumPct: bidPtr,
-		}
-	}
-
-	return pastorders.OpenPremiumStats{
-		Raw:       toMode(rawAcc),
-		NetFull:   toMode(netFullAcc),
-		NetCapped: toMode(netCappedAcc),
-	}
 }
 
 func buildPastPremiumStats(offers []map[string]any, lifecycleAgg map[int64]pastLifecycleAggregate, now time.Time, excludedPaymentMethods []string, maxFiatLimitEUR float64, requiredConfirmations int, excludedCEXes []string, feeTier string, opts *pastAnalyticsOpts) []pastorders.PastPremiumTimeframeStats {
@@ -2004,54 +1796,6 @@ func buildPastBTCNetworkFee(rep tradecost.CostBreakdown, requiredConfirmations i
 	}
 }
 
-// writeLifecycleEntries persists a computed snapshot of each live offer's
-// metrics into order_lifecycle, and updates best_route_cex / best_route_method
-// on the offers table when the optimizer found a valid route.
-func writeLifecycleEntries(offers []liveOutOffer) {
-	if len(offers) == 0 || db == nil {
-		return
-	}
-	if lifecycleRepo.DB != db {
-		lifecycleRepo = lifecycle.NewRepository(db)
-	}
-	records := make([]lifecycle.Record, 0, len(offers))
-	for _, o := range offers {
-		records = append(records, lifecycle.Record{
-			ID:            o.ID,
-			Price:         o.Price,
-			RefPrice:      o.RefPrice,
-			PriceDiffPct:  o.PriceDiffPct,
-			NetPremiumPct: o.NetPremiumPct,
-			CostBreakdown: o.CostBreakdown,
-		})
-	}
-	if err := lifecycleRepo.PersistSnapshot(context.Background(), records); err != nil {
-		fmt.Printf("[Lifecycle] persist error: %v\n", err)
-	}
-}
-
-// handleInternalLiveOffers receives the live offer list from the snapshot tool,
-// updates the hub, and persists a lifecycle snapshot to the DB.
-func handleInternalLiveOffers(w http.ResponseWriter, r *http.Request) {
-	var offers []LiveOffer
-	if err := json.NewDecoder(r.Body).Decode(&offers); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
-		return
-	}
-	// Fetch lifecycle from previous snapshot cycles and cache before broadcasting.
-	ids := make([]int64, len(offers))
-	for i, o := range offers {
-		ids[i] = o.ID
-	}
-	hub.setLifecycle(fetchOfferLifecycle(ids))
-	hub.setOffers(offers)
-	price := getCexPrice(defaultCEX)
-	outOffers := hub.computeOutOffers(price, liveSubscription{cex: defaultCEX})
-	writeLifecycleEntries(outOffers)
-	fmt.Printf("[LiveHub] updated with %d live offers from snapshot (ref_price=%.2f)\n", len(offers), price)
-	w.WriteHeader(http.StatusNoContent)
-}
-
 func handleStats(w http.ResponseWriter, r *http.Request) {
 	hours := queryInt(r, "hours", 24)
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
@@ -2185,41 +1929,6 @@ func handlePaymentMethodGroups(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	json.NewEncoder(w).Encode(map[string]any{"groups": pmService.GetGroups()})
-}
-
-func handleTradeCostConfig(w http.ResponseWriter, r *http.Request) {
-	type cexInfo struct {
-		Name         string   `json:"name"`
-		Methods      []string `json:"methods"`
-		HasLightning bool     `json:"has_lightning"`
-	}
-	cexes := make([]cexInfo, 0, len(supportedCEXes))
-	for _, name := range supportedCEXes {
-		profile := tradecost.ProfileFor(name)
-		methods := make([]string, 0, len(profile.Methods))
-		hasLN := false
-		for _, m := range profile.Methods {
-			methods = append(methods, string(m))
-			if m == tradecost.MethodLightning {
-				hasLN = true
-			}
-		}
-		cexes = append(cexes, cexInfo{Name: name, Methods: methods, HasLightning: hasLN})
-	}
-
-	tiers := []map[string]string{
-		{"value": "", "label": "Auto (congestion-based)"},
-		{"value": "economic", "label": "Economic (cheapest, ~1h)"},
-		{"value": "standard", "label": "Standard (balanced, ~30min)"},
-		{"value": "fast", "label": "Fast (priority, ~10min)"},
-		{"value": "express", "label": "Express (next block, ~2min)"},
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]any{
-		"cexes":     cexes,
-		"fee_tiers": tiers,
-	})
 }
 
 func handleSnapshotLog(w http.ResponseWriter, r *http.Request) {
