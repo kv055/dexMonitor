@@ -162,15 +162,16 @@ func main() {
 	tradingAccountRepo = tradingaccounts.NewRepository(db)
 	authSvc := auth.New(db, auth.Config{CookieSecure: sessionCookieSecure})
 
+	orchestrator := tradecost.NewTradeCostEstimator()
 	tradeCostEstimators = make(map[string]*tradecost.TradeCostEstimator, len(supportedCEXes))
 	for _, c := range supportedCEXes {
-		tradeCostEstimators[c] = tradecost.NewTradeCostEstimator(c)
-		slog.Info("trade-cost estimator initialized",
+		tradeCostEstimators[c] = orchestrator
+		slog.Info("trade-cost CEX enabled",
 			"cex", c,
 			"taker_fallback_pct", tradecost.TakerFeeFallback(c)*100,
-			"onchain_withdrawal_fallback_btc", tradecost.WithdrawalFallback(c, tradecost.MethodOnchain))
+			"onchain_withdrawal_fallback_btc", tradecost.WithdrawalFallback(c))
 	}
-	tradeRouteOptimizer = tradecost.NewOptimizer(supportedCEXes, tradeCostEstimators)
+	tradeRouteOptimizer = tradecost.NewTradeRouteOptimizer(tradeCostEstimators)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
