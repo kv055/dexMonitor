@@ -48,3 +48,5 @@ Thumbs.db
 # Codex
 .codex
 .codex/
+# Claude Code
+.claude/
