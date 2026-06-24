@@ -26,13 +26,27 @@ export interface BTCNetworkFeeDetail {
   data_age_minutes: number;
 }
 
+export interface ConversionBreakdown {
+  strategy: string;              // "submarine_swap" | "channel_open" | ""
+  service_fee_pct: number;
+  service_fee_btc: number;
+  provider_miner_btc: number;
+  lockup_fee_btc: number;
+  routing_fee_pct: number;
+  routing_fee_btc: number;
+  channel_open_btc: number;
+  fee_sum_pct: number;
+  fee_sum_btc: number;
+  crossover_amount_btc: number;
+}
+
 export interface CostBreakdown {
   btc_amount: number;
   route_cex: string;
   route_dex: string;
-  route_method: string;
-  trade_direction: string;   // "bid" (buy CEX→sell DEX) or "ask" (buy DEX→sell CEX)
-  num_network_txs: number;   // 2 for bid side, 1 for ask side
+  route_method: string;          // "onchain_direct" | "onchain_hub" | "onchain_swap"
+  trade_direction: string;       // "bid" (buy CEX→sell DEX) or "ask" (buy DEX→sell CEX)
+  num_network_txs: number;
   estimated_profit_pct: number;
   estimated_profit_btc: number;
   cex_taker_fee_pct: number;
@@ -41,10 +55,11 @@ export interface CostBreakdown {
   withdrawal_fee_btc: number;
   network_fee_pct: number;
   network_fee_btc: number;
-  network_fee_method: string;
+  network_fee_method: string;    // "onchain_direct" | "onchain_hub" | "onchain_swap"
   network_fee_tier: string;
   network_fee_confidence: number;
   network_fee_detail: BTCNetworkFeeDetail | null;
+  conversion: ConversionBreakdown;
   hedge: HedgeBreakdown;
   dex_fee_pct: number;
   dex_fee_btc: number;
@@ -190,6 +205,7 @@ export interface LiveOfferScenarioCosts {
   withdrawal: LiveOfferCostComponent;
   dex_fee: LiveOfferCostComponent;
   network: LiveOfferCostComponent;
+  conversion: ConversionBreakdown;
   hedge: HedgeBreakdown;
   total: LiveOfferCostComponent;
 }
@@ -595,8 +611,12 @@ export interface PaymentMethodGroup {
 
 export interface CexInfo {
   name: string;
-  methods: string[];
-  has_lightning: boolean;
+}
+
+export interface DexRoutingProfile {
+  dex: string;
+  bid: string;
+  ask: string;
 }
 
 export interface FeeTierOption {
@@ -606,6 +626,7 @@ export interface FeeTierOption {
 
 export interface TradeCostConfig {
   cexes: CexInfo[];
+  dex_routing_profiles: DexRoutingProfile[];
   fee_tiers: FeeTierOption[];
 }
 

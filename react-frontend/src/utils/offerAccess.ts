@@ -140,6 +140,7 @@ export function getDisplayCostBreakdown(offer: Offer, capped = false): CostBreak
     network_fee_tier: networkFee?.tier ?? '',
     network_fee_confidence: networkFee?.confidence ?? 0,
     network_fee_detail: networkFee?.detail ?? null,
+    conversion: scenario.costs.conversion,
     hedge: scenario.costs.hedge,
     dex_fee_pct: dexFeePct,
     dex_fee_btc: dexFeeBTC,

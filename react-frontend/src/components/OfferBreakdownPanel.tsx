@@ -70,10 +70,19 @@ function Badge({ label, colorCls }: { label: string; colorCls?: string }) {
   );
 }
 
-function OnchainFeeDetail({ d, conf }: { d: BTCDetail; conf: number }) {
+const ROUTE_EXPLANATIONS: Record<string, string> = {
+  onchain_direct: 'CEX withdraw → DEX wallet (direct)',
+  onchain_hub: 'CEX withdraw → LND hub wallet → trade destination',
+  onchain_swap: 'CEX withdraw → LND wallet → submarine swap into Lightning',
+};
+
+function OnchainFeeDetail({ d, conf, bd }: { d: BTCDetail; conf: number; bd: CostBreakdown }) {
   const tierCls = TIER_COLOR[d.congestion_level] ?? 'text-muted';
   const congCls = CONGESTION_COLOR[d.congestion_level] ?? 'text-muted';
   const confPct = conf > 0 ? Math.round(conf * 100) + '%' : null;
+  const method = bd.route_method || bd.network_fee_method || '';
+  const conv = bd.conversion;
+  const hasConversion = conv && conv.fee_sum_btc > 0;
 
   return (
     <>
@@ -84,16 +93,16 @@ function OnchainFeeDetail({ d, conf }: { d: BTCDetail; conf: number }) {
       </div>
       <div className="bg-bg rounded-md border border-border px-2.5 py-2 flex flex-col gap-1.5 text-[0.68rem]">
         <div className="flex items-center justify-between gap-3">
-          <span className="text-muted">Tx structure</span>
+          <span className="text-muted">On-chain tx</span>
           <span className="text-text font-mono">
             {d.tx_inputs}in · {d.tx_outputs}out · {d.tx_type} · {d.tx_vbytes} vB
             {d.num_txs > 1 && <span className="text-orange-400 ml-1.5">× {d.num_txs} txs</span>}
           </span>
         </div>
-        {d.num_txs > 1 && (
+        {ROUTE_EXPLANATIONS[method] && (
           <div className="flex items-center justify-between gap-3">
-            <span className="text-muted">Why 2 txs?</span>
-            <span className="text-muted text-right">CEX withdraw → pre-approved addr → trade wallet</span>
+            <span className="text-muted">Route</span>
+            <span className="text-muted text-right">{ROUTE_EXPLANATIONS[method]}</span>
           </div>
         )}
         <div className="flex items-center justify-between gap-3">
@@ -141,18 +150,42 @@ function OnchainFeeDetail({ d, conf }: { d: BTCDetail; conf: number }) {
           <span className="text-muted">{d.data_age_minutes}m ago</span>
         </div>
       </div>
-    </>
-  );
-}
 
-function LightningFeeDetail({ conf }: { conf: number }) {
-  const confPct = conf > 0 ? Math.round(conf * 100) + '%' : null;
-  return (
-    <div className="flex items-center gap-1.5 pl-0.5">
-      <Badge label="lightning" colorCls="text-[#bc8cff]" />
-      {confPct && <span className="text-[0.6rem] text-muted">{confPct} conf.</span>}
-      <span className="text-[0.6rem] text-muted">amount-proportional estimate</span>
-    </div>
+      {hasConversion && (
+        <>
+          <div className="flex items-center gap-1.5 mt-2 mb-1.5 pl-0.5">
+            <Badge label="submarine swap" colorCls="text-[#bc8cff]" />
+            {conv.strategy && <Badge label={conv.strategy.replace('_', ' ')} colorCls="text-[#bc8cff]" />}
+          </div>
+          <div className="bg-bg rounded-md border border-border px-2.5 py-2 flex flex-col gap-1.5 text-[0.68rem]">
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted">Service fee</span>
+              <span className="text-text font-mono">{fmt8(conv.service_fee_btc)} BTC <span className="text-muted">({(conv.service_fee_pct).toFixed(2)}%)</span></span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <span className="text-muted">Provider miner fee</span>
+              <span className="text-text font-mono">{fmt8(conv.provider_miner_btc)} BTC</span>
+            </div>
+            {conv.routing_fee_btc > 0 && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted">LN routing fee</span>
+                <span className="text-text font-mono">{fmt8(conv.routing_fee_btc)} BTC</span>
+              </div>
+            )}
+            <div className="flex items-center justify-between gap-3 border-t border-border pt-1.5">
+              <span className="text-muted font-medium">Swap total</span>
+              <span className="text-text font-mono font-medium">{fmt8(conv.fee_sum_btc)} BTC <span className="text-muted">({(conv.fee_sum_pct).toFixed(2)}%)</span></span>
+            </div>
+            {conv.crossover_amount_btc > 0 && (
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted">Crossover amount</span>
+                <span className="text-muted font-mono">{fmt8(conv.crossover_amount_btc)} BTC</span>
+              </div>
+            )}
+          </div>
+        </>
+      )}
+    </>
   );
 }
 
@@ -269,20 +302,11 @@ function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
 }
 
 function NetworkFeeDetail({ bd }: { bd: CostBreakdown }) {
-  if (bd.network_fee_method === 'onchain' && bd.network_fee_detail) {
+  if (bd.network_fee_detail) {
     return (
       <tr>
         <td colSpan={4} className="pt-0 pb-2">
-          <OnchainFeeDetail d={bd.network_fee_detail} conf={bd.network_fee_confidence} />
-        </td>
-      </tr>
-    );
-  }
-  if (bd.network_fee_method === 'lightning') {
-    return (
-      <tr>
-        <td colSpan={4} className="pt-0 pb-2">
-          <LightningFeeDetail conf={bd.network_fee_confidence} />
+          <OnchainFeeDetail d={bd.network_fee_detail} conf={bd.network_fee_confidence} bd={bd} />
         </td>
       </tr>
     );
@@ -411,13 +435,11 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
   const [networkFeeOpen, setNetworkFeeOpen] = useState(false);
   const [hedgeFeeOpen, setHedgeFeeOpen] = useState(false);
   const [amountUnit, setAmountUnit] = useState<'btc' | 'fiat'>('fiat');
-  const hasNetworkFeeDetail = bd.network_fee_method === 'onchain'
-    ? !!bd.network_fee_detail
-    : bd.network_fee_method === 'lightning';
+  const hasNetworkFeeDetail = !!bd.network_fee_detail;
 
   const isAsk = bd.trade_direction === 'ask';
   const numTxs = bd.num_network_txs ?? (isAsk ? 1 : 2);
-  const networkFeeLabel = `BTC network fee${numTxs > 1 ? ` ×${numTxs} txs` : ''}`;
+  const networkFeeLabel = `Network routing cost${numTxs > 1 ? ` ×${numTxs} txs` : ''}`;
 
   const withdrawalRows: BreakdownRow[] = !isAsk
     ? [{ label: 'CEX withdrawal', btc: bd.withdrawal_fee_btc, pct: bd.withdrawal_fee_pct, cumulative: 0 }]
@@ -432,10 +454,15 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
     }]
     : [];
 
+  const conversionBTC = bd.conversion?.fee_sum_btc ?? 0;
+  const conversionPct = bd.conversion?.fee_sum_pct ?? 0;
+  const routingTotalBTC = bd.network_fee_btc + conversionBTC;
+  const routingTotalPct = bd.network_fee_pct + conversionPct;
+
   const rows: BreakdownRow[] = [
     { label: 'CEX taker fee', btc: bd.cex_taker_fee_btc, pct: bd.cex_taker_fee_pct, cumulative: 0 },
     ...withdrawalRows,
-    { label: networkFeeLabel, btc: bd.network_fee_btc, pct: bd.network_fee_pct, cumulative: 0, ...(hasNetworkFeeDetail ? { expandable: 'network' as const } : {}) },
+    { label: networkFeeLabel, btc: routingTotalBTC, pct: routingTotalPct, cumulative: 0, ...(hasNetworkFeeDetail ? { expandable: 'network' as const } : {}) },
     ...hedgeRows,
     { label: 'DEX platform fee', btc: bd.dex_fee_btc, pct: bd.dex_fee_pct, cumulative: 0 },
   ];
@@ -446,7 +473,13 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
   }
   const routeCex = bd.route_cex || '—';
   const routeDex = bd.route_dex || '—';
-  const routeMethod = bd.route_method || bd.network_fee_method || '—';
+  const routeMethodLabels: Record<string, string> = {
+    onchain_direct: 'direct on-chain',
+    onchain_hub: 'on-chain via hub wallet',
+    onchain_swap: 'submarine swap',
+  };
+  const rawMethod = bd.route_method || bd.network_fee_method || '';
+  const routeMethod = routeMethodLabels[rawMethod] || rawMethod || '—';
   const profitPct = bd.estimated_profit_pct ?? netPremiumPct;
   const profitBtc = bd.estimated_profit_btc ?? (profitPct != null ? bd.btc_amount * (profitPct / 100) : null);
   const profitCls = profitPct != null && profitPct < 0 ? 'text-red' : profitPct != null && profitPct > 0 ? 'text-green' : 'text-muted';

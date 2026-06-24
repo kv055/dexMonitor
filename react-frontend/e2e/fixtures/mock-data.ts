@@ -49,7 +49,7 @@ function offer(
       btc_amount: btcAmount,
       route_cex: 'kraken',
       route_dex: exchange,
-      route_method: 'onchain',
+      route_method: 'onchain_direct',
       trade_direction: direction === 'sell' ? 'ask' : 'bid',
       num_network_txs: direction === 'sell' ? 1 : 2,
       estimated_profit_pct: netPremium,
@@ -60,14 +60,22 @@ function offer(
       withdrawal_fee_btc: withdrawalBTC,
       network_fee_pct: 0.10,
       network_fee_btc: networkBTC,
-      network_fee_method: 'onchain',
+      network_fee_method: 'onchain_direct',
       network_fee_tier: 'standard',
       network_fee_confidence: 0.9,
       network_fee_detail: null,
+      conversion: {
+        strategy: '',
+        service_fee_pct: 0, service_fee_btc: 0,
+        provider_miner_btc: 0, lockup_fee_btc: 0,
+        routing_fee_pct: 0, routing_fee_btc: 0,
+        channel_open_btc: 0,
+        fee_sum_pct: 0, fee_sum_btc: 0,
+        crossover_amount_btc: 0,
+      },
       hedge: {
         fee_sum_btc: 0,
         fee_sum_pct: 0,
-        legs: [],
       },
       dex_fee_pct: 0.35,
       dex_fee_btc: btcAmount * 0.0035,
@@ -341,8 +349,13 @@ export const MOCK_GENERAL_STATS_PAYMENT_METHODS = MOCK_GENERAL_STATS.payment_met
 
 export const MOCK_TRADE_COST_CONFIG = {
   cexes: [
-    { name: 'kraken', methods: ['onchain', 'lightning'], has_lightning: true },
-    { name: 'coinbase', methods: ['onchain'], has_lightning: false },
+    { name: 'kraken' },
+    { name: 'coinbase' },
+  ],
+  dex_routing_profiles: [
+    { dex: 'bisq', bid: 'onchain_direct', ask: 'onchain_direct' },
+    { dex: 'bisq2', bid: 'onchain_hub', ask: 'onchain_direct' },
+    { dex: 'robosats', bid: 'onchain_swap', ask: 'onchain_swap' },
   ],
   fee_tiers: [
     { value: '', label: 'Auto (congestion-based)' },

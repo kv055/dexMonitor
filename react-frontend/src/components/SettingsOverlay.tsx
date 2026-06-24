@@ -351,10 +351,6 @@ export function SettingsOverlay({
                     <div key={cex.name} className={`flex items-center justify-between gap-1.5 px-2.5 py-1 rounded-md border border-border ${excluded ? 'opacity-50' : ''}`}>
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span className={`text-[0.7rem] font-semibold ${excluded ? 'text-muted line-through' : 'text-text'}`}>{label}</span>
-                        <span className="text-[0.5rem] text-muted">{cex.methods.join(', ')}</span>
-                        {cex.has_lightning && (
-                          <span className="text-[0.5rem] uppercase tracking-wide text-yellow border border-yellow/40 rounded px-0.5 py-px">⚡ LN</span>
-                        )}
                       </div>
                       <button
                         type="button"

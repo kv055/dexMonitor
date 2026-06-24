@@ -4,6 +4,7 @@ import type { TradeCostConfig } from '../types';
 
 const defaultConfig: TradeCostConfig = {
   cexes: [],
+  dex_routing_profiles: [],
   fee_tiers: [{ value: '', label: 'Auto (congestion-based)' }],
 };
 
