@@ -87,11 +87,6 @@ function isProfitableInMode(order: PastProfitableOrder, mode: TakerOpportunityMo
   return (pickScenario(order, mode).profit.avg_btc ?? 0) > 0;
 }
 
-function isPaymentMethodExcluded(method: string | null | undefined, excludedMethods: string[]): boolean {
-  if (!method || excludedMethods.length === 0) return false;
-  return excludedMethods.includes(method);
-}
-
 function orderDurationMinutes(order: PastProfitableOrder): number {
   if (order.status.duration) {
     return order.status.duration.hours * 60 + order.status.duration.minutes;
@@ -303,7 +298,7 @@ function sortProfitableOrders(
         return durB - durA;
       }
       case 'payment_method_asc':
-        return (a.payment_method ?? '').localeCompare(b.payment_method ?? '', 'de');
+        return (a.payment_methods?.join(', ') ?? '').localeCompare(b.payment_methods?.join(', ') ?? '', 'de');
       case 'exchange_asc':
         return a.exchange.localeCompare(b.exchange, 'de');
       default:
@@ -740,12 +735,12 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
         <span className="uppercase tracking-wide text-[0.6rem] mr-1">ID</span>
         <span className="text-text">{order.offer_id ?? order.id}</span>
       </div>
-      {order.payment_method && (
+      {order.payment_methods?.length ? (
         <div className="text-[0.68rem] text-muted">
           <span className="uppercase tracking-wide text-[0.6rem] mr-1">Payment</span>
-          <span className="text-text">{order.payment_method}</span>
+          <span className="text-text">{order.payment_methods.join(', ')}</span>
         </div>
-      )}
+      ) : null}
       <PastOfferSupplementalDetails
         order={order}
         offer={offer}
@@ -816,7 +811,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   const activeOrders = useMemo(() => {
     let list = deferredOrders.filter(order => isProfitableInMode(order, mode));
     if (!showAllMethods && hasExcluded) {
-      list = list.filter(order => !isPaymentMethodExcluded(order.payment_method, excludedMethods));
+      list = list.filter(order => !order.payment_methods?.some(m => excludedMethods.includes(m)));
     }
     return list;
   }, [deferredOrders, mode, showAllMethods, hasExcluded, excludedMethods]);
@@ -1250,7 +1245,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
                   const isOpen = expandedId === order.id;
                   const activeScenario = pickScenario(order, mode);
                   const seenLabel = formatDateTimeLabel(order.status.last_seen ?? '', timezone);
-                  const paymentMethod = order.payment_method || 'Unknown method';
+                  const paymentMethod = order.payment_methods?.join(', ') || 'Unknown method';
 
                   return (
                     <div

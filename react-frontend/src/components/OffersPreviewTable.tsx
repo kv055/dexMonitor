@@ -30,10 +30,13 @@ const TD = "px-2 py-1 whitespace-nowrap";
 
 function useGroupLabel() {
   const { groups } = useFilters();
-  return (method: string | null): string => {
-    if (!method) return '—';
-    const group = groups.find(g => g.methods.includes(method));
-    return group ? group.display_name : method;
+  return (methods: string[] | null | undefined): string => {
+    if (!methods || methods.length === 0) return '—';
+    const labels = methods.map(method => {
+      const group = groups.find(g => g.methods.includes(method));
+      return group ? group.display_name : method;
+    });
+    return [...new Set(labels)].join(', ');
   };
 }
 
@@ -111,7 +114,7 @@ export function OffersPreviewTable() {
                     <td className={`${TD} text-right`}>€{formatNum(getOfferPrice(o))}</td>
                     <td className={`${TD} overflow-hidden max-w-32`}>
                       <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
-                        {groupLabel(o.payment_method)}
+                        {groupLabel(o.payment_methods)}
                       </span>
                     </td>
                   </tr>
@@ -139,10 +142,10 @@ export function OffersPreviewTable() {
                 ×
               </button>
               <OfferTimeMeta firstSeen={getFirstSeen(selectedOffer)} lastSeen={getLastSeen(selectedOffer)} isLive={isOfferLive(selectedOffer)} timezone={timezone} priceType={getPriceType(selectedOffer)} />
-              {selectedOffer.payment_method && (
+              {selectedOffer.payment_methods && selectedOffer.payment_methods.length > 0 && (
                 <div className="mt-1 mb-2 text-[0.68rem] text-muted">
                   <span className="uppercase tracking-wide text-[0.6rem] mr-1">Payment</span>
-                  <span className="text-text">{selectedOffer.payment_method}</span>
+                  <span className="text-text">{selectedOffer.payment_methods.join(', ')}</span>
                 </div>
               )}
               {getDisplayCostBreakdown(selectedOffer) ? (
@@ -243,7 +246,7 @@ export function OffersPreviewTable() {
                   </td>
                   <td className={`${TD} overflow-hidden`}>
                     <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
-                      {groupLabel(o.payment_method)}
+                      {groupLabel(o.payment_methods)}
                     </span>
                   </td>
                 </tr>
@@ -277,10 +280,10 @@ export function OffersPreviewTable() {
                 <span className="uppercase tracking-wide text-[0.6rem] mr-1">ID</span>
                 <span className="text-text">{selectedOffer.id}</span>
               </div>
-              {selectedOffer.payment_method && (
+              {selectedOffer.payment_methods && selectedOffer.payment_methods.length > 0 && (
                 <div className="mt-1 text-[0.68rem] text-muted">
                   <span className="uppercase tracking-wide text-[0.6rem] mr-1">Payment</span>
-                  <span className="text-text">{selectedOffer.payment_method}</span>
+                  <span className="text-text">{selectedOffer.payment_methods.join(', ')}</span>
                 </div>
               )}
             </div>

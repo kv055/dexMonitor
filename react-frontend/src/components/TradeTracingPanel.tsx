@@ -399,7 +399,7 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
                 <HeaderFact label="Direction">{isAsk ? 'Sell on DEX' : 'Buy on DEX'}</HeaderFact>
                 <HeaderFact label="DEX"><ExchangeTag exchange={offer.exchange} /></HeaderFact>
                 <HeaderFact label="Best CEX">{cexLabel}</HeaderFact>
-                <HeaderFact label="Payment">{offer.payment_method ?? '—'}</HeaderFact>
+                <HeaderFact label="Payment">{offer.payment_methods?.join(', ') ?? '—'}</HeaderFact>
                 <HeaderFact label="Net premium">
                   <span className={premiumClass(netPremium)}>{netPremium != null ? `${netPremium.toFixed(2)}%` : '—'}</span>
                 </HeaderFact>

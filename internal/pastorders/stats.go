@@ -25,8 +25,8 @@ var DefaultTimeframes = []Timeframe{
 
 // PremiumOrder represents a premium order.
 type PremiumOrder struct {
-	// PaymentMethod is the payment method value for the premium order.
-	PaymentMethod string
+	// PaymentMethods lists the payment methods accepted.
+	PaymentMethods []string
 	// LastSeen is the last seen value for the premium order.
 	LastSeen time.Time
 	// BTCAmount is a BTC-denominated btcamount value.
@@ -87,8 +87,8 @@ type Offer struct {
 	Exchange string
 	// Direction is the direction value for the offer.
 	Direction string
-	// PaymentMethod is the payment method value for the offer.
-	PaymentMethod string
+	// PaymentMethods lists the payment methods accepted by the offer.
+	PaymentMethods []string
 	// PriceDiffPercent is a percentage value.
 	PriceDiffPercent *float64
 	// FirstSeen is the first seen value for the offer.
@@ -265,7 +265,7 @@ func filterGeneralStatsOffers(offers []Offer, now time.Time, hours int, excluded
 
 	filtered := make([]Offer, 0, len(offers))
 	for _, offer := range offers {
-		if _, skip := excluded[offer.PaymentMethod]; skip {
+		if hasExcludedMethod(offer.PaymentMethods, excluded) {
 			continue
 		}
 		filtered = append(filtered, offer)
@@ -318,8 +318,8 @@ func BuildGeneralStatsOverview(offers []Offer, now time.Time, hours int, exclude
 		if offer.Exchange != "" {
 			offersByExchange[offer.Exchange]++
 		}
-		if offer.PaymentMethod != "" {
-			paymentCounts[offer.PaymentMethod]++
+		for _, m := range offer.PaymentMethods {
+			paymentCounts[m]++
 		}
 	}
 
@@ -424,7 +424,7 @@ func buildTimeframeStats(orders []PremiumOrder, now time.Time, tf Timeframe, exc
 		if order.LastSeen.Before(cutoff) {
 			continue
 		}
-		if _, skip := excluded[order.PaymentMethod]; skip {
+		if hasExcludedMethod(order.PaymentMethods, excluded) {
 			continue
 		}
 
@@ -504,4 +504,13 @@ func sortedCounts(counts map[string]int) []Count {
 func round(v float64, places int) float64 {
 	pow := math.Pow10(places)
 	return math.Round(v*pow) / pow
+}
+
+func hasExcludedMethod(methods []string, excluded map[string]struct{}) bool {
+	for _, m := range methods {
+		if _, skip := excluded[m]; skip {
+			return true
+		}
+	}
+	return false
 }

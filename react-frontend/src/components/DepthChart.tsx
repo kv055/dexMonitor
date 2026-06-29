@@ -63,7 +63,7 @@ function DepthChartInner() {
     if (hoveredOhlcTime === null) return depthOffers;
     return allOffers.filter(o => {
       if (filters.exchange && o.exchange !== filters.exchange) return false;
-      if (filters.payment && o.payment_method !== filters.payment) return false;
+      if (filters.payment && !(o.payment_methods?.includes(filters.payment) ?? false)) return false;
       const fs = toUtcSec(getFirstSeen(o) || '');
       const ls = toUtcSec(getLastSeen(o) || '');
       return fs <= hoveredOhlcTime && ls >= hoveredOhlcTime;

@@ -258,7 +258,7 @@ export interface Offer {
   btc_max?: number | null;
   fiat_min?: number | null;
   fiat_max?: number | null;
-  payment_method: string | null;
+  payment_methods: string[] | null;
   offer_id: string | null;
   status?: LiveOfferStatus;
   first_seen?: string | null;
@@ -536,7 +536,7 @@ export interface PastProfitableOrder {
   id: number;
   exchange: string;
   offer_id?: string | null;
-  payment_method?: string | null;
+  payment_methods?: string[] | null;
   direction: string;
   status: LiveOfferStatus;
   pricing: LiveOfferPricing;

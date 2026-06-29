@@ -6,7 +6,7 @@ function baseOfferKey(offer: Offer): string {
     offer.exchange,
     offer.offer_id ?? `id:${offer.id}`,
     offer.direction,
-    offer.payment_method ?? 'no-payment',
+    offer.payment_methods?.join(',') ?? 'no-payment',
     getFirstSeen(offer) ?? 'no-first-seen',
     getLastSeen(offer) ?? (isOfferLive(offer) ? 'live' : 'no-last-seen'),
     offer.pricing?.offer_price ?? offer.price ?? 0,

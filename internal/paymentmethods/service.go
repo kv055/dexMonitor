@@ -53,7 +53,7 @@ func (s *Service) RefreshLoop(ctx context.Context, interval time.Duration) {
 // refresh queries the DB and rebuilds the cached groups.
 func (s *Service) refresh() error {
 	rows, err := s.db.Query(
-		`SELECT DISTINCT payment_method FROM offers WHERE payment_method IS NOT NULL AND payment_method != '' ORDER BY payment_method`,
+		`SELECT DISTINCT unnest(payment_methods) AS method FROM offers WHERE payment_methods IS NOT NULL ORDER BY method`,
 	)
 	if err != nil {
 		return err

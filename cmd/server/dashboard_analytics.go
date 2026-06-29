@@ -170,7 +170,7 @@ func loadGeneralStatsContextUncachedForParams(p dashboardAnalyticsParams) (gener
 		generalOffers = append(generalOffers, pastorders.Offer{
 			Exchange:         offerString(o, "exchange"),
 			Direction:        direction,
-			PaymentMethod:    offerString(o, "payment_method"),
+			PaymentMethods:   offerStringSlice(o, "payment_methods"),
 			PriceDiffPercent: priceDiffPtr,
 			FirstSeen:        parseDBTime(offerString(o, "first_seen")),
 			LastSeen:         parseDBTime(offerString(o, "last_seen")),

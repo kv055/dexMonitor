@@ -567,7 +567,7 @@ type pastProfitableOrderAPI struct {
 	ID            int64                      `json:"id"`
 	Exchange      string                     `json:"exchange"`
 	OfferID       *string                    `json:"offer_id"`
-	PaymentMethod *string                    `json:"payment_method"`
+	PaymentMethods []string                  `json:"payment_methods"`
 	Direction     string                     `json:"direction"`
 	Status        pastOfferStatus            `json:"status"`
 	Pricing       pastOfferPricing           `json:"pricing"`
@@ -672,7 +672,7 @@ func loadGeneralStatsContextUncached(r *http.Request) (generalStatsContext, erro
 		generalOffers = append(generalOffers, pastorders.Offer{
 			Exchange:         offerString(o, "exchange"),
 			Direction:        direction,
-			PaymentMethod:    offerString(o, "payment_method"),
+			PaymentMethods:   offerStringSlice(o, "payment_methods"),
 			PriceDiffPercent: priceDiffPtr,
 			FirstSeen:        parseDBTime(offerString(o, "first_seen")),
 			LastSeen:         parseDBTime(offerString(o, "last_seen")),
@@ -1131,7 +1131,7 @@ type pastOfferAPI struct {
 	ID            int64                  `json:"id"`
 	Exchange      string                 `json:"exchange"`
 	OfferID       *string                `json:"offer_id"`
-	PaymentMethod *string                `json:"payment_method"`
+	PaymentMethods []string              `json:"payment_methods"`
 	Direction     string                 `json:"direction"`
 	Status        pastOfferStatus        `json:"status"`
 	Pricing       pastOfferPricing       `json:"pricing"`
@@ -1144,11 +1144,11 @@ type pastOfferCompactAPI struct {
 	ID            int64                 `json:"id"`
 	Exchange      string                `json:"exchange"`
 	OfferID       *string               `json:"offer_id"`
-	PaymentMethod *string               `json:"payment_method"`
-	Direction     string                `json:"direction"`
-	Status        pastOfferStatus       `json:"status"`
-	Pricing       pastOfferPricing      `json:"pricing"`
-	VolumeLimits  pastOfferVolumeLimits `json:"volume_limits"`
+	PaymentMethods []string              `json:"payment_methods"`
+	Direction      string                `json:"direction"`
+	Status         pastOfferStatus       `json:"status"`
+	Pricing        pastOfferPricing      `json:"pricing"`
+	VolumeLimits   pastOfferVolumeLimits `json:"volume_limits"`
 }
 
 type pastLifecycleSample = lifecycle.PastSample
@@ -1354,8 +1354,8 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 		ID:            id,
 		Exchange:      offerString(o, "exchange"),
 		OfferID:       offerStringPtr(o, "offer_id"),
-		PaymentMethod: offerStringPtr(o, "payment_method"),
-		Direction:     offerString(o, "direction"),
+		PaymentMethods: offerStringSlice(o, "payment_methods"),
+		Direction:      offerString(o, "direction"),
 		Status: pastOfferStatus{
 			IsLive:    false,
 			FirstSeen: firstSeen,
@@ -1401,8 +1401,8 @@ func buildPastOfferCompactAPI(o map[string]any) pastOfferCompactAPI {
 		ID:            int64(offerFloat(o, "id")),
 		Exchange:      offerString(o, "exchange"),
 		OfferID:       offerStringPtr(o, "offer_id"),
-		PaymentMethod: offerStringPtr(o, "payment_method"),
-		Direction:     offerString(o, "direction"),
+		PaymentMethods: offerStringSlice(o, "payment_methods"),
+		Direction:      offerString(o, "direction"),
 		Status: pastOfferStatus{
 			IsLive:    false,
 			FirstSeen: firstSeen,
@@ -1447,7 +1447,7 @@ func buildPastProfitableOrderAPI(o map[string]any, agg pastLifecycleAggregate, r
 		ID:            pastOffer.ID,
 		Exchange:      pastOffer.Exchange,
 		OfferID:       pastOffer.OfferID,
-		PaymentMethod: pastOffer.PaymentMethod,
+		PaymentMethods: pastOffer.PaymentMethods,
 		Direction:     pastOffer.Direction,
 		Status:        pastOffer.Status,
 		Pricing:       pastOffer.Pricing,
@@ -1912,7 +1912,7 @@ func handleOHLC(w http.ResponseWriter, r *http.Request) {
 			"premium":        premium,
 			"exchange":       offerString(row, "exchange"),
 			"direction":      direction,
-			"payment_method": offerString(row, "payment_method"),
+			"payment_methods": offerStringSlice(row, "payment_methods"),
 		})
 	}
 
@@ -2554,7 +2554,7 @@ func buildOfferTablePayload(o map[string]any) map[string]any {
 		"btc_max":                    offerFloatPtr(o, "btc_max"),
 		"fiat_min":                   offerInt64Ptr(o, "fiat_min"),
 		"fiat_max":                   offerInt64Ptr(o, "fiat_max"),
-		"payment_method":             offerStringPtr(o, "payment_method"),
+		"payment_methods":            offerStringSlice(o, "payment_methods"),
 		"offer_id":                   offerStringPtr(o, "offer_id"),
 		"first_seen":                 nilIfEmpty(offerString(o, "first_seen")),
 		"last_seen":                  nilIfEmpty(offerString(o, "last_seen")),
@@ -2776,6 +2776,28 @@ func offerString(o map[string]any, key string) string {
 		return v.UTC().Format("2006-01-02 15:04:05")
 	default:
 		return ""
+	}
+}
+
+func offerStringSlice(o map[string]any, key string) []string {
+	switch v := o[key].(type) {
+	case []string:
+		return v
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, e := range v {
+			if s, ok := e.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	case string:
+		if v != "" {
+			return []string{v}
+		}
+		return nil
+	default:
+		return nil
 	}
 }
 

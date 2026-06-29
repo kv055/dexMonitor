@@ -159,7 +159,7 @@ export function pastProfitableOrderAsOffer(order: PastProfitableOrder): Offer {
     id: order.id,
     exchange: order.exchange,
     direction: order.direction,
-    payment_method: order.payment_method ?? null,
+    payment_methods: order.payment_methods ?? null,
     offer_id: order.offer_id ?? null,
     status: order.status,
     pricing: order.pricing,

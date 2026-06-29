@@ -31,11 +31,11 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, chil
   const activeOffers = useMemo(() => {
     if (excludedMethods.length === 0) return offers;
     const excluded = new Set(excludedMethods);
-    return offers.filter(o => !o.payment_method || !excluded.has(o.payment_method));
+    return offers.filter(o => !o.payment_methods?.some(m => excluded.has(m)));
   }, [offers, excludedMethods]);
 
   const paymentMethods = useMemo(
-    () => [...new Set(activeOffers.map(o => o.payment_method).filter(Boolean))].sort() as string[],
+    () => [...new Set(activeOffers.flatMap(o => o.payment_methods ?? []))].sort(),
     [activeOffers]
   );
 
@@ -45,9 +45,9 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, chil
     const group = groups.find(g => g.name === filters.payment);
     if (group) {
       const set = new Set(group.methods);
-      return (o: Offer) => o.payment_method != null && set.has(o.payment_method);
+      return (o: Offer) => o.payment_methods?.some(m => set.has(m)) ?? false;
     }
-    return (o: Offer) => o.payment_method === filters.payment;
+    return (o: Offer) => o.payment_methods?.includes(filters.payment) ?? false;
   }, [filters.payment, groups]);
 
   const filteredOffers = useMemo(() => {

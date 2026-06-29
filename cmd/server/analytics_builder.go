@@ -192,7 +192,7 @@ func loadAnalyticsBuildContext(p dashboardAnalyticsParams) (*analyticsBuildConte
 func premiumOrderFromAnalysis(o map[string]any, analysis pastOfferAnalysis, mode takerOpportunityMode) pastorders.PremiumOrder {
 	btcAmount, netProfitBTC := analysis.valuesForMode(mode)
 	return pastorders.PremiumOrder{
-		PaymentMethod:       offerString(o, "payment_method"),
+		PaymentMethods:      offerStringSlice(o, "payment_methods"),
 		LastSeen:            parseDBTime(offerString(o, "last_seen")),
 		BTCAmount:           btcAmount,
 		NetProfitBTC:        netProfitBTC,

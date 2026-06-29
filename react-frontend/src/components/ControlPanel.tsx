@@ -67,8 +67,9 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
 
     const counts: Record<string, number> = {};
     f.forEach(o => {
-      const pm = o.payment_method || 'Unknown';
-      counts[pm] = (counts[pm] || 0) + 1;
+      for (const pm of (o.payment_methods ?? ['Unknown'])) {
+        counts[pm] = (counts[pm] || 0) + 1;
+      }
     });
     return { methodCounts: counts, total: f.length };
   }, [offers, filters]);
@@ -298,7 +299,7 @@ function DirectionDropdown({ value, onChange, inputCls }: DirectionDropdownProps
   const counts = useMemo(() => {
     let f = offers;
     if (filters.exchange) f = f.filter(o => o.exchange === filters.exchange);
-    if (filters.payment)  f = f.filter(o => o.payment_method === filters.payment);
+    if (filters.payment)  f = f.filter(o => o.payment_methods?.includes(filters.payment));
     if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
     if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
     const pMin = parseFloat(filters.premiumMin);
@@ -373,7 +374,7 @@ function StatusDropdown({ value, onChange, inputCls }: StatusDropdownProps) {
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
-    if (filters.payment)   f = f.filter(o => o.payment_method === filters.payment);
+    if (filters.payment)   f = f.filter(o => o.payment_methods?.includes(filters.payment));
     const pMin = parseFloat(filters.premiumMin);
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
@@ -445,7 +446,7 @@ function ExchangeDropdown({ value, onChange, inputCls }: ExchangeDropdownProps) 
   const countMap = useMemo(() => {
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
-    if (filters.payment)   f = f.filter(o => o.payment_method === filters.payment);
+    if (filters.payment)   f = f.filter(o => o.payment_methods?.includes(filters.payment));
     if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
     if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
     const pMin = parseFloat(filters.premiumMin);
@@ -540,7 +541,7 @@ function TimeframeDropdown({ value, onChange, inputCls }: TimeframeDropdownProps
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
-    if (filters.payment)   f = f.filter(o => o.payment_method === filters.payment);
+    if (filters.payment)   f = f.filter(o => o.payment_methods?.includes(filters.payment));
     if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
     if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
     const pMin = parseFloat(filters.premiumMin);
