@@ -8,7 +8,7 @@ const BASE_FILTERS: Filters = {
   premiumOnly: true,
   premiumMin: '',
   premiumMax: '',
-  premiumMode: 'raw',
+  premiumMode: 'net_full',
   hours: '24',
   cex: 'kraken',
 };
