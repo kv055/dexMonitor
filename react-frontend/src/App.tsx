@@ -43,9 +43,8 @@ function OhlcPanelHeader() {
 }
 
 // Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, lastUpdatedAt, error, loadCore, extendOhlc, refreshForCex, allowOhlcExtend }: {
+function MonitorView({ ohlcData, error, loadCore, extendOhlc, refreshForCex, allowOhlcExtend }: {
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
-  lastUpdatedAt: string;
   error: string | null;
   loadCore: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
   extendOhlc: (hours: number, cex?: string, intervalMin?: number) => void;
@@ -246,7 +245,6 @@ function AppShell() {
         {activeTab === 'monitor' && (
           <MonitorView
             ohlcData={ohlcData}
-            lastUpdatedAt={lastUpdatedAt}
             error={error}
             loadCore={loadCore}
             extendOhlc={extendOhlc}
