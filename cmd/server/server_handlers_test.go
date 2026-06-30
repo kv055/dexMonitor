@@ -39,6 +39,7 @@ CREATE TABLE offers (
     fiat_min INTEGER,
     fiat_max INTEGER,
     payment_method TEXT,
+    payment_methods TEXT,
     offer_id TEXT,
     first_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
     last_seen DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1342,7 +1343,7 @@ func withTempOrdersDB(t *testing.T) {
 
 	if _, err := db.Exec(`
 		INSERT INTO offers (
-			exchange, direction, price, btc_min, btc_max, payment_method, offer_id,
+			exchange, direction, price, btc_min, btc_max, payment_method, payment_methods, offer_id,
 			avg_ref_price, avg_premium_pct, avg_trade_cost_pct, avg_trade_cost_btc,
 			cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc, dex_fee_btc,
 			avg_net_premium_pct, avg_estimated_profit_btc, avg_estimated_profit_fiat,
@@ -1350,11 +1351,11 @@ func withTempOrdersDB(t *testing.T) {
 			first_seen, last_seen, is_live
 		)
 		VALUES
-			('bisq', 'buy', 105, 0.1, 0.1, 'Revolut', 'premium-30m', 100, 5, 1.00, 0.00100, 0.00025, 0.00015, 0.00010, 0.00010, 4.00, 0.00400, 0.40, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
-			('bisq', 'sell', 95, 0.2, 0.2, 'Wise', 'premium-5h', 100, 5, 0.37, 0.00074, 0.00050, NULL, 0.00004, 0.00020, 4.63, 0.00926, 0.93, 'kraken', 'onchain', 'analyzed', datetime('now', '-7 hours'), datetime('now', '-5 hours'), 0),
-			('bisq', 'buy', 105, 0.3, 0.3, 'SEPA', 'premium-30h', 100, 5, 1.00, 0.00300, 0.00075, 0.00015, 0.00010, 0.00030, 4.00, 0.01200, 1.20, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 hours'), datetime('now', '-30 hours'), 0),
-			('bisq', 'sell', 95, 0.4, 0.4, 'Revolut', 'active-ask-30m', 100, 5, 0.26, 0.00104, 0.00100, NULL, 0.00004, 0.00040, 4.74, 0.01896, 1.90, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
-			('bisq', 'buy', 105, 0.5, 0.5, 'SEPA', 'old-premium', 100, 5, 1.00, 0.00500, 0.00125, 0.00015, 0.00010, 0.00050, 4.00, 0.02000, 2.00, 'kraken', 'onchain', 'analyzed', datetime('now', '-200 hours'), datetime('now', '-200 hours'), 0)
+			('bisq', 'buy', 105, 0.1, 0.1, 'Revolut', 'Revolut', 'premium-30m', 100, 5, 1.00, 0.00100, 0.00025, 0.00015, 0.00010, 0.00010, 4.00, 0.00400, 0.40, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
+			('bisq', 'sell', 95, 0.2, 0.2, 'Wise', 'Wise', 'premium-5h', 100, 5, 0.37, 0.00074, 0.00050, NULL, 0.00004, 0.00020, 4.63, 0.00926, 0.93, 'kraken', 'onchain', 'analyzed', datetime('now', '-7 hours'), datetime('now', '-5 hours'), 0),
+			('bisq', 'buy', 105, 0.3, 0.3, 'SEPA', 'SEPA', 'premium-30h', 100, 5, 1.00, 0.00300, 0.00075, 0.00015, 0.00010, 0.00030, 4.00, 0.01200, 1.20, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 hours'), datetime('now', '-30 hours'), 0),
+			('bisq', 'sell', 95, 0.4, 0.4, 'Revolut', 'Revolut', 'active-ask-30m', 100, 5, 0.26, 0.00104, 0.00100, NULL, 0.00004, 0.00040, 4.74, 0.01896, 1.90, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
+			('bisq', 'buy', 105, 0.5, 0.5, 'SEPA', 'SEPA', 'old-premium', 100, 5, 1.00, 0.00500, 0.00125, 0.00015, 0.00010, 0.00050, 4.00, 0.02000, 2.00, 'kraken', 'onchain', 'analyzed', datetime('now', '-200 hours'), datetime('now', '-200 hours'), 0)
 	`); err != nil {
 		t.Fatalf("insert offers: %v", err)
 	}
