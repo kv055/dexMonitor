@@ -1,13 +1,17 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { usePreferences } from '../hooks/usePreferences';
+import { useFilters } from '../hooks/useFilters';
 import { useTradeCostConfig } from '../hooks/useTradeCostConfig';
+import { ControlPanel } from './ControlPanel';
 import type { PaymentMethodGroup } from '../types';
 
 interface Props {
   open: boolean;
   onClose: () => void;
   groups: PaymentMethodGroup[];
+  loadCore: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
+  lastUpdatedAt: string;
 }
 
 function getOffsetMinutes(timezone: string): number {
@@ -168,6 +172,8 @@ export function SettingsOverlay({
   open,
   onClose,
   groups,
+  loadCore,
+  lastUpdatedAt,
 }: Props) {
   const {
     preferredTimezone,
@@ -184,6 +190,7 @@ export function SettingsOverlay({
     maxFiatLimit,
     setMaxFiatLimit,
   } = usePreferences();
+  const { filters } = useFilters();
   const { config: tradeCostConfig } = useTradeCostConfig(open);
   const excludedSet = new Set(excludedMethods);
   const excludedCEXSet = new Set(excludedCEXes);
@@ -234,6 +241,17 @@ export function SettingsOverlay({
 
         {/* Scrollable body */}
         <div className="overflow-y-auto flex-1 p-3 flex flex-col gap-2.5">
+          <section className="rounded-lg border border-border bg-bg/50 p-2.5">
+            <div className="mb-2">
+              <h3 className="text-xs font-medium">Monitor Filters</h3>
+              <p className="mt-0.5 text-[0.65rem] text-muted leading-tight">Filters and timeframe for the live offers view.</p>
+            </div>
+            <ControlPanel
+              onRefresh={() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit)}
+              lastUpdatedAt={lastUpdatedAt}
+            />
+          </section>
+
           <section className="rounded-lg border border-border bg-bg/50 p-2.5">
             <div className="mb-1.5 lg:flex lg:items-baseline lg:gap-3">
               <div className="shrink-0">

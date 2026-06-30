@@ -14,7 +14,6 @@ import { LoadingSpinner } from './components/LoadingSpinner';
 import { Header } from './components/Header';
 import type { Tab } from './components/Header';
 import { SettingsOverlay } from './components/SettingsOverlay';
-import { ControlPanel } from './components/ControlPanel';
 import { OffersPreviewTable } from './components/OffersPreviewTable';
 import { OHLCChart } from './components/OHLCChart';
 import { DepthChart } from './components/DepthChart';
@@ -82,20 +81,11 @@ function MonitorView({ ohlcData, lastUpdatedAt, error, loadCore, extendOhlc, ref
         </div>
       )}
 
-      {/* Top row: control panel + offers */}
-      <div className="lg:flex-2 lg:min-h-0 grid grid-cols-1 lg:grid-cols-[1fr_3fr] gap-2 sm:gap-3">
-        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0">
-          <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Control Panel</h3>
-          <div className="overflow-y-auto min-h-0">
-            <ControlPanel onRefresh={() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit)} lastUpdatedAt={lastUpdatedAt} />
-          </div>
-        </div>
-
-        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
-          <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Offers</h3>
-          <div className="relative flex-1 min-h-64 sm:min-h-80 lg:min-h-0">
-            <OffersPreviewTable />
-          </div>
+      {/* Offers — full width */}
+      <div className="lg:flex-2 lg:min-h-0 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
+        <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Offers</h3>
+        <div className="relative flex-1 min-h-64 sm:min-h-80 lg:min-h-0">
+          <OffersPreviewTable />
         </div>
       </div>
 
@@ -249,6 +239,8 @@ function AppShell() {
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
           groups={groups}
+          loadCore={loadCore}
+          lastUpdatedAt={lastUpdatedAt}
         />
 
         {activeTab === 'monitor' && (
