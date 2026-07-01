@@ -281,7 +281,7 @@ export function SettingsOverlay({
             </div>
 
             {groups.length === 0 ? (
-              <p className="text-[0.65rem] text-muted">No payment methods found yet — offers need to be fetched first.</p>
+              <p className="text-[0.65rem] text-muted">Loading payment methods…</p>
             ) : (
               <div className="flex flex-col gap-1.5">
                 {groups.map(group => {

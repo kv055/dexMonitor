@@ -179,13 +179,10 @@ func main() {
 	// Metrics registry.
 	metricsReg := metrics.NewServiceRegistry("dexmonitor")
 
-	// Payment method grouping service — loads once at startup, refreshes every hour.
-	if svc, err := paymentmethods.NewService(db); err != nil {
-		slog.Warn("paymentmethods init warning", "err", err)
-	} else {
-		pmService = svc
-		go pmService.RefreshLoop(ctx, time.Hour)
-	}
+	// Payment method grouping service — RefreshLoop performs the initial load
+	// (with retry, in case the DB isn't ready yet) and refreshes every hour.
+	pmService = paymentmethods.NewService(db)
+	go pmService.RefreshLoop(ctx, time.Hour)
 
 	mux := http.NewServeMux()
 
