@@ -271,7 +271,21 @@ export interface Offer {
   premium?: number | null;
   time?: string;
   lifecycle?: LifecyclePoint[];
+  // Normalized maker reputation (0-100), null when no signal is obtainable.
+  // seller_rating_confidence records which methodology produced it (see
+  // internal/sellerrating); seller_rating_raw holds the source inputs.
+  seller_rating_score?: number | null;
+  seller_rating_confidence?: SellerRatingConfidence | null;
+  seller_rating_raw?: Record<string, unknown> | null;
 }
+
+export type SellerRatingConfidence =
+  | 'feedback_verified'
+  | 'feedback_new'
+  | 'stake_bonded'
+  | 'reputation_bonded'
+  | 'account_signing'
+  | 'unavailable';
 
 export interface ExchangeStat {
   exchange: string;

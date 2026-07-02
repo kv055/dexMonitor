@@ -2494,6 +2494,40 @@ func buildOfferTablePayload(o map[string]any) map[string]any {
 		"price_type":                 nilIfEmpty(offerString(o, "price_type")),
 		"best_route_cex":             nilIfEmpty(offerString(o, "best_route_cex")),
 		"best_route_method":          nilIfEmpty(offerString(o, "best_route_method")),
+		"seller_rating_score":        offerFloatPtrPreserveZero(o, "seller_rating_score"),
+		"seller_rating_confidence":   nilIfEmpty(offerString(o, "seller_rating_confidence")),
+		"seller_rating_raw":          offerRawJSON(o, "seller_rating_raw"),
+	}
+}
+
+// offerFloatPtrPreserveZero returns a *float64 that is nil only when the column
+// is SQL NULL (a nil entry in the scanned row), preserving a genuine 0 — unlike
+// offerFloatPtr, which treats 0 as absent. Needed for seller_rating_score, where
+// 0 (a banned / zero-reputation maker) is a real score distinct from "no rating".
+func offerFloatPtrPreserveZero(o map[string]any, key string) *float64 {
+	if o[key] == nil {
+		return nil
+	}
+	v := offerFloat(o, key)
+	return &v
+}
+
+// offerRawJSON passes a JSONB column through as embedded JSON, or nil when
+// absent/empty, so seller_rating_raw is nested rather than string-escaped.
+func offerRawJSON(o map[string]any, key string) any {
+	switch v := o[key].(type) {
+	case []byte:
+		if len(v) == 0 {
+			return nil
+		}
+		return json.RawMessage(v)
+	case string:
+		if v == "" {
+			return nil
+		}
+		return json.RawMessage(v)
+	default:
+		return nil
 	}
 }
 

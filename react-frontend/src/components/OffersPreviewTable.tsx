@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { ExchangeTag } from './ExchangeTag';
+import { SellerRatingBadge } from './SellerRatingBadge';
 import { formatNum, formatBtc, premiumClass } from '../utils/formatters';
 import { useTimezone } from '../hooks/useTimezone';
 import { useFilters } from '../hooks/useFilters';
@@ -83,12 +84,13 @@ export function OffersPreviewTable() {
                 <th className={TH_BASE}>Side</th>
                 <th className={`${TH_BASE} text-right`}>Prem.</th>
                 <th className={`${TH_BASE} text-right`}>Price</th>
+                <th className={TH_BASE}>Rating</th>
                 <th className={TH_BASE}>Payment</th>
               </tr>
             </thead>
             <tbody>
               {offers.length === 0 ? (
-                !loading && <tr><td colSpan={5} className="p-4 text-center text-muted">No offers</td></tr>
+                !loading && <tr><td colSpan={6} className="p-4 text-center text-muted">No offers</td></tr>
               ) : offers.map((o, index) => {
                 const offerKey = offerKeys[index];
                 const isSelected = offerKey === selectedOfferKey;
@@ -112,6 +114,9 @@ export function OffersPreviewTable() {
                       {rawPremium != null ? rawPremium.toFixed(1) + '%' : '—'}
                     </td>
                     <td className={`${TD} text-right`}>€{formatNum(getOfferPrice(o))}</td>
+                    <td className={TD}>
+                      <SellerRatingBadge score={o.seller_rating_score} confidence={o.seller_rating_confidence} compact />
+                    </td>
                     <td className={`${TD} overflow-hidden max-w-32`}>
                       <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
                         {groupLabel(o.payment_methods)}
@@ -148,6 +153,10 @@ export function OffersPreviewTable() {
                   <span className="text-text">{selectedOffer.payment_methods.join(', ')}</span>
                 </div>
               )}
+              <div className="mt-1 mb-2 text-[0.68rem] text-muted flex items-center gap-1">
+                <span className="uppercase tracking-wide text-[0.6rem]">Seller</span>
+                <SellerRatingBadge score={selectedOffer.seller_rating_score} confidence={selectedOffer.seller_rating_confidence} withLabel />
+              </div>
               {getDisplayCostBreakdown(selectedOffer) ? (
                 <div className="flex flex-col gap-3">
                   {hasCappedScenario(selectedOffer) && (
@@ -201,12 +210,13 @@ export function OffersPreviewTable() {
               <th className={`${TH_BASE} text-right ${hasSelection ? 'w-[1%]' : ''}`}>Fiat Min</th>
               <th className={`${TH_BASE} text-right ${hasSelection ? 'w-[1%]' : ''}`}>Fiat Max</th>
               <th className={`${TH_BASE} ${hasSelection ? 'w-[1%]' : ''}`}>Status</th>
+              <th className={`${TH_BASE} ${hasSelection ? 'w-[1%]' : ''}`}>Rating</th>
               <th className={TH_BASE}>Payment</th>
             </tr>
           </thead>
           <tbody>
             {offers.length === 0 ? (
-              !loading && <tr><td colSpan={10} className="p-4 text-center text-muted">No offers</td></tr>
+              !loading && <tr><td colSpan={11} className="p-4 text-center text-muted">No offers</td></tr>
             ) : offers.map((o, index) => {
               const offerKey = offerKeys[index];
               const isSelected = offerKey === selectedOfferKey;
@@ -243,6 +253,9 @@ export function OffersPreviewTable() {
                       ? <span className="text-green">live</span>
                       : <span className="text-muted">closed</span>
                     }
+                  </td>
+                  <td className={TD}>
+                    <SellerRatingBadge score={o.seller_rating_score} confidence={o.seller_rating_confidence} compact={hasSelection} />
                   </td>
                   <td className={`${TD} overflow-hidden`}>
                     <span className="block overflow-hidden text-ellipsis whitespace-nowrap">
@@ -286,6 +299,10 @@ export function OffersPreviewTable() {
                   <span className="text-text">{selectedOffer.payment_methods.join(', ')}</span>
                 </div>
               )}
+              <div className="mt-1 text-[0.68rem] text-muted flex items-center gap-1">
+                <span className="uppercase tracking-wide text-[0.6rem]">Seller</span>
+                <SellerRatingBadge score={selectedOffer.seller_rating_score} confidence={selectedOffer.seller_rating_confidence} withLabel />
+              </div>
             </div>
             <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
             {getDisplayCostBreakdown(selectedOffer) ? (
