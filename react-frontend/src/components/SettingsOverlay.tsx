@@ -189,8 +189,10 @@ export function SettingsOverlay({
     setCoupledHedge,
     maxFiatLimit,
     setMaxFiatLimit,
+    hideZeroTrustScore,
+    setHideZeroTrustScore,
   } = usePreferences();
-  const { filters } = useFilters();
+  const { filters, zeroTrustHiddenCount, paymentMethodCounts } = useFilters();
   const { config: tradeCostConfig } = useTradeCostConfig(open);
   const excludedSet = new Set(excludedMethods);
   const excludedCEXSet = new Set(excludedCEXes);
@@ -301,7 +303,9 @@ export function SettingsOverlay({
                           <span className={`text-[0.7rem] font-semibold ${allExcluded ? 'text-muted line-through' : 'text-text'}`}>
                             {group.display_name}
                           </span>
-                          <span className="text-[0.55rem] text-muted">({group.methods.length})</span>
+                          <span className="text-[0.55rem] text-muted tabular-nums">
+                            {group.methods.reduce((sum, m) => sum + (paymentMethodCounts[m] ?? 0), 0)}
+                          </span>
                           {someExcluded && !allExcluded && (
                             <span className="text-[0.5rem] uppercase tracking-wide text-accent border border-accent/40 rounded px-0.5 py-px">partial</span>
                           )}
@@ -326,7 +330,10 @@ export function SettingsOverlay({
                           const excluded = excludedSet.has(method);
                           return (
                             <div key={method} className={`flex items-center justify-between gap-1.5 px-2.5 py-1 pl-4 ${excluded ? 'opacity-50' : ''}`}>
-                              <span className={`text-[0.65rem] ${excluded ? 'text-muted line-through' : 'text-text'}`}>{method}</span>
+                              <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                                <span className={`text-[0.65rem] truncate ${excluded ? 'text-muted line-through' : 'text-text'}`}>{method}</span>
+                                <span className="text-[0.55rem] text-muted tabular-nums shrink-0">{paymentMethodCounts[method] ?? 0}</span>
+                              </div>
                               <button
                                 type="button"
                                 onClick={() => toggleMethod(method)}
@@ -348,6 +355,32 @@ export function SettingsOverlay({
                 })}
               </div>
             )}
+          </section>
+
+          <section className="rounded-lg border border-border bg-bg/50 p-2.5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <h3 className="text-xs font-medium">Seller Trust Score</h3>
+                <p className="mt-0.5 text-[0.65rem] text-muted leading-tight">
+                  Hide score-0 makers from the current monitor view (respects premium, direction, and other active filters). Offers with no rating signal are unaffected.
+                </p>
+              </div>
+              <button
+                type="button"
+                onClick={() => setHideZeroTrustScore(!hideZeroTrustScore)}
+                className={`shrink-0 text-[0.65rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
+                  hideZeroTrustScore
+                    ? 'border-accent/60 text-accent bg-accent/10'
+                    : 'border-border text-muted hover:border-muted'
+                }`}
+              >
+                {hideZeroTrustScore
+                  ? `Hiding ${zeroTrustHiddenCount}`
+                  : zeroTrustHiddenCount > 0
+                    ? `Show all (${zeroTrustHiddenCount} score 0)`
+                    : 'Show all'}
+              </button>
+            </div>
           </section>
 
           <section className="rounded-lg border border-border bg-bg/50 p-2.5">

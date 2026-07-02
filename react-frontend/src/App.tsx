@@ -209,7 +209,7 @@ function AppShell() {
   } = useDashboard();
   const { liveOffers, wssConnected, pollError, refreshForCex } = useLiveOffers();
   const { groups } = usePaymentMethodGroups();
-  const { preferredTimezone, excludedMethods } = usePreferences();
+  const { preferredTimezone, excludedMethods, hideZeroTrustScore } = usePreferences();
   const [activeTab, setActiveTab] = useState<Tab>('monitor');
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -224,7 +224,7 @@ function AppShell() {
 
   return (
     <TimezoneProvider timezone={preferredTimezone}>
-      <FiltersProvider offers={allOffers} loading={loading} groups={groups} excludedMethods={excludedMethods}>
+      <FiltersProvider offers={allOffers} loading={loading} groups={groups} excludedMethods={excludedMethods} hideZeroTrustScore={hideZeroTrustScore}>
       <div className="min-h-dvh lg:h-dvh flex flex-col overflow-y-auto lg:overflow-hidden bg-bg text-text p-2 sm:p-3 gap-2 sm:gap-3">
         <Header
           activeTab={activeTab}

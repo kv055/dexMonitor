@@ -10,6 +10,7 @@ export interface PreferencesState {
   feeTier: string;
   coupledHedge: boolean;
   maxFiatLimit: number | null;
+  hideZeroTrustScore: boolean;
 }
 
 export interface PreferencesContextValue extends PreferencesState {
@@ -21,6 +22,7 @@ export interface PreferencesContextValue extends PreferencesState {
   setFeeTier: (tier: string) => void;
   setCoupledHedge: (coupled: boolean) => void;
   setMaxFiatLimit: (limit: number | null) => void;
+  setHideZeroTrustScore: (hide: boolean) => void;
 }
 
 export const PreferencesContext = createContext<PreferencesContextValue | null>(null);

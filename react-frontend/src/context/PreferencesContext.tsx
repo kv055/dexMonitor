@@ -9,7 +9,8 @@ type Action =
   | { type: 'TOGGLE_CEX'; cex: string }
   | { type: 'SET_FEE_TIER'; tier: string }
   | { type: 'SET_COUPLED_HEDGE'; coupled: boolean }
-  | { type: 'SET_MAX_FIAT_LIMIT'; limit: number | null };
+  | { type: 'SET_MAX_FIAT_LIMIT'; limit: number | null }
+  | { type: 'SET_HIDE_ZERO_TRUST_SCORE'; hide: boolean };
 
 interface Props {
   children: ReactNode;
@@ -55,6 +56,7 @@ function getInitialState(): PreferencesState {
     feeTier: localStorage.getItem('dex-fee-tier') || '',
     coupledHedge: localStorage.getItem('dex-coupled-hedge') !== 'false',
     maxFiatLimit: maxFiat ? Number(maxFiat) : null,
+    hideZeroTrustScore: localStorage.getItem('dex-hide-zero-trust-score') === 'true',
   };
 }
 
@@ -91,6 +93,8 @@ function preferencesReducer(state: PreferencesState, action: Action): Preference
       return { ...state, coupledHedge: action.coupled };
     case 'SET_MAX_FIAT_LIMIT':
       return { ...state, maxFiatLimit: action.limit };
+    case 'SET_HIDE_ZERO_TRUST_SCORE':
+      return { ...state, hideZeroTrustScore: action.hide };
   }
 }
 
@@ -126,6 +130,10 @@ export function PreferencesProvider({ children }: Props) {
     localStorage.setItem('dex-max-fiat-limit', state.maxFiatLimit != null ? String(state.maxFiatLimit) : '');
   }, [state.maxFiatLimit]);
 
+  useLayoutEffect(() => {
+    localStorage.setItem('dex-hide-zero-trust-score', String(state.hideZeroTrustScore));
+  }, [state.hideZeroTrustScore]);
+
   const value = useMemo(() => ({
     ...state,
     setPreferredTimezone: (timezone: string) => dispatch({ type: 'SET_TIMEZONE', timezone }),
@@ -136,6 +144,7 @@ export function PreferencesProvider({ children }: Props) {
     setFeeTier: (tier: string) => dispatch({ type: 'SET_FEE_TIER', tier }),
     setCoupledHedge: (coupled: boolean) => dispatch({ type: 'SET_COUPLED_HEDGE', coupled }),
     setMaxFiatLimit: (limit: number | null) => dispatch({ type: 'SET_MAX_FIAT_LIMIT', limit }),
+    setHideZeroTrustScore: (hide: boolean) => dispatch({ type: 'SET_HIDE_ZERO_TRUST_SCORE', hide }),
   }), [state]);
 
   return (

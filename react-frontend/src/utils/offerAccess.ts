@@ -56,6 +56,24 @@ export function isOfferLive(offer: Offer): boolean {
   return offer.status?.is_live ?? offer.is_live ?? false;
 }
 
+export function getSellerRatingScore(offer: Offer): number | null {
+  const score = offer.seller_rating_score;
+  if (score == null || typeof score !== 'number' || !Number.isFinite(score)) {
+    return null;
+  }
+  return score;
+}
+
+/** True only for a confirmed normalized score of exactly 0 — not "no rating". */
+export function hasZeroTrustScore(offer: Offer): boolean {
+  const confidence = offer.seller_rating_confidence;
+  if (confidence == null || confidence === 'unavailable') {
+    return false;
+  }
+  const score = getSellerRatingScore(offer);
+  return score === 0;
+}
+
 export function getNetPremiumPercent(offer: Offer, capped = false): number | null {
   if (offer.analysis) {
     const scenario = capped ? offer.analysis.capped_volume : offer.analysis.full_volume;
