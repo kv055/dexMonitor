@@ -1,4 +1,4 @@
-import { test, expect, gotoAndWaitForData, waitForChartReady, controlPanel, offersPanel, depthPanel, jsClick, jsFill } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, waitForChartReady, controlPanel, openSettings, closeSettings, offersPanel, depthPanel, jsClick, jsFill } from '../fixtures/base-fixture';
 
 /**
  * Open a dropdown via jsClick, wait for the popup menu to appear, and click an option.
@@ -27,7 +27,9 @@ test.describe('Filter Flow — Cross-component integration', () => {
     // Wait for table to have data rows before interacting with filters
     await expect(panel.locator('table tbody tr').first()).not.toHaveText('No offers', { timeout: 5000 });
 
+    await openSettings(page);
     await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'All Exchanges' }), /BISQ/i);
+    await closeSettings(page);
     await page.waitForTimeout(400);
 
     const exchangeTags = panel.locator('table tbody td:first-child span');
@@ -45,7 +47,9 @@ test.describe('Filter Flow — Cross-component integration', () => {
     const panel = offersPanel(page);
 
     // Default premiumOnly view has mostly buy (Bid) offers — select "Bids (Buy)"
+    await openSettings(page);
     await selectDropdownOption(page, cp.getByRole('button', { name: /^All \d/ }), 'Bids (Buy)');
+    await closeSettings(page);
     await page.waitForTimeout(200);
 
     const sideCells = panel.locator('table tbody td:nth-child(2)');
@@ -63,8 +67,10 @@ test.describe('Filter Flow — Cross-component integration', () => {
     const panel = offersPanel(page);
 
     // Set premium min to 3.0
+    await openSettings(page);
     const minInput = cp.locator('input[placeholder="Min"]');
     await jsFill(minInput, '3');
+    await closeSettings(page);
     await page.waitForTimeout(300);
 
     const premCells = panel.locator('table tbody td:nth-child(3)');
@@ -84,7 +90,9 @@ test.describe('Filter Flow — Cross-component integration', () => {
     const cp = controlPanel(page);
     const panel = offersPanel(page);
 
+    await openSettings(page);
     await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'All Payments' }), 'SEPA Instant');
+    await closeSettings(page);
     await page.waitForTimeout(200);
 
     const paymentCells = panel.locator('table tbody td:last-child');
@@ -104,7 +112,9 @@ test.describe('Filter Flow — Cross-component integration', () => {
     const openCount = await panel.locator('table tbody tr').count();
 
     // Switch to "All Orders"
+    await openSettings(page);
     await selectDropdownOption(page, cp.getByRole('button', { name: /^Open \d/ }), 'All Orders');
+    await closeSettings(page);
     await page.waitForTimeout(200);
 
     const allCount = await panel.locator('table tbody tr').count();
@@ -118,14 +128,18 @@ test.describe('Filter Flow — Cross-component integration', () => {
     const rowsWithPremium = await panel.locator('table tbody tr').count();
 
     // Include non-premium offers.
-    await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'Raw Premium' }), 'Incl. non premium offers');
+    await openSettings(page);
+    await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'Net Premium Full' }), 'Incl. non premium offers');
+    await closeSettings(page);
     await page.waitForTimeout(300);
 
     const rowsWithout = await panel.locator('table tbody tr').count();
     expect(rowsWithout).toBeGreaterThanOrEqual(rowsWithPremium);
 
-    // Switch back to the default premium-only raw metric.
-    await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'Incl. non premium offers' }), 'Raw Premium');
+    // Switch back to the default premium-only metric.
+    await openSettings(page);
+    await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'Incl. non premium offers' }), 'Net Premium Full');
+    await closeSettings(page);
     await page.waitForTimeout(300);
 
     const rowsAgain = await panel.locator('table tbody tr').count();
@@ -139,15 +153,19 @@ test.describe('Filter Flow — Cross-component integration', () => {
     const initialCount = await panel.locator('table tbody tr').count();
 
     // Filter to bisq
+    await openSettings(page);
     await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'All Exchanges' }), /BISQ/i);
+    await closeSettings(page);
     await page.waitForTimeout(200);
 
     const bisqCount = await panel.locator('table tbody tr').count();
     expect(bisqCount).toBeLessThanOrEqual(initialCount);
 
     // Set premium min
+    await openSettings(page);
     const minInput = cp.locator('input[placeholder="Min"]');
     await jsFill(minInput, '2');
+    await closeSettings(page);
     await page.waitForTimeout(200);
 
     const filteredCount = await panel.locator('table tbody tr').count();
@@ -161,18 +179,22 @@ test.describe('Filter Flow — Cross-component integration', () => {
     const initialCount = await panel.locator('table tbody tr').count();
 
     // Apply filters
+    await openSettings(page);
     await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'All Exchanges' }), /BISQ/i);
     await page.waitForTimeout(100);
 
     const minInput = cp.locator('input[placeholder="Min"]');
     await jsFill(minInput, '5');
+    await closeSettings(page);
     await page.waitForTimeout(200);
 
     const filteredCount = await panel.locator('table tbody tr').count();
     expect(filteredCount).toBeLessThan(initialCount);
 
     // Reset
+    await openSettings(page);
     await cp.locator('button').filter({ hasText: '↺ Reset' }).click();
+    await closeSettings(page);
     await page.waitForTimeout(400);
 
     const resetCount = await panel.locator('table tbody tr').count();
@@ -189,6 +211,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
       req.url().includes('/api/ohlc') && req.url().includes('hours=6'),
     );
 
+    await openSettings(page);
     await cp.locator('button').filter({ hasText: 'Last 24h' }).click();
     await page.locator('button').filter({ hasText: 'Last 6h' }).click();
 
@@ -202,7 +225,9 @@ test.describe('Filter Flow — Cross-component integration', () => {
 
     const before = await dp.screenshot();
 
+    await openSettings(page);
     await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'All Exchanges' }), /BISQ/i);
+    await closeSettings(page);
     await page.waitForTimeout(600);
 
     const after = await dp.screenshot();

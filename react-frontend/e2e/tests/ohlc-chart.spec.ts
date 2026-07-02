@@ -1,4 +1,4 @@
-import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, controlPanel, jsClick } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, controlPanel, openSettings, closeSettings, jsClick } from '../fixtures/base-fixture';
 import {
   MOCK_OHLC_DATA_1D_WINDOW,
   MOCK_OHLC_DATA_1H,
@@ -9,9 +9,11 @@ import type { Page } from '@playwright/test';
 
 test.describe('OHLCChart', () => {
   async function showClosedOrders(page: Page) {
+    await openSettings(page);
     const cp = controlPanel(page);
-    await jsClick(cp.locator('button').filter({ hasText: 'Open' }));
-    await jsClick(page.locator('button').filter({ hasText: 'Closed' }));
+    await jsClick(cp.getByRole('button', { name: /^Open \d/ }));
+    await jsClick(page.locator('.absolute button').filter({ hasText: 'Closed' }));
+    await closeSettings(page);
   }
 
   function waitForOhlcRequest(page: Page, minHours: number, intervalMin: number) {
@@ -130,9 +132,11 @@ test.describe('OHLCChart', () => {
     );
 
     // Change timeframe to 6h
+    await openSettings(page);
     const cp = controlPanel(page);
     await cp.locator('button').filter({ hasText: 'Last 24h' }).click();
     await page.locator('button').filter({ hasText: 'Last 6h' }).click();
+    await closeSettings(page);
 
     const panel = ohlcPanel(page);
     await waitForChartReady(panel, page);

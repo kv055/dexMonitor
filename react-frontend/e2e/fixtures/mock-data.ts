@@ -128,6 +128,7 @@ function offer(
     btc_min: opts.btcMin ?? 0.001,
     btc_max: opts.btcMax ?? 0.05,
     payment_method: opts.payment ?? 'SEPA',
+    payment_methods: [opts.payment ?? 'SEPA'],
     offer_id: `offer-${id}`,
     first_seen: ts(opts.firstSeenHoursAgo ?? 12),
     last_seen: opts.isLive !== false ? ts(0) : ts(opts.lastSeenHoursAgo ?? 2),
@@ -184,6 +185,33 @@ export const MOCK_PAST_OFFER_LIFECYCLES: Record<number, Array<{ time: string; pr
     { time: new Date(FIXED_TIME - 28 * 3600_000).toISOString(), price: 82400, net_premium_pct: 0.9 },
     { time: new Date(FIXED_TIME - 26 * 3600_000).toISOString(), price: 83000, net_premium_pct: 1.1 },
     { time: new Date(FIXED_TIME - 24 * 3600_000).toISOString(), price: 83200, net_premium_pct: 1.35 },
+  ],
+};
+
+// Price histories for LIVE offers (served by /api/live_offers/{id}/lifecycle).
+// Offer 1: 12h zig-zag path whose net premium flips from negative to positive
+// (exercises the color-segment split). Offer 6: short single-color path.
+// Live offers without an entry get [] from the fixture and must fall back to
+// the 2-point stub.
+export const MOCK_LIVE_OFFER_LIFECYCLES: Record<number, Array<{ time: string; price: number; net_premium_pct: number }>> = {
+  1: [
+    { time: ts(12), price: 81600, net_premium_pct: -0.9 },
+    { time: ts(11), price: 82150, net_premium_pct: -0.5 },
+    { time: ts(10), price: 81900, net_premium_pct: -0.7 },
+    { time: ts(9),  price: 82600, net_premium_pct: -0.2 },
+    { time: ts(8),  price: 83150, net_premium_pct: 0.4 },
+    { time: ts(7),  price: 82900, net_premium_pct: 0.15 },
+    { time: ts(6),  price: 83650, net_premium_pct: 0.9 },
+    { time: ts(5),  price: 84150, net_premium_pct: 1.4 },
+    { time: ts(4),  price: 83850, net_premium_pct: 1.1 },
+    { time: ts(3),  price: 84450, net_premium_pct: 1.7 },
+    { time: ts(2),  price: 84150, net_premium_pct: 1.45 },
+    { time: ts(1),  price: 84460, net_premium_pct: 2.15 },
+  ],
+  6: [
+    { time: ts(2),   price: 86050, net_premium_pct: 4.2 },
+    { time: ts(1.5), price: 86350, net_premium_pct: 4.5 },
+    { time: ts(1),   price: 86510, net_premium_pct: 4.65 },
   ],
 };
 

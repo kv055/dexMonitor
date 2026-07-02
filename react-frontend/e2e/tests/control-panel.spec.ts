@@ -1,8 +1,9 @@
-import { test, expect, gotoAndWaitForData, controlPanel, jsClick, jsFill } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, controlPanel, openSettings, jsClick, jsFill } from '../fixtures/base-fixture';
 
 test.describe('ControlPanel', () => {
   test.beforeEach(async ({ page }) => {
     await gotoAndWaitForData(page);
+    await openSettings(page);
   });
 
   test('renders all filter section labels', async ({ page }) => {
@@ -17,7 +18,8 @@ test.describe('ControlPanel', () => {
     await expect(label('Exchange')).toBeVisible();
     await expect(label('Payment')).toBeVisible();
     await expect(label('Status')).toBeVisible();
-    await expect(label('Premium %')).toBeVisible();
+    await expect(label('Premium')).toBeVisible();
+    await expect(label('Range %')).toBeVisible();
   });
 
   test('currency and ref price selects are disabled', async ({ page }) => {
@@ -109,7 +111,7 @@ test.describe('ControlPanel', () => {
 
   test('premium dropdown can include non premium offers', async ({ page }) => {
     const cp = controlPanel(page);
-    const premiumDropdown = cp.locator('button').filter({ hasText: 'Raw Premium' });
+    const premiumDropdown = cp.locator('button').filter({ hasText: 'Net Premium Full' });
 
     await expect(premiumDropdown).toBeVisible();
 
@@ -118,8 +120,8 @@ test.describe('ControlPanel', () => {
     await expect(cp.locator('button').filter({ hasText: 'Incl. non premium offers' })).toBeVisible();
 
     await jsClick(cp.locator('button').filter({ hasText: 'Incl. non premium offers' }));
-    await page.locator('.absolute button').filter({ hasText: 'Net Premium Full' }).click();
-    await expect(cp.locator('button').filter({ hasText: 'Net Premium Full' })).toBeVisible();
+    await page.locator('.absolute button').filter({ hasText: 'Raw Premium' }).click();
+    await expect(cp.locator('button').filter({ hasText: 'Raw Premium' })).toBeVisible();
   });
 
   test('reset button restores default filters', async ({ page }) => {
@@ -136,9 +138,10 @@ test.describe('ControlPanel', () => {
     await cp.locator('button').filter({ hasText: '↺ Reset' }).click();
 
     await expect(cp.locator('button').filter({ hasText: 'All Exchanges' })).toBeVisible();
-    await expect(cp.locator('input[placeholder="Min"]')).toHaveValue('0');
-    await expect(cp.locator('input[placeholder="Max"]')).toHaveValue('30');
-    await expect(cp.locator('button').filter({ hasText: 'Raw Premium' })).toBeVisible();
+    // Reset clears the premium range (RESET_FILTERS, unlike the pre-filled INITIAL_FILTERS)
+    await expect(cp.locator('input[placeholder="Min"]')).toHaveValue('');
+    await expect(cp.locator('input[placeholder="Max"]')).toHaveValue('');
+    await expect(cp.locator('button').filter({ hasText: 'Net Premium Full' })).toBeVisible();
   });
 
   test('refresh button triggers API calls', async ({ page }) => {

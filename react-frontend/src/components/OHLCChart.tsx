@@ -11,7 +11,7 @@ import {
 } from 'lightweight-charts';
 import type { LifecyclePoint, OHLCCandle, OHLCData } from '../types';
 import { useFilters } from '../hooks/useFilters';
-import { getFirstSeen, getLastSeen, getNetPremiumPercent, getOfferPrice, isOfferLive } from '../utils/offerAccess';
+import { getFirstSeen, getLastSeen, getNetPremiumPercent, getOfferPrice, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
 import { useTimezone } from '../hooks/useTimezone';
 import { LoadingSpinner } from './LoadingSpinner';
 import { buildOfferKeys } from '../utils/offerIdentity';
@@ -29,6 +29,18 @@ type PendingVisibleRange = {
   intervalMin: number;
   visibleHours: number;
 };
+
+type LifecycleCacheEntry = { points: LifecyclePoint[]; fetchedAt: number };
+
+// Live offers gain one lifecycle point per snapshot cycle (~1 min), so their
+// cached history must be refreshed; closed offers' history is immutable.
+const LIVE_LIFECYCLE_REFRESH_MS = 60_000;
+
+function lifecycleUrl(offer: { id: number }, live: boolean): string {
+  return live
+    ? `/api/live_offers/${offer.id}/lifecycle`
+    : `/api/past_offers/${offer.id}/lifecycle`;
+}
 
 const DIR_COLORS = {
   bid_premium:  '#00d4ff',
@@ -93,9 +105,17 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
   const intendedRangeRef = useRef<PendingVisibleRange | null>(null);
   const fetchingMoreRef = useRef(false);
 
-  const { filteredOffers: premiumOffers, filters: { hours }, selectedOfferKey, setSelectedOfferKey, setHoveredOhlcTime, loading } = useFilters();
+  const { filteredOffers, filters: { hours, premiumMode }, selectedOfferKey, setSelectedOfferKey, setHoveredOhlcTime, loading } = useFilters();
+
+  // Chart guard: only offers with a positive premium are plotted. The
+  // "Incl. non premium offers" filter may let non-premium offers into the
+  // table, but they must never reach the overlay.
+  const premiumOffers = useMemo(
+    () => filteredOffers.filter((o) => (getPremiumMetricValue(o, premiumMode) ?? 0) > 0),
+    [filteredOffers, premiumMode]
+  );
   const { timezone } = useTimezone();
-  const [lifecycleCache, setLifecycleCache] = useState<Record<number, LifecyclePoint[]>>({});
+  const [lifecycleCache, setLifecycleCache] = useState<Record<number, LifecycleCacheEntry>>({});
   const lifecycleLoadingRef = useRef<Set<number>>(new Set());
 
   const sourceIntervalMin = data?.interval_min ?? 1;
@@ -165,12 +185,13 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
     let cancelled = false;
 
     async function loadMissingLifecycles() {
-      const needed = premiumOffers.filter((offer) =>
-        !isOfferLive(offer) &&
-        !offer.lifecycle &&
-        lifecycleCache[offer.id] == null &&
-        !lifecycleLoadingRef.current.has(offer.id)
-      );
+      const now = Date.now();
+      const needed = premiumOffers.filter((offer) => {
+        if (offer.lifecycle || lifecycleLoadingRef.current.has(offer.id)) return false;
+        const cached = lifecycleCache[offer.id];
+        if (cached == null) return true;
+        return isOfferLive(offer) && now - cached.fetchedAt > LIVE_LIFECYCLE_REFRESH_MS;
+      });
 
       if (needed.length === 0) return;
 
@@ -180,18 +201,24 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
       const results = await Promise.allSettled(
         toFetch.map(async (offer) => ({
           id: offer.id,
-          points: await apiFetch<LifecyclePoint[]>(`/api/past_offers/${offer.id}/lifecycle`),
+          points: await apiFetch<LifecyclePoint[]>(lifecycleUrl(offer, isOfferLive(offer))),
         }))
       );
 
       if (cancelled) return;
 
       setLifecycleCache((prev) => {
+        const fulfilled = results.filter(
+          (r): r is PromiseFulfilledResult<{ id: number; points: LifecyclePoint[] }> =>
+            r.status === 'fulfilled'
+        );
+        // Returning the same reference when nothing was fetched avoids
+        // re-triggering this effect in a loop while an endpoint is failing.
+        if (fulfilled.length === 0) return prev;
         const next = { ...prev };
-        for (const result of results) {
-          if (result.status === 'fulfilled') {
-            next[result.value.id] = result.value.points;
-          }
+        const fetchedAt = Date.now();
+        for (const result of fulfilled) {
+          next[result.value.id] = { points: result.value.points, fetchedAt };
         }
         return next;
       });
@@ -289,6 +316,9 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
 
     // --- Offer lines ---
     const seriesInfo = new Map<ISeriesApi<'Line'>, { offerKey: string; price: number }>();
+    // Per-offer render summary exposed on the container as data-offer-paths so
+    // e2e tests can verify what was plotted (canvas pixels are opaque to them).
+    const renderedPaths: Array<{ id: number; live: boolean; mode: 'lifecycle' | 'fallback' | 'none'; points: number; segments: number }> = [];
 
     premiumOffers.forEach((o, index) => {
       const offerKey = offerKeys[index];
@@ -296,13 +326,16 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
       const isSelected = offerKey === selectedOfferKey;
       const lineWidth = isSelected ? 3 : 2;
       const markerRadius = isSelected ? 5 : 3;
-      const lifecycle = o.lifecycle ?? lifecycleCache[o.id];
+      const lifecycle = o.lifecycle ?? lifecycleCache[o.id]?.points;
 
       type TimeValue = { time: UTCTimestamp; value: number };
       const renderFallbackLine = () => {
         // No usable lifecycle in the current view: show the offer at its known endpoint.
         const anchorUtc = isOpen ? nowUtcSec : toUtcSec(getLastSeen(o) ?? getFirstSeen(o) ?? '');
-        if (!anchorUtc) return;
+        if (!anchorUtc) {
+          renderedPaths.push({ id: o.id, live: isOpen, mode: 'none', points: 0, segments: 0 });
+          return;
+        }
         const candleWidthSec = candleMin * 60;
         const anchor = toDisplaySec(anchorUtc);
         const start = toDisplaySec(anchorUtc - candleWidthSec);
@@ -321,6 +354,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
         });
         series.setData(points);
         seriesInfo.set(series, { offerKey, price: getOfferPrice(o) });
+        renderedPaths.push({ id: o.id, live: isOpen, mode: 'fallback', points: points.length, segments: 1 });
       };
 
       if (lifecycle && lifecycle.length > 0) {
@@ -353,8 +387,17 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
           }
         }
         if (isOpen) {
+          // Extend to "now" with the offer's CURRENT price: lifecycle snapshots
+          // lag up to a cycle behind the live feed, so the tip must come from
+          // the offer itself for the path to end at the price shown elsewhere.
           const last = lcPoints[lcPoints.length - 1];
-          if (last.time < nowSec) lcPoints.push({ ...last, time: nowSec });
+          if (last.time < nowSec) {
+            lcPoints.push({
+              time: nowSec,
+              value: getOfferPrice(o),
+              color: isSelected ? selectedLine : offerColor(o.direction, getNetPremiumPercent(o)),
+            });
+          }
         } else if (lastSeenUtc) {
           const lastSeenDisplay = toDisplaySec(lastSeenUtc);
           const last = lcPoints[lcPoints.length - 1];
@@ -389,6 +432,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
         segments.push({ points: seg, color: segColor });
 
         let clickTargetRegistered = false;
+        let drawnSegments = 0;
         for (const { points: segPts, color } of segments) {
           if (segPts.length < 2) continue;
           const series = chart.addLineSeries({
@@ -400,15 +444,19 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
             crosshairMarkerRadius: markerRadius,
           });
           series.setData(segPts);
+          drawnSegments++;
           if (!clickTargetRegistered) {
             seriesInfo.set(series, { offerKey, price: representativePrice });
             clickTargetRegistered = true;
           }
         }
+        renderedPaths.push({ id: o.id, live: isOpen, mode: 'lifecycle', points: lcPoints.length, segments: drawnSegments });
       } else {
         renderFallbackLine();
       }
     });
+
+    divRef.current.dataset.offerPaths = JSON.stringify(renderedPaths);
 
     // Apply visible range — restore saved range if available (e.g. after load-more)
     const hasData = shiftedDisplay.candles.length > 0 || premiumOffers.length > 0;

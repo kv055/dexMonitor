@@ -1,4 +1,4 @@
-import { test, expect, gotoAndWaitForData, offersPanel, jsFill, jsClick } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, offersPanel, controlPanel, openSettings, closeSettings, jsFill, jsClick } from '../fixtures/base-fixture';
 
 test.describe('OffersPreviewTable', () => {
   test.beforeEach(async ({ page }) => {
@@ -62,11 +62,12 @@ test.describe('OffersPreviewTable', () => {
     // Should show fee rows
     await expect(panel.locator('text=CEX taker fee').first()).toBeVisible();
     await expect(panel.locator('text=CEX withdrawal').first()).toBeVisible();
-    await expect(panel.locator('text=BTC network fee').first()).toBeVisible();
+    await expect(panel.locator('text=Network routing cost').first()).toBeVisible();
     await expect(panel.locator('text=DEX platform fee').first()).toBeVisible();
     await expect(panel.locator('text=Total cost').first()).toBeVisible();
     await expect(panel.locator('text=Net premium').first()).toBeVisible();
-    await expect(panel.locator('text=Abort cost').first()).toBeVisible();
+    // Capital/abort sections are hidden for LIVE offers (showCapitalAndAbort)
+    await expect(panel.locator('text=Abort cost').first()).not.toBeVisible();
     await expect(panel.locator('text=Total abort cost').first()).not.toBeVisible();
     await expect(panel.locator('text=Offer disappearance unwind estimate').first()).not.toBeVisible();
   });
@@ -118,10 +119,10 @@ test.describe('OffersPreviewTable', () => {
   });
 
   test('shows "No offers" when filters match nothing', async ({ page }) => {
-    const cp = page.locator('.bg-surface').filter({ hasText: 'Control Panel' });
-
     // Set premium min very high to exclude all offers
-    await jsFill(cp.locator('input[placeholder="Min"]'), '99');
+    await openSettings(page);
+    await jsFill(controlPanel(page).locator('input[placeholder="Min"]'), '99');
+    await closeSettings(page);
     await page.waitForTimeout(300);
 
     const panel = offersPanel(page);

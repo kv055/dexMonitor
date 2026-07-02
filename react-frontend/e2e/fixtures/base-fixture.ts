@@ -3,6 +3,7 @@ import {
   FIXED_TIME,
   MOCK_STATS,
   MOCK_LIVE_OFFERS,
+  MOCK_LIVE_OFFER_LIFECYCLES,
   MOCK_PAST_OFFERS,
   MOCK_PAST_OFFER_LIFECYCLES,
   MOCK_OHLC_DATA,
@@ -50,6 +51,16 @@ export const test = base.extend<Fixtures>({
       ws.close();
     });
 
+    // Blanket guards (registered first — later, more specific routes win):
+    // secondary tabs fetch mm-controller/trading endpoints no test asserts on.
+    // Left unmocked they fall through to a real local backend whose 401
+    // triggers the app-wide auth:unauthorized logout and the login wall.
+    await page.route('**/api/trading/**', route => route.fulfill({ json: [] }));
+    await page.route('**/api/mm-controller/**', route => route.fulfill({ json: {} }));
+    await page.route('**/api/mm-controller/transactions*', route =>
+      route.fulfill({ json: { transactions: [], total: 0, limit: 20, offset: 0 } }),
+    );
+
     // Auth: the app calls /api/auth/me on mount and renders the login wall on
     // 401. Mock an authenticated user so the dashboard renders for every test.
     await page.route('**/api/auth/me', route =>
@@ -73,6 +84,12 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/ohlc*', route =>
       route.fulfill({ json: MOCK_OHLC_DATA }),
     );
+    // NOTE: the '**/api/live_offers*' glob below does NOT match this path (its
+    // trailing '*' cannot cross '/'), so lifecycle requests need their own route.
+    await page.route('**/api/live_offers/*/lifecycle*', route => {
+      const id = Number(new URL(route.request().url()).pathname.match(/\/api\/live_offers\/(\d+)\/lifecycle$/)?.[1]);
+      return route.fulfill({ json: MOCK_LIVE_OFFER_LIFECYCLES[id] ?? [] });
+    });
     await page.route('**/api/live_offers*', route =>
       route.fulfill({ json: MOCK_LIVE_OFFERS }),
     );
@@ -168,9 +185,26 @@ export async function jsFill(locator: Locator, value: string) {
   }, value);
 }
 
-/** Locator for the Control Panel container (scoped to avoid table header collisions) */
+/**
+ * The Control Panel now lives in the settings overlay ("Monitor Filters"
+ * section) opened via the header's gear button. Tests must call
+ * openSettings() before using controlPanel(), and closeSettings() before
+ * asserting on the dashboard behind the overlay backdrop.
+ */
+export async function openSettings(page: Page) {
+  await jsClick(page.locator('button[title="Settings"]'));
+  await controlPanel(page).waitFor({ state: 'visible' });
+}
+
+export async function closeSettings(page: Page) {
+  const overlay = page.locator('aside').filter({ hasText: 'Monitor Filters' });
+  await overlay.getByRole('button', { name: 'Close', exact: true }).click();
+  await overlay.waitFor({ state: 'hidden' });
+}
+
+/** Locator for the Control Panel (Monitor Filters section of the settings overlay) */
 export function controlPanel(page: Page) {
-  return page.locator('.bg-surface').filter({ hasText: 'Control Panel' });
+  return page.locator('section').filter({ has: page.getByRole('heading', { name: 'Monitor Filters' }) });
 }
 
 /** Locator for the OHLC chart panel */
