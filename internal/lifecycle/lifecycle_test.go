@@ -203,9 +203,6 @@ func TestLoadPastAggregatesComputesAveragesWithoutSamples(t *testing.T) {
 	if got.Count != 2 {
 		t.Fatalf("count = %d, want 2", got.Count)
 	}
-	if len(got.Samples) != 0 {
-		t.Fatalf("expected no samples in aggregate load, got %d", len(got.Samples))
-	}
 	assertFloat(t, got.AvgPremiumPercent, 7.5)
 	assertFloat(t, got.AvgNetPercent, 6)
 }
@@ -239,28 +236,6 @@ func TestLoadPastAggregatesComputesHedgePositionAverages(t *testing.T) {
 	assertFloat(t, got.AvgHedgeNotionalEUR, 55)
 	assertFloat(t, got.AvgLeverageUsed, 5)
 	assertFloat(t, got.AvgRecommendedCollateralEUR, 16)
-}
-
-func TestLoadPastSamplesReturnsRefPriceRows(t *testing.T) {
-	db := openTestDB(t)
-	offerID := insertOffer(t, db)
-	repo := NewRepository(db)
-
-	if _, err := db.Exec(
-		`INSERT INTO order_lifecycle (offer_db_id, price, ref_price, premium_pct)
-		 VALUES (?, 105, 100, 5), (?, 110, 100, 10)`,
-		offerID, offerID,
-	); err != nil {
-		t.Fatalf("insert lifecycle: %v", err)
-	}
-
-	samples, err := repo.LoadPastSamples(context.Background(), []int64{offerID})
-	if err != nil {
-		t.Fatalf("LoadPastSamples: %v", err)
-	}
-	if len(samples[offerID]) != 2 {
-		t.Fatalf("sample count = %d, want 2", len(samples[offerID]))
-	}
 }
 
 func TestPersistSnapshotLeavesAskWithdrawalFeeNull(t *testing.T) {

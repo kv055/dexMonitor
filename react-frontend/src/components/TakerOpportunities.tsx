@@ -108,15 +108,16 @@ function formatDurationMinutes(totalMinutes: number): string {
 type ProfitableOrderSortKey =
   | 'last_seen_desc'
   | 'last_seen_asc'
-  | 'net_btc_desc'
-  | 'net_btc_asc'
-  | 'net_fiat_desc'
-  | 'net_fiat_asc'
+  | 'net_profit_desc'
+  | 'net_profit_asc'
   | 'volume_btc_desc'
   | 'net_pct_desc'
   | 'duration_desc'
   | 'payment_method_asc'
   | 'exchange_asc';
+
+type NetProfitUnit = 'btc' | 'fiat';
+type SizeUnit = 'btc' | 'fiat';
 
 const INSIGHTS_FILTERS_STORAGE_KEY = 'dex-insights-filters';
 
@@ -125,8 +126,10 @@ interface PersistedInsightsFilters {
   directionFilter: DirectionFilter;
   disabledExchanges: string[];
   mode: TakerOpportunityMode;
-  showAllMethods: boolean;
   sortBy: ProfitableOrderSortKey;
+  netProfitUnit: NetProfitUnit;
+  sizeUnit: SizeUnit;
+  summaryUnit: SizeUnit;
   durationMin: number | null;
   durationMax: number | null;
   profitFiatMin: number | null;
@@ -138,8 +141,10 @@ const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
   directionFilter: 'both',
   disabledExchanges: [],
   mode: 'net_full',
-  showAllMethods: false,
   sortBy: 'last_seen_desc',
+  netProfitUnit: 'fiat',
+  sizeUnit: 'btc',
+  summaryUnit: 'btc',
   durationMin: null,
   durationMax: null,
   profitFiatMin: null,
@@ -149,13 +154,13 @@ const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
 const VALID_TIMEFRAMES = new Set(['1h', '6h', '24h', '48h', '7d']);
 const VALID_DIRECTIONS = new Set<DirectionFilter>(['both', 'buy', 'sell']);
 const VALID_MODES = new Set<TakerOpportunityMode>(['net_full', 'net_capped']);
+const VALID_NET_PROFIT_UNITS = new Set<NetProfitUnit>(['btc', 'fiat']);
+const VALID_SIZE_UNITS = new Set<SizeUnit>(['btc', 'fiat']);
 const VALID_SORT_KEYS = new Set<ProfitableOrderSortKey>([
   'last_seen_desc',
   'last_seen_asc',
-  'net_btc_desc',
-  'net_btc_asc',
-  'net_fiat_desc',
-  'net_fiat_asc',
+  'net_profit_desc',
+  'net_profit_asc',
   'volume_btc_desc',
   'net_pct_desc',
   'duration_desc',
@@ -194,10 +199,18 @@ function readPersistedInsightsFilters(): PersistedInsightsFilters {
       mode: VALID_MODES.has(parsed.mode as TakerOpportunityMode)
         ? parsed.mode as TakerOpportunityMode
         : DEFAULT_INSIGHTS_FILTERS.mode,
-      showAllMethods: parsed.showAllMethods === true,
       sortBy: VALID_SORT_KEYS.has(parsed.sortBy as ProfitableOrderSortKey)
         ? parsed.sortBy as ProfitableOrderSortKey
         : DEFAULT_INSIGHTS_FILTERS.sortBy,
+      netProfitUnit: VALID_NET_PROFIT_UNITS.has(parsed.netProfitUnit as NetProfitUnit)
+        ? parsed.netProfitUnit as NetProfitUnit
+        : DEFAULT_INSIGHTS_FILTERS.netProfitUnit,
+      sizeUnit: VALID_SIZE_UNITS.has(parsed.sizeUnit as SizeUnit)
+        ? parsed.sizeUnit as SizeUnit
+        : DEFAULT_INSIGHTS_FILTERS.sizeUnit,
+      summaryUnit: VALID_SIZE_UNITS.has(parsed.summaryUnit as SizeUnit)
+        ? parsed.summaryUnit as SizeUnit
+        : DEFAULT_INSIGHTS_FILTERS.summaryUnit,
       durationMin: readNullableNumber(parsed.durationMin, PERSISTED_DURATION_BOUNDS),
       durationMax: readNullableNumber(parsed.durationMax, PERSISTED_DURATION_BOUNDS),
       profitFiatMin: readNullableNumber(parsed.profitFiatMin, PERSISTED_PROFIT_BOUNDS),
@@ -264,6 +277,7 @@ function sortProfitableOrders(
   orders: PastProfitableOrder[],
   sortKey: ProfitableOrderSortKey,
   mode: TakerOpportunityMode,
+  netProfitUnit: NetProfitUnit,
 ): PastProfitableOrder[] {
   const sorted = [...orders];
   sorted.sort((a, b) => {
@@ -280,14 +294,16 @@ function sortProfitableOrders(
         const tb = parseUtcTimestamp(b.status.last_seen)?.getTime() ?? 0;
         return ta - tb;
       }
-      case 'net_btc_desc':
-        return (scenarioB.profit.avg_btc ?? 0) - (scenarioA.profit.avg_btc ?? 0);
-      case 'net_btc_asc':
-        return (scenarioA.profit.avg_btc ?? 0) - (scenarioB.profit.avg_btc ?? 0);
-      case 'net_fiat_desc':
-        return (scenarioB.profit.avg_fiat ?? 0) - (scenarioA.profit.avg_fiat ?? 0);
-      case 'net_fiat_asc':
-        return (scenarioA.profit.avg_fiat ?? 0) - (scenarioB.profit.avg_fiat ?? 0);
+      case 'net_profit_desc': {
+        const va = netProfitUnit === 'btc' ? scenarioA.profit.avg_btc : scenarioA.profit.avg_fiat;
+        const vb = netProfitUnit === 'btc' ? scenarioB.profit.avg_btc : scenarioB.profit.avg_fiat;
+        return (vb ?? 0) - (va ?? 0);
+      }
+      case 'net_profit_asc': {
+        const va = netProfitUnit === 'btc' ? scenarioA.profit.avg_btc : scenarioA.profit.avg_fiat;
+        const vb = netProfitUnit === 'btc' ? scenarioB.profit.avg_btc : scenarioB.profit.avg_fiat;
+        return (va ?? 0) - (vb ?? 0);
+      }
       case 'volume_btc_desc':
         return (scenarioB.trade_size_btc ?? 0) - (scenarioA.trade_size_btc ?? 0);
       case 'net_pct_desc':
@@ -308,14 +324,12 @@ function sortProfitableOrders(
   return sorted;
 }
 
-function profitableOrderSortOptions(fiat: string): { value: ProfitableOrderSortKey; label: string }[] {
+function profitableOrderSortOptions(): { value: ProfitableOrderSortKey; label: string }[] {
   return [
     { value: 'last_seen_desc', label: 'Last seen (newest)' },
     { value: 'last_seen_asc', label: 'Last seen (oldest)' },
-    { value: 'net_btc_desc', label: 'Net profit BTC (highest)' },
-    { value: 'net_btc_asc', label: 'Net profit BTC (lowest)' },
-    { value: 'net_fiat_desc', label: `Net profit ${fiat} (highest)` },
-    { value: 'net_fiat_asc', label: `Net profit ${fiat} (lowest)` },
+    { value: 'net_profit_desc', label: 'Net profit (highest)' },
+    { value: 'net_profit_asc', label: 'Net profit (lowest)' },
     { value: 'volume_btc_desc', label: 'Volume BTC (largest)' },
     { value: 'net_pct_desc', label: 'Net premium % (highest)' },
     { value: 'duration_desc', label: 'Duration (longest)' },
@@ -329,8 +343,11 @@ interface FilteredSummary {
   total_net_profit_btc: number;
   total_net_profit_fiat: number;
   average_order_size_btc: number;
+  average_order_size_fiat: number;
   smallest_order_size_btc: number | null;
+  smallest_order_size_fiat: number | null;
   biggest_order_size_btc: number | null;
+  biggest_order_size_fiat: number | null;
 }
 
 function computeFilteredSummary(orders: PastProfitableOrder[], mode: TakerOpportunityMode): FilteredSummary {
@@ -340,27 +357,41 @@ function computeFilteredSummary(orders: PastProfitableOrder[], mode: TakerOpport
       total_net_profit_btc: 0,
       total_net_profit_fiat: 0,
       average_order_size_btc: 0,
+      average_order_size_fiat: 0,
       smallest_order_size_btc: null,
+      smallest_order_size_fiat: null,
       biggest_order_size_btc: null,
+      biggest_order_size_fiat: null,
     };
   }
 
   let totalProfitBtc = 0;
   let totalProfitFiat = 0;
   let totalSizeBtc = 0;
-  let smallest = Infinity;
-  let biggest = -Infinity;
+  let totalSizeFiat = 0;
+  let smallestBtc = Infinity;
+  let smallestFiat = 0;
+  let biggestBtc = -Infinity;
+  let biggestFiat = 0;
 
   for (const order of orders) {
     const scenario = pickScenario(order, mode);
     const profitBtc = scenario.profit.avg_btc ?? 0;
     const profitFiat = scenario.profit.avg_fiat ?? 0;
     const sizeBtc = scenario.trade_size_btc ?? 0;
+    const sizeFiat = scenario.trade_size_fiat ?? 0;
     totalProfitBtc += profitBtc;
     totalProfitFiat += profitFiat;
     totalSizeBtc += sizeBtc;
-    if (sizeBtc < smallest) smallest = sizeBtc;
-    if (sizeBtc > biggest) biggest = sizeBtc;
+    totalSizeFiat += sizeFiat;
+    if (sizeBtc < smallestBtc) {
+      smallestBtc = sizeBtc;
+      smallestFiat = sizeFiat;
+    }
+    if (sizeBtc > biggestBtc) {
+      biggestBtc = sizeBtc;
+      biggestFiat = sizeFiat;
+    }
   }
 
   return {
@@ -368,8 +399,11 @@ function computeFilteredSummary(orders: PastProfitableOrder[], mode: TakerOpport
     total_net_profit_btc: totalProfitBtc,
     total_net_profit_fiat: totalProfitFiat,
     average_order_size_btc: totalSizeBtc / orders.length,
-    smallest_order_size_btc: smallest === Infinity ? null : smallest,
-    biggest_order_size_btc: biggest === -Infinity ? null : biggest,
+    average_order_size_fiat: totalSizeFiat / orders.length,
+    smallest_order_size_btc: smallestBtc === Infinity ? null : smallestBtc,
+    smallest_order_size_fiat: smallestBtc === Infinity ? null : smallestFiat,
+    biggest_order_size_btc: biggestBtc === -Infinity ? null : biggestBtc,
+    biggest_order_size_fiat: biggestBtc === -Infinity ? null : biggestFiat,
   };
 }
 
@@ -588,7 +622,7 @@ function DualRangeFilter({
 }
 
 const PROFITABLE_TRADES_GRID_COLS =
-  'grid w-full min-w-0 grid-cols-[minmax(0,1.35fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.75fr)_minmax(0,0.85fr)_minmax(0,0.8fr)_1.25rem] items-center gap-2 sm:gap-3';
+  'grid w-full min-w-0 grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.55fr)_minmax(0,0.7fr)_minmax(0,0.95fr)_1.25rem] items-center gap-2 sm:gap-3';
 
 interface TradeRowMetricProps {
   value: string;
@@ -603,16 +637,42 @@ function TradeRowMetric({ value, valueClassName = 'text-text' }: TradeRowMetricP
   );
 }
 
-function ProfitableTradesHeader({ fiat }: { fiat: string }) {
+function unitToggleButtonClass(active: boolean): string {
+  return `rounded px-1 normal-case transition-colors ${active ? 'text-accent font-semibold' : 'text-muted hover:text-text'}`;
+}
+
+function UnitToggle({ fiat, unit, onChange }: { fiat: string; unit: SizeUnit; onChange: (unit: SizeUnit) => void }) {
+  return (
+    <span className="inline-flex shrink-0 items-center gap-0.5">
+      <button type="button" onClick={() => onChange('btc')} className={unitToggleButtonClass(unit === 'btc')}>BTC</button>
+      <span className="text-border">|</span>
+      <button type="button" onClick={() => onChange('fiat')} className={unitToggleButtonClass(unit === 'fiat')}>{fiat}</button>
+    </span>
+  );
+}
+
+function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUnit, onNetProfitUnitChange }: {
+  fiat: string;
+  sizeUnit: SizeUnit;
+  onSizeUnitChange: (unit: SizeUnit) => void;
+  netProfitUnit: NetProfitUnit;
+  onNetProfitUnitChange: (unit: NetProfitUnit) => void;
+}) {
   const th = 'truncate text-[0.65rem] font-semibold uppercase tracking-wide text-muted';
   return (
     <div className={`${PROFITABLE_TRADES_GRID_COLS} shrink-0 border-b border-border bg-surface/70 px-3 py-1.5`}>
       <span className={th}>Offer</span>
+      <span className={`${th} text-right`}>First seen</span>
       <span className={`${th} text-right`}>Last seen</span>
       <span className={`${th} text-right`}>Duration</span>
-      <span className={`${th} text-right`}>Size</span>
-      <span className={`${th} text-right`}>Net BTC</span>
-      <span className={`${th} text-right`}>Net {fiat}</span>
+      <span className={`${th} flex items-center justify-end gap-1`}>
+        <span>Size</span>
+        <UnitToggle fiat={fiat} unit={sizeUnit} onChange={onSizeUnitChange} />
+      </span>
+      <span className={`${th} flex items-center justify-end gap-1`}>
+        <span>Net profit</span>
+        <UnitToggle fiat={fiat} unit={netProfitUnit} onChange={onNetProfitUnitChange} />
+      </span>
       <span className="shrink-0" aria-hidden />
     </div>
   );
@@ -660,17 +720,14 @@ function PastOfferSupplementalDetails({ order, offer, fiat }: {
   const refPrice = getRefPrice(offer)
     ?? order.pricing.avg_ref_price
     ?? offerNumber(raw, 'avg_ref_price');
-  const btcMin = getBtcMin(offer);
-  const btcMax = getBtcMax(offer);
   const fiatMin = getFiatMin(offer);
   const fiatMax = getFiatMax(offer);
   const avgObservedBtc = offerNumber(raw, 'avg_btc_amount');
 
-  const btcRange = formatRange(fmtBTC(btcMin), fmtBTC(btcMax));
   const fiatRange = formatRange(fmtFiat(fiatMin, fiat), fmtFiat(fiatMax, fiat));
 
   const hasPricing = offerPrice > 0 || refPrice != null;
-  const hasVolume = btcRange != null || fiatRange != null || avgObservedBtc != null;
+  const hasVolume = fiatRange != null || avgObservedBtc != null;
 
   if (!hasPricing && !hasVolume) return null;
 
@@ -689,9 +746,6 @@ function PastOfferSupplementalDetails({ order, offer, fiat }: {
 
       {hasVolume && (
         <PastOfferDetailSection title="Volume limits">
-          {btcRange != null && (
-            <PastOfferDetailRow label="BTC range" value={btcRange} />
-          )}
           {fiatRange != null && (
             <PastOfferDetailRow label={`${fiat} range`} value={fiatRange} />
           )}
@@ -721,6 +775,7 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
   const showCappedEffective = showCapped && hasCappedScenario(offer);
   const costBreakdown = getDisplayCostBreakdown(offer, showCappedEffective);
   const offerPrice = getOfferPrice(offer);
+  const btcVolumeRange = formatRange(fmtBTC(getBtcMin(offer)), fmtBTC(getBtcMax(offer)));
 
   return (
     <div className="flex flex-col gap-3">
@@ -741,6 +796,12 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
           <span className="text-text">{order.payment_methods.join(', ')}</span>
         </div>
       ) : null}
+      {btcVolumeRange && (
+        <div className="text-[0.68rem] text-muted">
+          <span className="uppercase tracking-wide text-[0.6rem] mr-1">Volume</span>
+          <span className="text-text">{btcVolumeRange}</span>
+        </div>
+      )}
       <PastOfferSupplementalDetails
         order={order}
         offer={offer}
@@ -772,7 +833,7 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
   );
 }
 
-export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNetCapped, orders, statsLoading, ordersLoading, maxFiatLimit }: Props) {
+export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading, ordersLoading, maxFiatLimit }: Props) {
   const deferredOrders = useDeferredValue(orders);
   const ordersPending = deferredOrders !== orders;
   const { timezone } = useTimezone();
@@ -783,8 +844,10 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>(initialFilters.directionFilter);
   const [disabledExchanges, setDisabledExchanges] = useState<string[]>(initialFilters.disabledExchanges);
   const [mode, setMode] = useState<TakerOpportunityMode>(initialFilters.mode);
-  const [showAllMethods, setShowAllMethods] = useState(initialFilters.showAllMethods);
   const [sortBy, setSortBy] = useState<ProfitableOrderSortKey>(initialFilters.sortBy);
+  const [netProfitUnit, setNetProfitUnit] = useState<NetProfitUnit>(initialFilters.netProfitUnit);
+  const [sizeUnit, setSizeUnit] = useState<SizeUnit>(initialFilters.sizeUnit);
+  const [summaryUnit, setSummaryUnit] = useState<SizeUnit>(initialFilters.summaryUnit);
   const [durationRange, setDurationRange] = useState<[number, number] | null>(null);
   const [profitFiatRangeCents, setProfitFiatRangeCents] = useState<[number, number] | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -804,17 +867,14 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   const tradesListRef = useRef<HTMLDivElement>(null);
 
   const hasExcluded = (stats?.excluded_payment_methods?.length ?? 0) > 0;
-  const statsByMode = mode === 'net_capped'
-    ? { filtered: statsNetCapped, all: statsAllNetCapped }
-    : { filtered: stats, all: statsAll };
-  const activeStats = showAllMethods && hasExcluded ? statsByMode.all : statsByMode.filtered;
+  const activeStats = mode === 'net_capped' ? statsNetCapped : stats;
   const activeOrders = useMemo(() => {
     let list = deferredOrders.filter(order => isProfitableInMode(order, mode));
-    if (!showAllMethods && hasExcluded) {
+    if (hasExcluded) {
       list = list.filter(order => !order.payment_methods?.some(m => excludedMethods.includes(m)));
     }
     return list;
-  }, [deferredOrders, mode, showAllMethods, hasExcluded, excludedMethods]);
+  }, [deferredOrders, mode, hasExcluded, excludedMethods]);
 
   // Capped mode is only meaningful when the global Max Position Size is set.
   const capAvailable = maxFiatLimit != null && maxFiatLimit > 0;
@@ -964,8 +1024,10 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
       directionFilter,
       disabledExchanges,
       mode,
-      showAllMethods,
       sortBy,
+      netProfitUnit,
+      sizeUnit,
+      summaryUnit,
       durationMin: !durationBounds.hasData || atFullDurationRange || durationRange == null
         ? null
         : durationRange[0],
@@ -985,8 +1047,10 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
     directionFilter,
     disabledExchanges,
     mode,
-    showAllMethods,
     sortBy,
+    netProfitUnit,
+    sizeUnit,
+    summaryUnit,
     durationRange,
     durationBounds.min,
     durationBounds.max,
@@ -1014,8 +1078,8 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
   );
 
   const sortedOrders = useMemo(
-    () => sortProfitableOrders(filteredOrders, sortBy, mode),
-    [filteredOrders, sortBy, mode],
+    () => sortProfitableOrders(filteredOrders, sortBy, mode, netProfitUnit),
+    [filteredOrders, sortBy, mode, netProfitUnit],
   );
 
   // TanStack Virtual returns refs that React Compiler cannot memoize; usage here is localized.
@@ -1041,9 +1105,11 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
     setSelectedTimeframe(DEFAULT_INSIGHTS_FILTERS.selectedTimeframe);
     setDirectionFilter(DEFAULT_INSIGHTS_FILTERS.directionFilter);
     setDisabledExchanges([]);
-    setShowAllMethods(DEFAULT_INSIGHTS_FILTERS.showAllMethods);
     setMode(DEFAULT_INSIGHTS_FILTERS.mode);
     setSortBy(DEFAULT_INSIGHTS_FILTERS.sortBy);
+    setNetProfitUnit(DEFAULT_INSIGHTS_FILTERS.netProfitUnit);
+    setSizeUnit(DEFAULT_INSIGHTS_FILTERS.sizeUnit);
+    setSummaryUnit(DEFAULT_INSIGHTS_FILTERS.summaryUnit);
     setExpandedId(null);
     setExpandedShowCapped(false);
     persistedDurationRef.current = { min: null, max: null };
@@ -1088,11 +1154,26 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
 
   const summaryRows = [
     { label: 'Orders', value: filteredSummary.premium_order_count.toLocaleString('de-DE'), className: 'text-text' },
-    { label: 'Net BTC', value: fmtBTC(filteredSummary.total_net_profit_btc), className: 'text-green' },
-    { label: `Net ${fiat}`, value: fmtFiat(filteredSummary.total_net_profit_fiat, fiat), className: 'text-text' },
-    { label: 'Avg Size', value: fmtBTC(filteredSummary.average_order_size_btc), className: 'text-text' },
-    { label: 'Smallest', value: fmtBTC(filteredSummary.smallest_order_size_btc), className: 'text-muted' },
-    { label: 'Biggest', value: fmtBTC(filteredSummary.biggest_order_size_btc), className: 'text-muted' },
+    {
+      label: 'Net profit',
+      value: summaryUnit === 'btc' ? fmtBTC(filteredSummary.total_net_profit_btc) : fmtFiat(filteredSummary.total_net_profit_fiat, fiat),
+      className: 'text-green',
+    },
+    {
+      label: 'Avg Size',
+      value: summaryUnit === 'btc' ? fmtBTC(filteredSummary.average_order_size_btc) : fmtFiat(filteredSummary.average_order_size_fiat, fiat),
+      className: 'text-text',
+    },
+    {
+      label: 'Smallest',
+      value: summaryUnit === 'btc' ? fmtBTC(filteredSummary.smallest_order_size_btc) : fmtFiat(filteredSummary.smallest_order_size_fiat, fiat),
+      className: 'text-muted',
+    },
+    {
+      label: 'Biggest',
+      value: summaryUnit === 'btc' ? fmtBTC(filteredSummary.biggest_order_size_btc) : fmtFiat(filteredSummary.biggest_order_size_fiat, fiat),
+      className: 'text-muted',
+    },
   ];
 
   return (
@@ -1113,6 +1194,13 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
             options={(activeStats ?? stats).timeframes.map(r => ({ value: r.timeframe, label: labelForTimeframe(r.timeframe) }))}
             selected={selected?.timeframe ?? selectedTimeframe}
             onChange={setSelectedTimeframe}
+          />
+          <SelectGroup
+            label="Sort"
+            description="Sort the profitable trades list"
+            options={profitableOrderSortOptions()}
+            selected={sortBy}
+            onChange={v => setSortBy(v as ProfitableOrderSortKey)}
           />
           <PillGroup
             label="Direction"
@@ -1157,18 +1245,6 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
             disabled={!profitFiatBounds.hasData || profitFiatRangeCents == null}
             disabledMessage="No profit data in this window"
           />
-          {hasExcluded && (
-            <PillGroup
-              label="Payment methods"
-              description="Selected: only your enabled methods. All: every payment method regardless of settings."
-              options={[
-                { value: 'selected', label: 'Selected' },
-                { value: 'all', label: 'All methods' },
-              ]}
-              selected={showAllMethods ? 'all' : 'selected'}
-              onChange={v => setShowAllMethods(v === 'all')}
-            />
-          )}
           <PillGroup
             label="Premium mode"
             description="Net full uses full order size. Net capped applies your max fiat position limit where needed."
@@ -1194,8 +1270,9 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
           </button>
 
           <div className="shrink-0 overflow-hidden rounded-lg border border-border bg-bg/20">
-            <div className="border-b border-border bg-surface/70 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-wide text-muted">
-              Backtesting summary
+            <div className="flex items-center justify-between gap-2 border-b border-border bg-surface/70 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-wide text-muted">
+              <span>Backtesting summary</span>
+              <UnitToggle fiat={fiat} unit={summaryUnit} onChange={setSummaryUnit} />
             </div>
             <div className="divide-y divide-border/70 text-[0.75rem]">
               {summaryRows.map(row => (
@@ -1209,29 +1286,16 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
         </aside>
 
         <div className="min-h-0 flex-1 rounded-lg border border-border overflow-hidden flex flex-col">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border bg-surface/70 px-3 py-2 text-[0.72rem]">
-            <span className="text-text font-medium">Profitable trades</span>
-            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
-              <label className="flex items-center gap-1.5 text-muted">
-                <span className="shrink-0 uppercase tracking-wide text-[0.65rem] font-semibold">Sort</span>
-                <select
-                  title="Sort the profitable trades list"
-                  value={sortBy}
-                  onChange={event => setSortBy(event.target.value as ProfitableOrderSortKey)}
-                  className="max-w-[12rem] rounded border border-border bg-bg/60 px-2 py-1 text-[0.72rem] font-medium text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
-                >
-                  {profitableOrderSortOptions(fiat).map(option => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <span className="text-muted">{sortedOrders.length} in {labelForTimeframe(selected?.timeframe ?? selectedTimeframe).toLowerCase()}</span>
-            </div>
-          </div>
           <div className="min-h-0 flex-1 flex flex-col overflow-hidden">
-            {sortedOrders.length > 0 && <ProfitableTradesHeader fiat={fiat} />}
+            {sortedOrders.length > 0 && (
+              <ProfitableTradesHeader
+                fiat={fiat}
+                sizeUnit={sizeUnit}
+                onSizeUnitChange={setSizeUnit}
+                netProfitUnit={netProfitUnit}
+                onNetProfitUnitChange={setNetProfitUnit}
+              />
+            )}
             <div ref={tradesListRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
               {sortedOrders.length === 0 ? (
                 <div className="px-3 py-4 text-[0.75rem] text-muted">No profitable closed trades in this window for the selected net mode.</div>
@@ -1244,6 +1308,7 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
                   const order = sortedOrders[virtualRow.index];
                   const isOpen = expandedId === order.id;
                   const activeScenario = pickScenario(order, mode);
+                  const firstSeenLabel = formatDateTimeLabel(order.status.first_seen ?? '', timezone);
                   const seenLabel = formatDateTimeLabel(order.status.last_seen ?? '', timezone);
                   const paymentMethod = order.payment_methods?.join(', ') || 'Unknown method';
 
@@ -1283,11 +1348,16 @@ export function TakerOpportunities({ stats, statsAll, statsNetCapped, statsAllNe
                               {paymentMethod}
                             </span>
                           </div>
+                          <TradeRowMetric value={firstSeenLabel} />
                           <TradeRowMetric value={seenLabel} />
                           <TradeRowMetric value={order.status.duration?.display || '—'} />
-                          <TradeRowMetric value={fmtBTC(activeScenario.trade_size_btc)} />
-                          <TradeRowMetric value={fmtBTC(activeScenario.profit.avg_btc)} valueClassName="text-green" />
-                          <TradeRowMetric value={fmtFiat(activeScenario.profit.avg_fiat, fiat)} />
+                          <TradeRowMetric
+                            value={sizeUnit === 'btc' ? fmtBTC(activeScenario.trade_size_btc) : fmtFiat(activeScenario.trade_size_fiat, fiat)}
+                          />
+                          <TradeRowMetric
+                            value={netProfitUnit === 'btc' ? fmtBTC(activeScenario.profit.avg_btc) : fmtFiat(activeScenario.profit.avg_fiat, fiat)}
+                            valueClassName="text-green"
+                          />
                           <span className="shrink-0 text-right text-muted">{isOpen ? '▲' : '▼'}</span>
                         </div>
                       </button>

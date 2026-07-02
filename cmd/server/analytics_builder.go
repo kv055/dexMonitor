@@ -7,15 +7,17 @@ import (
 	"sync"
 	"time"
 
+	"commons/tradecost"
 	"dexmonitor/internal/pastorders"
 )
 
 const analyticsResultCacheTTL = 10 * time.Minute
 
 const (
-	analyticsSectionOverview    = "overview"
-	analyticsSectionTakerStats  = "taker_stats"
-	analyticsSectionTakerOrders = "taker_orders"
+	analyticsSectionOverview        = "overview"
+	analyticsSectionTakerStats      = "taker_stats"
+	analyticsSectionTakerOrdersFull = "taker_orders_full"
+	analyticsSectionTakerOrders     = "taker_orders"
 )
 
 var analyticsResultCache struct {
@@ -24,68 +26,28 @@ var analyticsResultCache struct {
 }
 
 type analyticsResultCacheEntry struct {
-	response      dashboardAnalyticsResponse
-	expiry        time.Time
-	builtOverview bool
-	builtStats    bool
-	builtOrders   bool
+	response        dashboardAnalyticsResponse
+	expiry          time.Time
+	builtOverview   bool
+	builtStats      bool
+	builtOrdersFull bool
+	builtOrders     bool
 }
 
 type analyticsBuildTimings struct {
-	cacheHit        bool
-	loadContextMs   float64
-	buildOverviewMs float64
-	buildStatsMs    float64
-	buildOrdersMs   float64
+	cacheHit          bool
+	loadContextMs     float64
+	buildOverviewMs   float64
+	buildStatsMs      float64
+	buildOrdersFullMs float64
+	buildOrdersMs     float64
 }
 
-type cappedLifecycleAverages struct {
-	tradeCostPct float64
-	netPct       float64
-	profitBTC    float64
-	profitFiat   float64
-	tradeCostBTC float64
-	networkPct   float64
-}
-
-type cappedLifecycleMemo struct {
-	maxFiatLimitEUR float64
-	entries         map[int64]cappedLifecycleAverages
-}
-
-func newCappedLifecycleMemo(maxFiatLimitEUR float64) *cappedLifecycleMemo {
-	if maxFiatLimitEUR <= 0 {
-		return nil
-	}
-	return &cappedLifecycleMemo{
-		maxFiatLimitEUR: maxFiatLimitEUR,
-		entries:         make(map[int64]cappedLifecycleAverages),
-	}
-}
-
-func (m *cappedLifecycleMemo) get(o map[string]any, agg pastLifecycleAggregate, fullBTCSize float64) cappedLifecycleAverages {
-	id := int64(offerFloat(o, "id"))
-	if cached, ok := m.entries[id]; ok {
-		return cached
-	}
-	tc, net, pb, pf, tcb, np := recomputeCappedLifecycleAverages(o, agg.Samples, fullBTCSize, m.maxFiatLimitEUR)
-	result := cappedLifecycleAverages{
-		tradeCostPct: tc,
-		netPct:       net,
-		profitBTC:    pb,
-		profitFiat:   pf,
-		tradeCostBTC: tcb,
-		networkPct:   np,
-	}
-	m.entries[id] = result
-	return result
-}
-
-type pastAnalyticsOpts struct {
-	cappedMemo *cappedLifecycleMemo
-}
-
-func cappedNetPremium(opts *pastAnalyticsOpts, o map[string]any, agg pastLifecycleAggregate, fullTradeSizeBTC, maxFiatLimitEUR float64) float64 {
+// cappedNetPremium estimates the capped-volume net premium once from the
+// offer's whole-life averages (agg) rather than replaying every historical
+// tick in order_lifecycle — see buildPastOfferAPI's capped scenario for the
+// same approach.
+func cappedNetPremium(o map[string]any, agg pastLifecycleAggregate, fullTradeSizeBTC, maxFiatLimitEUR float64) float64 {
 	if maxFiatLimitEUR <= 0 || fullTradeSizeBTC <= 0 {
 		return 0
 	}
@@ -100,19 +62,57 @@ func cappedNetPremium(opts *pastAnalyticsOpts, o map[string]any, agg pastLifecyc
 	if btcCap <= 0 || fullTradeSizeBTC <= btcCap {
 		return 0
 	}
-	if opts != nil && opts.cappedMemo != nil {
-		return opts.cappedMemo.get(o, agg, fullTradeSizeBTC).netPct
+	avgPremiumPercent := agg.AvgPremiumPercent
+	if avgPremiumPercent == 0 {
+		avgPremiumPercent = tradecost.Round4(offerFloat(o, "avg_premium_pct"))
 	}
-	_, net, _, _, _, _ := recomputeCappedLifecycleAverages(o, agg.Samples, fullTradeSizeBTC, maxFiatLimitEUR)
-	return net
+	bd := buildCappedPastBreakdown(o, fullTradeSizeBTC, btcCap, avgRefPrice, avgPremiumPercent,
+		agg.AvgHedgeNotionalEUR, agg.AvgLeverageUsed, agg.AvgRecommendedCollateralEUR)
+	return bd.EstimatedProfitPct
 }
 
 type analyticsBuildContext struct {
-	params       dashboardAnalyticsParams
-	generalCtx   generalStatsContext
-	closedOffers []map[string]any
-	lifecycleAgg map[int64]pastLifecycleAggregate
-	cappedMemo   *cappedLifecycleMemo
+	params            dashboardAnalyticsParams
+	generalCtx        generalStatsContext
+	closedOffers      []map[string]any
+	closedIDs         []int64
+	lifecycleAggCache map[int64]pastLifecycleAggregate
+	analysisByID      map[int64]pastOfferAnalysis
+}
+
+// lifecycleAgg lazily fetches the whole-life lifecycle averages for
+// closedOffers. Building the "full volume" orders/section needs none of
+// this (it only reads the offer row's own persisted avg_* columns), so
+// callers that don't touch capped/premium math never pay for this query.
+func (bc *analyticsBuildContext) lifecycleAgg() map[int64]pastLifecycleAggregate {
+	if bc.lifecycleAggCache == nil {
+		bc.lifecycleAggCache = fetchPastOfferLifecycleAggregates(bc.closedIDs)
+	}
+	return bc.lifecycleAggCache
+}
+
+// offerAnalyses computes each closed offer's cost/profit analysis once and
+// caches it, so buildTakerStatsOnly and buildTakerOrdersOnly (which iterate
+// the same closedOffers) don't each redo the same per-offer math.
+func (bc *analyticsBuildContext) offerAnalyses() map[int64]pastOfferAnalysis {
+	if bc.analysisByID != nil {
+		return bc.analysisByID
+	}
+	agg := bc.lifecycleAgg()
+	result := make(map[int64]pastOfferAnalysis, len(bc.closedOffers))
+	for _, o := range bc.closedOffers {
+		id := int64(offerFloat(o, "id"))
+		result[id] = addPastOfferCostFieldsFull(
+			o,
+			agg[id],
+			bc.params.Confirmations,
+			bc.params.ExcludeCEXes,
+			bc.params.FeeTier,
+			bc.params.MaxFiatLimitEUR,
+		)
+	}
+	bc.analysisByID = result
+	return result
 }
 
 type takerAnalyticsResult struct {
@@ -155,10 +155,49 @@ func filterDashboardAnalyticsResponse(full dashboardAnalyticsResponse, p dashboa
 		filtered.PastOrderStatsAllNetCapped = full.PastOrderStatsAllNetCapped
 		filtered.PastOrderStatsNetCapped = full.PastOrderStatsNetCapped
 	}
-	if p.wantsSection(analyticsSectionTakerOrders) {
+	if p.wantsSection(analyticsSectionTakerOrdersFull) || p.wantsSection(analyticsSectionTakerOrders) {
 		filtered.PastProfitableOrders = full.PastProfitableOrders
 	}
 	return filtered
+}
+
+// cloneOfferMap shallow-copies an offer row. addPastOfferCostFieldsFull
+// writes derived fields (ref_price, cost_breakdown, ...) back onto the map
+// it's given; offers here come from generalStatsCache, a 30s cache shared
+// across concurrent requests, so mutating the cached map in place is a data
+// race (fatal "concurrent map read and map write" — hit this once two
+// analytics requests for the same params run in parallel). Each request
+// gets its own copy to mutate instead.
+func cloneOfferMap(o map[string]any) map[string]any {
+	clone := make(map[string]any, len(o))
+	for k, v := range o {
+		clone[k] = v
+	}
+	return clone
+}
+
+// filterClosedAnalyzedOffers derives the 168h closed/analyzed offer set from
+// an already-loaded, cached offer list instead of issuing a second "SELECT *
+// FROM offers" query — generalCtx.offers already covers at least 168h and is
+// ordered by last_seen DESC (see loadGeneralStatsContextUncachedForParams).
+// Each returned offer is a private clone (see cloneOfferMap) since callers
+// mutate it.
+func filterClosedAnalyzedOffers(offers []map[string]any) []map[string]any {
+	cutoff := time.Now().Add(-168 * time.Hour)
+	result := make([]map[string]any, 0, len(offers))
+	for _, o := range offers {
+		if offerBool(o, "is_live") {
+			continue
+		}
+		if offerString(o, "historical_analysis_status") != "analyzed" {
+			continue
+		}
+		if parseDBTime(offerString(o, "last_seen")).Before(cutoff) {
+			continue
+		}
+		result = append(result, cloneOfferMap(o))
+	}
+	return result
 }
 
 func loadAnalyticsBuildContext(p dashboardAnalyticsParams) (*analyticsBuildContext, error) {
@@ -167,25 +206,18 @@ func loadAnalyticsBuildContext(p dashboardAnalyticsParams) (*analyticsBuildConte
 		return nil, err
 	}
 
-	closedOffers, err := loadClosedOffers168h()
-	if err != nil {
-		return nil, err
-	}
+	closedOffers := filterClosedAnalyzedOffers(generalCtx.offers)
 
 	closedIDs := make([]int64, 0, len(closedOffers))
 	for _, o := range closedOffers {
 		closedIDs = append(closedIDs, int64(offerFloat(o, "id")))
 	}
 
-	lifecycleAgg := fetchPastOfferLifecycleAggregates(closedIDs)
-	enrichLifecycleSamplesForCapped(lifecycleAgg, closedOffers, p.MaxFiatLimitEUR)
-
 	return &analyticsBuildContext{
 		params:       p,
 		generalCtx:   generalCtx,
 		closedOffers: closedOffers,
-		lifecycleAgg: lifecycleAgg,
-		cappedMemo:   newCappedLifecycleMemo(p.MaxFiatLimitEUR),
+		closedIDs:    closedIDs,
 	}, nil
 }
 
@@ -207,6 +239,7 @@ func premiumOrderFromAnalysis(o map[string]any, analysis pastOfferAnalysis, mode
 func (bc *analyticsBuildContext) buildTakerStatsOnly() takerAnalyticsResult {
 	now := time.Now()
 	hasExclusions := len(bc.params.ExcludePaymentMethods) > 0
+	analyses := bc.offerAnalyses()
 
 	fullAll := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
 	fullFiltered := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
@@ -214,13 +247,7 @@ func (bc *analyticsBuildContext) buildTakerStatsOnly() takerAnalyticsResult {
 	cappedFiltered := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
 
 	for _, o := range bc.closedOffers {
-		analysis := addPastOfferCostFieldsFull(
-			o,
-			bc.params.Confirmations,
-			bc.params.ExcludeCEXes,
-			bc.params.FeeTier,
-			bc.params.MaxFiatLimitEUR,
-		)
+		analysis := analyses[int64(offerFloat(o, "id"))]
 		excluded := hasExclusions && isPaymentMethodExcluded(offerString(o, "payment_method"), bc.params.ExcludePaymentMethods)
 
 		if analysis.profitableInMode(takerOpportunityModeNetFull) {
@@ -253,30 +280,52 @@ func (bc *analyticsBuildContext) buildTakerStatsOnly() takerAnalyticsResult {
 }
 
 func (bc *analyticsBuildContext) buildTakerOrdersOnly() []pastProfitableOrderAPI {
-	opts := &pastAnalyticsOpts{cappedMemo: bc.cappedMemo}
+	analyses := bc.offerAnalyses()
+	agg := bc.lifecycleAgg()
 	orders := make([]pastProfitableOrderAPI, 0, len(bc.closedOffers))
 
 	for _, o := range bc.closedOffers {
-		analysis := addPastOfferCostFieldsFull(
-			o,
-			bc.params.Confirmations,
-			bc.params.ExcludeCEXes,
-			bc.params.FeeTier,
-			bc.params.MaxFiatLimitEUR,
-		)
+		id := int64(offerFloat(o, "id"))
+		analysis := analyses[id]
 		if !analysis.profitableInMode(takerOpportunityModeNetFull) && !analysis.profitableInMode(takerOpportunityModeNetCapped) {
 			continue
 		}
-		id := int64(offerFloat(o, "id"))
 		orders = append(orders, buildPastProfitableOrderAPI(
 			o,
-			bc.lifecycleAgg[id],
+			analysis,
+			agg[id],
 			bc.params.Confirmations,
 			bc.params.ExcludeCEXes,
 			bc.params.FeeTier,
 			bc.params.MaxFiatLimitEUR,
 			takerOpportunityModeNetFull,
-			opts,
+		))
+	}
+	return orders
+}
+
+// buildTakerOrdersFullOnly renders the full-volume order list without the
+// order_lifecycle aggregate query (or the capped-volume calc, which needs
+// it): every field it uses lives on the offer row already fetched for the
+// overview/stats pass. This lets the frontend paint the table immediately,
+// while the capped-aware buildTakerOrdersOnly result (which does need the
+// aggregate query) fills in afterward — see the taker_orders_full section.
+func (bc *analyticsBuildContext) buildTakerOrdersFullOnly() []pastProfitableOrderAPI {
+	orders := make([]pastProfitableOrderAPI, 0, len(bc.closedOffers))
+	for _, o := range bc.closedOffers {
+		analysis := addPastOfferCostFieldsFull(o, pastLifecycleAggregate{}, bc.params.Confirmations, bc.params.ExcludeCEXes, bc.params.FeeTier, 0)
+		if !analysis.profitableInMode(takerOpportunityModeNetFull) {
+			continue
+		}
+		orders = append(orders, buildPastProfitableOrderAPI(
+			o,
+			analysis,
+			pastLifecycleAggregate{},
+			bc.params.Confirmations,
+			bc.params.ExcludeCEXes,
+			bc.params.FeeTier,
+			0,
+			takerOpportunityModeNetFull,
 		))
 	}
 	return orders
@@ -289,18 +338,16 @@ func (bc *analyticsBuildContext) buildTakerAnalytics() takerAnalyticsResult {
 }
 
 func (bc *analyticsBuildContext) applyOverviewSections(resp *dashboardAnalyticsResponse, p dashboardAnalyticsParams) {
-	opts := &pastAnalyticsOpts{cappedMemo: bc.cappedMemo}
 	resp.GeneralStatsOverview = bc.generalCtx.overview()
 	resp.PastPremiums, resp.PremiumLifetimes = buildPastPremiumAndLifetimeStats(
 		bc.generalCtx.offers,
-		bc.lifecycleAgg,
+		bc.lifecycleAgg(),
 		bc.generalCtx.now,
 		bc.generalCtx.excludedPaymentMethods,
 		p.MaxFiatLimitEUR,
 		p.Confirmations,
 		p.ExcludeCEXes,
 		p.FeeTier,
-		opts,
 	)
 }
 
@@ -310,6 +357,10 @@ func (bc *analyticsBuildContext) applyTakerStatsSections(resp *dashboardAnalytic
 	resp.PastOrderStats = taker.statsFilteredFull
 	resp.PastOrderStatsAllNetCapped = taker.statsAllCapped
 	resp.PastOrderStatsNetCapped = taker.statsFilteredCapped
+}
+
+func (bc *analyticsBuildContext) applyTakerOrdersFullSection(resp *dashboardAnalyticsResponse) {
+	resp.PastProfitableOrders = bc.buildTakerOrdersFullOnly()
 }
 
 func (bc *analyticsBuildContext) applyTakerOrdersSection(resp *dashboardAnalyticsResponse) {
@@ -324,6 +375,14 @@ func (p dashboardAnalyticsParams) needsStatsBuild() bool {
 	return len(p.Sections) == 0 || p.wantsSection(analyticsSectionTakerStats)
 }
 
+// needsOrdersFullBuild reports whether the fast, full-volume-only orders
+// section was requested. A completed capped-aware build (builtOrders)
+// already supersedes it, so callers should treat that as satisfying this
+// too — see analyticsSectionsSatisfied.
+func (p dashboardAnalyticsParams) needsOrdersFullBuild() bool {
+	return len(p.Sections) == 0 || p.wantsSection(analyticsSectionTakerOrdersFull)
+}
+
 func (p dashboardAnalyticsParams) needsOrdersBuild() bool {
 	return len(p.Sections) == 0 || p.wantsSection(analyticsSectionTakerOrders)
 }
@@ -335,6 +394,9 @@ func analyticsSectionsSatisfied(p dashboardAnalyticsParams, entry analyticsResul
 	if p.needsStatsBuild() && !entry.builtStats {
 		return false
 	}
+	if p.needsOrdersFullBuild() && !entry.builtOrdersFull && !entry.builtOrders {
+		return false
+	}
 	if p.needsOrdersBuild() && !entry.builtOrders {
 		return false
 	}
@@ -343,11 +405,12 @@ func analyticsSectionsSatisfied(p dashboardAnalyticsParams, entry analyticsResul
 
 func writeAnalyticsServerTiming(w http.ResponseWriter, timings analyticsBuildTimings) {
 	w.Header().Add("Server-Timing", fmt.Sprintf(
-		"cache;desc=\"hit=%t\", ctx;dur=%.1f, overview;dur=%.1f, stats;dur=%.1f, orders;dur=%.1f",
+		"cache;desc=\"hit=%t\", ctx;dur=%.1f, overview;dur=%.1f, stats;dur=%.1f, ordersFull;dur=%.1f, orders;dur=%.1f",
 		timings.cacheHit,
 		timings.loadContextMs,
 		timings.buildOverviewMs,
 		timings.buildStatsMs,
+		timings.buildOrdersFullMs,
 		timings.buildOrdersMs,
 	))
 }
@@ -369,11 +432,13 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 	merged := dashboardAnalyticsResponse{}
 	builtOverview := false
 	builtStats := false
+	builtOrdersFull := false
 	builtOrders := false
 	if cached && now.Before(entry.expiry) {
 		merged = entry.response
 		builtOverview = entry.builtOverview
 		builtStats = entry.builtStats
+		builtOrdersFull = entry.builtOrdersFull
 		builtOrders = entry.builtOrders
 	}
 	analyticsResultCache.Unlock()
@@ -381,7 +446,10 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 	needOverview := p.needsOverviewBuild() && !builtOverview
 	needStats := p.needsStatsBuild() && !builtStats
 	needOrders := p.needsOrdersBuild() && !builtOrders
-	if !needOverview && !needStats && !needOrders {
+	// A completed capped-aware build already covers the full-volume-only
+	// section, so skip redoing it in that case.
+	needOrdersFull := p.needsOrdersFullBuild() && !builtOrdersFull && !builtOrders && !needOrders
+	if !needOverview && !needStats && !needOrdersFull && !needOrders {
 		timings.cacheHit = true
 		return filterDashboardAnalyticsResponse(merged, p), timings, nil
 	}
@@ -405,11 +473,18 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 		timings.buildStatsMs = float64(time.Since(start).Microseconds()) / 1000
 		builtStats = true
 	}
+	if needOrdersFull {
+		start := time.Now()
+		bc.applyTakerOrdersFullSection(&merged)
+		timings.buildOrdersFullMs = float64(time.Since(start).Microseconds()) / 1000
+		builtOrdersFull = true
+	}
 	if needOrders {
 		start := time.Now()
 		bc.applyTakerOrdersSection(&merged)
 		timings.buildOrdersMs = float64(time.Since(start).Microseconds()) / 1000
 		builtOrders = true
+		builtOrdersFull = true
 	}
 
 	analyticsResultCache.Lock()
@@ -417,11 +492,12 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 		analyticsResultCache.entries = make(map[string]analyticsResultCacheEntry)
 	}
 	analyticsResultCache.entries[cacheKey] = analyticsResultCacheEntry{
-		response:      merged,
-		expiry:        now.Add(analyticsResultCacheTTL),
-		builtOverview: builtOverview,
-		builtStats:    builtStats,
-		builtOrders:   builtOrders,
+		response:        merged,
+		expiry:          now.Add(analyticsResultCacheTTL),
+		builtOverview:   builtOverview,
+		builtStats:      builtStats,
+		builtOrdersFull: builtOrdersFull,
+		builtOrders:     builtOrders,
 	}
 	analyticsResultCache.Unlock()
 
@@ -467,10 +543,10 @@ func loadPastTakerBuildContext(maxFiatLimitEUR float64) (*analyticsBuildContext,
 		closedIDs = append(closedIDs, int64(offerFloat(o, "id")))
 	}
 	lifecycleAgg := fetchPastOfferLifecycleAggregates(closedIDs)
-	enrichLifecycleSamplesForCapped(lifecycleAgg, closedOffers, maxFiatLimitEUR)
 	return &analyticsBuildContext{
-		closedOffers: closedOffers,
-		lifecycleAgg: lifecycleAgg,
+		closedOffers:      closedOffers,
+		closedIDs:         closedIDs,
+		lifecycleAggCache: lifecycleAgg,
 	}, nil
 }
 
@@ -486,7 +562,8 @@ func buildPastOrderStatsForQuery(p pastTakerQueryParams) (pastorders.StatsRespon
 		if p.ApplyPaymentExclusions && isPaymentMethodExcluded(offerString(o, "payment_method"), p.ExcludePaymentMethods) {
 			continue
 		}
-		analysis := addPastOfferCostFieldsFull(o, p.Confirmations, p.ExcludeCEXes, p.FeeTier, p.MaxFiatLimitEUR)
+		id := int64(offerFloat(o, "id"))
+		analysis := addPastOfferCostFieldsFull(o, bc.lifecycleAgg()[id], p.Confirmations, p.ExcludeCEXes, p.FeeTier, p.MaxFiatLimitEUR)
 		if !analysis.profitableInMode(p.PremiumMode) {
 			continue
 		}
@@ -505,34 +582,28 @@ func buildPastProfitableOrdersForQuery(p pastTakerQueryParams) ([]pastProfitable
 	if err != nil {
 		return nil, err
 	}
-	opts := &pastAnalyticsOpts{cappedMemo: newCappedLifecycleMemo(p.MaxFiatLimitEUR)}
 
 	result := make([]pastProfitableOrderAPI, 0, len(bc.closedOffers))
 	for _, o := range bc.closedOffers {
 		if p.ApplyPaymentExclusions && isPaymentMethodExcluded(offerString(o, "payment_method"), p.ExcludePaymentMethods) {
 			continue
 		}
-		analysis := addPastOfferCostFieldsFull(o, p.Confirmations, p.ExcludeCEXes, p.FeeTier, p.MaxFiatLimitEUR)
+		id := int64(offerFloat(o, "id"))
+		agg := bc.lifecycleAgg()[id]
+		analysis := addPastOfferCostFieldsFull(o, agg, p.Confirmations, p.ExcludeCEXes, p.FeeTier, p.MaxFiatLimitEUR)
 		if !analysis.profitableInMode(p.PremiumMode) {
 			continue
 		}
-		id := int64(offerFloat(o, "id"))
 		result = append(result, buildPastProfitableOrderAPI(
 			o,
-			bc.lifecycleAgg[id],
+			analysis,
+			agg,
 			p.Confirmations,
 			p.ExcludeCEXes,
 			p.FeeTier,
 			p.MaxFiatLimitEUR,
 			p.PremiumMode,
-			opts,
 		))
 	}
 	return result, nil
-}
-
-func logLargeCappedSampleLoad(needIDs []int64) {
-	if len(needIDs) > 500 {
-		fmt.Printf("[analytics] capped sample load for %d offers\n", len(needIDs))
-	}
 }

@@ -302,18 +302,42 @@ export function useDashboard() {
           },
         });
 
-        const ordersResponse = await apiPost<AnalyticsOrdersResponse>(
+        // Render full-volume orders as soon as they're ready — that pass
+        // needs only the offers table, no order_lifecycle query — instead
+        // of leaving the table blank until the capped-aware pass (which
+        // does need that query) finishes too. `cappedArrived` stops the
+        // fast response from overwriting the capped one if it lands late.
+        let cappedArrived = false;
+        const fastOrders = apiPost<AnalyticsOrdersResponse>(
+          '/api/dashboard/analytics',
+          buildAnalyticsBody(params, ['taker_orders_full']),
+          { signal },
+        ).then((res) => {
+          if (signal.aborted || cappedArrived) return;
+          startTransition(() => {
+            dispatch({
+              type: 'ANALYTICS_ORDERS_SUCCESS',
+              pastProfitableOrders: res.past_profitable_orders ?? [],
+            });
+          });
+        });
+
+        const cappedOrders = apiPost<AnalyticsOrdersResponse>(
           '/api/dashboard/analytics',
           buildAnalyticsBody(params, ['taker_orders']),
           { signal },
-        );
-        if (signal.aborted) return;
-        startTransition(() => {
-          dispatch({
-            type: 'ANALYTICS_ORDERS_SUCCESS',
-            pastProfitableOrders: ordersResponse.past_profitable_orders ?? [],
+        ).then((res) => {
+          if (signal.aborted) return;
+          cappedArrived = true;
+          startTransition(() => {
+            dispatch({
+              type: 'ANALYTICS_ORDERS_SUCCESS',
+              pastProfitableOrders: res.past_profitable_orders ?? [],
+            });
           });
         });
+
+        await Promise.all([fastOrders, cappedOrders]);
       } catch (e: unknown) {
         if (signal.aborted) return;
         const message = e instanceof Error ? e.message : String(e);
