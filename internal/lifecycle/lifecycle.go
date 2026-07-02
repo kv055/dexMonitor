@@ -20,14 +20,6 @@ type Point struct {
 	NetPremiumPct *float64 `json:"net_premium_pct,omitempty"`
 }
 
-// PastSample represents a past sample.
-type PastSample struct {
-	// RefPrice is the price value used by the past sample.
-	RefPrice float64
-	// PremiumPct is a percentage value.
-	PremiumPct float64
-}
-
 // PastAggregate represents a past aggregate.
 type PastAggregate struct {
 	// Count is the count associated with the past aggregate.
@@ -61,8 +53,6 @@ type PastAggregate struct {
 	// AvgRecommendedCollateralEUR is the average recommended hedge collateral
 	// in EUR across the offer's lifecycle samples.
 	AvgRecommendedCollateralEUR float64
-	// Samples is the samples value for the past aggregate.
-	Samples []PastSample
 }
 
 // Record represents a record.
@@ -141,7 +131,6 @@ func formatSnapshotTime(value any) string {
 }
 
 // LoadPastAggregates loads per-offer lifecycle averages without raw sample rows.
-// Samples are loaded on demand via LoadPastSamples when capped-premium math needs them.
 func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[int64]PastAggregate, error) {
 	result := make(map[int64]PastAggregate, len(ids))
 	if r.DB == nil || len(ids) == 0 {
@@ -226,35 +215,6 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 			agg.AvgRecommendedCollateralEUR = tradecost.Round2(avgRecommendedCollateralEUR.Float64)
 		}
 		result[offerID] = agg
-	}
-	return result, nil
-}
-
-// LoadPastSamples loads ref_price/premium_pct rows for capped-premium recomputation.
-func (r Repository) LoadPastSamples(ctx context.Context, ids []int64) (map[int64][]PastSample, error) {
-	result := make(map[int64][]PastSample, len(ids))
-	if r.DB == nil || len(ids) == 0 {
-		return result, nil
-	}
-	ph, args := placeholders(ids)
-	rows, err := r.DB.QueryContext(ctx, rebind(fmt.Sprintf(
-		`SELECT offer_db_id, ref_price, premium_pct
-		   FROM order_lifecycle
-		  WHERE offer_db_id IN (%s)
-		  ORDER BY offer_db_id, snapshot_time`,
-		strings.Join(ph, ","),
-	)), args...)
-	if err != nil {
-		return result, err
-	}
-	defer rows.Close()
-	for rows.Next() {
-		var offerID int64
-		var refPrice, premiumPct float64
-		if err := rows.Scan(&offerID, &refPrice, &premiumPct); err != nil {
-			continue
-		}
-		result[offerID] = append(result[offerID], PastSample{RefPrice: refPrice, PremiumPct: premiumPct})
 	}
 	return result, nil
 }

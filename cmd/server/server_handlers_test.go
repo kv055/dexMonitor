@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -377,7 +378,7 @@ func TestPastOfferAnalysisUsesStoredUncappedCosts(t *testing.T) {
 	offer["avg_estimated_profit_btc"] = 0.0037655
 	offer["network_fee_btc"] = 0.00001234
 
-	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 10_000, nil)
+	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 10_000)
 
 	full := got.Analysis.FullVolume
 	assertFloat(t, full.Premium.AvgTradeCostPercent, 1.2345)
@@ -412,7 +413,7 @@ func TestPastOfferFullVolumeRecomputesHedgeWhenStoredAbsent(t *testing.T) {
 	offer["hedge_venue"] = ""
 	offer["hedge_instrument"] = ""
 
-	full := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 10_000, nil).Analysis.FullVolume
+	full := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 10_000).Analysis.FullVolume
 
 	if full.Costs.Hedge.FeeSumBTC <= 0 {
 		t.Fatalf("full-volume hedge fee_sum_btc = %v, want > 0 (recomputed from estimator)", full.Costs.Hedge.FeeSumBTC)
@@ -439,7 +440,7 @@ func TestPastOfferFullVolumeUsesHistoricalHedgePositionWhenPersisted(t *testing.
 		AvgRecommendedCollateralEUR: 15,
 	}
 
-	full := buildPastOfferAPI(offer, agg, 0, nil, "", 10_000, nil).Analysis.FullVolume
+	full := buildPastOfferAPI(offer, agg, 0, nil, "", 10_000).Analysis.FullVolume
 
 	pos := full.Costs.Hedge.Position
 	if pos == nil {
@@ -471,7 +472,7 @@ func TestPastOfferCappedHedgePositionScalesWithTradeSize(t *testing.T) {
 
 	// maxFiatLimitEUR=5 with avg_ref_price=100 caps the trade at 0.05 BTC —
 	// 1/20th of the full 1.0 BTC size.
-	got := buildPastOfferAPI(offer, agg, 0, nil, "", 5, nil)
+	got := buildPastOfferAPI(offer, agg, 0, nil, "", 5)
 	if got.Analysis.CappedVolume == nil {
 		t.Fatal("expected capped volume scenario")
 	}
@@ -501,7 +502,7 @@ func TestPastOfferCappedAnalysisKeepsStoredRouteAndFixedTransferCosts(t *testing
 	offer["network_fee_btc"] = 0.0003
 	offer["cex_withdraw_fee_btc"] = 0.0007
 	offer["hedge_transfer_minutes"] = int64(42)
-	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 5, nil)
+	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 5)
 	if got.Analysis.CappedVolume == nil {
 		t.Fatal("expected capped volume scenario")
 	}
@@ -538,7 +539,7 @@ func TestPastOfferCappedAskOmitsWithdrawalAndIncludesLongHedgeCosts(t *testing.T
 	offer["avg_ref_price"] = 100.0
 	offer["cex_withdraw_fee_btc"] = 0.0007
 	offer["network_fee_btc"] = 0.0003
-	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 5, nil)
+	got := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 5)
 	if got.Analysis.CappedVolume == nil {
 		t.Fatal("expected capped volume scenario")
 	}
@@ -999,6 +1000,52 @@ func TestDashboardAnalyticsOrdersSectionReusesCache(t *testing.T) {
 	}
 }
 
+// TestDashboardAnalyticsConcurrentOrdersSectionsDoNotRaceOnSharedOfferMaps
+// guards against a regression where addPastOfferCostFieldsFull mutated
+// offer maps that came straight out of generalStatsCache (shared across
+// requests for the same params). The frontend now fires taker_orders_full
+// and taker_orders in parallel for the same params, so two goroutines could
+// end up mutating and reading the exact same cached map concurrently — a
+// fatal "concurrent map read and map write" crash in production, caught
+// here via -race plus a plain status/data assertion.
+func TestDashboardAnalyticsConcurrentOrdersSectionsDoNotRaceOnSharedOfferMaps(t *testing.T) {
+	withTempOrdersDB(t)
+
+	// Warm the general-stats cache so every request below resolves to the
+	// exact same cached offer maps instead of each doing its own DB scan.
+	warmBody := `{"hours":48,"cex":"kraken","sections":["overview","taker_stats"],"fiat":"EUR"}`
+	warmReq := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(warmBody))
+	warmReq.Header.Set("Content-Type", "application/json")
+	handleDashboardAnalytics(httptest.NewRecorder(), warmReq)
+
+	const pairs = 15
+	fullBody := `{"hours":48,"cex":"kraken","sections":["taker_orders_full"],"fiat":"EUR"}`
+	cappedBody := `{"hours":48,"cex":"kraken","sections":["taker_orders"],"fiat":"EUR"}`
+
+	statuses := make([]int, pairs*2)
+	var wg sync.WaitGroup
+	fire := func(idx int, body string) {
+		defer wg.Done()
+		req := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handleDashboardAnalytics(rec, req)
+		statuses[idx] = rec.Code
+	}
+	for i := 0; i < pairs; i++ {
+		wg.Add(2)
+		go fire(i*2, fullBody)
+		go fire(i*2+1, cappedBody)
+	}
+	wg.Wait()
+
+	for i, code := range statuses {
+		if code != http.StatusOK {
+			t.Fatalf("request %d status = %d, want %d", i, code, http.StatusOK)
+		}
+	}
+}
+
 func TestDashboardAnalyticsBuildPerformanceBudget(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping analytics performance budget in short mode")
@@ -1222,7 +1269,7 @@ func TestBuildPastPremiumStatsIgnoresNonPremiumOffers(t *testing.T) {
 		},
 	}
 
-	stats := buildPastPremiumStats(offers, map[int64]pastLifecycleAggregate{}, now, nil, 0, 0, nil, "", nil)
+	stats := buildPastPremiumStats(offers, map[int64]pastLifecycleAggregate{}, now, nil, 0, 0, nil, "")
 	frame := stats[0] // 6h
 	if len(frame.Modes.Raw) != 2 {
 		t.Fatalf("6h raw len = %d, want 2", len(frame.Modes.Raw))
@@ -1279,7 +1326,7 @@ func TestBuildPremiumLifetimeStatsIgnoresNonPremiumOffers(t *testing.T) {
 		},
 	}
 
-	stats := buildPremiumLifetimeStats(offers, map[int64]pastLifecycleAggregate{}, now, nil, 0, 0, nil, "", nil)
+	stats := buildPremiumLifetimeStats(offers, map[int64]pastLifecycleAggregate{}, now, nil, 0, 0, nil, "")
 	if stats.Raw.AvgOfferLifetimeMs == nil {
 		t.Fatal("raw lifetime avg is nil")
 	}
@@ -1294,6 +1341,41 @@ func TestBuildPremiumLifetimeStatsIgnoresNonPremiumOffers(t *testing.T) {
 	assertFloat(t, float64(*stats.NetCapped.AvgOfferLifetimeMs), float64(int64((3*time.Hour+4*time.Hour)/2/time.Millisecond)))
 	if len(stats.Raw.AvgOfferLifetimeMsByExchange) != 2 {
 		t.Fatalf("raw lifetime exchanges = %d, want 2", len(stats.Raw.AvgOfferLifetimeMsByExchange))
+	}
+}
+
+// TestOfferStringSliceParsesPostgresTextArrayLiteral guards against a
+// regression where payment_methods (a Postgres text[] column) rendered as
+// e.g. `Payment{"Instant SEPA",Revolut}` in the frontend. The pgx stdlib
+// driver hands scanOffers the raw array literal as a plain string (verified
+// against a live DB — it does not parse it into a []string), and
+// offerStringSlice used to wrap that whole literal as a single element
+// instead of splitting it.
+func TestOfferStringSliceParsesPostgresTextArrayLiteral(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want []string
+	}{
+		{"two plain elements", `{SEPA,Wise}`, []string{"SEPA", "Wise"}},
+		{"quoted element with space", `{SEPA,"SEPA Instant",Wise}`, []string{"SEPA", "SEPA Instant", "Wise"}},
+		{"multiple quoted elements", `{Monero,"Other coins","SOL XRP XLM","USDT LTC"}`, []string{"Monero", "Other coins", "SOL XRP XLM", "USDT LTC"}},
+		{"single quoted element", `{"Cash by Mail"}`, []string{"Cash by Mail"}},
+		{"empty array", `{}`, nil},
+		{"plain non-array string (test fixtures)", `Revolut`, []string{"Revolut"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := offerStringSlice(map[string]any{"payment_methods": c.raw}, "payment_methods")
+			if len(got) != len(c.want) {
+				t.Fatalf("offerStringSlice(%q) = %#v, want %#v", c.raw, got, c.want)
+			}
+			for i := range got {
+				if got[i] != c.want[i] {
+					t.Fatalf("offerStringSlice(%q) = %#v, want %#v", c.raw, got, c.want)
+				}
+			}
+		})
 	}
 }
 
