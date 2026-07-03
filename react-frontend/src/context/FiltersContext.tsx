@@ -70,7 +70,7 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
   }, [offers, excludedMethods]);
 
   const paymentMethods = useMemo(
-    () => [...new Set(baseOffers.flatMap(o => o.payment_methods ?? []))].sort(),
+    () => [...new Set(baseOffers.flatMap(o => o.payment_methods ?? []))].sort((a, b) => a.localeCompare(b)),
     [baseOffers],
   );
 

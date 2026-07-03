@@ -40,7 +40,7 @@ function exchangeLabel(name: string) {
 
 function exchangeNamesForEntry(entry: LogEntry) {
   const names = [...EXPECTED_EXCHANGES];
-  const present = Object.keys(entry.exchanges ?? {}).sort();
+  const present = Object.keys(entry.exchanges ?? {}).sort((a, b) => a.localeCompare(b));
   for (const name of present) {
     if (!names.includes(name)) names.push(name);
   }

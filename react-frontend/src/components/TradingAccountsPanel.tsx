@@ -1070,7 +1070,7 @@ function CollapsibleSection({
             <span className="rounded-full border border-border px-1.5 py-0 text-[0.6rem] text-muted">{count}</span>
           ) : null}
         </button>
-        {actions ? <div className="flex shrink-0 items-center gap-1" onClick={e => e.stopPropagation()}>{actions}</div> : null}
+        {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
       </div>
       {open ? <div className="border-t border-border px-2 py-1.5 grid gap-1.5">{children}</div> : null}
     </div>

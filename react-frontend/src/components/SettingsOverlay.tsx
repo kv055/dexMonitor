@@ -221,7 +221,15 @@ export function SettingsOverlay({
     <div className="fixed inset-0 z-40 flex items-end sm:items-start justify-center sm:justify-end sm:p-4">
       <div
         className="absolute inset-0 bg-black/50 backdrop-blur-[2px] cursor-default"
+        role="button"
+        tabIndex={0}
         onClick={onClose}
+        onKeyDown={event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            onClose();
+          }
+        }}
         aria-label="Close settings"
       />
 

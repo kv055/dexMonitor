@@ -1,21 +1,22 @@
 import React, { useState } from 'react';
 import { formatDuration, formatTime, premiumClass } from '../utils/formatters';
+import { stripTrailingZeros } from '../utils/numberFormat';
 import type { AbortCostBreakdown, BTCNetworkFeeDetail as BTCDetail, CapitalRequirement, CostBreakdown } from '../types';
 
 function fmt8(n: number): string {
-  return n.toFixed(8).replace(/\.?0+$/, '') || '0';
+  return stripTrailingZeros(n.toFixed(8));
 }
 
 function fmtPct(n: number): string {
-  return n.toFixed(4).replace(/\.?0+$/, '') + '%';
+  return stripTrailingZeros(n.toFixed(4)) + '%';
 }
 
 function fmtRatioPct(n: number): string {
-  return (n * 100).toFixed(2).replace(/\.?0+$/, '') + '%';
+  return stripTrailingZeros((n * 100).toFixed(2)) + '%';
 }
 
 function fmtLeverage(n: number): string {
-  return n.toFixed(2).replace(/\.?0+$/, '') + 'x';
+  return stripTrailingZeros(n.toFixed(2)) + 'x';
 }
 
 function fmtSignedBtc(n: number): string {

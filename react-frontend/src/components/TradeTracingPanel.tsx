@@ -1,6 +1,7 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { Offer, CexSpotBuyResult, CexHedgeOpenResult, CexTradeflowResult, HedgePositionUpdate, PreTradeCheckReport, WithdrawalTrackResult } from '../types';
 import { ExchangeTag } from './ExchangeTag';
+import { stripTrailingZeros } from '../utils/numberFormat';
 import { premiumClass } from '../utils/formatters';
 import { cexTradeflow, cexPreTradeCheck } from '../utils/api';
 import { useHedgeStream } from '../hooks/useHedgeStream';
@@ -46,7 +47,7 @@ interface ChecksState {
 }
 
 function fmtBtc(n: number): string {
-  return n.toFixed(8).replace(/\.?0+$/, '') || '0';
+  return stripTrailingZeros(n.toFixed(8));
 }
 
 function fmtFiat(n: number, currency: string): string {
@@ -276,6 +277,15 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
     setConfirmOpen(false);
     setChecks({ phase: 'idle' });
   }
+
+  useEffect(() => {
+    if (!confirmOpen) return;
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') closeConfirm();
+    };
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, [confirmOpen]);
 
   async function runPreTradeChecks() {
     setChecks({ phase: 'running' });
@@ -584,9 +594,28 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
 
       {/* Confirmation dialog */}
       {confirmOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4" onClick={closeConfirm}>
-          <div className="bg-surface border border-border rounded-lg p-4 w-full max-w-sm flex flex-col gap-3" onClick={e => e.stopPropagation()}>
-            <h3 className="text-[0.8rem] font-semibold text-text">Confirm market buy</h3>
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          role="button"
+          tabIndex={0}
+          aria-label="Close confirmation dialog"
+          onClick={event => {
+            if (event.target === event.currentTarget) closeConfirm();
+          }}
+          onKeyDown={event => {
+            if (event.key === 'Enter' || event.key === ' ') {
+              event.preventDefault();
+              closeConfirm();
+            }
+          }}
+        >
+          <div
+            className="bg-surface border border-border rounded-lg p-4 w-full max-w-sm flex flex-col gap-3"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="trade-confirm-title"
+          >
+            <h3 id="trade-confirm-title" className="text-[0.8rem] font-semibold text-text">Confirm market buy</h3>
             <p className="text-[0.72rem] text-muted">
               This places a real market <span className="text-green font-medium">BUY</span> order. Funds will be spent immediately.
             </p>
