@@ -1,4 +1,4 @@
-import { memo, useEffect, useRef, useState, useMemo } from 'react';
+import { memo, useCallback, useEffect, useRef, useState, useMemo } from 'react';
 import { toUtcSec } from '../utils/formatters';
 import { shiftOhlcCandlesForTimezone, shiftUtcSecForTimezone } from '../utils/ohlcTimezone';
 import {
@@ -11,6 +11,7 @@ import {
 } from 'lightweight-charts';
 import type { LifecyclePoint, OHLCCandle, OHLCData } from '../types';
 import { useFilters } from '../hooks/useFilters';
+import { usePreferences } from '../hooks/usePreferences';
 import { getFirstSeen, getLastSeen, getNetPremiumPercent, getOfferPrice, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
 import { useTimezone } from '../hooks/useTimezone';
 import { LoadingSpinner } from './LoadingSpinner';
@@ -35,6 +36,11 @@ type LifecycleCacheEntry = { points: LifecyclePoint[]; fetchedAt: number };
 // Live offers gain one lifecycle point per snapshot cycle (~1 min), so their
 // cached history must be refreshed; closed offers' history is immutable.
 const LIVE_LIFECYCLE_REFRESH_MS = 60_000;
+
+// Offer lines are re-synced at most this often. Live offers arrive on every
+// CEX price tick over the WebSocket, which can be several times per second —
+// without this the offer layer would churn constantly.
+const OFFER_RENDER_THROTTLE_MS = 1_000;
 
 function lifecycleUrl(offer: { id: number }, live: boolean): string {
   return live
@@ -98,14 +104,34 @@ function requiredHoursForCandleSize(candleMin: number): number {
   return Math.ceil((candleMin * TARGET_VISIBLE_CANDLES) / 60);
 }
 
+/**
+ * The chart instance is created ONCE (per theme) and mutated incrementally:
+ * candles via candleSeries.setData, offers by swapping only the line series.
+ * Live offers arrive on every CEX price tick, so rebuilding the whole chart
+ * per update — the previous design — reset the user's pan/zoom continuously
+ * and burned CPU on full canvas teardowns.
+ */
 function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
-  const savedRangeRef = useRef<{ from: UTCTimestamp; to: UTCTimestamp } | null>(null);
+  const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
+  const offerSeriesRef = useRef<ISeriesApi<'Line'>[]>([]);
+  const seriesInfoRef = useRef<Map<ISeriesApi<'Line'>, { offerKey: string; price: number }>>(new Map());
+  // display-time → UTC mapping for crosshair reporting; grows with data, never
+  // cleared (entries are tiny and stay valid).
+  const utcByDisplaySecRef = useRef<Map<number, number>>(new Map());
   const intendedRangeRef = useRef<PendingVisibleRange | null>(null);
   const fetchingMoreRef = useRef(false);
+  const earliestCandleTimeRef = useRef<number | null>(null);
+  // Which default window ([hours, timezone]) has been applied; '' = none yet.
+  const appliedWindowRef = useRef('');
+  // Whether the candle series has ever held data on the current chart. A
+  // default range applied while only offer bars existed gets clamped by the
+  // library, so the first real candle batch must re-apply it.
+  const hadCandlesRef = useRef(false);
 
   const { filteredOffers, filters: { hours, premiumMode }, selectedOfferKey, setSelectedOfferKey, setHoveredOhlcTime, loading } = useFilters();
+  const { theme } = usePreferences();
 
   // Chart guard: only offers with a positive premium are plotted. The
   // "Incl. non premium offers" filter may let non-premium offers into the
@@ -129,13 +155,6 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
   }, [data?.candles, loadedHours, sourceIntervalMin]);
   const availableHours = Math.max(loadedHours, loadedDataHours);
 
-  const sourceIntervalMinRef = useRef(sourceIntervalMin);
-  const loadedDataHoursRef = useRef(loadedDataHours);
-  useEffect(() => {
-    sourceIntervalMinRef.current = sourceIntervalMin;
-    loadedDataHoursRef.current = loadedDataHours;
-  }, [sourceIntervalMin, loadedDataHours]);
-
   // Candle size selector — default always tracks source interval
   const [candleMin, setCandleMin] = useState<number>(sourceIntervalMin);
 
@@ -144,12 +163,33 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
     setCandleMin(sourceIntervalMin);
   }, [sourceIntervalMin]);
 
-  const visibleOptions = useMemo(
-    () => CANDLE_OPTIONS,
-    []
-  );
   const requiredHours = useMemo(() => requiredHoursForCandleSize(candleMin), [candleMin]);
   const effectiveVisibleHours = Math.max(Number(hours), requiredHours);
+
+  // Mount-scoped chart handlers read reactive values through refs so the
+  // chart itself never has to be re-created when they change.
+  const selectedOfferKeyRef = useRef(selectedOfferKey);
+  const candleMinRef = useRef(candleMin);
+  const availableHoursRef = useRef(availableHours);
+  const requiredHoursRef = useRef(requiredHours);
+  const allowExtendRef = useRef(allowExtend);
+  const onNeedMoreDataRef = useRef(onNeedMoreData);
+  const effectiveVisibleHoursRef = useRef(effectiveVisibleHours);
+  const timezoneRef = useRef(timezone);
+  useEffect(() => {
+    selectedOfferKeyRef.current = selectedOfferKey;
+    candleMinRef.current = candleMin;
+    availableHoursRef.current = availableHours;
+    requiredHoursRef.current = requiredHours;
+    allowExtendRef.current = allowExtend;
+    onNeedMoreDataRef.current = onNeedMoreData;
+    effectiveVisibleHoursRef.current = effectiveVisibleHours;
+    timezoneRef.current = timezone;
+  });
+
+  // "Reset view" appears once the view deviates from the default window
+  // (pan/zoom on either axis) and restores it.
+  const [showReset, setShowReset] = useState(false);
 
   const handleCandleMinChange = (nextCandleMin: number) => {
     const nextRequiredHours = requiredHoursForCandleSize(nextCandleMin);
@@ -248,15 +288,40 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
     return () => ro.disconnect();
   }, []);
 
-  useEffect(() => {
-    if (!divRef.current) return;
+  const applyDefaultRange = useCallback((chart: IChartApi) => {
+    const nowUtcSec = getNowUtcSec();
+    const from = shiftUtcSecForTimezone(nowUtcSec - effectiveVisibleHours * 3600, timezone) as UTCTimestamp;
+    const to = shiftUtcSecForTimezone(nowUtcSec, timezone) as UTCTimestamp;
+    try {
+      chart.timeScale().setVisibleRange({ from, to });
+    } catch {
+      try { chart.timeScale().fitContent(); } catch { /* no data yet */ }
+    }
+    appliedWindowRef.current = `${effectiveVisibleHours}|${timezone}`;
+  }, [effectiveVisibleHours, timezone]);
 
-    chartRef.current?.remove();
+  const resetView = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    // Manual y-axis zoom turns autoScale off; a reset must undo that too.
+    chart.priceScale('right').applyOptions({ autoScale: true });
+    applyDefaultRange(chart);
+    setShowReset(false);
+  }, [applyDefaultRange]);
+
+  // ── Chart lifetime (once per theme) ────────────────────────────────────────
+  // Bumped after (re)creating the chart so the data-sync effects below re-run
+  // against the fresh instance.
+  const [chartEpoch, setChartEpoch] = useState(0);
+
+  useEffect(() => {
+    const container = divRef.current;
+    if (!container) return;
+
     const text = cssVar('--app-muted', '#8b949e');
     const grid = cssVar('--app-grid', '#21262d');
-    const selectedLine = cssVar('--app-text', '#e6edf3');
 
-    const chart = createChart(divRef.current, {
+    const chart = createChart(container, {
       layout: {
         background: { type: ColorType.Solid, color: 'rgba(0, 0, 0, 0)' },
         textColor: text,
@@ -276,233 +341,56 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
         borderColor: grid,
         scaleMargins: { top: 0.1, bottom: 0.1 },
       },
-      width: divRef.current.clientWidth,
-      height: divRef.current.clientHeight,
+      width: container.clientWidth,
+      height: container.clientHeight,
     });
     chartRef.current = chart;
+    // e2e observability: how often the chart has been torn down and rebuilt.
+    // Interactions (pan/zoom) only survive when this stays constant.
+    container.dataset.chartInstances = String(Number(container.dataset.chartInstances ?? 0) + 1);
+    appliedWindowRef.current = '';
 
-    // --- Candlestick series ---
-    if (shiftedDisplay.candles.length > 0) {
-      const candleSeries = chart.addCandlestickSeries({
-        upColor: '#3fb950',
-        downColor: '#f85149',
-        borderUpColor: '#3fb950',
-        borderDownColor: '#f85149',
-        wickUpColor: '#3fb950',
-        wickDownColor: '#f85149',
-      });
-      candleSeries.setData(
-        shiftedDisplay.candles.map(c => ({
-          time: toUtcSec(c.time) as UTCTimestamp,
-          open: c.open,
-          high: c.high,
-          low: c.low,
-          close: c.close,
-        }))
-      );
-    }
-
-    const utcByDisplaySec = new Map(shiftedDisplay.utcByShiftedSec);
-    const toDisplaySec = (utcSec: number): UTCTimestamp => {
-      const displaySec = shiftUtcSecForTimezone(utcSec, timezone);
-      utcByDisplaySec.set(displaySec, utcSec);
-      return displaySec as UTCTimestamp;
-    };
-
-    const nowUtcSec = getNowUtcSec();
-    const fromUtcSec = nowUtcSec - effectiveVisibleHours * 3600;
-    const nowSec = toDisplaySec(nowUtcSec);
-    const fromSec = toDisplaySec(fromUtcSec);
-
-    // --- Offer lines ---
-    const seriesInfo = new Map<ISeriesApi<'Line'>, { offerKey: string; price: number }>();
-    // Per-offer render summary exposed on the container as data-offer-paths so
-    // e2e tests can verify what was plotted (canvas pixels are opaque to them).
-    const renderedPaths: Array<{ id: number; live: boolean; mode: 'lifecycle' | 'fallback' | 'none'; points: number; segments: number }> = [];
-
-    premiumOffers.forEach((o, index) => {
-      const offerKey = offerKeys[index];
-      const isOpen = isOfferLive(o);
-      const isSelected = offerKey === selectedOfferKey;
-      const lineWidth = isSelected ? 3 : 2;
-      const markerRadius = isSelected ? 5 : 3;
-      const lifecycle = o.lifecycle ?? lifecycleCache[o.id]?.points;
-
-      type TimeValue = { time: UTCTimestamp; value: number };
-      const renderFallbackLine = () => {
-        // No usable lifecycle in the current view: show the offer at its known endpoint.
-        const anchorUtc = isOpen ? nowUtcSec : toUtcSec(getLastSeen(o) ?? getFirstSeen(o) ?? '');
-        if (!anchorUtc) {
-          renderedPaths.push({ id: o.id, live: isOpen, mode: 'none', points: 0, segments: 0 });
-          return;
-        }
-        const candleWidthSec = candleMin * 60;
-        const anchor = toDisplaySec(anchorUtc);
-        const start = toDisplaySec(anchorUtc - candleWidthSec);
-        const points: TimeValue[] = [
-          { time: start, value: getOfferPrice(o) },
-          { time: anchor, value: getOfferPrice(o) },
-        ];
-        const color = isSelected ? selectedLine : offerColor(o.direction, getNetPremiumPercent(o));
-        const series = chart.addLineSeries({
-          color,
-          lineWidth,
-          priceLineVisible: false,
-          lastValueVisible: false,
-          crosshairMarkerVisible: true,
-          crosshairMarkerRadius: markerRadius,
-        });
-        series.setData(points);
-        seriesInfo.set(series, { offerKey, price: getOfferPrice(o) });
-        renderedPaths.push({ id: o.id, live: isOpen, mode: 'fallback', points: points.length, segments: 1 });
-      };
-
-      if (lifecycle && lifecycle.length > 0) {
-        // Lifecycle line: render the full known history, including points outside
-        // the initial visible range so scrolling can reveal the whole order path.
-        const lcPointsRaw = lifecycle.flatMap((p) => {
-          const utcSec = toUtcSec(p.time);
-          if (!utcSec) return [];
-          return [{
-            time: toDisplaySec(utcSec),
-            value: p.price,
-            color: isSelected ? selectedLine : offerColor(o.direction, p.net_premium_pct),
-          }];
-        });
-        // Deduplicate by timestamp (keep last), then sort ascending.
-        const lcByTime = new Map<number, typeof lcPointsRaw[0]>();
-        for (const pt of lcPointsRaw) lcByTime.set(pt.time, pt);
-        const lcPoints = Array.from(lcByTime.values()).sort((a, b) => a.time - b.time);
-        if (lcPoints.length === 0) {
-          renderFallbackLine();
-          return;
-        }
-
-        const firstSeenUtc = toUtcSec(getFirstSeen(o) ?? '');
-        const lastSeenUtc = toUtcSec(getLastSeen(o) ?? '');
-        if (firstSeenUtc) {
-          const firstSeenDisplay = toDisplaySec(firstSeenUtc);
-          if (firstSeenDisplay < lcPoints[0].time) {
-            lcPoints.unshift({ ...lcPoints[0], time: firstSeenDisplay });
-          }
-        }
-        if (isOpen) {
-          // Extend to "now" with the offer's CURRENT price: lifecycle snapshots
-          // lag up to a cycle behind the live feed, so the tip must come from
-          // the offer itself for the path to end at the price shown elsewhere.
-          const last = lcPoints[lcPoints.length - 1];
-          if (last.time < nowSec) {
-            lcPoints.push({
-              time: nowSec,
-              value: getOfferPrice(o),
-              color: isSelected ? selectedLine : offerColor(o.direction, getNetPremiumPercent(o)),
-            });
-          }
-        } else if (lastSeenUtc) {
-          const lastSeenDisplay = toDisplaySec(lastSeenUtc);
-          const last = lcPoints[lcPoints.length - 1];
-          if (lastSeenDisplay > last.time) {
-            lcPoints.push({ time: lastSeenDisplay, value: getOfferPrice(o), color: last.color });
-          }
-        }
-        if (lcPoints.length < 2) {
-          renderFallbackLine();
-          return;
-        }
-
-        const representativePrice = lcPoints[Math.floor(lcPoints.length / 2)].value;
-
-        // Group into contiguous segments of the same color.
-        type Segment = { points: TimeValue[]; color: string };
-        const segments: Segment[] = [];
-        let seg: TimeValue[] = [{ time: lcPoints[0].time, value: lcPoints[0].value }];
-        let segColor = lcPoints[0].color;
-
-        for (let i = 1; i < lcPoints.length; i++) {
-          const pt = lcPoints[i];
-          if (pt.color !== segColor) {
-            // Overlap: include this point in the closing segment before starting a new one.
-            segments.push({ points: [...seg, { time: pt.time, value: pt.value }], color: segColor });
-            seg = [{ time: pt.time, value: pt.value }];
-            segColor = pt.color;
-          } else {
-            seg.push({ time: pt.time, value: pt.value });
-          }
-        }
-        segments.push({ points: seg, color: segColor });
-
-        let clickTargetRegistered = false;
-        let drawnSegments = 0;
-        for (const { points: segPts, color } of segments) {
-          if (segPts.length < 2) continue;
-          const series = chart.addLineSeries({
-            color,
-            lineWidth,
-            priceLineVisible: false,
-            lastValueVisible: false,
-            crosshairMarkerVisible: true,
-            crosshairMarkerRadius: markerRadius,
-          });
-          series.setData(segPts);
-          drawnSegments++;
-          if (!clickTargetRegistered) {
-            seriesInfo.set(series, { offerKey, price: representativePrice });
-            clickTargetRegistered = true;
-          }
-        }
-        renderedPaths.push({ id: o.id, live: isOpen, mode: 'lifecycle', points: lcPoints.length, segments: drawnSegments });
-      } else {
-        renderFallbackLine();
-      }
+    // Created here (before any offer line) so candles stay below offer paths.
+    candleSeriesRef.current = chart.addCandlestickSeries({
+      upColor: '#3fb950',
+      downColor: '#f85149',
+      borderUpColor: '#3fb950',
+      borderDownColor: '#f85149',
+      wickUpColor: '#3fb950',
+      wickDownColor: '#f85149',
     });
 
-    divRef.current.dataset.offerPaths = JSON.stringify(renderedPaths);
-
-    // Apply visible range — restore saved range if available (e.g. after load-more)
-    const hasData = shiftedDisplay.candles.length > 0 || premiumOffers.length > 0;
-    if (hasData) {
-      const intendedRange = intendedRangeRef.current;
-      const intendedRangeReady = intendedRange != null &&
-        sourceIntervalMinRef.current <= intendedRange.intervalMin &&
-        loadedDataHoursRef.current >= intendedRange.visibleHours;
-      if (intendedRangeReady) {
-        try {
-          chart.timeScale().setVisibleRange(intendedRange.range);
-        } catch {
-          chart.timeScale().setVisibleRange({ from: fromSec, to: nowSec });
-        }
-        intendedRangeRef.current = null;
-      } else if (savedRangeRef.current) {
-        try {
-          chart.timeScale().setVisibleRange(savedRangeRef.current);
-        } catch {
-          chart.timeScale().setVisibleRange({ from: fromSec, to: nowSec });
-        }
-        savedRangeRef.current = null;
-      } else {
-        try {
-          chart.timeScale().setVisibleRange({ from: fromSec, to: nowSec });
-        } catch {
-          chart.timeScale().fitContent();
-        }
-      }
-    }
+    // True when the price scale was manually zoomed (drag on the y-axis
+    // disables autoScale). There is no LWC event for it, so it's sampled from
+    // the interaction events below.
+    const isPriceScaleZoomed = () => chart.priceScale('right').options().autoScale === false;
 
     // --- Auto-fetch when scrolling back to the start ---
-    const earliestCandleTime = shiftedDisplay.candles.length > 0
-      ? toUtcSec(shiftedDisplay.candles[0].time) as UTCTimestamp
-      : null;
-
     chart.timeScale().subscribeVisibleTimeRangeChange((range) => {
-      if (!allowExtend || !range || !earliestCandleTime || fetchingMoreRef.current) return;
+      if (!range) return;
+      if (divRef.current) divRef.current.dataset.visibleRange = JSON.stringify(range);
+
+      // Offer the reset button once the view left the default window by more
+      // than 5% (small drifts from live updates and edge rounding to the bar
+      // grid must not count — the reported range snaps to existing bars).
+      const nowUtcSec = getNowUtcSec();
+      const windowSec = effectiveVisibleHoursRef.current * 3600;
+      const defFrom = shiftUtcSecForTimezone(nowUtcSec - windowSec, timezoneRef.current);
+      const defTo = shiftUtcSecForTimezone(nowUtcSec, timezoneRef.current);
+      const tolerance = Math.max(candleMinRef.current * 60 * 3, windowSec * 0.05);
+      const deviates = Math.abs((range.from as number) - defFrom) > tolerance ||
+        Math.abs((range.to as number) - defTo) > tolerance;
+      setShowReset(deviates || isPriceScaleZoomed());
+
+      if (!allowExtendRef.current || fetchingMoreRef.current) return;
+      const earliest = earliestCandleTimeRef.current;
+      if (!earliest) return;
       // Trigger when the left edge of the view is within 2 candle-widths of the earliest data
-      const triggerThreshold = earliestCandleTime + candleMin * 60 * 2;
+      const triggerThreshold = earliest + candleMinRef.current * 60 * 2;
       if ((range.from as number) <= triggerThreshold) {
         fetchingMoreRef.current = true;
-        // Save the current visible range so we can restore it after the chart re-renders
-        savedRangeRef.current = { from: range.from as UTCTimestamp, to: range.to as UTCTimestamp };
-        const newHours = Math.max(availableHours * 3, requiredHours * 2);
-        onNeedMoreData(newHours, candleMin);
+        const newHours = Math.max(availableHoursRef.current * 3, requiredHoursRef.current * 2);
+        onNeedMoreDataRef.current(newHours, candleMinRef.current);
         // Reset the guard after a cooldown so rapid scrolling doesn't spam requests
         setTimeout(() => { fetchingMoreRef.current = false; }, 10_000);
       }
@@ -510,15 +398,18 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
 
     // Crosshair move
     chart.subscribeCrosshairMove((param) => {
+      // A pure y-axis drag never fires a time-range change, but the next mouse
+      // move does land here — catch manual price zoom this way.
+      if (isPriceScaleZoomed()) setShowReset(true);
       if (param.time === undefined) {
         setHoveredOhlcTime(null);
         return;
       }
       const shiftedSec = param.time as number;
-      setHoveredOhlcTime(utcByDisplaySec.get(shiftedSec) ?? shiftedSec);
+      setHoveredOhlcTime(utcByDisplaySecRef.current.get(shiftedSec) ?? shiftedSec);
     });
 
-    // Click handler
+    // Click handler — select the offer line nearest to the click
     chart.subscribeClick((param) => {
       if (!param.point) {
         setSelectedOfferKey(null);
@@ -528,7 +419,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
       let closestKey: string | null = null;
       let closestDist = Infinity;
 
-      for (const [series, info] of seriesInfo) {
+      for (const [series, info] of seriesInfoRef.current) {
         const coord = series.priceToCoordinate(info.price);
         if (coord == null) continue;
         const dist = Math.abs(coord - clickY);
@@ -539,24 +430,311 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
       }
 
       setSelectedOfferKey(closestKey != null
-        ? (closestKey === selectedOfferKey ? null : closestKey)
+        ? (closestKey === selectedOfferKeyRef.current ? null : closestKey)
         : null
       );
     });
 
+    setChartEpoch((e) => e + 1);
+
+    const seriesInfo = seriesInfoRef.current;
     return () => {
       setHoveredOhlcTime(null);
       chart.remove();
       chartRef.current = null;
+      candleSeriesRef.current = null;
+      offerSeriesRef.current = [];
+      seriesInfo.clear();
+      earliestCandleTimeRef.current = null;
+      hadCandlesRef.current = false;
     };
-  }, [shiftedDisplay, premiumOffers, offerKeys, hours, selectedOfferKey, candleMin, loadedHours, onNeedMoreData, allowExtend, setHoveredOhlcTime, setSelectedOfferKey, lifecycleCache, timezone, effectiveVisibleHours, availableHours, requiredHours, sourceIntervalMinRef, loadedDataHoursRef]);
+  }, [theme, setHoveredOhlcTime, setSelectedOfferKey]);
+
+  // ── Candle sync ────────────────────────────────────────────────────────────
+  useEffect(() => {
+    const chart = chartRef.current;
+    const candleSeries = candleSeriesRef.current;
+    if (!chart || !candleSeries) return;
+
+    shiftedDisplay.utcByShiftedSec.forEach((utc, disp) => utcByDisplaySecRef.current.set(disp, utc));
+
+    if (shiftedDisplay.candles.length === 0) {
+      earliestCandleTimeRef.current = null;
+      return;
+    }
+
+    // Preserve the user's current view across data swaps: setData shifts
+    // logical indices when history is prepended, so restore by TIME range.
+    const prevRange = chart.timeScale().getVisibleRange();
+
+    candleSeries.setData(
+      shiftedDisplay.candles.map(c => ({
+        time: toUtcSec(c.time) as UTCTimestamp,
+        open: c.open,
+        high: c.high,
+        low: c.low,
+        close: c.close,
+      }))
+    );
+    earliestCandleTimeRef.current = toUtcSec(shiftedDisplay.candles[0].time);
+
+    const firstCandles = !hadCandlesRef.current;
+    hadCandlesRef.current = true;
+
+    const windowKey = `${effectiveVisibleHours}|${timezone}`;
+    const intendedRange = intendedRangeRef.current;
+    const intendedRangeReady = intendedRange != null &&
+      sourceIntervalMin <= intendedRange.intervalMin &&
+      loadedDataHours >= intendedRange.visibleHours;
+    if (intendedRangeReady) {
+      try {
+        chart.timeScale().setVisibleRange(intendedRange.range);
+        appliedWindowRef.current = windowKey;
+      } catch {
+        applyDefaultRange(chart);
+      }
+      intendedRangeRef.current = null;
+    } else if (appliedWindowRef.current !== windowKey || firstCandles) {
+      // First candles, or the requested window (timeframe/timezone) changed.
+      applyDefaultRange(chart);
+    } else if (prevRange) {
+      try { chart.timeScale().setVisibleRange(prevRange); } catch { /* keep whatever the chart chose */ }
+    }
+  }, [shiftedDisplay, chartEpoch, effectiveVisibleHours, timezone, sourceIntervalMin, loadedDataHours, applyDefaultRange]);
+
+  // ── Offer line sync (throttled) ────────────────────────────────────────────
+  const renderOffersRef = useRef<() => void>(() => {});
+  const offerCooldownRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const offerDirtyRef = useRef(false);
+
+  useEffect(() => () => {
+    // Fully reset the throttle on unmount: a dangling non-null cooldown ref
+    // would deadlock all offer renders after a remount (e.g. StrictMode).
+    if (offerCooldownRef.current) {
+      clearTimeout(offerCooldownRef.current);
+      offerCooldownRef.current = null;
+    }
+    offerDirtyRef.current = false;
+  }, []);
+
+  useEffect(() => {
+    renderOffersRef.current = () => {
+      const chart = chartRef.current;
+      const container = divRef.current;
+      if (!chart || !container) return;
+
+      // Swapping line series adds/removes slots on the shared time axis, and
+      // the library preserves the LOGICAL range across that — which drifts the
+      // visible time window a little on every render. Capture and restore the
+      // time range around the swap (all synchronous, so no gesture is lost).
+      const prevRange = chart.timeScale().getVisibleRange();
+
+      for (const series of offerSeriesRef.current) {
+        try { chart.removeSeries(series); } catch { /* chart already disposed */ }
+      }
+      offerSeriesRef.current = [];
+      seriesInfoRef.current.clear();
+
+      const selectedLine = cssVar('--app-text', '#e6edf3');
+      const toDisplaySec = (utcSec: number): UTCTimestamp => {
+        const displaySec = shiftUtcSecForTimezone(utcSec, timezone);
+        utcByDisplaySecRef.current.set(displaySec, utcSec);
+        return displaySec as UTCTimestamp;
+      };
+      const addLine = (options: Parameters<IChartApi['addLineSeries']>[0]) => {
+        const series = chart.addLineSeries(options);
+        offerSeriesRef.current.push(series);
+        return series;
+      };
+
+      // All series share one time axis: off-grid offer timestamps would insert
+      // extra slots BETWEEN candles and visibly spread them apart. Snap every
+      // offer point to the active candle grid; the dedupe map below then keeps
+      // the last (close) lifecycle point of each bucket.
+      const bucketSec = candleMin * 60;
+      const snapToGrid = (utcSec: number) => Math.floor(utcSec / bucketSec) * bucketSec;
+
+      const nowUtcSec = getNowUtcSec();
+      const nowSec = toDisplaySec(snapToGrid(nowUtcSec));
+
+      // Per-offer render summary exposed on the container as data-offer-paths so
+      // e2e tests can verify what was plotted (canvas pixels are opaque to them).
+      const renderedPaths: Array<{ id: number; live: boolean; mode: 'lifecycle' | 'fallback' | 'none'; points: number; segments: number }> = [];
+
+      premiumOffers.forEach((o, index) => {
+        const offerKey = offerKeys[index];
+        const isOpen = isOfferLive(o);
+        const isSelected = offerKey === selectedOfferKey;
+        const lineWidth = isSelected ? 3 : 2;
+        const markerRadius = isSelected ? 5 : 3;
+        const lifecycle = o.lifecycle ?? lifecycleCache[o.id]?.points;
+
+        type TimeValue = { time: UTCTimestamp; value: number };
+        const renderFallbackLine = () => {
+          // No usable lifecycle in the current view: show the offer at its known endpoint.
+          const anchorUtc = isOpen ? nowUtcSec : toUtcSec(getLastSeen(o) ?? getFirstSeen(o) ?? '');
+          if (!anchorUtc) {
+            renderedPaths.push({ id: o.id, live: isOpen, mode: 'none', points: 0, segments: 0 });
+            return;
+          }
+          const anchor = toDisplaySec(snapToGrid(anchorUtc));
+          const start = toDisplaySec(snapToGrid(anchorUtc) - bucketSec);
+          const points: TimeValue[] = [
+            { time: start, value: getOfferPrice(o) },
+            { time: anchor, value: getOfferPrice(o) },
+          ];
+          const color = isSelected ? selectedLine : offerColor(o.direction, getNetPremiumPercent(o));
+          const series = addLine({
+            color,
+            lineWidth,
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: true,
+            crosshairMarkerRadius: markerRadius,
+          });
+          series.setData(points);
+          seriesInfoRef.current.set(series, { offerKey, price: getOfferPrice(o) });
+          renderedPaths.push({ id: o.id, live: isOpen, mode: 'fallback', points: points.length, segments: 1 });
+        };
+
+        if (lifecycle && lifecycle.length > 0) {
+          // Lifecycle line: render the full known history, including points outside
+          // the initial visible range so scrolling can reveal the whole order path.
+          const lcPointsRaw = lifecycle.flatMap((p) => {
+            const utcSec = toUtcSec(p.time);
+            if (!utcSec) return [];
+            return [{
+              time: toDisplaySec(snapToGrid(utcSec)),
+              value: p.price,
+              color: isSelected ? selectedLine : offerColor(o.direction, p.net_premium_pct),
+            }];
+          });
+          // Deduplicate by timestamp (keep last), then sort ascending.
+          const lcByTime = new Map<number, typeof lcPointsRaw[0]>();
+          for (const pt of lcPointsRaw) lcByTime.set(pt.time, pt);
+          const lcPoints = Array.from(lcByTime.values()).sort((a, b) => a.time - b.time);
+          if (lcPoints.length === 0) {
+            renderFallbackLine();
+            return;
+          }
+
+          const firstSeenUtc = toUtcSec(getFirstSeen(o) ?? '');
+          const lastSeenUtc = toUtcSec(getLastSeen(o) ?? '');
+          if (firstSeenUtc) {
+            const firstSeenDisplay = toDisplaySec(snapToGrid(firstSeenUtc));
+            if (firstSeenDisplay < lcPoints[0].time) {
+              lcPoints.unshift({ ...lcPoints[0], time: firstSeenDisplay });
+            }
+          }
+          if (isOpen) {
+            // Extend to "now" with the offer's CURRENT price: lifecycle snapshots
+            // lag up to a cycle behind the live feed, so the tip must come from
+            // the offer itself for the path to end at the price shown elsewhere.
+            const last = lcPoints[lcPoints.length - 1];
+            if (last.time < nowSec) {
+              lcPoints.push({
+                time: nowSec,
+                value: getOfferPrice(o),
+                color: isSelected ? selectedLine : offerColor(o.direction, getNetPremiumPercent(o)),
+              });
+            }
+          } else if (lastSeenUtc) {
+            const lastSeenDisplay = toDisplaySec(snapToGrid(lastSeenUtc));
+            const last = lcPoints[lcPoints.length - 1];
+            if (lastSeenDisplay > last.time) {
+              lcPoints.push({ time: lastSeenDisplay, value: getOfferPrice(o), color: last.color });
+            }
+          }
+          if (lcPoints.length < 2) {
+            renderFallbackLine();
+            return;
+          }
+
+          const representativePrice = lcPoints[Math.floor(lcPoints.length / 2)].value;
+
+          // Group into contiguous segments of the same color.
+          type Segment = { points: TimeValue[]; color: string };
+          const segments: Segment[] = [];
+          let seg: TimeValue[] = [{ time: lcPoints[0].time, value: lcPoints[0].value }];
+          let segColor = lcPoints[0].color;
+
+          for (let i = 1; i < lcPoints.length; i++) {
+            const pt = lcPoints[i];
+            if (pt.color !== segColor) {
+              // Overlap: include this point in the closing segment before starting a new one.
+              segments.push({ points: [...seg, { time: pt.time, value: pt.value }], color: segColor });
+              seg = [{ time: pt.time, value: pt.value }];
+              segColor = pt.color;
+            } else {
+              seg.push({ time: pt.time, value: pt.value });
+            }
+          }
+          segments.push({ points: seg, color: segColor });
+
+          let clickTargetRegistered = false;
+          let drawnSegments = 0;
+          for (const { points: segPts, color } of segments) {
+            if (segPts.length < 2) continue;
+            const series = addLine({
+              color,
+              lineWidth,
+              priceLineVisible: false,
+              lastValueVisible: false,
+              crosshairMarkerVisible: true,
+              crosshairMarkerRadius: markerRadius,
+            });
+            series.setData(segPts);
+            drawnSegments++;
+            if (!clickTargetRegistered) {
+              seriesInfoRef.current.set(series, { offerKey, price: representativePrice });
+              clickTargetRegistered = true;
+            }
+          }
+          renderedPaths.push({ id: o.id, live: isOpen, mode: 'lifecycle', points: lcPoints.length, segments: drawnSegments });
+        } else {
+          renderFallbackLine();
+        }
+      });
+
+      container.dataset.offerPaths = JSON.stringify(renderedPaths);
+
+      if (appliedWindowRef.current === '' && renderedPaths.length > 0) {
+        // Offers-only view (no candles loaded yet): a window must still be applied once.
+        applyDefaultRange(chart);
+      } else if (prevRange) {
+        try { chart.timeScale().setVisibleRange(prevRange); } catch { /* keep whatever the chart chose */ }
+      }
+    };
+  }, [premiumOffers, offerKeys, lifecycleCache, selectedOfferKey, candleMin, timezone, applyDefaultRange]);
+
+  // Leading render immediately, then at most one trailing render per cooldown
+  // window while updates keep streaming in.
+  const scheduleOfferRender = useCallback(() => {
+    if (offerCooldownRef.current) {
+      offerDirtyRef.current = true;
+      return;
+    }
+    renderOffersRef.current();
+    offerCooldownRef.current = setTimeout(function onCooldown() {
+      offerCooldownRef.current = null;
+      if (offerDirtyRef.current) {
+        offerDirtyRef.current = false;
+        renderOffersRef.current();
+        offerCooldownRef.current = setTimeout(onCooldown, OFFER_RENDER_THROTTLE_MS);
+      }
+    }, OFFER_RENDER_THROTTLE_MS);
+  }, []);
+
+  useEffect(() => {
+    scheduleOfferRender();
+  }, [premiumOffers, offerKeys, lifecycleCache, selectedOfferKey, candleMin, timezone, chartEpoch, scheduleOfferRender]);
 
   return (
     <div className="relative h-full bg-bg flex flex-col">
       {/* Candle size selector */}
       <div className="flex items-center gap-1 px-1 pb-1 shrink-0">
         <span className="text-[0.6rem] text-muted uppercase tracking-wider mr-1">Candle</span>
-        {visibleOptions.map(opt => (
+        {CANDLE_OPTIONS.map(opt => (
           <button
             key={opt}
             onClick={() => handleCandleMinChange(opt)}
@@ -573,10 +751,20 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
 
       {loading && <LoadingSpinner size={120} label="Loading chart data" />}
       <div
-        ref={divRef}
-        className="flex-1 min-h-0"
+        className="relative flex-1 min-h-0"
         style={{ opacity: loading ? 0 : 1, transition: 'opacity 0.35s ease' }}
-      />
+      >
+        <div ref={divRef} className="h-full w-full" />
+        {showReset && (
+          <button
+            onClick={resetView}
+            title="Reset chart view"
+            className="absolute top-1.5 right-16 z-10 bg-surface/90 border border-border rounded-md px-2 py-0.5 text-[0.68rem] text-muted hover:text-text hover:border-muted transition-colors"
+          >
+            ⟲ Reset view
+          </button>
+        )}
+      </div>
     </div>
   );
 }

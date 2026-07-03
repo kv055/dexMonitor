@@ -1,5 +1,5 @@
 import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, offersPanel, controlPanel, openSettings, closeSettings, jsClick, jsFill } from '../fixtures/base-fixture';
-import { MOCK_LIVE_OFFER_LIFECYCLES } from '../fixtures/mock-data';
+import { MOCK_LIVE_OFFER_LIFECYCLES, MOCK_OHLC_DATA_4H_WINDOW } from '../fixtures/mock-data';
 import type { Page } from '@playwright/test';
 
 /**
@@ -79,6 +79,38 @@ test.describe('OHLC live offer price paths', () => {
     await expect(panel).toHaveScreenshot('ohlc-chart-live-offer-paths.png', {
       maxDiffPixelRatio: 0.12,
     });
+  });
+
+  test('offer paths snap to the selected candle size', async ({ page }) => {
+    await gotoAndWaitForData(page);
+    const panel = ohlcPanel(page);
+    await waitForChartReady(panel, page);
+    await expect
+      .poll(async () => (await pathForOffer(page, 1))?.mode, { timeout: 10_000 })
+      .toBe('lifecycle');
+
+    await page.route('**/api/ohlc*hours=*', route =>
+      route.fulfill({ json: MOCK_OHLC_DATA_4H_WINDOW }),
+    );
+    await panel.getByRole('button', { name: '4h' }).click();
+
+    // Off-grid offer timestamps would insert phantom slots between candles, so
+    // paths must collapse to the candle grid: offer 1's 12 hourly points fall
+    // into three 4h buckets (keeping each bucket's last point) plus the live
+    // tip on the current candle.
+    await expect
+      .poll(async () => (await pathForOffer(page, 1))?.points, { timeout: 10_000 })
+      .toBe(4);
+    const offer1 = (await pathForOffer(page, 1))!;
+    // Bucketing keeps the sign flip: last point of the first bucket is still a
+    // discount, later buckets are premium → exactly two color segments.
+    expect(offer1.segments).toBe(2);
+
+    // Offer 6's three points (spanning 2h) collapse into one bucket + tip.
+    const offer6 = (await pathForOffer(page, 6))!;
+    expect(offer6.mode).toBe('lifecycle');
+    expect(offer6.points).toBe(2);
+    expect(offer6.segments).toBe(1);
   });
 
   test('discards non-premium offers even when the filter includes them', async ({ page }) => {

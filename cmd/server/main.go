@@ -1775,6 +1775,14 @@ func handleStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+const ohlcCandleTimeLayout = "2006-01-02T15:04:05"
+
+// Exchange APIs cap OHLC history (Kraken returns at most 720 candles per
+// interval, so 1-min data only reaches ~12h back). The snapshot service
+// continuously stores Kraken 1-min candles in the ohlc table; the DB
+// back-fill window stays bounded so a runaway hours param can't scan years.
+const maxOHLCBackfillHours = 24 * 180
+
 func handleOHLC(w http.ResponseWriter, r *http.Request) {
 	hours := queryInt(r, "hours", 24)
 	cex := queryCex(r)
@@ -1784,53 +1792,122 @@ func handleOHLC(w http.ResponseWriter, r *http.Request) {
 		ohlcService = ohlc.NewService()
 	}
 	candles := ohlcService.Candles(r.Context(), cex, hours, intervalMin)
-
-	rows, err := db.Query(
-		rebind("SELECT * FROM offers WHERE last_seen >= ?"),
-		time.Now().Add(-time.Duration(hours)*time.Hour),
-	)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	defer rows.Close()
-
-	offerRows, err := scanOffers(rows)
-	if err != nil {
-		writeError(w, err)
-		return
+	if candles == nil {
+		candles = make([]map[string]any, 0)
 	}
 
-	offers := make([]map[string]any, 0, len(offerRows))
-	for _, row := range offerRows {
-		price := offerFloat(row, "price")
-		refPrice := offerRefPrice(row)
-		direction := offerString(row, "direction")
-		if refPrice <= 0 {
-			continue
-		}
-		if direction == "sell" && price > refPrice {
-			continue
-		}
-		if direction == "buy" && price < refPrice {
-			continue
-		}
-		premium := computeDirectionalPremiumPct(direction, price, refPrice)
-		offers = append(offers, map[string]any{
-			"time":           offerString(row, "first_seen"),
-			"price":          price,
-			"premium":        premium,
-			"exchange":       offerString(row, "exchange"),
-			"direction":      direction,
-			"payment_methods": offerStringSlice(row, "payment_methods"),
-		})
+	// The ohlc table only holds Kraken data, so other CEXes stay API-only.
+	if cex == "kraken" {
+		candles = backfillOHLCFromDB(r.Context(), candles, hours, intervalMin)
 	}
 
 	writeJSON(w, map[string]any{
 		"candles":      candles,
-		"offers":       offers,
 		"interval_min": intervalMin,
 	})
+}
+
+type ohlcRow struct {
+	time                   time.Time
+	open, high, low, close float64
+}
+
+// backfillOHLCFromDB prepends candles aggregated from the stored 1-min Kraken
+// data for the part of the requested window that the exchange API did not
+// cover. API candles stay authoritative for their own range.
+func backfillOHLCFromDB(ctx context.Context, apiCandles []map[string]any, hours int, intervalMin int) []map[string]any {
+	if db == nil {
+		return apiCandles
+	}
+	if hours > maxOHLCBackfillHours {
+		hours = maxOHLCBackfillHours
+	}
+	windowStart := time.Now().UTC().Add(-time.Duration(hours) * time.Hour)
+
+	// Oldest candle the API delivered; everything older comes from the DB.
+	apiOldest := time.Now().UTC()
+	if len(apiCandles) > 0 {
+		if t, ok := apiCandles[0]["time"].(string); ok {
+			if parsed, err := time.Parse(ohlcCandleTimeLayout, t); err == nil {
+				apiOldest = parsed
+			}
+		}
+	}
+	if !apiOldest.After(windowStart) {
+		return apiCandles
+	}
+
+	rows, err := db.QueryContext(ctx,
+		rebind("SELECT time, open, high, low, close FROM ohlc WHERE time >= ? AND time < ? ORDER BY time"),
+		windowStart, apiOldest,
+	)
+	if err != nil {
+		fmt.Printf("[OHLC] backfill query error: %v\n", err)
+		return apiCandles
+	}
+	defer rows.Close()
+
+	var dbRows []ohlcRow
+	for rows.Next() {
+		var row ohlcRow
+		if err := rows.Scan(&row.time, &row.open, &row.high, &row.low, &row.close); err != nil {
+			fmt.Printf("[OHLC] backfill scan error: %v\n", err)
+			return apiCandles
+		}
+		dbRows = append(dbRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		fmt.Printf("[OHLC] backfill rows error: %v\n", err)
+		return apiCandles
+	}
+	if len(dbRows) == 0 {
+		return apiCandles
+	}
+
+	// Buckets are epoch-floored like the API's; the bucket containing the API's
+	// oldest candle is excluded so the merged series has no duplicate time.
+	intervalSec := int64(intervalMin) * 60
+	cutoffBucket := apiOldest.Unix() / intervalSec * intervalSec
+	backfill := aggregateOHLCRows(dbRows, intervalMin, cutoffBucket)
+	return append(backfill, apiCandles...)
+}
+
+// aggregateOHLCRows rolls 1-min rows up into intervalMin buckets, dropping any
+// bucket starting at or after cutoffBucketStart (unix seconds).
+func aggregateOHLCRows(dbRows []ohlcRow, intervalMin int, cutoffBucketStart int64) []map[string]any {
+	intervalSec := int64(intervalMin) * 60
+	candles := make([]map[string]any, 0, len(dbRows)/intervalMin+1)
+	var bucketStart int64 = -1
+	var cur ohlcRow
+	flush := func() {
+		if bucketStart < 0 {
+			return
+		}
+		candles = append(candles, map[string]any{
+			"time":  time.Unix(bucketStart, 0).UTC().Format(ohlcCandleTimeLayout),
+			"open":  cur.open,
+			"high":  cur.high,
+			"low":   cur.low,
+			"close": cur.close,
+		})
+	}
+	for _, row := range dbRows {
+		b := row.time.Unix() / intervalSec * intervalSec
+		if b >= cutoffBucketStart {
+			break
+		}
+		if b != bucketStart {
+			flush()
+			bucketStart = b
+			cur = row
+			continue
+		}
+		cur.high = max(cur.high, row.high)
+		cur.low = min(cur.low, row.low)
+		cur.close = row.close
+	}
+	flush()
+	return candles
 }
 
 func handlePaymentMethodGroups(w http.ResponseWriter, r *http.Request) {
