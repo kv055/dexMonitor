@@ -4,8 +4,11 @@ import (
 	"context"
 	"database/sql"
 	"log/slog"
+	"strings"
 	"sync"
 	"time"
+
+	commonpm "commons/paymentmethods"
 )
 
 // initialRetryStart and initialRetryCap bound the backoff used to populate the
@@ -105,8 +108,33 @@ func (s *Service) refresh() error {
 
 	groups := buildGroups(methods)
 
+	unmatched := commonpm.UnmatchedFromDistinct(methods)
+	if len(unmatched) > 0 {
+		const maxLog = 20
+		shown := unmatched
+		if len(shown) > maxLog {
+			shown = shown[:maxLog]
+		}
+		slog.Info("paymentmethods: unmatched canonical candidates",
+			"count", len(unmatched),
+			"sample", strings.Join(shown, ", "),
+		)
+	}
+	if other := findGroupMethods(groups, commonpm.CategoryOther); len(other) > 0 {
+		slog.Info("paymentmethods: methods in other category", "count", len(other), "methods", other)
+	}
+
 	s.mu.Lock()
 	s.cached = groups
 	s.mu.Unlock()
+	return nil
+}
+
+func findGroupMethods(groups []Group, name string) []string {
+	for _, g := range groups {
+		if g.Name == name {
+			return g.Methods
+		}
+	}
 	return nil
 }
