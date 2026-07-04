@@ -1,6 +1,12 @@
 import { useMemo, useState } from 'react';
 import { LoadingSpinner } from './LoadingSpinner';
-import type { GeneralStatsData } from '../types';
+import type {
+  GeneralStatsData,
+  GeneralStatsPremiumSummaryData,
+  NamedCount,
+  PastPremiumTimeframeStats,
+  PremiumLifetimeModes,
+} from '../types';
 
 function fmtDuration(ms: number): string {
   const h = Math.floor(ms / 3_600_000);
@@ -55,7 +61,7 @@ function premiumColor(v: number | null): string {
   return 'text-red';
 }
 
-function Card({ accent = 'bg-border', accentHex, bottomFill, bottomColor, children }: {
+export function Card({ accent = 'bg-border', accentHex, bottomFill, bottomColor, children }: {
   accent?: string;
   accentHex?: string;
   bottomFill?: number;
@@ -79,7 +85,7 @@ function Card({ accent = 'bg-border', accentHex, bottomFill, bottomColor, childr
   );
 }
 
-function Label({ children }: { children: React.ReactNode }) {
+export function Label({ children }: { children: React.ReactNode }) {
   return (
     <span className="text-[0.65rem] uppercase tracking-widest text-muted font-semibold leading-none shrink-0">
       {children}
@@ -87,8 +93,11 @@ function Label({ children }: { children: React.ReactNode }) {
   );
 }
 
-function ExchangesCard({ stats }: { stats: GeneralStatsData }) {
-  const entries = stats.offers_by_exchange ?? [];
+export function ExchangesCard({ exchangesLive, offersByExchange }: {
+  exchangesLive: number;
+  offersByExchange: NamedCount[];
+}) {
+  const entries = offersByExchange ?? [];
   const max = entries.reduce((m, e) => Math.max(m, e.count), 0);
   // Accent bar: color of leading exchange
   const leading = entries[0];
@@ -99,7 +108,7 @@ function ExchangesCard({ stats }: { stats: GeneralStatsData }) {
       <div className="flex items-baseline justify-between gap-2">
         <Label>Exchanges Live</Label>
         <span className="text-sm font-bold tabular-nums mono-nums leading-none text-text">
-          {stats.exchanges_live}
+          {exchangesLive}
         </span>
       </div>
       <div className="flex items-center gap-2.5 flex-wrap">
@@ -122,12 +131,9 @@ function ExchangesCard({ stats }: { stats: GeneralStatsData }) {
   );
 }
 
-function LifetimeCard({ stats }: { stats: GeneralStatsData }) {
+export function LifetimeCard({ lifetimes }: { lifetimes: PremiumLifetimeModes }) {
   const [mode, setMode] = useState<'raw' | 'net_full' | 'net_capped'>('raw');
-  const selected = stats.premium_lifetimes?.[mode] ?? {
-    avg_offer_lifetime_ms: mode === 'raw' ? stats.avg_offer_lifetime_ms : null,
-    avg_offer_lifetime_ms_by_exchange: mode === 'raw' ? stats.avg_offer_lifetime_ms_by_exchange : [],
-  };
+  const selected = lifetimes?.[mode] ?? { avg_offer_lifetime_ms: null, avg_offer_lifetime_ms_by_exchange: [] };
   const byExchange = selected.avg_offer_lifetime_ms_by_exchange ?? [];
   const overall = selected.avg_offer_lifetime_ms;
   const modeLabel = mode === 'raw' ? 'Raw' : mode === 'net_full' ? 'Net Full' : 'Net Capped';
@@ -176,19 +182,20 @@ function LifetimeCard({ stats }: { stats: GeneralStatsData }) {
   );
 }
 
-function PremiumsCard({ stats }: { stats: GeneralStatsData }) {
+export function PremiumsCard({ premium }: { premium: GeneralStatsPremiumSummaryData }) {
   const [mode, setMode] = useState<'raw' | 'net_full' | 'net_capped'>('raw');
-  const selected = {
-    avg_ask_premium_pct: mode === 'raw' ? stats.avg_ask_premium_pct : null,
-    avg_bid_premium_pct: mode === 'raw' ? stats.avg_bid_premium_pct : null,
-  };
-  const avgAsk = selected.avg_ask_premium_pct;
-  const avgBid = selected.avg_bid_premium_pct;
+  // Live premiums are only available in raw mode (no net/capped recompute for
+  // currently-live offers). The mode toggle is retained for visual consistency
+  // with the past cards; net_full / net_capped render the raw value with a
+  // dimmed toggle since the backend does not produce them for the live set.
+  const avgAsk = premium?.avg_ask_premium_pct ?? null;
+  const avgBid = premium?.avg_bid_premium_pct ?? null;
   const strongest = Math.max(Math.abs(avgAsk ?? 0), Math.abs(avgBid ?? 0));
   const barValue = isFinite(strongest) ? strongest : 0;
   const barColor = barValue >= 3 ? 'bg-green' : barValue > 0 ? 'bg-accent' : 'bg-red';
   const accent = barValue > 0 ? barColor : 'bg-border';
   const modeLabel = mode === 'raw' ? 'Raw' : mode === 'net_full' ? 'Net Full' : 'Net Capped';
+  const modeDisabled = mode !== 'raw';
 
   return (
     <Card accent={accent} bottomFill={barValue > 0 ? Math.min(barValue / 10, 1) : 0} bottomColor={barColor}>
@@ -216,6 +223,11 @@ function PremiumsCard({ stats }: { stats: GeneralStatsData }) {
           </button>
         ))}
       </div>
+      {modeDisabled && (
+        <span className="text-[0.62rem] text-muted leading-none">
+          Net modes are only computed for past offers.
+        </span>
+      )}
       <div className="flex items-center gap-3 flex-wrap">
         <div className="flex items-center gap-1.5">
           <span className="text-[0.68rem] font-bold text-accent leading-none">Asks</span>
@@ -231,16 +243,16 @@ function PremiumsCard({ stats }: { stats: GeneralStatsData }) {
   );
 }
 
-function PastPremiumsCard({ stats }: { stats: GeneralStatsData }) {
-  const frames = useMemo(() => stats.past_premiums ?? [], [stats.past_premiums]);
+export function PastPremiumsCard({ frames }: { frames: PastPremiumTimeframeStats[] }) {
+  const framesList = useMemo(() => frames ?? [], [frames]);
   const [mode, setMode] = useState<'raw' | 'net_full' | 'net_capped'>('raw');
   const [selectedTimeframe, setSelectedTimeframe] = useState('24h');
   const selected = useMemo(() => (
-    frames.find(frame => frame.timeframe === selectedTimeframe)
-      ?? frames.find(frame => frame.timeframe === '24h')
-      ?? frames[0]
+    framesList.find(frame => frame.timeframe === selectedTimeframe)
+      ?? framesList.find(frame => frame.timeframe === '24h')
+      ?? framesList[0]
       ?? null
-  ), [frames, selectedTimeframe]);
+  ), [framesList, selectedTimeframe]);
   const entries = selected?.modes?.[mode] ?? selected?.avg_premium_by_exchange ?? [];
   const top = entries.slice(0, 3);
   const rest = entries.length - top.length;
@@ -262,7 +274,7 @@ function PastPremiumsCard({ stats }: { stats: GeneralStatsData }) {
         </div>
       </div>
       <div className="flex items-center gap-1 flex-wrap">
-        {frames.map(frame => (
+        {framesList.map(frame => (
           <button
             key={frame.timeframe}
             type="button"
@@ -314,10 +326,10 @@ function PastPremiumsCard({ stats }: { stats: GeneralStatsData }) {
   );
 }
 
-function PaymentMethodsCard({ stats }: { stats: GeneralStatsData }) {
-  const counts = stats.payment_method_counts ?? [];
-  const top = counts.slice(0, 5);
-  const rest = counts.slice(5).reduce((s, e) => s + e.count, 0);
+export function PaymentMethodsCard({ counts }: { counts: NamedCount[] }) {
+  const list = counts ?? [];
+  const top = list.slice(0, 5);
+  const rest = list.slice(5).reduce((s, e) => s + e.count, 0);
   const max = top.reduce((m, e) => Math.max(m, e.count), 0);
   // cycle through subtle accent colors for top methods
   const methodColors = ['text-accent', 'text-blue', 'text-green', 'text-purple', 'text-red'];
@@ -326,7 +338,7 @@ function PaymentMethodsCard({ stats }: { stats: GeneralStatsData }) {
     <Card accent="bg-blue">
       <div className="flex items-baseline justify-between gap-2">
         <Label>Payment Methods</Label>
-        <span className="text-sm font-bold tabular-nums mono-nums leading-none text-blue">{counts.length}</span>
+        <span className="text-sm font-bold tabular-nums mono-nums leading-none text-blue">{list.length}</span>
       </div>
       <div className="flex items-center gap-2.5 flex-wrap">
         {top.map((e, i) => {
@@ -347,6 +359,9 @@ function PaymentMethodsCard({ stats }: { stats: GeneralStatsData }) {
   );
 }
 
+// Backwards-compatible wrapper kept so any remaining import of the old
+// GeneralStats default surface still renders. The Statistics page composes the
+// exported cards above directly instead.
 export function GeneralStats({ stats, loading }: { stats: GeneralStatsData | null; loading: boolean }) {
   if (loading && !stats) {
     return <div className="relative min-h-32"><LoadingSpinner size={88} label="Loading statistics" /></div>;
@@ -356,11 +371,16 @@ export function GeneralStats({ stats, loading }: { stats: GeneralStatsData | nul
   }
   return (
     <div className="grid grid-cols-2 xl:grid-cols-5 gap-1.5">
-      <ExchangesCard stats={stats} />
-      <PremiumsCard stats={stats} />
-      <PastPremiumsCard stats={stats} />
-      <LifetimeCard stats={stats} />
-      <PaymentMethodsCard stats={stats} />
+      <ExchangesCard exchangesLive={stats.exchanges_live} offersByExchange={stats.offers_by_exchange} />
+      <PremiumsCard premium={{
+        best_ask_premium_pct: stats.best_ask_premium_pct,
+        avg_ask_premium_pct: stats.avg_ask_premium_pct,
+        best_bid_premium_pct: stats.best_bid_premium_pct,
+        avg_bid_premium_pct: stats.avg_bid_premium_pct,
+      }} />
+      <PastPremiumsCard frames={stats.past_premiums ?? []} />
+      <LifetimeCard lifetimes={stats.premium_lifetimes ?? { raw: { avg_offer_lifetime_ms: stats.avg_offer_lifetime_ms, avg_offer_lifetime_ms_by_exchange: stats.avg_offer_lifetime_ms_by_exchange }, net_full: { avg_offer_lifetime_ms: null, avg_offer_lifetime_ms_by_exchange: [] }, net_capped: { avg_offer_lifetime_ms: null, avg_offer_lifetime_ms_by_exchange: [] } }} />
+      <PaymentMethodsCard counts={stats.payment_method_counts} />
     </div>
   );
 }

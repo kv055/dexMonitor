@@ -653,6 +653,51 @@ export interface TradingWalletAddress {
   address: string;
 }
 
+// Live premium summary for currently-live offers (best/avg ask & bid premium
+// pct). Mirrors the Go pastorders.GeneralStatsPremiumSummary struct.
+export interface GeneralStatsPremiumSummaryData {
+  best_ask_premium_pct: number | null;
+  avg_ask_premium_pct: number | null;
+  best_bid_premium_pct: number | null;
+  avg_bid_premium_pct: number | null;
+}
+
+// Statistics for the live dimension: currently-live offers only.
+export interface LiveStatisticsData {
+  total_offers: number;
+  active_offers: number;
+  exchanges_live: number;
+  offers_by_exchange: NamedCount[];
+  payment_method_counts: NamedCount[];
+  premium_summary: GeneralStatsPremiumSummaryData;
+}
+
+// Statistics for the past dimension: closed offers only.
+export interface PastStatisticsData {
+  total_offers: number;
+  offers_by_exchange: NamedCount[];
+  payment_method_counts: NamedCount[];
+  past_premiums: PastPremiumTimeframeStats[];
+  premium_lifetimes: PremiumLifetimeModes;
+}
+
+// Statistics that span both live and past offers in the configured window.
+export interface SharedStatisticsData {
+  hours: number;
+  total_offers: number;
+  active_offers: number;
+  exchanges_live: number;
+  offers_by_exchange: NamedCount[];
+  payment_method_counts: NamedCount[];
+}
+
+// Response shape of POST /api/statistics.
+export interface StatisticsResponse {
+  live: LiveStatisticsData;
+  past: PastStatisticsData;
+  shared: SharedStatisticsData;
+}
+
 export interface PaymentMethodGroup {
   name: string;
   display_name: string;

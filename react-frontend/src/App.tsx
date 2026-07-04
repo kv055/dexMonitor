@@ -20,12 +20,12 @@ import { DepthChart } from './components/DepthChart';
 import { TradeTracingPanel } from './components/TradeTracingPanel';
 import { buildOfferKeys } from './utils/offerIdentity';
 import { isOfferLive } from './utils/offerAccess';
-// import { GeneralStats } from './components/GeneralStats';
 import { SnapshotLog } from './components/SnapshotLog';
 import { MmTransactionsLog } from './components/MmTransactionsLog';
 import { TakerOpportunities } from './components/TakerOpportunities';
 import { TradingAccountsPanel } from './components/TradingAccountsPanel';
 import { PaymentMethodsPanel } from './components/PaymentMethodsPanel';
+import { StatisticsView } from './components/StatisticsView';
 
 function OhlcPanelHeader() {
   const { refPrice, filters } = useFilters();
@@ -150,12 +150,6 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
 
   return (
     <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
-      {/* Top — statistics (temporarily hidden)
-      <div className="lg:flex-none bg-surface border border-border rounded-lg px-2 py-1.5">
-        <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-1 block">General Statistics</span>
-        <GeneralStats stats={generalStats} loading={analyticsOverviewLoading} />
-      </div>
-      */}
       <div className="lg:flex-1 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
         <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2">Taker Opportunities</span>
         <TakerOpportunities
@@ -276,6 +270,10 @@ function AppShell() {
 
         {activeTab === 'trading' && (
           <TradingView />
+        )}
+
+        {activeTab === 'statistics' && (
+          <StatisticsView />
         )}
       </div>
       </FiltersProvider>

@@ -217,6 +217,7 @@ func main() {
 	mux.HandleFunc("GET /api/general_stats/lifetimes", handleGeneralStatsLifetimes)
 	mux.HandleFunc("GET /api/general_stats/payment_methods", handleGeneralStatsPaymentMethods)
 	mux.HandleFunc("POST /api/dashboard/analytics", handleDashboardAnalytics)
+	mux.HandleFunc("POST /api/statistics", handleStatistics)
 	mux.HandleFunc("GET /api/stats", handleStats)
 	mux.HandleFunc("GET /api/ohlc", handleOHLC)
 	mux.HandleFunc("GET /api/snapshot-log", handleSnapshotLog)
