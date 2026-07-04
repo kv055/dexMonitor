@@ -4,6 +4,7 @@ import { ExchangeTag } from './ExchangeTag';
 import { stripTrailingZeros } from '../utils/numberFormat';
 import { premiumClass } from '../utils/formatters';
 import { cexTradeflow, cexPreTradeCheck } from '../utils/api';
+import { useFilters } from '../hooks/useFilters';
 import { useHedgeStream } from '../hooks/useHedgeStream';
 import { useWithdrawalTrack } from '../hooks/useWithdrawalTrack';
 import { CapitalRequiredSection, AbortCostSection, SizeToggle } from './OfferBreakdownPanel';
