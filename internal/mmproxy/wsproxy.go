@@ -11,11 +11,25 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// wsUpgrader upgrades inbound browser connections. Origin is unrestricted because
-// the same-origin frontend and trusted clients are the only callers; mm-controller
-// itself is reached server-side below.
+// wsUpgrader upgrades inbound browser connections. The origin is restricted to
+// same-origin (Origin host must equal the request Host) so a page on another site
+// can't open the hedge-stream relay using the visitor's session cookie
+// (cross-site WebSocket hijacking). A missing Origin header (non-browser clients
+// like the e2e harness) is allowed.
 var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(r *http.Request) bool { return true },
+	CheckOrigin: sameOriginWS,
+}
+
+func sameOriginWS(r *http.Request) bool {
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	return strings.EqualFold(u.Host, r.Host)
 }
 
 // ForwardWebSocket relays a WebSocket connection to the market-maker controller. It

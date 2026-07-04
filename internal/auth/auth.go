@@ -109,8 +109,12 @@ func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return
 	}
-	id, err := s.repo.Create(r.Context(), username, string(hash))
+	id, err := s.repo.CreateInitial(r.Context(), username, string(hash))
 	if err != nil {
+		if errors.Is(err, errRegistrationClosed) {
+			writeErr(w, http.StatusForbidden, "registration is closed")
+			return
+		}
 		slog.ErrorContext(r.Context(), "auth: create user", "err", err)
 		writeErr(w, http.StatusInternalServerError, "internal error")
 		return

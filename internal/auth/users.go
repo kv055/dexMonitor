@@ -3,6 +3,7 @@ package auth
 import (
 	"context"
 	"database/sql"
+	"errors"
 )
 
 // user is a stored login account (the app_users table, migration 025).
@@ -36,13 +37,29 @@ func (r *userRepo) GetByUsername(ctx context.Context, username string) (user, er
 	return u, err
 }
 
-// Create inserts a new account and returns its id.
-func (r *userRepo) Create(ctx context.Context, username, passwordHash string) (int64, error) {
+// (Create was removed: the first-user bootstrap now goes through CreateInitial,
+// which writes atomically instead of racing the handler's Count check.)
+
+// errRegistrationClosed is returned by CreateInitial when an account already
+// exists, so registration is closed.
+var errRegistrationClosed = errors.New("registration is closed")
+
+// CreateInitial inserts the first (bootstrap) account atomically: the row is
+// written only when app_users is still empty, so two concurrent registrations
+// can't both create a first user (the Count check in the handler is a fast path,
+// not the guard). Returns errRegistrationClosed when an account already exists.
+func (r *userRepo) CreateInitial(ctx context.Context, username, passwordHash string) (int64, error) {
 	var id int64
 	err := r.db.QueryRowContext(ctx,
-		`INSERT INTO app_users (username, password_hash) VALUES ($1, $2) RETURNING id`,
+		`INSERT INTO app_users (username, password_hash)
+		 SELECT $1, $2
+		 WHERE NOT EXISTS (SELECT 1 FROM app_users)
+		 RETURNING id`,
 		username, passwordHash,
 	).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, errRegistrationClosed
+	}
 	return id, err
 }
 

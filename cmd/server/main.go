@@ -3,8 +3,10 @@ package main
 import (
 	"context"
 	"database/sql"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"hash/fnv"
 	"log/slog"
 	"math"
 	"net/http"
@@ -69,6 +71,18 @@ var generalStatsCache struct {
 type generalStatsCacheEntry struct {
 	ctx    generalStatsContext
 	expiry time.Time
+}
+
+// sweepGeneralStatsCache drops expired entries. Caller must hold the lock. These
+// caches are keyed by filter-parameter combinations, so without eviction the map
+// grows unbounded as users try different filters; logical expiry alone never
+// reclaims the memory.
+func sweepGeneralStatsCache(now time.Time) {
+	for k, entry := range generalStatsCache.entries {
+		if !now.Before(entry.expiry) {
+			delete(generalStatsCache.entries, k)
+		}
+	}
 }
 
 var lifecycleAggCache struct {
@@ -323,29 +337,6 @@ func serveDistStatic(w http.ResponseWriter, r *http.Request) {
 	http.ServeFile(w, r, full)
 }
 
-func handleOffers(w http.ResponseWriter, r *http.Request) {
-	limit := queryInt(r, "limit", 1000)
-	hours := queryInt(r, "hours", 24)
-	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
-
-	rows, err := db.Query(
-		rebind("SELECT * FROM offers WHERE last_seen >= ? ORDER BY last_seen DESC LIMIT ?"),
-		cutoff, limit,
-	)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	defer rows.Close()
-
-	offers, err := scanOffers(rows)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	writeJSON(w, offers)
-}
-
 // handlePastOffers serves closed offers (is_live=0) from the DB.
 // Costing uses the cheapest available CEX→DEX route for each premium offer.
 func handlePastOffers(w http.ResponseWriter, r *http.Request) {
@@ -377,7 +368,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	filteredOffers := make([]map[string]any, 0, len(offers))
 	ids := make([]int64, 0, len(offers))
 	for _, o := range offers {
-		if isPaymentMethodExcluded(offerString(o, "payment_method"), excludedPaymentMethods) {
+		if offerHasExcludedPaymentMethod(o, excludedPaymentMethods) {
 			continue
 		}
 		filteredOffers = append(filteredOffers, o)
@@ -458,7 +449,16 @@ func lifecycleAggCacheKey(ids []int64) string {
 	}
 	sorted := append([]int64(nil), ids...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	return fmt.Sprintf("%d:%d:%d", len(sorted), sorted[0], sorted[len(sorted)-1])
+	// Hash the full id set: a len:min:max key collides for different sets that
+	// share those three values, which would serve one query's aggregates for
+	// another's within the cache TTL.
+	h := fnv.New64a()
+	var buf [8]byte
+	for _, id := range sorted {
+		binary.LittleEndian.PutUint64(buf[:], uint64(id))
+		_, _ = h.Write(buf[:])
+	}
+	return fmt.Sprintf("%d:%x", len(sorted), h.Sum64())
 }
 
 func fetchPastOfferLifecycleAggregates(ids []int64) map[int64]pastLifecycleAggregate {
@@ -582,6 +582,7 @@ func loadGeneralStatsContext(r *http.Request) (generalStatsContext, error) {
 	if generalStatsCache.entries == nil {
 		generalStatsCache.entries = make(map[string]generalStatsCacheEntry)
 	}
+	sweepGeneralStatsCache(now)
 	generalStatsCache.entries[key] = generalStatsCacheEntry{ctx: ctx, expiry: now.Add(dashboardCacheTTL)}
 	generalStatsCache.Unlock()
 	return ctx, nil
@@ -825,7 +826,7 @@ func buildPastPremiumAndLifetimeStats(
 		if exchange == "" {
 			continue
 		}
-		if isPaymentMethodExcluded(offerString(offer, "payment_method"), excludedPaymentMethods) {
+		if offerHasExcludedPaymentMethod(offer, excludedPaymentMethods) {
 			continue
 		}
 
@@ -1950,10 +1951,6 @@ func handleSnapshotLogDetail(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, entry)
 }
 
-func compactSnapshotExchanges(exchanges map[string]any) map[string]any {
-	return snapshotlog.CompactExchanges(exchanges)
-}
-
 func handleMmControllerTransactions(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/transactions")
 }
@@ -2430,9 +2427,13 @@ func loadTradingBankAccountByID(ctx context.Context, id int64) (*tradingBankAcco
 	return tradingAccounts().GetBankAccount(ctx, id)
 }
 
+// maxJSONBodyBytes bounds request bodies so a client can't stream an unbounded
+// payload into memory before decoding.
+const maxJSONBodyBytes = 1 << 20 // 1 MiB
+
 func decodeJSON(r *http.Request, dest any) error {
 	defer r.Body.Close()
-	decoder := json.NewDecoder(r.Body)
+	decoder := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxJSONBodyBytes))
 	decoder.DisallowUnknownFields()
 	return decoder.Decode(dest)
 }
@@ -2623,13 +2624,6 @@ func offerFloatPtr(o map[string]any, key string) *float64 {
 	return nil
 }
 
-func nonEmptyOr(value, fallback string) string {
-	if strings.TrimSpace(value) != "" {
-		return value
-	}
-	return fallback
-}
-
 func nonZeroFloat(value, fallback float64) float64 {
 	if value != 0 {
 		return value
@@ -2787,6 +2781,22 @@ func isPaymentMethodExcluded(method string, excluded []string) bool {
 	return false
 }
 
+// offerHasExcludedPaymentMethod reports whether any of an offer's payment
+// methods is in the excluded set. Offers carry payment_methods as a TEXT[]
+// (migration 20260629 replaced the scalar payment_method column), so callers
+// must match against every element rather than a single scalar field.
+func offerHasExcludedPaymentMethod(o map[string]any, excluded []string) bool {
+	if len(excluded) == 0 {
+		return false
+	}
+	for _, method := range offerStringSlice(o, "payment_methods") {
+		if isPaymentMethodExcluded(method, excluded) {
+			return true
+		}
+	}
+	return false
+}
+
 func offerString(o map[string]any, key string) string {
 	switch v := o[key].(type) {
 	case string:
@@ -2925,18 +2935,6 @@ func handleMmControllerHedgeStreamWS(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerWebSocket(w, r, "/ws/cex/hedge-stream")
 }
 
-func queryIntPtr(r *http.Request, key string) *int {
-	s := r.URL.Query().Get(key)
-	if s == "" {
-		return nil
-	}
-	v, err := strconv.Atoi(s)
-	if err != nil {
-		return nil
-	}
-	return &v
-}
-
 func parseFloat(s string) float64 {
 	v, _ := strconv.ParseFloat(s, 64)
 	return v
@@ -2948,5 +2946,8 @@ func writeJSON(w http.ResponseWriter, data any) {
 }
 
 func writeError(w http.ResponseWriter, err error) {
-	http.Error(w, err.Error(), http.StatusInternalServerError)
+	// Log the real error server-side but return a generic message: raw err.Error()
+	// can carry DB/driver internals (table names, connection strings, SQL state).
+	slog.Error("request failed", "err", err)
+	http.Error(w, "internal server error", http.StatusInternalServerError)
 }

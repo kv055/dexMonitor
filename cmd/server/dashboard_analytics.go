@@ -36,7 +36,7 @@ type dashboardAnalyticsResponse struct {
 
 func parseDashboardAnalyticsParams(r *http.Request) (dashboardAnalyticsParams, error) {
 	var body dashboardAnalyticsParams
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(nil, r.Body, maxJSONBodyBytes)).Decode(&body); err != nil {
 		return dashboardAnalyticsParams{}, err
 	}
 	if body.Hours <= 0 {
@@ -130,6 +130,7 @@ func loadGeneralStatsContextForParams(p dashboardAnalyticsParams) (generalStatsC
 	if generalStatsCache.entries == nil {
 		generalStatsCache.entries = make(map[string]generalStatsCacheEntry)
 	}
+	sweepGeneralStatsCache(now)
 	generalStatsCache.entries[key] = generalStatsCacheEntry{ctx: ctx, expiry: now.Add(dashboardCacheTTL)}
 	generalStatsCache.Unlock()
 	return ctx, nil

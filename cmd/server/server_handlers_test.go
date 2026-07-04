@@ -655,6 +655,27 @@ func TestPastOrderStatsAndPastOffersRespectExcludedPaymentMethods(t *testing.T) 
 	}
 }
 
+func TestOfferHasExcludedPaymentMethodMatchesAnyArrayElement(t *testing.T) {
+	// After migration 20260629 offers carry payment_methods as a Postgres TEXT[]
+	// literal; exclusion must match ANY element. The pre-fix code read the dropped
+	// scalar payment_method column, so every exclusion silently no-op'd.
+	multi := map[string]any{"payment_methods": `{SEPA,"SEPA Instant",Revolut}`}
+	if !offerHasExcludedPaymentMethod(multi, []string{"Revolut"}) {
+		t.Fatal("expected an offer whose array contains Revolut to be excluded")
+	}
+	if offerHasExcludedPaymentMethod(multi, []string{"Wise"}) {
+		t.Fatal("did not expect exclusion when no array element matches")
+	}
+	if offerHasExcludedPaymentMethod(multi, nil) {
+		t.Fatal("empty exclusion set must never exclude")
+	}
+	// The removed scalar column must not drive the filter anymore.
+	scalarOnly := map[string]any{"payment_method": "Revolut"}
+	if offerHasExcludedPaymentMethod(scalarOnly, []string{"Revolut"}) {
+		t.Fatal("must read payment_methods (TEXT[]), not the removed scalar payment_method")
+	}
+}
+
 func TestPastProfitableOrdersReturnsClosedNetPositiveOrders(t *testing.T) {
 	withTempOrdersDB(t)
 

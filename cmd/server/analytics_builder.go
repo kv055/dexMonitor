@@ -248,7 +248,7 @@ func (bc *analyticsBuildContext) buildTakerStatsOnly() takerAnalyticsResult {
 
 	for _, o := range bc.closedOffers {
 		analysis := analyses[int64(offerFloat(o, "id"))]
-		excluded := hasExclusions && isPaymentMethodExcluded(offerString(o, "payment_method"), bc.params.ExcludePaymentMethods)
+		excluded := hasExclusions && offerHasExcludedPaymentMethod(o, bc.params.ExcludePaymentMethods)
 
 		if analysis.profitableInMode(takerOpportunityModeNetFull) {
 			po := premiumOrderFromAnalysis(o, analysis, takerOpportunityModeNetFull)
@@ -491,6 +491,12 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 	if analyticsResultCache.entries == nil {
 		analyticsResultCache.entries = make(map[string]analyticsResultCacheEntry)
 	}
+	// Evict expired entries so the param-keyed map doesn't grow unbounded.
+	for k, e := range analyticsResultCache.entries {
+		if !now.Before(e.expiry) {
+			delete(analyticsResultCache.entries, k)
+		}
+	}
 	analyticsResultCache.entries[cacheKey] = analyticsResultCacheEntry{
 		response:        merged,
 		expiry:          now.Add(analyticsResultCacheTTL),
@@ -559,7 +565,7 @@ func buildPastOrderStatsForQuery(p pastTakerQueryParams) (pastorders.StatsRespon
 	now := time.Now()
 	profitableOrders := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
 	for _, o := range bc.closedOffers {
-		if p.ApplyPaymentExclusions && isPaymentMethodExcluded(offerString(o, "payment_method"), p.ExcludePaymentMethods) {
+		if p.ApplyPaymentExclusions && offerHasExcludedPaymentMethod(o, p.ExcludePaymentMethods) {
 			continue
 		}
 		id := int64(offerFloat(o, "id"))
@@ -585,7 +591,7 @@ func buildPastProfitableOrdersForQuery(p pastTakerQueryParams) ([]pastProfitable
 
 	result := make([]pastProfitableOrderAPI, 0, len(bc.closedOffers))
 	for _, o := range bc.closedOffers {
-		if p.ApplyPaymentExclusions && isPaymentMethodExcluded(offerString(o, "payment_method"), p.ExcludePaymentMethods) {
+		if p.ApplyPaymentExclusions && offerHasExcludedPaymentMethod(o, p.ExcludePaymentMethods) {
 			continue
 		}
 		id := int64(offerFloat(o, "id"))
