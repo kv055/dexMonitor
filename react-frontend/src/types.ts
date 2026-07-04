@@ -617,6 +617,42 @@ export interface GeneralStatsData {
   past_premiums?: PastPremiumTimeframeStats[];
 }
 
+// PaymentMethodRow is one payment_methods catalog row as served by
+// GET /api/trading/payment_methods for the categorization panel.
+export interface PaymentMethodRow {
+  id: number;
+  name: string;
+  merge_regex: string | null;
+  category: string;
+  bank_account_id: number | null;
+  account_id: number | null;
+  wallet_address_id: number | null;
+  is_active: boolean;
+  is_linked: boolean;
+  priority: number;
+  match_order: number;
+  link_label: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PaymentMethodUpdatePayload {
+  merge_regex: string | null;
+  category: string;
+  bank_account_id: number | null;
+  account_id: number | null;
+  wallet_address_id: number | null;
+  is_active: boolean;
+  priority: number;
+}
+
+// TradingWalletAddress is a wallet_addresses row (Crypto link dropdown).
+export interface TradingWalletAddress {
+  id: number;
+  label: string;
+  address: string;
+}
+
 export interface PaymentMethodGroup {
   name: string;
   display_name: string;
@@ -734,6 +770,8 @@ export interface CexTradeflowRequest {
   fiat_amount?: number;
   transaction_id?: number;
   selected_offer?: Record<string, unknown>;
+  payment_method?: string;
+  payment_methods?: string[];
 }
 
 export interface CexTradeflowResult {
@@ -816,12 +854,19 @@ export interface PreTradeCheckReport {
   ok: boolean;
   checks: PreTradeCheckResult[];
   lnd_withdraw_address?: string;
+  // The catalog method the payment check validated — the explicitly requested
+  // one, or the highest-priority linked+active pick from payment_methods.
+  resolved_payment_method?: string;
 }
 
 export interface CexPreTradeCheckRequest {
   provider: string;
   fiat_currency: string;
   required_capital_eur: number;
+  payment_method?: string;
+  // The offer's full accepted-method list; when payment_method is empty the
+  // backend picks the highest-priority linked+active catalog entry.
+  payment_methods?: string[];
 }
 
 export interface CexHedgeOpenResult {

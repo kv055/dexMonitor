@@ -2,6 +2,8 @@ package paymentmethods
 
 import (
 	"testing"
+
+	commonpm "commons/paymentmethods"
 )
 
 func findGroup(groups []Group, name string) *Group {
@@ -34,7 +36,7 @@ func TestBuildGroupsCanonicalizesAndSplits(t *testing.T) {
 		"SEPA_INSTANT",
 		"Deutsche Bank",
 	}
-	groups := buildGroups(methods)
+	groups := buildGroups(commonpm.NewRegistry(commonpm.SeedRows()), methods)
 
 	bank := methodsOf(findGroup(groups, "bank_transfer"))
 	if !bank["SEPA Instant"] {
@@ -50,13 +52,13 @@ func TestBuildGroupsCanonicalizesAndSplits(t *testing.T) {
 		t.Errorf("bank_transfer should not list raw Deutsche Bank: %v", bank)
 	}
 
-	mt := methodsOf(findGroup(groups, "money_transmitter"))
+	mt := methodsOf(findGroup(groups, "fiat_transmitter"))
 	if !mt["PayPal"] {
-		t.Errorf("money_transmitter missing 'PayPal': %v", mt)
+		t.Errorf("fiat_transmitter missing 'PayPal': %v", mt)
 	}
 	for _, want := range []string{"Revolut", "Strike", "MB Way", "Bizum"} {
 		if !mt[want] {
-			t.Errorf("money_transmitter missing %q: %v", want, mt)
+			t.Errorf("fiat_transmitter missing %q: %v", want, mt)
 		}
 	}
 
@@ -78,7 +80,7 @@ func TestBuildGroupsNoDuplicates(t *testing.T) {
 		"Deutsche Bank",
 		"ING",
 	}
-	groups := buildGroups(methods)
+	groups := buildGroups(commonpm.NewRegistry(commonpm.SeedRows()), methods)
 
 	seen := make(map[string]int)
 	for _, g := range groups {
@@ -115,7 +117,7 @@ func TestBuildGroupsCryptoCategory(t *testing.T) {
 		"True USD",
 		"PYUSD",
 	}
-	groups := buildGroups(methods)
+	groups := buildGroups(commonpm.NewRegistry(commonpm.SeedRows()), methods)
 	crypto := methodsOf(findGroup(groups, "crypto"))
 	for _, want := range []string{
 		"Monero", "Other Coins", "Solana", "Stellar", "XRP", "Litecoin", "USDT", "Altcoins Instant", "Bitcoin",
@@ -125,7 +127,7 @@ func TestBuildGroupsCryptoCategory(t *testing.T) {
 			t.Errorf("crypto group missing %q: %v", want, crypto)
 		}
 	}
-	if other := methodsOf(findGroup(groups, "other")); len(other) > 0 {
+	if other := methodsOf(findGroup(groups, "others")); len(other) > 0 {
 		t.Errorf("expected no crypto methods in other, got %v", other)
 	}
 }

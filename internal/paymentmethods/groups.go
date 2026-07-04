@@ -15,27 +15,22 @@ type Group struct {
 	Methods []string `json:"methods"`
 }
 
-// classifyMethod returns the category for the given canonical payment method.
-func classifyMethod(method string) string {
-	return commonpm.CategoryOf(method)
-}
-
 // buildGroups takes the raw distinct payment method strings from the DB,
-// canonicalizes them via the shared registry, then organizes the resulting atoms
-// into category groups. Groups with no methods are omitted; "other" is always
-// last if non-empty.
-func buildGroups(methods []string) []Group {
-	canonical := commonpm.CanonicalizeDistinct(methods)
+// canonicalizes them via the given registry (built from the payment_methods
+// table), then organizes the resulting atoms into category groups. Groups
+// with no methods are omitted; "others" is always last if non-empty.
+func buildGroups(reg *commonpm.Registry, methods []string) []Group {
+	canonical := reg.CanonicalizeDistinct(methods)
 
 	groupMethods := make(map[string][]string)
 	for _, m := range canonical {
-		key := classifyMethod(m)
+		key := reg.CategoryOf(m)
 		groupMethods[key] = append(groupMethods[key], m)
 	}
 
 	var groups []Group
 	for _, cat := range commonpm.CategoryOrder() {
-		if cat == commonpm.CategoryOther {
+		if cat == commonpm.CategoryOthers {
 			continue
 		}
 		ms := groupMethods[cat]
@@ -48,10 +43,10 @@ func buildGroups(methods []string) []Group {
 			Methods:     ms,
 		})
 	}
-	if other := groupMethods[commonpm.CategoryOther]; len(other) > 0 {
+	if other := groupMethods[commonpm.CategoryOthers]; len(other) > 0 {
 		groups = append(groups, Group{
-			Name:        commonpm.CategoryOther,
-			DisplayName: commonpm.CategoryDisplayName(commonpm.CategoryOther),
+			Name:        commonpm.CategoryOthers,
+			DisplayName: commonpm.CategoryDisplayName(commonpm.CategoryOthers),
 			Methods:     other,
 		})
 	}

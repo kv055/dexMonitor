@@ -84,6 +84,12 @@ func (s *Service) RefreshLoop(ctx context.Context, interval time.Duration) {
 	}
 }
 
+// RefreshNow rebuilds the cache immediately — called after categorization
+// panel edits so they take effect without waiting for the periodic refresh.
+func (s *Service) RefreshNow() error {
+	return s.refresh()
+}
+
 // refresh queries the DB and rebuilds the cached groups.
 func (s *Service) refresh() error {
 	rows, err := s.db.Query(
@@ -106,9 +112,24 @@ func (s *Service) refresh() error {
 		return err
 	}
 
-	groups := buildGroups(methods)
+	// Rebuild the registry from the payment_methods table so panel edits
+	// (categories, merge regexes) apply on the next refresh. On failure keep
+	// whatever registry is installed — same resilience contract as the rest
+	// of this service.
+	reg := commonpm.Default()
+	if pmRows, err := commonpm.LoadRows(context.Background(), s.db); err != nil {
+		slog.Warn("paymentmethods: loading payment_methods registry failed; keeping previous registry", "err", err)
+	} else {
+		reg = commonpm.NewRegistry(pmRows)
+		for _, w := range reg.Warnings() {
+			slog.Warn("paymentmethods: registry warning", "warning", w)
+		}
+		commonpm.SetDefault(reg)
+	}
 
-	unmatched := commonpm.UnmatchedFromDistinct(methods)
+	groups := buildGroups(reg, methods)
+
+	unmatched := reg.UnmatchedFromDistinct(methods)
 	if len(unmatched) > 0 {
 		const maxLog = 20
 		shown := unmatched
@@ -120,7 +141,7 @@ func (s *Service) refresh() error {
 			"sample", strings.Join(shown, ", "),
 		)
 	}
-	if other := findGroupMethods(groups, commonpm.CategoryOther); len(other) > 0 {
+	if other := findGroupMethods(groups, commonpm.CategoryOthers); len(other) > 0 {
 		slog.Info("paymentmethods: methods in other category", "count", len(other), "methods", other)
 	}
 

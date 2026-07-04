@@ -25,6 +25,7 @@ import { SnapshotLog } from './components/SnapshotLog';
 import { MmTransactionsLog } from './components/MmTransactionsLog';
 import { TakerOpportunities } from './components/TakerOpportunities';
 import { TradingAccountsPanel } from './components/TradingAccountsPanel';
+import { PaymentMethodsPanel } from './components/PaymentMethodsPanel';
 
 function OhlcPanelHeader() {
   const { refPrice, filters } = useFilters();
@@ -174,8 +175,11 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
 
 function TradingView() {
   return (
-    <div className="lg:flex-1 lg:min-h-0 lg:overflow-hidden">
-      <TradingAccountsPanel />
+    <div className="lg:flex-1 lg:min-h-0 lg:overflow-hidden flex flex-col gap-3">
+      <div className="flex-1 min-h-0 overflow-hidden">
+        <TradingAccountsPanel />
+      </div>
+      <PaymentMethodsPanel />
       {/* Trade Flow Monitor — temporarily disabled
       <div className="min-h-0 rounded-lg border border-border bg-surface p-3 flex flex-col">
         <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">Trade Flow Monitor</h3>

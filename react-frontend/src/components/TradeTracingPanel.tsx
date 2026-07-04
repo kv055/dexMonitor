@@ -171,6 +171,7 @@ function LiveHedgePosition({ position, socketConnected }: { position: HedgePosit
 }
 
 export function TradeTracingPanel({ offer }: { offer: Offer }) {
+  const { filters } = useFilters();
   const hasCapped = hasCappedScenario(offer);
   // Default to the capped scenario when one actually applies (the offer's
   // full size exceeds the fiat cap); otherwise there's nothing to cap, so
@@ -191,6 +192,17 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
 
   const defaultBtc = bd?.btc_amount ?? btcMax ?? btcMin ?? 0;
   const canUseFiat = refPrice != null && refPrice > 0;
+
+  // Explicit client-side preference: a single-method offer or an active
+  // dashboard payment filter names the method outright. Otherwise the method
+  // is left empty and the backend picks the highest-priority linked+active
+  // catalog entry from the offer's accepted list (payment_methods).
+  const resolvedPaymentMethod = useMemo(() => {
+    const methods = offer.payment_methods ?? [];
+    if (methods.length === 1) return methods[0];
+    if (filters.payment && methods.includes(filters.payment)) return filters.payment;
+    return '';
+  }, [offer.payment_methods, filters.payment]);
 
   const [unit, setUnit] = useState<Unit>('btc');
   const [draft, setDraft] = useState<string>(() => fmtBtc(defaultBtc));
@@ -295,6 +307,8 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
         provider: routeCex,
         fiat_currency: fiatCurrency,
         required_capital_eur: bd?.capital?.total_eur ?? 0,
+        payment_method: resolvedPaymentMethod || undefined,
+        payment_methods: offer.payment_methods ?? undefined,
       });
       setChecks({ phase: 'done', report });
       if (report.lnd_withdraw_address) {
@@ -322,6 +336,9 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
     const btcNotional = clampedBtc * hedgeRatio;
 
     const fiatAmount = estFiat ?? (refPrice != null ? refPrice * clampedBtc : 0);
+    // Pay with the method the pre-trade checks validated: the explicit choice
+    // when there is one, else the backend's priority pick echoed in the report.
+    const tradePaymentMethod = resolvedPaymentMethod || (checks.phase === 'done' ? checks.report?.resolved_payment_method ?? '' : '');
 
     try {
       const result = await cexTradeflow({
@@ -337,6 +354,8 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
         offer_id: offer.offer_id ?? undefined,
         dex: offer.exchange,
         fiat_amount: fiatAmount > 0 ? fiatAmount : undefined,
+        payment_method: tradePaymentMethod || undefined,
+        payment_methods: tradePaymentMethod ? undefined : offer.payment_methods ?? undefined,
         selected_offer: {
           offer_id: offer.offer_id,
           exchange: offer.exchange,
@@ -624,7 +643,14 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
               <div className="flex justify-between gap-2"><span className="text-muted">CEX</span><span className="text-text font-medium">{cexLabel}</span></div>
               <div className="flex justify-between gap-2"><span className="text-muted">Amount</span><span className="text-text mono-nums">{fmtBtc(clampedBtc)} BTC</span></div>
               <div className="flex justify-between gap-2"><span className="text-muted">Est. cost</span><span className="text-text mono-nums">{estFiat != null ? fmtFiat(estFiat, fiatCurrency) : '—'}</span></div>
+              <div className="flex justify-between gap-2"><span className="text-muted">Payment</span><span className="text-text font-medium">{resolvedPaymentMethod || (checks.phase === 'done' ? checks.report?.resolved_payment_method : undefined) || '—'}</span></div>
             </div>
+
+            {!resolvedPaymentMethod && (offer.payment_methods?.length ?? 0) > 1 && (
+              <p className="text-[0.68rem] text-muted">
+                This offer accepts multiple payment methods — the highest-priority linked method from the payment methods panel is used automatically.
+              </p>
+            )}
 
             {/* Pre-trade checks — all run to completion before the buy can be confirmed. */}
             <div className="bg-bg border border-border rounded-md p-2.5 flex flex-col gap-1.5 text-[0.74rem]">

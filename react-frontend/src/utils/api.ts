@@ -22,6 +22,9 @@ import type {
   TradingSeed,
   TradingTOTPSecret,
   TradingBankAccount,
+  PaymentMethodRow,
+  PaymentMethodUpdatePayload,
+  TradingWalletAddress,
 } from '../types';
 
 const API_BASE = '';
@@ -284,6 +287,25 @@ export function fetchCexHedgePositions(accountId: number) {
 
 export function fetchCexSpotTrades(accountId: number, limit = 50) {
   return request<CexSpotTrade[]>(`/api/trading/accounts/${accountId}/cex/spot-trades?limit=${limit}`);
+}
+
+export function fetchPaymentMethods() {
+  return request<{ payment_methods: PaymentMethodRow[] }>('/api/trading/payment_methods');
+}
+
+export function updatePaymentMethod(id: number, payload: PaymentMethodUpdatePayload) {
+  return request<{ payment_methods: PaymentMethodRow[] }>(`/api/trading/payment_methods/${id}`, {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deletePaymentMethod(id: number) {
+  return request<{ ok: boolean }>(`/api/trading/payment_methods/${id}`, { method: 'DELETE' });
+}
+
+export function fetchTradingWalletAddresses() {
+  return request<{ wallet_addresses: TradingWalletAddress[] }>('/api/trading/wallet_addresses');
 }
 
 export function cexPreTradeCheck(payload: CexPreTradeCheckRequest) {

@@ -50,6 +50,7 @@ var (
 	sessionCookieSecure bool
 	db                  *sql.DB
 	pmService           *paymentmethods.Service
+	pmRepo              *paymentmethods.Repo
 	lifecycleRepo       lifecycle.Repository
 	ohlcService         *ohlc.Service
 	snapshotLogRepo     snapshotlog.Repository
@@ -197,6 +198,7 @@ func main() {
 	// Payment method grouping service — RefreshLoop performs the initial load
 	// (with retry, in case the DB isn't ready yet) and refreshes every hour.
 	pmService = paymentmethods.NewService(db)
+	pmRepo = &paymentmethods.Repo{DB: db}
 	go pmService.RefreshLoop(ctx, time.Hour)
 
 	mux := http.NewServeMux()
@@ -220,6 +222,10 @@ func main() {
 	mux.HandleFunc("GET /api/snapshot-log", handleSnapshotLog)
 	mux.HandleFunc("GET /api/snapshot-log/{id}", handleSnapshotLogDetail)
 	mux.HandleFunc("GET /api/payment_method_groups", handlePaymentMethodGroups)
+	mux.HandleFunc("GET /api/trading/payment_methods", handleTradingPaymentMethods)
+	mux.HandleFunc("PUT /api/trading/payment_methods/{id}", handleTradingPaymentMethodByID)
+	mux.HandleFunc("DELETE /api/trading/payment_methods/{id}", handleTradingPaymentMethodByID)
+	mux.HandleFunc("GET /api/trading/wallet_addresses", handleTradingWalletAddresses)
 	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
 	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
 	mux.HandleFunc("GET /api/mm-controller/lnd/wallet", handleMmControllerLNDWallet)
@@ -1921,6 +1927,70 @@ func handlePaymentMethodGroups(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"groups": pmService.GetGroups()})
 }
 
+// handleTradingPaymentMethods serves the payment-method categorization panel's
+// catalog list.
+func handleTradingPaymentMethods(w http.ResponseWriter, r *http.Request) {
+	rows, err := pmRepo.List(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"payment_methods": rows})
+}
+
+// handleTradingPaymentMethodByID updates or deletes one catalog row. After a
+// successful update the grouping cache refreshes immediately so category and
+// merge-regex edits apply without waiting for the hourly refresh.
+func handleTradingPaymentMethodByID(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	switch r.Method {
+	case http.MethodPut:
+		var payload paymentmethods.UpdatePayload
+		if err := decodeJSON(r, &payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := pmRepo.Update(r.Context(), int64(id), payload); err != nil {
+			writeRepoError(w, err)
+			return
+		}
+		if pmService != nil {
+			if err := pmService.RefreshNow(); err != nil {
+				slog.Warn("payment method groups refresh after update failed", "err", err)
+			}
+		}
+		rows, err := pmRepo.List(r.Context())
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"payment_methods": rows})
+	case http.MethodDelete:
+		if err := pmRepo.Delete(r.Context(), int64(id)); err != nil {
+			writeRepoError(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+// handleTradingWalletAddresses serves the wallet_addresses list for the
+// panel's Crypto link dropdown (read-only; dexMmController owns writes).
+func handleTradingWalletAddresses(w http.ResponseWriter, r *http.Request) {
+	rows, err := pmRepo.ListWalletAddresses(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"wallet_addresses": rows})
+}
+
 func handleSnapshotLog(w http.ResponseWriter, r *http.Request) {
 	limit := queryInt(r, "limit", 50)
 	if snapshotLogRepo.DB != db {
@@ -2960,6 +3030,11 @@ func writeRepoError(w http.ResponseWriter, err error) {
 	var verr tradingaccounts.ValidationError
 	if errors.As(err, &verr) {
 		http.Error(w, verr.Error(), http.StatusBadRequest)
+		return
+	}
+	var pmErr paymentmethods.ValidationError
+	if errors.As(err, &pmErr) {
+		http.Error(w, pmErr.Error(), http.StatusBadRequest)
 		return
 	}
 	writeError(w, err)
