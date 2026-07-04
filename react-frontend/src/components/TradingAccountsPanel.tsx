@@ -32,6 +32,7 @@ import {
   updateSeed,
   updateTOTPSecret,
 } from '../utils/api';
+import { emailFormatError, ibanFormatError } from '../utils/validators';
 import type {
   CexBalancesResponse,
   CexDepositAddress,
@@ -874,7 +875,9 @@ function AccountEditor({
     ? 'w-full rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none focus:border-accent'
     : inputCls;
   const labelCls = compact ? 'grid min-w-0 gap-1 text-xs text-muted' : 'grid gap-1 text-sm text-muted';
-  const submitCls = submitDisabled
+  const emailError = showContactFields ? emailFormatError(value.email) : null;
+  const effectiveSubmitDisabled = submitDisabled || Boolean(emailError);
+  const submitCls = effectiveSubmitDisabled
     ? `${primaryButtonCls} cursor-not-allowed opacity-50`
     : primaryButtonCls;
 
@@ -911,6 +914,7 @@ function AccountEditor({
                   onChange={e => onChange({ ...value, email: e.target.value })}
                   placeholder="Optional"
                 />
+                {emailError ? <span className="text-[0.65rem] text-red">{emailError}</span> : null}
               </label>
               <label className={labelCls}>
                 <span>Password</span>
@@ -951,7 +955,7 @@ function AccountEditor({
                 Cancel
               </button>
             ) : null}
-            <button type="button" className={submitCls} disabled={submitDisabled} onClick={onSubmit}>
+            <button type="button" className={submitCls} disabled={effectiveSubmitDisabled} onClick={onSubmit}>
               {submitLabel}
             </button>
           </div>
@@ -992,6 +996,7 @@ function AccountEditor({
               onChange={e => onChange({ ...value, email: e.target.value })}
               placeholder="Optional"
             />
+            {emailError ? <span className="text-[0.65rem] text-red">{emailError}</span> : null}
           </label>
           <label className={labelCls}>
             <span>Password</span>
@@ -1033,7 +1038,7 @@ function AccountEditor({
             Cancel
           </button>
         ) : null}
-        <button type="button" className={submitCls} disabled={submitDisabled} onClick={onSubmit}>
+        <button type="button" className={submitCls} disabled={effectiveSubmitDisabled} onClick={onSubmit}>
           {submitLabel}
         </button>
       </div>
@@ -2439,6 +2444,7 @@ export function TradingAccountsPanel() {
     if (!isBankAccount(account)) return null;
     const draft = newBankAccountByAccount[account.id] ?? emptyBankAccountForm();
     const showNew = !!showNewFormByAccount[account.id]?.seeds;
+    const draftIbanError = draft.iban.trim() ? ibanFormatError(draft.iban) : null;
     return (
       <CollapsibleSection
         title="Bank Accounts"
@@ -2463,6 +2469,7 @@ export function TradingAccountsPanel() {
             bic: ba.details.bic ?? '',
             is_active: ba.is_active,
           };
+          const ibanError = form.iban.trim() ? ibanFormatError(form.iban) : null;
           return (
             <ResourceCard key={ba.id} title={ba.label ?? `Account #${ba.id}`}>
               {edit ? (
@@ -2470,7 +2477,10 @@ export function TradingAccountsPanel() {
                   <input className={compactInputCls} value={form.label} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, label: e.target.value } }))} placeholder="Label (optional)" />
                   <input className={compactInputCls} value={form.owner_name} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, owner_name: e.target.value } }))} placeholder="Owner name" />
                   <div className="grid gap-1.5 md:grid-cols-2">
-                    <input className={compactInputCls} value={form.iban} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, iban: e.target.value } }))} placeholder="IBAN" />
+                    <div className="grid gap-1">
+                      <input className={compactInputCls} value={form.iban} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, iban: e.target.value } }))} placeholder="IBAN" />
+                      {ibanError ? <span className="text-[0.65rem] text-red">{ibanError}</span> : null}
+                    </div>
                     <input className={compactInputCls} value={form.bic} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, bic: e.target.value } }))} placeholder="BIC" />
                     <input className={compactInputCls} value={form.currency} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, currency: e.target.value.toUpperCase() } }))} placeholder="Currency (EUR)" />
                     <input className={compactInputCls} value={form.country} onChange={e => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: { ...form, country: e.target.value.toUpperCase() } }))} placeholder="Country (DE)" />
@@ -2480,7 +2490,7 @@ export function TradingAccountsPanel() {
                     Active
                   </label>
                   <div className="flex gap-1">
-                    <button type="button" className={compactButtonCls} onClick={() => withReload(async () => {
+                    <button type="button" className={compactButtonCls} disabled={Boolean(ibanError)} onClick={() => withReload(async () => {
                       await updateBankAccount(ba.id, { ...form, scheme: 'iban_bic', details: { iban: form.iban, bic: form.bic }, label: form.label || null, country: form.country || null });
                       setEditingBankAccountById(prev => { const next = { ...prev }; delete next[ba.id]; return next; });
                     })}>Save</button>
@@ -2509,7 +2519,10 @@ export function TradingAccountsPanel() {
               <input className={compactInputCls} value={draft.label} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, label: e.target.value } }))} placeholder="Label (optional)" />
               <input className={compactInputCls} value={draft.owner_name} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, owner_name: e.target.value } }))} placeholder="Owner name" />
               <div className="grid gap-1.5 md:grid-cols-2">
-                <input className={compactInputCls} value={draft.iban} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, iban: e.target.value } }))} placeholder="IBAN" />
+                <div className="grid gap-1">
+                  <input className={compactInputCls} value={draft.iban} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, iban: e.target.value } }))} placeholder="IBAN" />
+                  {draftIbanError ? <span className="text-[0.65rem] text-red">{draftIbanError}</span> : null}
+                </div>
                 <input className={compactInputCls} value={draft.bic} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, bic: e.target.value } }))} placeholder="BIC" />
                 <input className={compactInputCls} value={draft.currency} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, currency: e.target.value.toUpperCase() } }))} placeholder="Currency (EUR)" />
                 <input className={compactInputCls} value={draft.country} onChange={e => setNewBankAccountByAccount(prev => ({ ...prev, [account.id]: { ...draft, country: e.target.value.toUpperCase() } }))} placeholder="Country (DE)" />
@@ -2520,7 +2533,7 @@ export function TradingAccountsPanel() {
               </label>
             </div>
             <div className="mt-1.5 flex justify-end">
-              <button type="button" className={compactButtonCls} onClick={() => withReload(async () => {
+              <button type="button" className={compactButtonCls} disabled={Boolean(draftIbanError)} onClick={() => withReload(async () => {
                 await createBankAccount(account.id, {
                   label: draft.label || null,
                   owner_name: draft.owner_name,

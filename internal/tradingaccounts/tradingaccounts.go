@@ -8,7 +8,41 @@ import (
 	"time"
 
 	"commons/accounts"
+	"commons/paymentmethods"
 )
+
+// ValidationError marks an error as rejected user input (mapped to HTTP 400
+// by the API handlers), as opposed to an internal/database failure (500).
+type ValidationError struct {
+	err error
+}
+
+func (e ValidationError) Error() string { return e.err.Error() }
+func (e ValidationError) Unwrap() error { return e.err }
+
+// validateEmail checks format and (best-effort) domain deliverability for a
+// non-empty email before it's persisted.
+func validateEmail(ctx context.Context, email string) error {
+	if err := paymentmethods.ValidateEmailFormat(email); err != nil {
+		return ValidationError{err}
+	}
+	if err := paymentmethods.ValidateEmailDomain(ctx, email); err != nil {
+		return ValidationError{err}
+	}
+	return nil
+}
+
+// validateIBAN checks the "iban" detail, if present, before it's persisted.
+func validateIBAN(details map[string]string) error {
+	iban := strings.TrimSpace(details["iban"])
+	if iban == "" {
+		return nil
+	}
+	if err := paymentmethods.ValidateIBAN(iban); err != nil {
+		return ValidationError{err}
+	}
+	return nil
+}
 
 // Account is a stored trading-account profile and its credential metadata.
 type Account struct {
@@ -380,12 +414,18 @@ func (r Repository) Create(ctx context.Context, payload AccountPayload) (int64, 
 	if category == "" {
 		category = accounts.CategoryForProvider(provider)
 	}
+	email := strings.TrimSpace(payload.Email)
+	if email != "" {
+		if err := validateEmail(ctx, email); err != nil {
+			return 0, err
+		}
+	}
 	var id int64
 	err := r.DB.QueryRowContext(ctx, `
 		INSERT INTO accounts (provider, category, email, password, phone)
 		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''))
 		RETURNING id
-	`, provider, category, strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone)).Scan(&id)
+	`, provider, category, email, strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone)).Scan(&id)
 	return id, err
 }
 
@@ -396,6 +436,12 @@ func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload
 	if category == "" {
 		category = accounts.CategoryForProvider(provider)
 	}
+	email := strings.TrimSpace(payload.Email)
+	if email != "" {
+		if err := validateEmail(ctx, email); err != nil {
+			return err
+		}
+	}
 	_, err := r.DB.ExecContext(ctx, `
 		UPDATE accounts
 		SET provider = $2,
@@ -405,7 +451,7 @@ func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload
 		    phone = NULLIF($6, ''),
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
-	`, id, provider, category, strings.TrimSpace(payload.Email), strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone))
+	`, id, provider, category, email, strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone))
 	return err
 }
 
@@ -825,6 +871,9 @@ func (r Repository) appendAPIKeys(ctx context.Context, accounts []Account, accou
 
 // CreateBankAccount creates a bank account under the given account.
 func (r Repository) CreateBankAccount(ctx context.Context, accountID int64, payload BankAccountPayload) (int64, error) {
+	if err := validateIBAN(payload.Details); err != nil {
+		return 0, err
+	}
 	detailsJSON, err := json.Marshal(payload.Details)
 	if err != nil {
 		return 0, err
@@ -842,6 +891,9 @@ func (r Repository) CreateBankAccount(ctx context.Context, accountID int64, payl
 
 // UpdateBankAccount replaces a bank account.
 func (r Repository) UpdateBankAccount(ctx context.Context, id int64, payload BankAccountPayload) error {
+	if err := validateIBAN(payload.Details); err != nil {
+		return err
+	}
 	detailsJSON, err := json.Marshal(payload.Details)
 	if err != nil {
 		return err

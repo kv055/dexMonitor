@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/binary"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"log/slog"
@@ -2046,7 +2047,7 @@ func handleTradingAccounts(w http.ResponseWriter, r *http.Request) {
 		}
 		id, err := createTradingAccount(r.Context(), payload)
 		if err != nil {
-			writeError(w, err)
+			writeRepoError(w, err)
 			return
 		}
 		account, err := loadTradingAccountByID(r.Context(), id)
@@ -2074,7 +2075,7 @@ func handleTradingAccountByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := updateTradingAccount(r.Context(), id, payload); err != nil {
-			writeError(w, err)
+			writeRepoError(w, err)
 			return
 		}
 		account, err := loadTradingAccountByID(r.Context(), id)
@@ -2378,7 +2379,7 @@ func handleTradingAccountBankAccounts(w http.ResponseWriter, r *http.Request) {
 	}
 	id, err := tradingAccounts().CreateBankAccount(r.Context(), accountID, payload)
 	if err != nil {
-		writeError(w, err)
+		writeRepoError(w, err)
 		return
 	}
 	row, err := loadTradingBankAccountByID(r.Context(), id)
@@ -2403,7 +2404,7 @@ func handleTradingBankAccountByID(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err := tradingAccounts().UpdateBankAccount(r.Context(), id, payload); err != nil {
-			writeError(w, err)
+			writeRepoError(w, err)
 			return
 		}
 		row, err := loadTradingBankAccountByID(r.Context(), id)
@@ -2950,4 +2951,16 @@ func writeError(w http.ResponseWriter, err error) {
 	// can carry DB/driver internals (table names, connection strings, SQL state).
 	slog.Error("request failed", "err", err)
 	http.Error(w, "internal server error", http.StatusInternalServerError)
+}
+
+// writeRepoError distinguishes rejected user input from internal failures:
+// a tradingaccounts.ValidationError is safe to show verbatim as a 400,
+// everything else falls back to writeError's generic 500.
+func writeRepoError(w http.ResponseWriter, err error) {
+	var verr tradingaccounts.ValidationError
+	if errors.As(err, &verr) {
+		http.Error(w, verr.Error(), http.StatusBadRequest)
+		return
+	}
+	writeError(w, err)
 }
