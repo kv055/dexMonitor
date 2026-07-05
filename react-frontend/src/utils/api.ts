@@ -25,6 +25,8 @@ import type {
   PaymentMethodRow,
   PaymentMethodUpdatePayload,
   TradingWalletAddress,
+  BisqPaymentAccount,
+  BisqCreateSepaPayload,
 } from '../types';
 
 const API_BASE = '';
@@ -306,6 +308,25 @@ export function deletePaymentMethod(id: number) {
 
 export function fetchTradingWalletAddresses() {
   return request<{ wallet_addresses: TradingWalletAddress[] }>('/api/trading/wallet_addresses');
+}
+
+// --- Bisq1 payment-account profile (proxied to dexMmController) ---
+
+export function fetchBisqPaymentAccounts() {
+  return request<{ payment_accounts: BisqPaymentAccount[] }>('/api/mm-controller/bisq/payment-accounts');
+}
+
+export function createBisqPaymentAccount(payload: BisqCreateSepaPayload) {
+  return request<BisqPaymentAccount>('/api/mm-controller/bisq/payment-accounts', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function deleteBisqPaymentAccount(id: string) {
+  return request<{ ok: boolean }>(`/api/mm-controller/bisq/payment-accounts/${encodeURIComponent(id)}`, {
+    method: 'DELETE',
+  });
 }
 
 export function cexPreTradeCheck(payload: CexPreTradeCheckRequest) {

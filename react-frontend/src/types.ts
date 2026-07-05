@@ -636,6 +636,26 @@ export interface PaymentMethodRow {
   updated_at: string;
 }
 
+// BisqPaymentAccount is one payment account saved in the bisq1 daemon's own profile, as
+// served by GET /api/mm-controller/bisq/payment-accounts.
+export interface BisqPaymentAccount {
+  id: string;
+  account_name: string;
+  payment_method_id: string;
+  trade_currency: string;
+}
+
+// BisqCreateSepaPayload is the body for POST /api/mm-controller/bisq/payment-accounts. Only
+// SEPA is supported for now (payment_method_type defaults to SEPA server-side).
+export interface BisqCreateSepaPayload {
+  payment_method_type?: string;
+  account_name: string;
+  holder_name: string;
+  iban: string;
+  bic: string;
+  country_code: string;
+}
+
 export interface PaymentMethodUpdatePayload {
   merge_regex: string | null;
   category: string;

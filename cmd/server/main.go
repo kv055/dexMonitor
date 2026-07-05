@@ -238,6 +238,9 @@ func main() {
 	mux.HandleFunc("POST /api/mm-controller/cex/pre-trade-check", handleMmControllerCexPreTradeCheck)
 	mux.HandleFunc("POST /api/mm-controller/cex/tradeflow", handleMmControllerCexTradeflow)
 	mux.HandleFunc("GET /api/mm-controller/cex/withdrawal-track", handleMmControllerCexWithdrawalTrack)
+	mux.HandleFunc("GET /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
+	mux.HandleFunc("POST /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
+	mux.HandleFunc("DELETE /api/mm-controller/bisq/payment-accounts/{id}", handleMmControllerBisqPaymentAccountByID)
 	mux.HandleFunc("GET /ws/cex/hedge-stream", handleMmControllerHedgeStreamWS)
 	mux.HandleFunc("GET /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("POST /api/trading/accounts", handleTradingAccounts)
@@ -2062,6 +2065,22 @@ func handleMmControllerLNDCloseChannel(w http.ResponseWriter, r *http.Request) {
 
 func handleMmControllerCexPreTradeCheck(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/cex/pre-trade-check")
+}
+
+// handleMmControllerBisqPaymentAccounts proxies GET (list) and POST (create) of the bisq1
+// daemon's own payment-account profile to dexMmController, which owns the bisq gRPC client.
+func handleMmControllerBisqPaymentAccounts(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/bisq/payment-accounts")
+}
+
+// handleMmControllerBisqPaymentAccountByID proxies DELETE of a bisq payment account by id.
+func handleMmControllerBisqPaymentAccountByID(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	if strings.TrimSpace(id) == "" {
+		http.Error(w, "missing payment account id", http.StatusBadRequest)
+		return
+	}
+	forwardMMControllerJSON(w, r, "/api/bisq/payment-accounts/"+url.PathEscape(id))
 }
 
 func handleMmControllerCexTradeflow(w http.ResponseWriter, r *http.Request) {
