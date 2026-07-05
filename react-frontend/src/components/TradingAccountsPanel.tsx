@@ -74,9 +74,17 @@ const PROVIDER_DEFINITIONS: ProviderDefinition[] = [
   { value: LND_WALLET_PROVIDER, label: 'LND wallet', category: 'Internal Infrastructure', creatable: false },
 ];
 
-const CREATABLE_PROVIDER_CATEGORIES = ['Fiat Transmitter', 'DEX', 'CEX', 'Bank'] as const;
+const CREATABLE_PROVIDER_CATEGORIES = ['Fiat Transmitter', 'DEX', 'CEX', 'Bank', 'Wallet addresses'] as const;
 
-const CATEGORY_ORDER = ['Fiat Transmitter', 'DEX', 'CEX', 'Bank', 'Internal Infrastructure', 'Uncategorized'];
+const PAYMENT_CATEGORIES = ['Fiat Transmitter', 'Bank', 'Wallet addresses'] as const;
+const TRADING_CATEGORIES = ['DEX', 'CEX', 'Internal Infrastructure', 'Uncategorized'] as const;
+const TAB_STORAGE_KEY = 'tradingAccounts.activeTab';
+
+function isPaymentCategory(category: string): boolean {
+  return (PAYMENT_CATEGORIES as readonly string[]).includes(category);
+}
+
+const CATEGORY_ORDER = ['Fiat Transmitter', 'Bank', 'Wallet addresses', 'DEX', 'CEX', 'Internal Infrastructure', 'Uncategorized'];
 
 const inputCls =
   'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent';
@@ -1168,6 +1176,13 @@ function ResourceCard({
 
 export function TradingAccountsPanel() {
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
+  const [activeTab, setActiveTab] = useState<'payment' | 'trading'>(() => {
+    if (typeof window !== 'undefined') {
+      const stored = window.localStorage.getItem(TAB_STORAGE_KEY);
+      if (stored === 'payment' || stored === 'trading') return stored;
+    }
+    return 'payment';
+  });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [lndWalletStatus, setLndWalletStatus] = useState<LNDWalletStatus | null>(null);
@@ -1407,6 +1422,31 @@ export function TradingAccountsPanel() {
       });
   }, [accounts]);
 
+  const activeGroups = useMemo(
+    () => groupedAccounts.filter(group =>
+      activeTab === 'payment'
+        ? isPaymentCategory(group.category)
+        : (TRADING_CATEGORIES as readonly string[]).includes(group.category),
+    ),
+    [groupedAccounts, activeTab],
+  );
+
+  const paymentAccountCount = useMemo(
+    () => groupedAccounts.reduce(
+      (total, group) => total + (isPaymentCategory(group.category) ? group.accounts.length : 0),
+      0,
+    ),
+    [groupedAccounts],
+  );
+  const tradingAccountCount = useMemo(
+    () => groupedAccounts.reduce(
+      (total, group) =>
+        total + ((TRADING_CATEGORIES as readonly string[]).includes(group.category) ? group.accounts.length : 0),
+      0,
+    ),
+    [groupedAccounts],
+  );
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
@@ -1434,6 +1474,14 @@ export function TradingAccountsPanel() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(TAB_STORAGE_KEY, activeTab);
+    } catch {
+      // ignore storage errors (private mode, quota, etc.)
+    }
+  }, [activeTab]);
 
   const expandedAccount = useMemo(
     () => accounts.find(account => account.id === expandedId) ?? null,
@@ -2846,6 +2894,35 @@ export function TradingAccountsPanel() {
           </div>
         </div>
 
+        <div className="flex items-center gap-1 border-b border-border">
+          {(['payment', 'trading'] as const).map(tab => {
+            const active = activeTab === tab;
+            const count = tab === 'payment' ? paymentAccountCount : tradingAccountCount;
+            return (
+              <button
+                key={tab}
+                type="button"
+                onClick={() => {
+                  setActiveTab(tab);
+                  if (showNewAccountForm && newAccount.category) {
+                    const catIsPayment = isPaymentCategory(newAccount.category);
+                    if ((tab === 'payment') !== catIsPayment) {
+                      resetNewAccountForm();
+                    }
+                  }
+                }}
+                className={`-mb-px border-b-2 px-3 py-1.5 text-xs font-medium transition ${
+                  active
+                    ? 'border-accent text-text'
+                    : 'border-transparent text-muted hover:text-text'
+                }`}
+              >
+                {tab === 'payment' ? 'Payment Accounts' : 'Trading Accounts'} ({count})
+              </button>
+            );
+          })}
+        </div>
+
         {showNewAccountForm ? (
           <div className="grid gap-2">
             <label className="grid min-w-0 gap-1 text-xs text-muted w-40">
@@ -2856,10 +2933,18 @@ export function TradingAccountsPanel() {
                 onChange={e => setNewAccount({ ...emptyAccountForm(), category: e.target.value })}
               >
                 <option value="">Auto-detect</option>
-                <option value="Fiat Transmitter">Fiat Transmitter</option>
-                <option value="DEX">DEX</option>
-                <option value="CEX">CEX</option>
-                <option value="Bank">Bank</option>
+                {activeTab === 'payment' ? (
+                  <>
+                    <option value="Fiat Transmitter">Fiat Transmitter</option>
+                    <option value="Bank">Bank</option>
+                    <option value="Wallet addresses">Wallet addresses</option>
+                  </>
+                ) : (
+                  <>
+                    <option value="DEX">DEX</option>
+                    <option value="CEX">CEX</option>
+                  </>
+                )}
               </select>
             </label>
           <AccountEditor
@@ -2873,7 +2958,7 @@ export function TradingAccountsPanel() {
             submitLabel="Add New Account"
             compact
             groupedProviders
-            freeFormProvider={newAccount.category === 'Bank'}
+            freeFormProvider={newAccount.category === 'Bank' || newAccount.category === 'Wallet addresses'}
             showContactFields={newAccount.category === 'Bank' || showContactFieldsForProvider(newAccount.provider)}
             submitDisabled={
               !newAccount.provider
@@ -2929,7 +3014,12 @@ export function TradingAccountsPanel() {
           {!loading && accounts.length === 0 ? (
             <div className="rounded-lg border border-border bg-bg p-4 text-sm text-muted">No accounts yet.</div>
           ) : null}
-          {groupedAccounts.map(group => (
+          {!loading && accounts.length > 0 && activeGroups.length === 0 ? (
+            <div className="rounded-lg border border-border bg-bg p-4 text-sm text-muted">
+              {activeTab === 'payment' ? 'No payment accounts yet.' : 'No trading accounts yet.'}
+            </div>
+          ) : null}
+          {activeGroups.map(group => (
             <div key={group.category} className="grid gap-1.5">
               {group.category !== 'Uncategorized' ? (
                 <div className="flex items-center gap-2 py-0.5">
@@ -2963,8 +3053,9 @@ export function TradingAccountsPanel() {
                         <HealthBadge account={account} compact />
                         <button
                           type="button"
-                          className={compactButtonCls}
-                          disabled={!!checkingHealthByAccount[account.id]}
+                          className={`${compactButtonCls} disabled:opacity-50 disabled:cursor-not-allowed`}
+                          disabled={isPaymentCategory(account.category || 'Uncategorized') || !!checkingHealthByAccount[account.id]}
+                          title={isPaymentCategory(account.category || 'Uncategorized') ? 'Health checks are not available for payment accounts' : undefined}
                           onClick={() => void triggerHealthCheck(account)}
                         >
                           {checkingHealthByAccount[account.id] ? '…' : 'Healthcheck'}
