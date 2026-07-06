@@ -24,6 +24,7 @@ import type {
   TradingBankAccount,
   PaymentMethodRow,
   PaymentMethodUpdatePayload,
+  PaymentMethodChatTemplate,
   TradingWalletAddress,
   BisqPaymentAccount,
   BisqCreateSepaPayload,
@@ -306,6 +307,31 @@ export function deletePaymentMethod(id: number) {
   return request<{ ok: boolean }>(`/api/trading/payment_methods/${id}`, { method: 'DELETE' });
 }
 
+export function fetchPaymentMethodChatTemplates(id: number) {
+  return request<{ chat_templates: PaymentMethodChatTemplate[] }>(`/api/trading/payment_methods/${id}/chat_templates`);
+}
+
+export function updatePaymentMethodChatTemplate(
+  id: number,
+  exchange: string,
+  payload: { template: string; is_active: boolean },
+) {
+  return request<{ chat_templates: PaymentMethodChatTemplate[] }>(
+    `/api/trading/payment_methods/${id}/chat_templates/${encodeURIComponent(exchange)}`,
+    {
+      method: 'PUT',
+      body: JSON.stringify(payload),
+    },
+  );
+}
+
+export function deletePaymentMethodChatTemplate(id: number, exchange: string) {
+  return request<{ ok: boolean }>(
+    `/api/trading/payment_methods/${id}/chat_templates/${encodeURIComponent(exchange)}`,
+    { method: 'DELETE' },
+  );
+}
+
 export function fetchTradingWalletAddresses() {
   return request<{ wallet_addresses: TradingWalletAddress[] }>('/api/trading/wallet_addresses');
 }
@@ -350,4 +376,58 @@ export function cexWithdrawalTrack(
     params.set('client_request_id', clientRequestId);
   }
   return request<WithdrawalTrackResult>(`/api/mm-controller/cex/withdrawal-track?${params}`);
+}
+
+// --- Telegram bot connection (proxied to dexMmController) ---
+
+export interface TelegramConfig {
+  bot_token_present: boolean;
+  chat_id: string;
+  dexmm_webhook_url: string;
+  pushpush_webhook_url: string;
+  dexmm_webhook_set: boolean;
+  pushpush_webhook_set: boolean;
+  config_version: number;
+}
+
+export type TelegramService = 'dexmm' | 'pushpush';
+
+export interface TelegramActionResult {
+  ok: boolean;
+  detail?: string;
+  url?: string;
+}
+
+export function fetchTelegramConfig() {
+  return request<TelegramConfig>('/api/mm-controller/telegram/config');
+}
+
+/**
+ * Save (parts of) the Telegram bot configuration. Only send bot_token when the
+ * operator entered a new value; omit it to preserve the stored token.
+ */
+export function saveTelegramConfig(payload: {
+  bot_token?: string;
+  chat_id?: string;
+  dexmm_webhook_url?: string;
+  pushpush_webhook_url?: string;
+}) {
+  return request<TelegramConfig>('/api/mm-controller/telegram/config', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function setTelegramWebhook(service: TelegramService) {
+  return request<TelegramActionResult>(
+    `/api/mm-controller/telegram/set-webhook?service=${service}`,
+    { method: 'POST' },
+  );
+}
+
+export function testTelegram(service: TelegramService) {
+  return request<TelegramActionResult>(
+    `/api/mm-controller/telegram/test?service=${service}`,
+    { method: 'POST' },
+  );
 }

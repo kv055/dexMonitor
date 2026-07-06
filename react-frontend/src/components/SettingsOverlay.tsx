@@ -4,6 +4,7 @@ import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
 import { useTradeCostConfig } from '../hooks/useTradeCostConfig';
 import { ControlPanel } from './ControlPanel';
+import { TelegramBotSection } from './TelegramBotSection';
 import type { PaymentMethodGroup } from '../types';
 
 interface Props {
@@ -261,6 +262,8 @@ export function SettingsOverlay({
               lastUpdatedAt={lastUpdatedAt}
             />
           </section>
+
+          <TelegramBotSection />
 
           <section className="rounded-lg border border-border bg-bg/50 p-2.5">
             <div className="mb-1.5 lg:flex lg:items-baseline lg:gap-3">
