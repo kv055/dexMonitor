@@ -15,7 +15,7 @@ import { usePreferences } from '../hooks/usePreferences';
 import { getFirstSeen, getLastSeen, getNetPremiumPercent, getOfferPrice, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
 import { useTimezone } from '../hooks/useTimezone';
 import { LoadingSpinner } from './LoadingSpinner';
-import { buildOfferKeys } from '../utils/offerIdentity';
+import { buildOfferKeys, buildStableOfferKey } from '../utils/offerIdentity';
 import { apiFetch } from '../utils/api';
 
 interface Props {
@@ -130,15 +130,18 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
   // library, so the first real candle batch must re-apply it.
   const hadCandlesRef = useRef(false);
 
-  const { filteredOffers, filters: { hours, premiumMode }, selectedOfferKey, setSelectedOfferKey, setHoveredOhlcTime, loading } = useFilters();
+  const { filteredOffers, filters: { hours, premiumMode }, selectedOfferKey, setSelectedOfferKey, setHoveredOhlcTime, loading, hiddenChartOfferKeys } = useFilters();
   const { theme } = usePreferences();
 
-  // Chart guard: only offers with a positive premium are plotted. The
+  // Chart guard: only offers with a positive premium are plotted, and only
+  // offers left ticked in the table's chart-visibility checkboxes. The
   // "Incl. non premium offers" filter may let non-premium offers into the
   // table, but they must never reach the overlay.
   const premiumOffers = useMemo(
-    () => filteredOffers.filter((o) => (getPremiumMetricValue(o, premiumMode) ?? 0) > 0),
-    [filteredOffers, premiumMode]
+    () => filteredOffers.filter((o) =>
+      (getPremiumMetricValue(o, premiumMode) ?? 0) > 0 && !hiddenChartOfferKeys.has(buildStableOfferKey(o))
+    ),
+    [filteredOffers, premiumMode, hiddenChartOfferKeys]
   );
   const { timezone } = useTimezone();
   const [lifecycleCache, setLifecycleCache] = useState<Record<number, LifecycleCacheEntry>>({});

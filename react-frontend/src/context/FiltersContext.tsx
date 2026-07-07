@@ -53,6 +53,25 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
   const [filters, dispatch] = useReducer(filtersReducer, INITIAL_FILTERS);
   const [selectedOfferKey, setSelectedOfferKey] = useState<string | null>(null);
   const [hoveredOhlcTime, setHoveredOhlcTime] = useState<number | null>(null);
+  const [hiddenChartOfferKeys, setHiddenChartOfferKeys] = useState<Set<string>>(() => new Set());
+
+  const toggleChartOfferKey = (key: string) => {
+    setHiddenChartOfferKeys(prev => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
+  const setChartOfferKeysVisible = (keys: string[], visible: boolean) => {
+    setHiddenChartOfferKeys(prev => {
+      const next = new Set(prev);
+      if (visible) keys.forEach(k => next.delete(k));
+      else keys.forEach(k => next.add(k));
+      return next;
+    });
+  };
 
   const setFilters = (partial: Partial<Filters>) => dispatch({ type: 'SET', payload: partial });
   const resetFilters = () => dispatch({ type: 'RESET' });
@@ -121,7 +140,7 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
   }, [activeOffers, filters, paymentFilterFn]);
 
   return (
-    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, paymentMethodCounts, groups, selectedOfferKey, setSelectedOfferKey, hoveredOhlcTime, setHoveredOhlcTime, loading, refPrice, zeroTrustHiddenCount }}>
+    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, paymentMethodCounts, groups, selectedOfferKey, setSelectedOfferKey, hoveredOhlcTime, setHoveredOhlcTime, loading, refPrice, zeroTrustHiddenCount, hiddenChartOfferKeys, toggleChartOfferKey, setChartOfferKeysVisible }}>
       {children}
     </FiltersContext.Provider>
   );

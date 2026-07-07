@@ -27,3 +27,13 @@ export function buildOfferKeys(offers: Offer[]): string[] {
     return occurrence === 0 ? baseKey : `${baseKey}|dup:${occurrence}`;
   });
 }
+
+/**
+ * Identity for the chart-visibility checkbox. Unlike `buildOfferKeys`,
+ * this deliberately omits `last_seen` (which the backend bumps to "now" on
+ * every snapshot cycle for live offers) so a user's checkbox choice
+ * survives polling instead of resetting every ~15s.
+ */
+export function buildStableOfferKey(offer: Offer): string {
+  return [offer.exchange, offer.offer_id ?? `id:${offer.id}`, offer.direction].join('|');
+}
