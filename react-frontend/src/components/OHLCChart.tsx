@@ -12,10 +12,11 @@ import {
 import type { LifecyclePoint, OHLCCandle, OHLCData } from '../types';
 import { useFilters } from '../hooks/useFilters';
 import { usePreferences } from '../hooks/usePreferences';
-import { getFirstSeen, getLastSeen, getNetPremiumPercent, getOfferPrice, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
+import { getFirstSeen, getLastSeen, getOfferPrice, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
 import { useTimezone } from '../hooks/useTimezone';
 import { LoadingSpinner } from './LoadingSpinner';
 import { buildOfferKeys, buildStableOfferKey } from '../utils/offerIdentity';
+import { exchangeColor } from '../utils/exchangeColors';
 import { apiFetch } from '../utils/api';
 
 interface Props {
@@ -46,20 +47,6 @@ function lifecycleUrl(offer: { id: number }, live: boolean): string {
   return live
     ? `/api/live_offers/${offer.id}/lifecycle`
     : `/api/past_offers/${offer.id}/lifecycle`;
-}
-
-const DIR_COLORS = {
-  bid_premium:  '#00d4ff',
-  bid_discount: '#0369a1',
-  ask_premium:  '#f472b6',
-  ask_discount: '#86198f',
-} as const;
-
-function offerColor(direction: string, netPremiumPct: number | null | undefined): string {
-  const isBid = direction === 'buy';
-  const isPremium = netPremiumPct != null && netPremiumPct > 0;
-  if (isBid) return isPremium ? DIR_COLORS.bid_premium : DIR_COLORS.bid_discount;
-  return isPremium ? DIR_COLORS.ask_premium : DIR_COLORS.ask_discount;
 }
 
 // Candle size options in minutes — only multiples >= source interval are shown
@@ -586,7 +573,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
             { time: start, value: getOfferPrice(o) },
             { time: anchor, value: getOfferPrice(o) },
           ];
-          const color = isSelected ? selectedLine : offerColor(o.direction, getNetPremiumPercent(o));
+          const color = isSelected ? selectedLine : exchangeColor(o.exchange);
           const series = addLine({
             color,
             lineWidth,
@@ -609,7 +596,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
             return [{
               time: toDisplaySec(snapToGrid(utcSec)),
               value: p.price,
-              color: isSelected ? selectedLine : offerColor(o.direction, p.net_premium_pct),
+              color: isSelected ? selectedLine : exchangeColor(o.exchange),
             }];
           });
           // Deduplicate by timestamp (keep last), then sort ascending.
@@ -638,7 +625,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
               lcPoints.push({
                 time: nowSec,
                 value: getOfferPrice(o),
-                color: isSelected ? selectedLine : offerColor(o.direction, getNetPremiumPercent(o)),
+                color: isSelected ? selectedLine : exchangeColor(o.exchange),
               });
             }
           } else if (lastSeenUtc) {
