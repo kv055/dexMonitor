@@ -2,9 +2,28 @@ package main
 
 import (
 	"net/http"
+	"sync"
+	"time"
 
 	"dexmonitor/internal/pastorders"
 )
+
+// statisticsResultCacheTTL mirrors analyticsResultCacheTTL: the past-premium
+// and lifetime aggregation is expensive and only depends on the param set
+// (filters + fee/cap config) and the 168h offer window, so a 10-minute TTL
+// trades a tiny staleness window for eliminating the per-request rebuild that
+// made /api/statistics slow enough to time out under load.
+const statisticsResultCacheTTL = 10 * time.Minute
+
+var statisticsResultCache struct {
+	sync.Mutex
+	entries map[string]statisticsResultCacheEntry
+}
+
+type statisticsResultCacheEntry struct {
+	response statisticsResponse
+	expiry   time.Time
+}
 
 // liveStatistics holds the statistics that only make sense for currently-live
 // offers: the live exchange distribution, the active/live counts, and the live
@@ -132,7 +151,10 @@ func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, er
 // handleStatistics serves POST /api/statistics: a single-call breakdown of the
 // offer window into live, past, and shared statistics. It reuses the cached
 // generalStatsContext (30s TTL) and the same body schema as
-// /api/dashboard/analytics.
+// /api/dashboard/analytics. The full statisticsResponse is additionally cached
+// per param set for statisticsResultCacheTTL, since buildStatisticsResponse
+// rebuilds the past-premium/lifetime aggregation from scratch on every call —
+// the dominant cost that made the Statistics page slow.
 func handleStatistics(w http.ResponseWriter, r *http.Request) {
 	p, err := parseDashboardAnalyticsParams(r)
 	if err != nil {
@@ -140,11 +162,37 @@ func handleStatistics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	cacheKey := p.cacheKey()
+	now := time.Now()
+	statisticsResultCache.Lock()
+	if entry, ok := statisticsResultCache.entries[cacheKey]; ok && now.Before(entry.expiry) {
+		resp := entry.response
+		statisticsResultCache.Unlock()
+		writeJSON(w, resp)
+		return
+	}
+	statisticsResultCache.Unlock()
+
 	resp, err := buildStatisticsResponse(p)
 	if err != nil {
 		writeError(w, err)
 		return
 	}
+
+	statisticsResultCache.Lock()
+	if statisticsResultCache.entries == nil {
+		statisticsResultCache.entries = make(map[string]statisticsResultCacheEntry)
+	}
+	for k, e := range statisticsResultCache.entries {
+		if !now.Before(e.expiry) {
+			delete(statisticsResultCache.entries, k)
+		}
+	}
+	statisticsResultCache.entries[cacheKey] = statisticsResultCacheEntry{
+		response: resp,
+		expiry:   now.Add(statisticsResultCacheTTL),
+	}
+	statisticsResultCache.Unlock()
 
 	writeJSON(w, resp)
 }

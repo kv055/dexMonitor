@@ -666,6 +666,17 @@ export interface PaymentMethodUpdatePayload {
   priority: number;
 }
 
+// PaymentMethodChatTemplate is one chat request template for a payment method / DEX pair.
+export interface PaymentMethodChatTemplate {
+  id: number;
+  exchange: string;
+  payment_method_id: number;
+  template: string;
+  is_active: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
 // TradingWalletAddress is a wallet_addresses row (Crypto link dropdown).
 export interface TradingWalletAddress {
   id: number;

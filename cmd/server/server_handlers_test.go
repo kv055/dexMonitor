@@ -4,6 +4,7 @@ import (
 	"commons/tradecost"
 	"database/sql"
 	"dexmonitor/internal/pastorders"
+	"dexmonitor/internal/paymentmethods"
 	"encoding/json"
 	"math"
 	"net/http"
@@ -96,6 +97,32 @@ CREATE UNIQUE INDEX idx_offers_offer_id ON offers(offer_id) WHERE offer_id IS NO
 
 CREATE INDEX idx_lifecycle_offer ON order_lifecycle(offer_db_id);
 CREATE INDEX idx_lifecycle_time  ON order_lifecycle(snapshot_time);
+
+CREATE TABLE payment_methods (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    merge_regex TEXT,
+    category TEXT NOT NULL DEFAULT 'Others',
+    bank_account_id INTEGER,
+    account_id INTEGER,
+    wallet_address_id INTEGER,
+    is_active BOOLEAN NOT NULL DEFAULT 0,
+    priority INTEGER NOT NULL DEFAULT 0,
+    match_order INTEGER NOT NULL DEFAULT 1000,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE payment_method_chat_templates (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    exchange TEXT NOT NULL,
+    payment_method_id INTEGER NOT NULL,
+    template TEXT NOT NULL,
+    is_active BOOLEAN NOT NULL DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE(exchange, payment_method_id)
+);
 
 CREATE TABLE snapshot_log (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1400,10 +1427,93 @@ func TestOfferStringSliceParsesPostgresTextArrayLiteral(t *testing.T) {
 	}
 }
 
+func TestPaymentMethodChatTemplatesCRUD(t *testing.T) {
+	withTempOrdersDB(t)
+
+	oldPmRepo := pmRepo
+	pmRepo = &paymentmethods.Repo{DB: db}
+	t.Cleanup(func() {
+		pmRepo = oldPmRepo
+	})
+
+	if _, err := db.Exec(`
+		INSERT INTO payment_methods (id, name, category, is_active, priority)
+		VALUES (1001, 'Revolut', 'Fiat Transmitter', 1, 5)
+	`); err != nil {
+		t.Fatalf("insert payment method: %v", err)
+	}
+
+	// GET returns an empty list initially.
+	getRec := httptest.NewRecorder()
+	getReq := httptest.NewRequest(http.MethodGet, "/api/trading/payment_methods/1001/chat_templates", nil)
+	getReq.SetPathValue("id", "1001")
+	handleTradingPaymentMethodChatTemplates(getRec, getReq)
+
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET chat_templates status = %d, want %d", getRec.Code, http.StatusOK)
+	}
+	var emptyResp struct {
+		ChatTemplates []paymentmethods.ChatTemplateRow `json:"chat_templates"`
+	}
+	if err := json.Unmarshal(getRec.Body.Bytes(), &emptyResp); err != nil {
+		t.Fatalf("decode empty GET response: %v", err)
+	}
+	if len(emptyResp.ChatTemplates) != 0 {
+		t.Fatalf("expected no chat templates initially, got %d", len(emptyResp.ChatTemplates))
+	}
+
+	// PUT creates a template.
+	putRec := httptest.NewRecorder()
+	putBody := `{"template":"Please send {{amount}} {{currency}} via Revolut.","is_active":true}`
+	putReq := httptest.NewRequest(http.MethodPut, "/api/trading/payment_methods/1001/chat_templates/RoboSats", strings.NewReader(putBody))
+	putReq.SetPathValue("id", "1001")
+	putReq.SetPathValue("exchange", "RoboSats")
+	handleTradingPaymentMethodChatTemplateByExchange(putRec, putReq)
+	if putRec.Code != http.StatusOK {
+		t.Fatalf("PUT chat_template status = %d, body = %s", putRec.Code, putRec.Body.String())
+	}
+	var putResp struct {
+		ChatTemplates []paymentmethods.ChatTemplateRow `json:"chat_templates"`
+	}
+	if err := json.Unmarshal(putRec.Body.Bytes(), &putResp); err != nil {
+		t.Fatalf("decode PUT response: %v", err)
+	}
+	if len(putResp.ChatTemplates) != 1 {
+		t.Fatalf("expected 1 chat template after PUT, got %d", len(putResp.ChatTemplates))
+	}
+	if putResp.ChatTemplates[0].Exchange != "RoboSats" || putResp.ChatTemplates[0].Template != "Please send {{amount}} {{currency}} via Revolut." {
+		t.Fatalf("unexpected chat template: %+v", putResp.ChatTemplates[0])
+	}
+
+	// Reject an invalid exchange.
+	badRec := httptest.NewRecorder()
+	badReq := httptest.NewRequest(http.MethodPut, "/api/trading/payment_methods/1001/chat_templates/Bisq", strings.NewReader(putBody))
+	badReq.SetPathValue("id", "1001")
+	badReq.SetPathValue("exchange", "Bisq")
+	handleTradingPaymentMethodChatTemplateByExchange(badRec, badReq)
+	if badRec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid exchange status = %d, want %d", badRec.Code, http.StatusBadRequest)
+	}
+
+	// DELETE removes the template.
+	delRec := httptest.NewRecorder()
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/trading/payment_methods/1001/chat_templates/RoboSats", nil)
+	delReq.SetPathValue("id", "1001")
+	delReq.SetPathValue("exchange", "RoboSats")
+	handleTradingPaymentMethodChatTemplateByExchange(delRec, delReq)
+	if delRec.Code != http.StatusOK {
+		t.Fatalf("DELETE chat_template status = %d", delRec.Code)
+	}
+}
+
 func resetAnalyticsCaches() {
 	analyticsResultCache.Lock()
 	analyticsResultCache.entries = nil
 	analyticsResultCache.Unlock()
+
+	statisticsResultCache.Lock()
+	statisticsResultCache.entries = nil
+	statisticsResultCache.Unlock()
 
 	generalStatsCache.Lock()
 	generalStatsCache.entries = nil
@@ -1466,6 +1576,8 @@ func withTempOrdersDB(t *testing.T) {
 	est := fixedCostEstimator("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.00005)
 	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{"kraken": est}
 	tradeRouteOptimizer = tradecost.NewTradeRouteOptimizer(tradeCostEstimators)
+
+	pmRepo = &paymentmethods.Repo{DB: db}
 }
 
 type pastOrderStatsTestResponse struct {

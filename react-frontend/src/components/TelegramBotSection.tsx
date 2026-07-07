@@ -186,6 +186,10 @@ export function TelegramBotSection() {
           />
         </label>
 
+        <p className="text-[0.6rem] text-muted leading-relaxed">
+          Alerts and relay messages are sent to the bot directly and don&rsquo;t need this. A webhook is only for the return path: it tells Telegram where to deliver your replies and button taps, so DEXMM can act on trade-chat replies and PUSHPUSH on fiat-arrival confirmations.
+        </p>
+
         <WebhookField
           label="DEXMM webhook URL"
           value={fields.dexmmWebhookUrl}

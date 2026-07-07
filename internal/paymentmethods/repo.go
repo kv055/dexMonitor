@@ -210,3 +210,111 @@ func (r *Repo) ListWalletAddresses(ctx context.Context) ([]WalletAddressRow, err
 	}
 	return out, rows.Err()
 }
+
+// ChatTemplateRow is one chat-template row for a payment method / exchange pair.
+type ChatTemplateRow struct {
+	ID              int64  `json:"id"`
+	Exchange        string `json:"exchange"`
+	PaymentMethodID int64  `json:"payment_method_id"`
+	Template        string `json:"template"`
+	IsActive        bool   `json:"is_active"`
+	CreatedAt       string `json:"created_at"`
+	UpdatedAt       string `json:"updated_at"`
+}
+
+// ChatTemplatePayload is the body used to create or update a chat template.
+type ChatTemplatePayload struct {
+	Template string `json:"template"`
+	IsActive bool   `json:"is_active"`
+}
+
+// allowedChatExchanges lists the DEX venues that use the chat-based payment-details flow.
+var allowedChatExchanges = map[string]bool{
+	"RoboSats": true,
+	"Bisq2":    true,
+}
+
+// ListChatTemplates returns all chat templates for a single payment method.
+func (r *Repo) ListChatTemplates(ctx context.Context, paymentMethodID int64) ([]ChatTemplateRow, error) {
+	rows, err := r.DB.QueryContext(ctx, `
+		SELECT id, exchange, payment_method_id, template, is_active, created_at, updated_at
+		FROM payment_method_chat_templates
+		WHERE payment_method_id = $1
+		ORDER BY exchange`, paymentMethodID)
+	if err != nil {
+		return nil, fmt.Errorf("list chat templates for payment method %d: %w", paymentMethodID, err)
+	}
+	defer rows.Close()
+
+	out := make([]ChatTemplateRow, 0)
+	for rows.Next() {
+		var row ChatTemplateRow
+		if err := rows.Scan(&row.ID, &row.Exchange, &row.PaymentMethodID, &row.Template,
+			&row.IsActive, &row.CreatedAt, &row.UpdatedAt); err != nil {
+			return nil, fmt.Errorf("scan chat template: %w", err)
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
+// UpsertChatTemplate creates or updates the chat template for a payment method / exchange pair.
+func (r *Repo) UpsertChatTemplate(ctx context.Context, paymentMethodID int64, exchange string, p ChatTemplatePayload) error {
+	exchange = strings.TrimSpace(exchange)
+	if !allowedChatExchanges[exchange] {
+		return ValidationError{fmt.Errorf("exchange %q is not a chat-venue DEX (allowed: RoboSats, Bisq2)", exchange)}
+	}
+	template := strings.TrimSpace(p.Template)
+	if template == "" {
+		return ValidationError{fmt.Errorf("template is required")}
+	}
+	if err := r.validatePaymentMethodExists(ctx, paymentMethodID); err != nil {
+		return err
+	}
+
+	res, err := r.DB.ExecContext(ctx, `
+		INSERT INTO payment_method_chat_templates (exchange, payment_method_id, template, is_active)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (exchange, payment_method_id)
+		DO UPDATE SET
+			template = EXCLUDED.template,
+			is_active = EXCLUDED.is_active,
+			updated_at = CURRENT_TIMESTAMP`,
+		exchange, paymentMethodID, template, p.IsActive)
+	if err != nil {
+		return fmt.Errorf("upsert chat template %s/%d: %w", exchange, paymentMethodID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ValidationError{fmt.Errorf("payment method %d does not exist", paymentMethodID)}
+	}
+	return nil
+}
+
+// DeleteChatTemplate removes the chat template for a payment method / exchange pair.
+func (r *Repo) DeleteChatTemplate(ctx context.Context, paymentMethodID int64, exchange string) error {
+	exchange = strings.TrimSpace(exchange)
+	if !allowedChatExchanges[exchange] {
+		return ValidationError{fmt.Errorf("exchange %q is not a chat-venue DEX (allowed: RoboSats, Bisq2)", exchange)}
+	}
+	res, err := r.DB.ExecContext(ctx, `
+		DELETE FROM payment_method_chat_templates
+		WHERE payment_method_id = $1 AND exchange = $2`, paymentMethodID, exchange)
+	if err != nil {
+		return fmt.Errorf("delete chat template %s/%d: %w", exchange, paymentMethodID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ValidationError{fmt.Errorf("chat template for %s/%d does not exist", exchange, paymentMethodID)}
+	}
+	return nil
+}
+
+func (r *Repo) validatePaymentMethodExists(ctx context.Context, id int64) error {
+	var exists bool
+	if err := r.DB.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM payment_methods WHERE id = $1)`, id).Scan(&exists); err != nil {
+		return fmt.Errorf("validate payment method %d: %w", id, err)
+	}
+	if !exists {
+		return ValidationError{fmt.Errorf("payment method %d does not exist", id)}
+	}
+	return nil
+}

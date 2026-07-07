@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useReducer, useState, type ReactNode, type SetStateAction } from 'react';
+import { TelegramBotSection } from './TelegramBotSection';
 import {
   createAccount,
   createAPIKey,
@@ -23,6 +24,9 @@ import {
   fetchLNDWalletStatus,
   fetchTradingAccounts,
   fetchPaymentMethods,
+  fetchPaymentMethodChatTemplates,
+  updatePaymentMethodChatTemplate,
+  deletePaymentMethodChatTemplate,
   fetchBisqPaymentAccounts,
   createBisqPaymentAccount,
   deleteBisqPaymentAccount,
@@ -51,6 +55,7 @@ import type {
   TradingBankAccount,
   BisqPaymentAccount,
   PaymentMethodRow,
+  PaymentMethodChatTemplate,
 } from '../types';
 
 type ProviderOption = { value: string; label: string };
@@ -295,6 +300,21 @@ function isBisqProvider(value: string) {
 function isBisq1Provider(value: string) {
   return value.trim().toLowerCase() === 'bisq';
 }
+
+// chatVenueForProvider maps a DEX provider to its chat-template venue key, or null if the
+// provider doesn't exchange payment details via free-text trade chat. The returned string
+// MUST match payment_method_chat_templates.exchange (RoboSats / Bisq2).
+function chatVenueForProvider(value: string): 'RoboSats' | 'Bisq2' | null {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === 'bisq2') return 'Bisq2';
+  if (normalized === 'robosats') return 'RoboSats';
+  return null;
+}
+
+// Placeholder shown in the collapsed template preview and as the editor placeholder until the
+// user writes a real template. TODO: replace with a sensible per-venue default.
+const LOREM_TEMPLATE =
+  'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.';
 
 function normalizeIban(iban: string | null | undefined) {
   return (iban ?? '').replace(/\s+/g, '').toUpperCase();
@@ -684,6 +704,7 @@ type AccountSectionKey =
   | 'seeds'
   | 'apiKeys'
   | 'bisqPaymentMethods'
+  | 'chatTemplates'
   | 'lndBackup'
   | 'lightningManagement'
   | 'walletAddresses'
@@ -1210,10 +1231,10 @@ function ResourceCard({
 
 export function TradingAccountsPanel() {
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
-  const [activeTab, setActiveTab] = useState<'payment' | 'trading'>(() => {
+  const [activeTab, setActiveTab] = useState<'payment' | 'trading' | 'communication'>(() => {
     if (typeof window !== 'undefined') {
       const stored = window.localStorage.getItem(TAB_STORAGE_KEY);
-      if (stored === 'payment' || stored === 'trading') return stored;
+      if (stored === 'payment' || stored === 'trading' || stored === 'communication') return stored;
     }
     return 'payment';
   });
@@ -1237,11 +1258,25 @@ export function TradingAccountsPanel() {
   // Bisq1 "Saved payment methods" section state. Loaded lazily when the section is first
   // opened (it needs the DEX stack, which may be down independently of the panel).
   const [bisqPmAccounts, setBisqPmAccounts] = useState<BisqPaymentAccount[]>([]);
-  const [bisqCatalogRows, setBisqCatalogRows] = useState<PaymentMethodRow[]>([]);
   const [bisqPmLoading, setBisqPmLoading] = useState(false);
   const [bisqPmError, setBisqPmError] = useState<string | null>(null);
   const [bisqPmLoaded, setBisqPmLoaded] = useState(false);
   const [bisqPmBusyKey, setBisqPmBusyKey] = useState<string | null>(null);
+  // Chat-message-template editing state for DEX account cards (RoboSats / Bisq2). Templates are
+  // keyed per payment method + venue; all maps/sets are keyed by `${venue}:${paymentMethodId}`.
+  const [chatTplCatalog, setChatTplCatalog] = useState<PaymentMethodRow[] | null>(null);
+  const [chatTplDrafts, setChatTplDrafts] = useState<Record<string, string>>({});
+  const [chatTplActive, setChatTplActive] = useState<Record<string, boolean>>({});
+  // Keys currently rendered as rows (saved-on-load ∪ added this session), and the subset that
+  // exist on the server (drives whether a preview is backed by a real template + delete-on-remove).
+  const [chatTplShown, setChatTplShown] = useState<Set<string>>(() => new Set());
+  const [chatTplServer, setChatTplServer] = useState<Set<string>>(() => new Set());
+  const [chatTplEditing, setChatTplEditing] = useState<Set<string>>(() => new Set());
+  const [chatTplLoadedVenues, setChatTplLoadedVenues] = useState<Set<string>>(() => new Set());
+  const [chatTplAddingVenue, setChatTplAddingVenue] = useState<string | null>(null);
+  const [chatTplLoading, setChatTplLoading] = useState(false);
+  const [chatTplError, setChatTplError] = useState<string | null>(null);
+  const [chatTplBusyKey, setChatTplBusyKey] = useState<string | null>(null);
   const [uiState, dispatchUi] = useReducer(tradingPanelUiReducer, undefined, () => ({
     expandedId: null,
     showNewAccountForm: false,
@@ -1517,15 +1552,14 @@ export function TradingAccountsPanel() {
     void load();
   }, [load]);
 
-  // loadBisqPaymentMethods fetches our catalog rows and the bisq1 daemon's saved accounts so
-  // the section can reconcile the two. Errors are held locally (the DEX stack can be down
-  // without affecting the rest of the panel).
+  // loadBisqPaymentMethods fetches the bisq1 daemon's saved accounts so the section can
+  // reconcile our saved bank accounts against what already exists in the bisq profile.
+  // Errors are held locally (the DEX stack can be down without affecting the rest of the panel).
   const loadBisqPaymentMethods = useCallback(async () => {
     setBisqPmLoading(true);
     setBisqPmError(null);
     try {
-      const [catalog, bisq] = await Promise.all([fetchPaymentMethods(), fetchBisqPaymentAccounts()]);
-      setBisqCatalogRows(catalog.payment_methods);
+      const bisq = await fetchBisqPaymentAccounts();
       setBisqPmAccounts(bisq.payment_accounts);
       setBisqPmLoaded(true);
     } catch (err) {
@@ -1681,6 +1715,147 @@ export function TradingAccountsPanel() {
       setBisqPmError(err instanceof Error ? err.message : 'Bisq payment request failed');
     } finally {
       setBisqPmBusyKey(null);
+    }
+  };
+
+  // loadAccountChatTemplates fetches the payment-method catalog (once) and every active method's
+  // chat template for the given venue. Only methods that ALREADY have a saved template become
+  // rows — a fresh account shows none, just the "Add provider" button. Per-method requests run
+  // in parallel; the section only loads when a card is expanded.
+  const loadAccountChatTemplates = useCallback(async (venue: 'RoboSats' | 'Bisq2') => {
+    setChatTplLoading(true);
+    setChatTplError(null);
+    try {
+      let catalog = chatTplCatalog;
+      if (!catalog) {
+        const res = await fetchPaymentMethods();
+        catalog = res.payment_methods;
+        setChatTplCatalog(catalog);
+      }
+      // Candidates for templating: active methods, linked instruments, and every Bank Transfer
+      // method (so a template saved against an inactive/unlinked bank method still loads back).
+      const candidates = catalog.filter(
+        row => row.is_active || row.is_linked || row.category === 'Bank Transfer',
+      );
+      const results = await Promise.all(
+        candidates.map(async row => {
+          const res = await fetchPaymentMethodChatTemplates(row.id);
+          const t = res.chat_templates.find((tpl: PaymentMethodChatTemplate) => tpl.exchange === venue);
+          return t ? { key: `${venue}:${row.id}`, template: t.template, isActive: t.is_active } : null;
+        }),
+      );
+      const found = results.filter((r): r is { key: string; template: string; isActive: boolean } => r !== null);
+      setChatTplDrafts(prev => {
+        const next = { ...prev };
+        for (const r of found) next[r.key] = r.template;
+        return next;
+      });
+      setChatTplActive(prev => {
+        const next = { ...prev };
+        for (const r of found) next[r.key] = r.isActive;
+        return next;
+      });
+      // Rebuild this venue's server truth from scratch; preserve other venues and any unsaved
+      // rows the user added this session.
+      const serverKeys = new Set(found.map(r => r.key));
+      setChatTplServer(prev => {
+        const next = new Set([...prev].filter(k => !k.startsWith(`${venue}:`)));
+        for (const k of serverKeys) next.add(k);
+        return next;
+      });
+      setChatTplShown(prev => {
+        const next = new Set(prev);
+        for (const k of serverKeys) next.add(k);
+        return next;
+      });
+      setChatTplLoadedVenues(prev => new Set(prev).add(venue));
+    } catch (err) {
+      setChatTplError(err instanceof Error ? err.message : 'Failed to load chat templates');
+    } finally {
+      setChatTplLoading(false);
+    }
+  }, [chatTplCatalog]);
+
+  // addChatTemplateProvider adds a chosen payment method as a new (unsaved) row and opens its
+  // editor. Nothing is persisted until the user saves a non-empty template.
+  const addChatTemplateProvider = (venue: 'RoboSats' | 'Bisq2', pmId: number) => {
+    const key = `${venue}:${pmId}`;
+    setChatTplShown(prev => new Set(prev).add(key));
+    setChatTplDrafts(prev => (key in prev ? prev : { ...prev, [key]: '' }));
+    setChatTplActive(prev => (key in prev ? prev : { ...prev, [key]: true }));
+    setChatTplEditing(prev => new Set(prev).add(key));
+    setChatTplAddingVenue(null);
+  };
+
+  const setChatTemplateEditing = (key: string, on: boolean) => {
+    setChatTplEditing(prev => {
+      const next = new Set(prev);
+      if (on) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  };
+
+  // saveAccountChatTemplate upserts the template for one payment method + venue (an emptied draft
+  // deletes it → falls back to the default). Templates live on the payment method, so the edit is
+  // shared with the global Payment Methods panel and any other card on the same venue.
+  const saveAccountChatTemplate = async (venue: 'RoboSats' | 'Bisq2', pmId: number) => {
+    const key = `${venue}:${pmId}`;
+    setChatTplBusyKey(key);
+    setChatTplError(null);
+    try {
+      const template = chatTplDrafts[key]?.trim() ?? '';
+      if (template === '') {
+        await deletePaymentMethodChatTemplate(pmId, venue);
+        setChatTplServer(prev => {
+          const n = new Set(prev);
+          n.delete(key);
+          return n;
+        });
+      } else {
+        await updatePaymentMethodChatTemplate(pmId, venue, {
+          template,
+          is_active: chatTplActive[key] ?? true,
+        });
+        setChatTplServer(prev => new Set(prev).add(key));
+      }
+      setChatTemplateEditing(key, false);
+    } catch (err) {
+      setChatTplError(err instanceof Error ? err.message : 'Failed to save chat template');
+    } finally {
+      setChatTplBusyKey(null);
+    }
+  };
+
+  // removeChatTemplate drops a row from the list, deleting the server template if one exists.
+  const removeChatTemplate = async (venue: 'RoboSats' | 'Bisq2', pmId: number) => {
+    const key = `${venue}:${pmId}`;
+    setChatTplBusyKey(key);
+    setChatTplError(null);
+    try {
+      if (chatTplServer.has(key)) {
+        await deletePaymentMethodChatTemplate(pmId, venue);
+      }
+      setChatTplServer(prev => {
+        const n = new Set(prev);
+        n.delete(key);
+        return n;
+      });
+      setChatTplShown(prev => {
+        const n = new Set(prev);
+        n.delete(key);
+        return n;
+      });
+      setChatTemplateEditing(key, false);
+      setChatTplDrafts(prev => {
+        const n = { ...prev };
+        delete n[key];
+        return n;
+      });
+    } catch (err) {
+      setChatTplError(err instanceof Error ? err.message : 'Failed to remove chat template');
+    } finally {
+      setChatTplBusyKey(null);
     }
   };
 
@@ -2027,8 +2202,8 @@ export function TradingAccountsPanel() {
                   </div>
                 </>
               ) : (
-                <div className="grid gap-1 text-[0.65rem] text-muted">
-                  <div><span className="text-text">Credential:</span> {cred.credential_id}</div>
+                <div className="grid gap-1 text-[0.65rem] text-muted sm:grid-cols-2">
+                  <div className="sm:col-span-2 truncate"><span className="text-text">Credential:</span> {cred.credential_id}</div>
                   <div><span className="text-text">User handle:</span> {cred.user_handle || '—'}</div>
                   <div><span className="text-text">Sign count:</span> {cred.sign_count}</div>
                   <div><span className="text-text">Last used:</span> {formatDate(cred.last_used_at)}</div>
@@ -2344,13 +2519,15 @@ export function TradingAccountsPanel() {
             {lndWalletStatus.pending_channels.length > 0 ? (
               <div className="grid gap-1.5">
                 <div className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted px-1">Pending</div>
-                {lndWalletStatus.pending_channels.map((pending, index) => (
-                  <div key={`${pending.remote_pubkey}-${pending.state}-${index}`} className="rounded border border-border bg-bg px-2 py-1.5 text-xs text-muted">
-                    <div><span className="text-text">Hub:</span> {pending.remote_alias || truncatePubkey(pending.remote_pubkey)}</div>
-                    <div><span className="text-text">State:</span> {pending.state}</div>
-                    <div><span className="text-text">Capacity:</span> {formatSats(pending.capacity_sat)}</div>
-                  </div>
-                ))}
+                <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3">
+                  {lndWalletStatus.pending_channels.map((pending, index) => (
+                    <div key={`${pending.remote_pubkey}-${pending.state}-${index}`} className="rounded border border-border bg-bg px-2 py-1.5 text-xs text-muted">
+                      <div><span className="text-text">Hub:</span> {pending.remote_alias || truncatePubkey(pending.remote_pubkey)}</div>
+                      <div><span className="text-text">State:</span> {pending.state}</div>
+                      <div><span className="text-text">Capacity:</span> {formatSats(pending.capacity_sat)}</div>
+                    </div>
+                  ))}
+                </div>
               </div>
             ) : null}
           </div>
@@ -2564,24 +2741,20 @@ export function TradingAccountsPanel() {
     );
   };
 
-  // renderSavedPaymentMethodsSection lists our linked payment-method catalog rows on the Bisq
-  // v1 card and reconciles them against the bisq1 daemon's own profile: each row shows whether
-  // it is Saved (present in bisq), Pending (linked but not yet pushed), or Not supported
-  // (non-SEPA for now), with Add/Delete actions. A trailing list surfaces any bisq accounts
-  // that don't map to one of our catalog rows so they can be cleaned up.
+  // renderSavedPaymentMethodsSection lists our saved bank accounts on the Bisq v1 card and
+  // reconciles each against the bisq1 daemon's own profile: every account shows whether it is
+  // Saved (present in bisq), Pending (SEPA-eligible but not yet pushed), or Not supported
+  // (non-SEPA for now), with an "Add to Bisq" / Delete action. No manual catalog-linking step
+  // is required — any SEPA bank account is pushable straight from here. A trailing list surfaces
+  // any bisq accounts that don't map to one of our bank accounts so they can be cleaned up.
   const renderSavedPaymentMethodsSection = (account: TradingAccount) => {
     const open = !!openSectionsByAccount[account.id]?.bisqPaymentMethods;
 
-    // Flatten every bank account across all trading accounts so a catalog row's
-    // bank_account_id can be resolved to its IBAN/BIC/owner/country.
-    const bankAccountById = new Map<number, TradingBankAccount>();
-    for (const acc of accounts) {
-      for (const ba of acc.bank_accounts) bankAccountById.set(ba.id, ba);
-    }
-
-    const linkedRows = bisqCatalogRows
-      .filter(row => row.is_linked && row.bank_account_id != null)
-      .sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name));
+    // Flatten every bank account across all trading accounts — a saved bank account can be
+    // pushed into the bisq1 profile regardless of which trading account it lives under.
+    const bankAccounts = accounts
+      .flatMap(acc => acc.bank_accounts)
+      .sort((a, b) => a.owner_name.localeCompare(b.owner_name) || a.id - b.id);
 
     const sepaAccounts = bisqPmAccounts.filter(a => a.payment_method_id === 'SEPA');
     const expectedNames = new Set<string>();
@@ -2595,13 +2768,12 @@ export function TradingAccountsPanel() {
       <span className={`rounded-full border px-1.5 py-0.5 text-[0.65rem] whitespace-nowrap ${cls}`}>{label}</span>
     );
 
-    const rows = linkedRows.map(row => {
-      const ba = row.bank_account_id != null ? bankAccountById.get(row.bank_account_id) : undefined;
-      const eligible = row.category === 'Bank Transfer' && sepaEligibility(ba) === 'eligible';
-      const expectedName = ba ? sepaBisqAccountName(ba) : '';
+    const rows = bankAccounts.map(ba => {
+      const eligible = sepaEligibility(ba) === 'eligible';
+      const expectedName = eligible ? sepaBisqAccountName(ba) : '';
       if (eligible && expectedName) expectedNames.add(expectedName);
       const savedAccount = eligible ? sepaAccounts.find(a => a.account_name === expectedName) : undefined;
-      const busyKey = `row-${row.id}`;
+      const busyKey = `ba-${ba.id}`;
       const busy = bisqPmBusyKey === busyKey;
 
       let badge: ReactNode;
@@ -2610,12 +2782,12 @@ export function TradingAccountsPanel() {
       else badge = statusBadge('border-yellow/40 bg-yellow/10 text-yellow', 'Pending');
 
       return (
-        <ResourceCard key={`pm-${row.id}`} title={row.name} meta={ba ? `${ba.owner_name} · ${normalizeIban(ba.details.iban)}` : row.link_label ?? undefined}>
+        <ResourceCard key={`ba-${ba.id}`} title={ba.label?.trim() || ba.owner_name} meta={normalizeIban(ba.details.iban) || ba.scheme}>
           <div className="flex flex-wrap items-center justify-between gap-1.5">
             <div className="flex flex-wrap items-center gap-1.5 text-[0.65rem] text-muted">
               {badge}
-              <span>{row.category}</span>
-              {ba?.country ? <span>· {ba.country}</span> : null}
+              <span>{ba.owner_name}</span>
+              {ba.country ? <span>· {ba.country}</span> : null}
             </div>
             <div className="flex gap-1">
               {eligible && !savedAccount ? (
@@ -2624,7 +2796,6 @@ export function TradingAccountsPanel() {
                   className={compactButtonCls}
                   disabled={busy || bisqPmLoading}
                   onClick={() => runBisqAction(busyKey, async () => {
-                    if (!ba) return;
                     await createBisqPaymentAccount({
                       payment_method_type: 'SEPA',
                       account_name: expectedName,
@@ -2656,14 +2827,14 @@ export function TradingAccountsPanel() {
       );
     });
 
-    // Bisq accounts that don't map to one of our catalog rows (e.g. added out-of-band). Shown
+    // Bisq accounts that don't map to one of our bank accounts (e.g. added out-of-band). Shown
     // so they can be deleted from here too.
     const orphanAccounts = bisqPmAccounts.filter(a => !expectedNames.has(a.account_name));
 
     return (
       <CollapsibleSection
         title="Saved payment methods"
-        count={linkedRows.length}
+        count={bankAccounts.length}
         open={open}
         onToggle={onToggle}
         actions={
@@ -2679,35 +2850,225 @@ export function TradingAccountsPanel() {
       >
         {bisqPmError ? <div className="text-[0.65rem] text-red px-1">{bisqPmError}</div> : null}
         {!bisqPmLoaded && bisqPmLoading ? <div className="text-[0.65rem] text-muted px-1">Loading…</div> : null}
-        {rows}
-        {bisqPmLoaded && linkedRows.length === 0 && !bisqPmError ? (
+        {rows.length > 0 ? <div className="grid gap-1.5 sm:grid-cols-2">{rows}</div> : null}
+        {bankAccounts.length === 0 ? (
           <div className="text-[0.65rem] text-muted px-1">
-            No linked payment methods yet. Link one to a bank account in the Payment Methods panel first.
+            No bank accounts saved yet. Add one in the Bank Accounts section first.
           </div>
         ) : null}
         {orphanAccounts.length > 0 ? (
           <div className="grid gap-1.5">
             <div className="text-[0.65rem] font-semibold text-muted px-1 pt-1">Other accounts in Bisq</div>
-            {orphanAccounts.map(acct => {
-              const busyKey = `orphan-${acct.id}`;
-              const busy = bisqPmBusyKey === busyKey;
+            <div className="grid gap-1.5 sm:grid-cols-2">
+              {orphanAccounts.map(acct => {
+                const busyKey = `orphan-${acct.id}`;
+                const busy = bisqPmBusyKey === busyKey;
+                return (
+                  <ResourceCard key={busyKey} title={acct.account_name} meta={`${acct.payment_method_id}${acct.trade_currency ? ` · ${acct.trade_currency}` : ''}`}>
+                    <div className="flex items-center justify-between gap-1.5">
+                      <span className="text-[0.65rem] text-muted">Not linked to one of our payment methods</span>
+                      <button
+                        type="button"
+                        className={`${compactButtonCls} text-red`}
+                        disabled={busy || bisqPmLoading}
+                        onClick={() => runBisqAction(busyKey, async () => { await deleteBisqPaymentAccount(acct.id); })}
+                      >
+                        {busy ? 'Deleting…' : 'Delete'}
+                      </button>
+                    </div>
+                  </ResourceCard>
+                );
+              })}
+            </div>
+          </div>
+        ) : null}
+      </CollapsibleSection>
+    );
+  };
+
+  // renderChatTemplatesSection surfaces the per-payment-method chat request templates for a
+  // chat-venue DEX account (RoboSats / Bisq2). It starts empty — the user adds a linked payment
+  // method via "Add provider", and each row shows the template text with an Edit affordance.
+  // Templates live on the payment method, so an edit here is shared with the global Payment
+  // Methods panel and any other card on the same venue.
+  const renderChatTemplatesSection = (account: TradingAccount) => {
+    const venue = chatVenueForProvider(account.provider);
+    if (!venue) return null;
+    const open = !!openSectionsByAccount[account.id]?.chatTemplates;
+    const loaded = chatTplLoadedVenues.has(venue);
+
+    const onToggle = () => {
+      toggleSection(account.id, 'chatTemplates');
+      if (!loaded && !chatTplLoading) void loadAccountChatTemplates(venue);
+    };
+
+    const catalog = chatTplCatalog ?? [];
+    const byId = new Map(catalog.map(row => [row.id, row] as const));
+    const shownIds = [...chatTplShown]
+      .filter(k => k.startsWith(`${venue}:`))
+      .map(k => Number(k.slice(venue.length + 1)))
+      .filter(id => byId.has(id))
+      .sort((a, b) => {
+        const ra = byId.get(a)!;
+        const rb = byId.get(b)!;
+        return ra.priority - rb.priority || ra.name.localeCompare(rb.name);
+      });
+
+    // "Add provider" choices, not already added: linked/active instruments (PayPal, Revolut, …)
+    // plus every Bank Transfer method when a bank account is saved — bank accounts aren't
+    // auto-linked to the catalog, so their method would otherwise never appear here.
+    const hasBankAccounts = accounts.some(acc => acc.bank_accounts.length > 0);
+    const addable = catalog
+      .filter(row => {
+        if (chatTplShown.has(`${venue}:${row.id}`)) return false;
+        if (row.is_active && row.is_linked) return true;
+        return hasBankAccounts && row.category === 'Bank Transfer';
+      })
+      .sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name));
+    const adding = chatTplAddingVenue === venue;
+
+    return (
+      <CollapsibleSection
+        title="Chat message templates"
+        count={loaded ? shownIds.length : undefined}
+        open={open}
+        onToggle={onToggle}
+        actions={
+          <button
+            type="button"
+            className={compactButtonCls}
+            disabled={chatTplLoading}
+            onClick={() => { void loadAccountChatTemplates(venue); }}
+          >
+            {chatTplLoading ? 'Refreshing…' : 'Refresh'}
+          </button>
+        }
+      >
+        <div className="text-[0.62rem] text-muted px-1">
+          Message sent to the counterparty on {venue} for each payment method. Use{' '}
+          <code className="text-accent">{'{{amount}}'}</code> and{' '}
+          <code className="text-accent">{'{{currency}}'}</code> as placeholders.
+        </div>
+        {chatTplError ? <div className="text-[0.65rem] text-red px-1">{chatTplError}</div> : null}
+        {!loaded && chatTplLoading ? <div className="text-[0.65rem] text-muted px-1">Loading…</div> : null}
+
+        {loaded
+          ? shownIds.map(pmId => {
+              const key = `${venue}:${pmId}`;
+              const row = byId.get(pmId)!;
+              const busy = chatTplBusyKey === key;
+              const editing = chatTplEditing.has(key);
+              const draft = chatTplDrafts[key] ?? '';
+              const hasText = draft.trim() !== '';
               return (
-                <ResourceCard key={busyKey} title={acct.account_name} meta={`${acct.payment_method_id}${acct.trade_currency ? ` · ${acct.trade_currency}` : ''}`}>
-                  <div className="flex items-center justify-between gap-1.5">
-                    <span className="text-[0.65rem] text-muted">Not linked to one of our payment methods</span>
-                    <button
-                      type="button"
-                      className={`${compactButtonCls} text-red`}
-                      disabled={busy || bisqPmLoading}
-                      onClick={() => runBisqAction(busyKey, async () => { await deleteBisqPaymentAccount(acct.id); })}
-                    >
-                      {busy ? 'Deleting…' : 'Delete'}
-                    </button>
-                  </div>
+                <ResourceCard key={key} title={row.name} meta={row.link_label ?? row.category}>
+                  {editing ? (
+                    <div className="flex flex-col gap-1.5">
+                      <textarea
+                        className={`${textareaCls} font-mono`}
+                        value={draft}
+                        onChange={e => setChatTplDrafts(prev => ({ ...prev, [key]: e.target.value }))}
+                        placeholder={LOREM_TEMPLATE}
+                        disabled={busy}
+                      />
+                      <div className="flex items-center justify-between gap-1.5">
+                        <label className="flex items-center gap-1 text-[0.62rem] text-muted">
+                          <input
+                            type="checkbox"
+                            checked={chatTplActive[key] ?? true}
+                            onChange={e => setChatTplActive(prev => ({ ...prev, [key]: e.target.checked }))}
+                            disabled={busy}
+                          />
+                          Active
+                        </label>
+                        <div className="flex gap-1">
+                          <button
+                            type="button"
+                            className={compactButtonCls}
+                            disabled={busy}
+                            onClick={() => void saveAccountChatTemplate(venue, pmId)}
+                          >
+                            {busy ? 'Saving…' : 'Save'}
+                          </button>
+                          <button
+                            type="button"
+                            className={compactButtonCls}
+                            disabled={busy}
+                            onClick={() => setChatTemplateEditing(key, false)}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            className={`${compactButtonCls} text-red`}
+                            disabled={busy}
+                            onClick={() => void removeChatTemplate(venue, pmId)}
+                          >
+                            Remove
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div className="flex items-start justify-between gap-2">
+                      <p className={`whitespace-pre-wrap text-[0.68rem] ${hasText ? 'text-text' : 'text-muted italic'}`}>
+                        {hasText ? draft : LOREM_TEMPLATE}
+                      </p>
+                      <button
+                        type="button"
+                        className={compactButtonCls}
+                        disabled={busy}
+                        onClick={() => setChatTemplateEditing(key, true)}
+                      >
+                        Edit
+                      </button>
+                    </div>
+                  )}
                 </ResourceCard>
               );
-            })}
+            })
+          : null}
+
+        {loaded && shownIds.length === 0 && !adding ? (
+          <div className="text-[0.65rem] text-muted px-1">No payment methods added yet.</div>
+        ) : null}
+
+        {loaded && adding ? (
+          <div className="flex flex-col gap-1 px-1">
+            <div className="flex items-center gap-1.5">
+              <select
+                className={compactInputCls}
+                defaultValue=""
+                onChange={e => { const v = e.target.value; if (v) addChatTemplateProvider(venue, Number(v)); }}
+              >
+                <option value="" disabled>Select a payment method…</option>
+                {addable.map(row => (
+                  <option key={row.id} value={row.id}>
+                    {row.link_label ? `${row.name} · ${row.link_label}` : row.name}
+                  </option>
+                ))}
+              </select>
+              <button type="button" className={compactButtonCls} onClick={() => setChatTplAddingVenue(null)}>
+                Cancel
+              </button>
+            </div>
+            {addable.length === 0 ? (
+              <div className="text-[0.6rem] text-muted">
+                No more linked payment methods. Link one in the Payment Methods panel first.
+              </div>
+            ) : null}
           </div>
+        ) : null}
+
+        {loaded && !adding ? (
+          <button
+            type="button"
+            className={compactButtonCls}
+            disabled={chatTplLoading}
+            onClick={() => setChatTplAddingVenue(venue)}
+          >
+            + Add provider
+          </button>
         ) : null}
       </CollapsibleSection>
     );
@@ -2771,13 +3132,13 @@ export function TradingAccountsPanel() {
                   </div>
                 </div>
               ) : (
-                <div className="grid gap-1 text-xs text-muted">
+                <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
                   <div><span className="text-text">Owner:</span> {ba.owner_name}</div>
                   <div><span className="text-text">IBAN:</span> {ba.details.iban ?? '—'}</div>
                   <div><span className="text-text">BIC:</span> {ba.details.bic ?? '—'}</div>
                   <div><span className="text-text">Currency:</span> {ba.currency}{ba.country ? ` · ${ba.country}` : ''}</div>
                   <div><span className="text-text">Active:</span> {ba.is_active ? 'Yes' : 'No'}</div>
-                  <div className="flex gap-1 mt-1">
+                  <div className="flex gap-1 mt-1 sm:col-span-2">
                     <button type="button" className={compactButtonCls} onClick={() => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: form }))}>Edit</button>
                     <button type="button" className={`${compactButtonCls} text-red`} onClick={() => withReload(async () => { await deleteBankAccount(ba.id); })}>Del</button>
                   </div>
@@ -2924,9 +3285,11 @@ export function TradingAccountsPanel() {
               ) : (
                 <div className="grid gap-1 text-[0.65rem] text-muted">
                   <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-text whitespace-pre-wrap break-all">{key.api_key}</pre>
-                  {profile.showSecret && key.api_secret ? <div><span className="text-text">{profile.secretLabel}:</span> ••••••••</div> : null}
-                  {profile.showPassphrase && key.passphrase ? <div><span className="text-text">Passphrase:</span> ••••••••</div> : null}
-                  <div>Updated {formatDate(key.updated_at)}</div>
+                  <div className="grid gap-1 sm:grid-cols-3">
+                    {profile.showSecret && key.api_secret ? <div><span className="text-text">{profile.secretLabel}:</span> ••••••••</div> : null}
+                    {profile.showPassphrase && key.passphrase ? <div><span className="text-text">Passphrase:</span> ••••••••</div> : null}
+                    <div>Updated {formatDate(key.updated_at)}</div>
+                  </div>
                 </div>
               )}
             </SecretItem>
@@ -3007,13 +3370,21 @@ export function TradingAccountsPanel() {
         {positions ? (
           <div className="grid gap-2">
             <div className="text-xs font-semibold text-text px-1">Active ({positions.active.length})</div>
-            {positions.active.length > 0
-              ? positions.active.map(position => renderHedgePositionCard(position, 'Active'))
-              : <div className="text-[0.65rem] text-muted px-1">No active hedge positions.</div>}
+            {positions.active.length > 0 ? (
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                {positions.active.map(position => renderHedgePositionCard(position, 'Active'))}
+              </div>
+            ) : (
+              <div className="text-[0.65rem] text-muted px-1">No active hedge positions.</div>
+            )}
             <div className="text-xs font-semibold text-text px-1 pt-1">Past ({positions.past.length})</div>
-            {positions.past.length > 0
-              ? positions.past.map(position => renderHedgePositionCard(position, 'Past'))
-              : <div className="text-[0.65rem] text-muted px-1">No past hedge positions.</div>}
+            {positions.past.length > 0 ? (
+              <div className="grid gap-1.5 sm:grid-cols-2">
+                {positions.past.map(position => renderHedgePositionCard(position, 'Past'))}
+              </div>
+            ) : (
+              <div className="text-[0.65rem] text-muted px-1">No past hedge positions.</div>
+            )}
           </div>
         ) : null}
       </CollapsibleSection>
@@ -3037,16 +3408,20 @@ export function TradingAccountsPanel() {
         }
       >
         {renderCexSectionMessage(slice?.loading ?? false, slice?.error ?? null, 'No spot trades returned yet.', trades.length > 0)}
-        {trades.map(trade => (
-          <ResourceCard key={trade.trade_id} title={`${trade.trade_type} ${trade.trading_pair}`} meta={formatDate(trade.timestamp)}>
-            <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
-              <div><span className="text-text">Price:</span> {formatTokenAmount(trade.price, 2)}</div>
-              <div><span className="text-text">Amount:</span> {formatTokenAmount(trade.amount)}</div>
-              <div><span className="text-text">Fee:</span> {formatTokenAmount(trade.fee, 8)}{trade.fee_asset ? ` ${trade.fee_asset}` : ''}</div>
-              <div><span className="text-text">Trade ID:</span> {trade.trade_id}</div>
-            </div>
-          </ResourceCard>
-        ))}
+        {trades.length > 0 ? (
+          <div className="grid gap-1.5 sm:grid-cols-2">
+            {trades.map(trade => (
+              <ResourceCard key={trade.trade_id} title={`${trade.trade_type} ${trade.trading_pair}`} meta={formatDate(trade.timestamp)}>
+                <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
+                  <div><span className="text-text">Price:</span> {formatTokenAmount(trade.price, 2)}</div>
+                  <div><span className="text-text">Amount:</span> {formatTokenAmount(trade.amount)}</div>
+                  <div><span className="text-text">Fee:</span> {formatTokenAmount(trade.fee, 8)}{trade.fee_asset ? ` ${trade.fee_asset}` : ''}</div>
+                  <div><span className="text-text">Trade ID:</span> {trade.trade_id}</div>
+                </div>
+              </ResourceCard>
+            ))}
+          </div>
+        ) : null}
       </CollapsibleSection>
     );
   };
@@ -3100,36 +3475,39 @@ export function TradingAccountsPanel() {
           <div>
             <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">Accounts Management</h3>
           </div>
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              className={compactPrimaryButtonCls}
-              onClick={() => {
-                if (showNewAccountForm) {
-                  resetNewAccountForm();
-                }
-                setShowNewAccountForm(prev => !prev);
-              }}
-            >
-              {showNewAccountForm ? 'Cancel' : 'Add Account'}
-            </button>
-            <button type="button" className={compactButtonCls} onClick={() => void load()}>
-              Refresh
-            </button>
-          </div>
+          {activeTab !== 'communication' ? (
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                className={compactPrimaryButtonCls}
+                onClick={() => {
+                  if (showNewAccountForm) {
+                    resetNewAccountForm();
+                  }
+                  setShowNewAccountForm(prev => !prev);
+                }}
+              >
+                {showNewAccountForm ? 'Cancel' : 'Add Account'}
+              </button>
+              <button type="button" className={compactButtonCls} onClick={() => void load()}>
+                Refresh
+              </button>
+            </div>
+          ) : null}
         </div>
 
         <div className="flex items-center gap-1 border-b border-border">
-          {(['payment', 'trading'] as const).map(tab => {
+          {(['payment', 'trading', 'communication'] as const).map(tab => {
             const active = activeTab === tab;
-            const count = tab === 'payment' ? paymentAccountCount : tradingAccountCount;
+            const count = tab === 'payment' ? paymentAccountCount : tab === 'trading' ? tradingAccountCount : null;
+            const label = tab === 'payment' ? 'Payment Accounts' : tab === 'trading' ? 'Trading Accounts' : 'Comunication Gateway';
             return (
               <button
                 key={tab}
                 type="button"
                 onClick={() => {
                   setActiveTab(tab);
-                  if (showNewAccountForm && newAccount.category) {
+                  if (showNewAccountForm && newAccount.category && tab !== 'communication') {
                     const catIsPayment = isPaymentCategory(newAccount.category);
                     if ((tab === 'payment') !== catIsPayment) {
                       resetNewAccountForm();
@@ -3142,13 +3520,17 @@ export function TradingAccountsPanel() {
                     : 'border-transparent text-muted hover:text-text'
                 }`}
               >
-                {tab === 'payment' ? 'Payment Accounts' : 'Trading Accounts'} ({count})
+                {label}{count != null ? ` (${count})` : ''}
               </button>
             );
           })}
         </div>
 
-        {showNewAccountForm ? (
+        {activeTab === 'communication' ? (
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+            <TelegramBotSection />
+          </div>
+        ) : showNewAccountForm ? (
           <div className="grid gap-2">
             <label className="grid min-w-0 gap-1 text-xs text-muted w-40">
               <span>Category</span>
@@ -3228,10 +3610,11 @@ export function TradingAccountsPanel() {
           </div>
         ) : null}
 
-        {error ? (
+        {activeTab !== 'communication' && error ? (
           <div className="rounded-lg border border-red/40 bg-red/10 px-3 py-2 text-sm text-red">{error}</div>
         ) : null}
 
+        {activeTab === 'communication' ? null : (
         <div className="min-h-0 flex-1 overflow-y-auto pr-1 grid content-start gap-1.5">
           {loading ? (
             <div className="rounded-lg border border-border bg-bg p-4 text-sm text-muted">Loading trading accounts…</div>
@@ -3274,7 +3657,7 @@ export function TradingAccountsPanel() {
                           {formatAccountHeaderDate(account.created_at)}
                         </div>
                       </div>
-                      <div className="ml-auto flex shrink-0 items-center gap-1 overflow-x-auto">
+                      <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
                         <HealthBadge account={account} compact />
                         <button
                           type="button"
@@ -3344,8 +3727,8 @@ export function TradingAccountsPanel() {
                       </div>
                     ) : null}
                     {expanded ? (
-                      <div className="border-t border-border px-2 py-2 grid gap-1.5">
-                        <div className="grid gap-1.5 pb-1.5 border-b border-border">
+                      <div className="border-t border-border px-2 py-2 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3 sm:items-start">
+                        <div className="grid gap-1.5 pb-1.5 border-b border-border sm:col-span-2 xl:col-span-3">
                           <div className="flex items-center justify-between gap-2">
                             <span className="text-xs font-semibold text-text">Account</span>
                             <div className="flex gap-1">
@@ -3433,6 +3816,7 @@ export function TradingAccountsPanel() {
 
                         {isBisqProvider(account.provider) ? renderAccountFileSection(account) : null}
                         {isBisq1Provider(account.provider) ? renderSavedPaymentMethodsSection(account) : null}
+                        {chatVenueForProvider(account.provider) ? renderChatTemplatesSection(account) : null}
                         {showDexIdentitySections(account.provider) ? renderTOTPSection(account) : null}
                         {showDexIdentitySections(account.provider) ? renderPasskeysSection(account) : null}
                         {renderSeedsSection(account)}
@@ -3452,6 +3836,7 @@ export function TradingAccountsPanel() {
             </div>
           ))}
         </div>
+        )}
       </div>
     </div>
   );
