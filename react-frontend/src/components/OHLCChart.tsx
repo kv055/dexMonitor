@@ -5,6 +5,7 @@ import {
   createChart,
   ColorType,
   CrosshairMode,
+  LineStyle,
   type IChartApi,
   type ISeriesApi,
   type UTCTimestamp,
@@ -56,9 +57,54 @@ const CANDLE_LABELS: Record<number, string> = {
 };
 const TARGET_VISIBLE_CANDLES = 120;
 
+// A connector between two lifecycle observations is treated as a DATA GAP —
+// drawn dashed and muted rather than as a confident straight line — when it
+// spans far more than the offer's own typical snapshot cadence. The factor is
+// applied to the median spacing (so it adapts to 1m vs 4h buckets), with an
+// absolute floor so ordinary sub-minute jitter never trips it.
+const GAP_CADENCE_FACTOR = 2.5;
+const MIN_GAP_SECONDS = 90;
+
 function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;
+}
+
+function parseHexColor(color: string): { r: number; g: number; b: number } | null {
+  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
+  if (!m) return null;
+  const hex = m[1].length === 3 ? m[1].split('').map((c) => c + c).join('') : m[1];
+  const n = parseInt(hex, 16);
+  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
+}
+
+// Blend a line's color toward neutral grey (and drop its alpha a touch) so a
+// gap connector still carries the line's identity but clearly reads as
+// "uncertain — we don't actually know the price here".
+function weakenColor(color: string): string {
+  const rgb = parseHexColor(color);
+  if (!rgb) return 'rgba(139, 148, 158, 0.7)';
+  const GREY = 145;
+  const MIX = 0.62; // 0 = original color, 1 = fully grey
+  const r = Math.round(rgb.r + (GREY - rgb.r) * MIX);
+  const g = Math.round(rgb.g + (GREY - rgb.g) * MIX);
+  const b = Math.round(rgb.b + (GREY - rgb.b) * MIX);
+  return `rgba(${r}, ${g}, ${b}, 0.85)`;
+}
+
+// The offer's typical observation spacing × factor (with a floor). Connectors
+// longer than this are missing-data gaps.
+function gapThresholdSeconds(points: { utcSec?: number }[]): number {
+  const deltas: number[] = [];
+  for (let i = 1; i < points.length; i++) {
+    const a = points[i - 1].utcSec;
+    const b = points[i].utcSec;
+    if (a != null && b != null) deltas.push(b - a);
+  }
+  if (deltas.length === 0) return Infinity;
+  deltas.sort((x, y) => x - y);
+  const median = deltas[Math.floor(deltas.length / 2)];
+  return Math.max(median * GAP_CADENCE_FACTOR, MIN_GAP_SECONDS);
 }
 
 function getNowUtcSec(): number {
@@ -590,22 +636,38 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
         if (lifecycle && lifecycle.length > 0) {
           // Lifecycle line: render the full known history, including points outside
           // the initial visible range so scrolling can reveal the whole order path.
-          const lcPointsRaw = lifecycle.flatMap((p) => {
+          type LcPoint = { time: UTCTimestamp; value: number; color: string; utcSec?: number; gapBefore?: boolean };
+          const lcPointsRaw: LcPoint[] = lifecycle.flatMap((p) => {
             const utcSec = toUtcSec(p.time);
             if (!utcSec) return [];
             return [{
               time: toDisplaySec(snapToGrid(utcSec)),
+              utcSec,
               value: p.price,
               color: isSelected ? selectedLine : exchangeColor(o.exchange),
             }];
           });
           // Deduplicate by timestamp (keep last), then sort ascending.
-          const lcByTime = new Map<number, typeof lcPointsRaw[0]>();
+          const lcByTime = new Map<number, LcPoint>();
           for (const pt of lcPointsRaw) lcByTime.set(pt.time, pt);
           const lcPoints = Array.from(lcByTime.values()).sort((a, b) => a.time - b.time);
           if (lcPoints.length === 0) {
             renderFallbackLine();
             return;
+          }
+
+          // Flag connectors that jump across a data gap: between two such
+          // observations we don't actually know the price, so that stretch must
+          // be drawn as an uncertain (dashed, muted) line instead of a straight
+          // interpolation. Computed on the real observations only — the synthetic
+          // first-seen / now / last-seen anchors added below stay solid.
+          const gapThreshold = gapThresholdSeconds(lcPoints);
+          for (let i = 1; i < lcPoints.length; i++) {
+            const prev = lcPoints[i - 1].utcSec;
+            const curr = lcPoints[i].utcSec;
+            if (prev != null && curr != null && curr - prev > gapThreshold) {
+              lcPoints[i].gapBefore = true;
+            }
           }
 
           const firstSeenUtc = toUtcSec(getFirstSeen(o) ?? '');
@@ -642,35 +704,41 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
 
           const representativePrice = lcPoints[Math.floor(lcPoints.length / 2)].value;
 
-          // Group into contiguous segments of the same color.
-          type Segment = { points: TimeValue[]; color: string };
+          // Group into contiguous runs sharing BOTH color and gap-state. A gap
+          // connector is drawn dashed in a muted color; the real segments on
+          // either side stay solid and fully colored. (Color can still vary if a
+          // future change reintroduces per-point coloring — this handles both.)
+          type Segment = { points: TimeValue[]; color: string; isGap: boolean };
           const segments: Segment[] = [];
-          let seg: TimeValue[] = [{ time: lcPoints[0].time, value: lcPoints[0].value }];
-          let segColor = lcPoints[0].color;
-
           for (let i = 1; i < lcPoints.length; i++) {
-            const pt = lcPoints[i];
-            if (pt.color !== segColor) {
-              // Overlap: include this point in the closing segment before starting a new one.
-              segments.push({ points: [...seg, { time: pt.time, value: pt.value }], color: segColor });
-              seg = [{ time: pt.time, value: pt.value }];
-              segColor = pt.color;
+            const a = lcPoints[i - 1];
+            const b = lcPoints[i];
+            const isGap = b.gapBefore === true;
+            const color = isGap ? weakenColor(a.color) : a.color;
+            const from = { time: a.time, value: a.value };
+            const to = { time: b.time, value: b.value };
+            const last = segments[segments.length - 1];
+            const lastPt = last?.points[last.points.length - 1];
+            if (last && last.isGap === isGap && last.color === color &&
+                lastPt && lastPt.time === from.time && lastPt.value === from.value) {
+              last.points.push(to);
             } else {
-              seg.push({ time: pt.time, value: pt.value });
+              segments.push({ points: [from, to], color, isGap });
             }
           }
-          segments.push({ points: seg, color: segColor });
 
           let clickTargetRegistered = false;
           let drawnSegments = 0;
-          for (const { points: segPts, color } of segments) {
+          for (const { points: segPts, color, isGap } of segments) {
             if (segPts.length < 2) continue;
             const series = addLine({
               color,
               lineWidth,
+              lineStyle: isGap ? LineStyle.Dashed : LineStyle.Solid,
               priceLineVisible: false,
               lastValueVisible: false,
-              crosshairMarkerVisible: true,
+              // Gap stretches are uncertain, so don't invite hovering their points.
+              crosshairMarkerVisible: !isGap,
               crosshairMarkerRadius: markerRadius,
             });
             series.setData(segPts);
