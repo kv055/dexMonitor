@@ -26,6 +26,10 @@ function cumulativeRows(rows: { price: number; btc: number }[]) {
   });
 }
 
+const MIN_ZOOM = 0.1;
+const MAX_ZOOM = 20;
+const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
+
 function DepthChartInner() {
   const { depthOffers, offers: allOffers, filters, loading, hoveredOhlcTime } = useFilters();
   const { timezone } = useTimezone();
@@ -34,8 +38,27 @@ function DepthChartInner() {
   const canvasMetricsRef = useRef<{ w: number; h: number; dpr: number } | null>(null);
   const [referenceNowSec] = useState(() => Math.floor(Date.now() / 1000));
   const [resizeTick, setResizeTick] = useState(0);
+  // Price-axis zoom (1 = default window) and vertical pan expressed as a
+  // fraction of the natural data range, so it stays stable across zoom levels.
   const [yZoom, setYZoom] = useState(1.0);
+  const [panFrac, setPanFrac] = useState(0);
   const headerTimestamp = formatDateTimeLabel(hoveredOhlcTime ?? referenceNowSec, timezone);
+
+  // Mirror the interactive state into refs so the (mount-scoped) pointer
+  // handlers always read the latest values without re-binding listeners.
+  const yZoomRef = useRef(yZoom);
+  const panFracRef = useRef(panFrac);
+  useEffect(() => { yZoomRef.current = yZoom; }, [yZoom]);
+  useEffect(() => { panFracRef.current = panFrac; }, [panFrac]);
+  // Plot geometry published by the draw pass so pointer handlers can tell the
+  // price-axis margin (left) from the plot area and convert pixels ↔ price.
+  const layoutRef = useRef<{ ML: number; PH: number } | null>(null);
+
+  const showReset = Math.abs(yZoom - 1) > 0.001 || Math.abs(panFrac) > 0.001;
+  const resetView = () => {
+    setYZoom(1);
+    setPanFrac(0);
+  };
 
   // Resize observer
   useEffect(() => {
@@ -46,16 +69,72 @@ function DepthChartInner() {
     return () => ro.disconnect();
   }, []);
 
-  // Wheel zoom on the y (price) axis
+  // Pan/zoom gestures on the price (y) axis — mirrors the OHLC chart:
+  //   · wheel over the chart zooms the price scale
+  //   · dragging vertically on the left price-axis margin scales it
+  //   · dragging vertically inside the plot pans up/down
+  // The cursor turns into the same ns-resize arrow over the axis labels.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
+
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
-      setYZoom(z => Math.min(20, Math.max(0.1, z * (e.deltaY < 0 ? 1.15 : 1 / 1.15))));
+      setYZoom(z => clampZoom(z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
     };
+
+    const drag = { active: false, mode: 'pan' as 'pan' | 'zoom', startY: 0, startZoom: 1, startPan: 0 };
+
+    const onWindowMove = (e: MouseEvent) => {
+      const layout = layoutRef.current;
+      if (!drag.active || !layout) return;
+      const dy = e.clientY - drag.startY;
+      if (drag.mode === 'zoom') {
+        setYZoom(clampZoom(drag.startZoom * Math.exp(-dy / 150)));
+      } else {
+        // Grab-and-pull: dragging down reveals higher prices (which sit at the top).
+        setPanFrac(drag.startPan + (dy / layout.PH) * (2 / drag.startZoom));
+      }
+    };
+    const onWindowUp = () => {
+      if (!drag.active) return;
+      drag.active = false;
+      canvas.style.cursor = 'default';
+      window.removeEventListener('mousemove', onWindowMove);
+      window.removeEventListener('mouseup', onWindowUp);
+    };
+    const onDown = (e: MouseEvent) => {
+      const layout = layoutRef.current;
+      if (!layout) return;
+      const x = e.clientX - canvas.getBoundingClientRect().left;
+      drag.active = true;
+      drag.startY = e.clientY;
+      drag.startZoom = yZoomRef.current;
+      drag.startPan = panFracRef.current;
+      drag.mode = x < layout.ML ? 'zoom' : 'pan';
+      canvas.style.cursor = drag.mode === 'zoom' ? 'ns-resize' : 'grabbing';
+      e.preventDefault();
+      window.addEventListener('mousemove', onWindowMove);
+      window.addEventListener('mouseup', onWindowUp);
+    };
+    const onHover = (e: MouseEvent) => {
+      if (drag.active) return;
+      const layout = layoutRef.current;
+      if (!layout) { canvas.style.cursor = 'default'; return; }
+      const x = e.clientX - canvas.getBoundingClientRect().left;
+      canvas.style.cursor = x < layout.ML ? 'ns-resize' : 'grab';
+    };
+
     canvas.addEventListener('wheel', onWheel, { passive: false });
-    return () => canvas.removeEventListener('wheel', onWheel);
+    canvas.addEventListener('mousedown', onDown);
+    canvas.addEventListener('mousemove', onHover);
+    return () => {
+      canvas.removeEventListener('wheel', onWheel);
+      canvas.removeEventListener('mousedown', onDown);
+      canvas.removeEventListener('mousemove', onHover);
+      window.removeEventListener('mousemove', onWindowMove);
+      window.removeEventListener('mouseup', onWindowUp);
+    };
   }, []);
 
   // Compute offers to display: live or historical snapshot
@@ -100,8 +179,9 @@ function DepthChartInner() {
       (rawAsks.at(-1)?.price ?? midPrice) - midPrice
     ) * 1.1 || midPrice * 0.05;
     const priceRange = dataRange / yZoom;
-    const priceMin = midPrice - priceRange;
-    const priceMax = midPrice + priceRange;
+    const priceCenter = midPrice + panFrac * dataRange;
+    const priceMin = priceCenter - priceRange;
+    const priceMax = priceCenter + priceRange;
 
     // Volume totals within visible price range
     const visibleBidBtc = rawBids
@@ -129,7 +209,7 @@ function DepthChartInner() {
       volumeInfo: `Bids ${visibleBidBtc.toFixed(3)} · Asks ${visibleAskBtc.toFixed(3)} BTC`,
       midInfo: `Mid €${Math.round(midPrice).toLocaleString('de-DE')}${spreadText}`,
     };
-  }, [displayOffers, hoveredOhlcTime, yZoom]);
+  }, [displayOffers, hoveredOhlcTime, yZoom, panFrac]);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -168,6 +248,9 @@ function DepthChartInner() {
     const { bids, asks, midPrice, maxVol, priceMin, priceMax } = chartData;
     const PW = W - ML - MR;
     const PH = H - MT - MB;
+
+    // Publish geometry for the pointer handlers (axis margin vs plot, px↔price).
+    layoutRef.current = { ML, PH };
 
     const xOf = (v: number) => ML + (v / maxVol) * PW;
     const yOf = (p: number) => MT + (1 - (p - priceMin) / (priceMax - priceMin)) * PH;
@@ -295,6 +378,15 @@ function DepthChartInner() {
             transition: 'opacity 0.35s ease',
           }}
         />
+        {showReset && (
+          <button
+            onClick={resetView}
+            title="Reset chart view"
+            className="absolute top-1.5 right-2 z-10 bg-surface/90 border border-border rounded-md px-2 py-0.5 text-[0.68rem] text-muted hover:text-text hover:border-muted transition-colors"
+          >
+            ⟲ Reset view
+          </button>
+        )}
       </div>
     </div>
   );
