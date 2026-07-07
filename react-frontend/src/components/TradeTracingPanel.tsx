@@ -8,6 +8,7 @@ import { useFilters } from '../hooks/useFilters';
 import { useHedgeStream } from '../hooks/useHedgeStream';
 import { useWithdrawalTrack } from '../hooks/useWithdrawalTrack';
 import { CapitalRequiredSection, AbortCostSection, SizeToggle } from './OfferBreakdownPanel';
+import type { SizeMode } from './OfferBreakdownPanel';
 import {
   getBtcMax,
   getBtcMin,
@@ -16,7 +17,9 @@ import {
   getDisplayCostBreakdown,
   getNetPremiumPercent,
   getRefPrice,
+  getMinTradeSizeBtc,
   hasCappedScenario,
+  hasMinScenario,
 } from '../utils/offerAccess';
 
 type Unit = 'btc' | 'fiat';
@@ -173,19 +176,20 @@ function LiveHedgePosition({ position, socketConnected }: { position: HedgePosit
 export function TradeTracingPanel({ offer }: { offer: Offer }) {
   const { filters } = useFilters();
   const hasCapped = hasCappedScenario(offer);
+  const hasMin = hasMinScenario(offer);
   // Default to the capped scenario when one actually applies (the offer's
   // full size exceeds the fiat cap); otherwise there's nothing to cap, so
   // fall back to the max position size.
-  const [showCapped, setShowCapped] = useState(() => hasCapped);
+  const [sizeMode, setSizeMode] = useState<SizeMode>(() => (hasCapped ? 'capped' : 'full'));
 
-  const bd = getDisplayCostBreakdown(offer, showCapped);
-  const abortCost = getDisplayAbortCost(offer, showCapped);
+  const bd = getDisplayCostBreakdown(offer, sizeMode);
+  const abortCost = getDisplayAbortCost(offer, sizeMode);
   const refPrice = getRefPrice(offer);
   const fiatCurrency = offer.pricing?.fiat_currency ?? 'EUR';
   const isAsk = offer.direction === 'sell';
   const routeCex = bd?.route_cex ?? '';
   const cexLabel = routeCex ? routeCex.charAt(0).toUpperCase() + routeCex.slice(1) : '—';
-  const netPremium = getNetPremiumPercent(offer, showCapped);
+  const netPremium = getNetPremiumPercent(offer, sizeMode);
   const btcMin = getBtcMin(offer);
   const btcMax = getBtcMax(offer);
   const cappedBtc = getCappedTradeSizeBtc(offer);
@@ -261,13 +265,13 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
     setUnit(next);
   }
 
-  // Switches which precomputed scenario (max position size vs. the
-  // fiat-capped size) is previewed, and resets the volume box to that
-  // scenario's size — same convention as toggleUnit above.
-  function toggleSize(capped: boolean) {
-    if (capped === showCapped) return;
-    setShowCapped(capped);
-    const sizeBd = getDisplayCostBreakdown(offer, capped);
+  // Switches which precomputed scenario (max position size, the fiat-capped
+  // size, or the offer's minimum amount) is previewed, and resets the volume
+  // box to that scenario's size — same convention as toggleUnit above.
+  function toggleSize(mode: SizeMode) {
+    if (mode === sizeMode) return;
+    setSizeMode(mode);
+    const sizeBd = getDisplayCostBreakdown(offer, mode);
     const nextBtc = sizeBd?.btc_amount ?? btcMax ?? btcMin ?? 0;
     if (unit === 'fiat' && canUseFiat) {
       setDraft(nextBtc > 0 ? (nextBtc * refPrice!).toFixed(2) : '');
@@ -438,11 +442,12 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
 
               <div className="border-t border-border" />
 
-              {hasCapped && (
+              {(hasCapped || hasMin) && (
                 <SizeToggle
-                  showCapped={showCapped}
-                  onToggle={toggleSize}
+                  mode={sizeMode}
+                  onModeChange={toggleSize}
                   cappedBtc={cappedBtc}
+                  minBtc={getMinTradeSizeBtc(offer)}
                   refPrice={refPrice}
                 />
               )}

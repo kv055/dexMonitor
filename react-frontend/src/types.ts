@@ -225,6 +225,7 @@ export interface LiveOfferScenario {
 export interface LiveOfferAnalysis {
   full_volume: LiveOfferScenario;
   capped_volume?: LiveOfferScenario | null;
+  min_volume?: LiveOfferScenario | null;
 }
 
 export interface LifecyclePoint {
