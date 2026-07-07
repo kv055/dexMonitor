@@ -326,37 +326,52 @@ function HedgeDetailRow({ bd }: { bd: CostBreakdown }) {
   );
 }
 
-export function SizeToggle({ showCapped, onToggle, cappedBtc, refPrice }: {
-  showCapped: boolean;
-  onToggle: (v: boolean) => void;
+export type SizeMode = 'full' | 'capped' | 'min';
+
+function SizeModeButton({ active, onClick, children }: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`text-[0.63rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
+        active
+          ? 'border-accent/60 text-accent bg-accent/10'
+          : 'border-border text-muted hover:border-muted/60'
+      }`}
+    >
+      {children}
+    </button>
+  );
+}
+
+export function SizeToggle({ mode, onModeChange, cappedBtc, minBtc, refPrice }: {
+  mode: SizeMode;
+  onModeChange: (v: SizeMode) => void;
   cappedBtc: number | null | undefined;
+  minBtc?: number | null;
   refPrice: number | null;
 }) {
   const cappedEur = cappedBtc != null && refPrice != null ? Math.round(cappedBtc * refPrice) : null;
+  const minEur = minBtc != null && refPrice != null ? Math.round(minBtc * refPrice) : null;
   return (
     <div className="flex items-center gap-1 self-start">
-      <button
-        type="button"
-        onClick={() => onToggle(false)}
-        className={`text-[0.63rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
-          !showCapped
-            ? 'border-accent/60 text-accent bg-accent/10'
-            : 'border-border text-muted hover:border-muted/60'
-        }`}
-      >
+      <SizeModeButton active={mode === 'full'} onClick={() => onModeChange('full')}>
         Full size
-      </button>
-      <button
-        type="button"
-        onClick={() => onToggle(true)}
-        className={`text-[0.63rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
-          showCapped
-            ? 'border-accent/60 text-accent bg-accent/10'
-            : 'border-border text-muted hover:border-muted/60'
-        }`}
-      >
-        {cappedEur != null ? `€${cappedEur} cap` : 'Capped'}
-      </button>
+      </SizeModeButton>
+      {cappedBtc != null && (
+        <SizeModeButton active={mode === 'capped'} onClick={() => onModeChange('capped')}>
+          {cappedEur != null ? `€${cappedEur} cap` : 'Capped'}
+        </SizeModeButton>
+      )}
+      {minBtc != null && (
+        <SizeModeButton active={mode === 'min'} onClick={() => onModeChange('min')}>
+          {minEur != null ? `€${minEur} min` : 'Min amount'}
+        </SizeModeButton>
+      )}
     </div>
   );
 }

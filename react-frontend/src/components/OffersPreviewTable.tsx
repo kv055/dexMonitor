@@ -6,6 +6,7 @@ import { useTimezone } from '../hooks/useTimezone';
 import { useFilters } from '../hooks/useFilters';
 import { LoadingSpinner } from './LoadingSpinner';
 import { CostBreakdownPanel, OfferTimeMeta, SizeToggle } from './OfferBreakdownPanel';
+import type { SizeMode } from './OfferBreakdownPanel';
 import { buildOfferKeys, buildStableOfferKey } from '../utils/offerIdentity';
 import {
   getBtcMax,
@@ -22,7 +23,9 @@ import {
   getPriceType,
   getRawPremiumPercent,
   getRefPrice,
+  getMinTradeSizeBtc,
   hasCappedScenario,
+  hasMinScenario,
   isOfferLive,
 } from '../utils/offerAccess';
 
@@ -60,9 +63,9 @@ export function OffersPreviewTable() {
   const { timezone } = useTimezone();
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
   const [isMobile, setIsMobile] = useState(() => window.matchMedia('(max-width: 1023px)').matches);
-  const [cappedSelection, setCappedSelection] = useState<{ offerKey: string | null; enabled: boolean }>({
+  const [sizeSelection, setSizeSelection] = useState<{ offerKey: string | null; mode: SizeMode }>({
     offerKey: null,
-    enabled: false,
+    mode: 'full',
   });
   const offerKeys = useMemo(() => buildOfferKeys(offers), [offers]);
   const stableOfferKeys = useMemo(() => offers.map(buildStableOfferKey), [offers]);
@@ -72,7 +75,7 @@ export function OffersPreviewTable() {
   );
   const allChartVisible = offers.length > 0 && visibleCount === offers.length;
   const someChartVisible = visibleCount > 0 && visibleCount < offers.length;
-  const showCapped = cappedSelection.offerKey === selectedOfferKey && cappedSelection.enabled;
+  const sizeMode: SizeMode = sizeSelection.offerKey === selectedOfferKey ? sizeSelection.mode : 'full';
 
   // Selecting a row for the detail view implies wanting to see it on the chart too —
   // otherwise a previously-unchecked offer would open its breakdown panel while
@@ -203,19 +206,20 @@ export function OffersPreviewTable() {
               </div>
               {getDisplayCostBreakdown(selectedOffer) ? (
                 <div className="flex flex-col gap-3">
-                  {hasCappedScenario(selectedOffer) && (
+                  {(hasCappedScenario(selectedOffer) || hasMinScenario(selectedOffer)) && (
                     <SizeToggle
-                      showCapped={showCapped}
-                      onToggle={enabled => setCappedSelection({ offerKey: selectedOfferKey, enabled })}
+                      mode={sizeMode}
+                      onModeChange={mode => setSizeSelection({ offerKey: selectedOfferKey, mode })}
                       cappedBtc={getCappedTradeSizeBtc(selectedOffer)}
+                      minBtc={getMinTradeSizeBtc(selectedOffer)}
                       refPrice={getRefPrice(selectedOffer)}
                     />
                   )}
                   <CostBreakdownPanel
-                    bd={getDisplayCostBreakdown(selectedOffer, showCapped) ?? getDisplayCostBreakdown(selectedOffer)!}
-                    abortCost={getDisplayAbortCost(selectedOffer, showCapped)}
+                    bd={getDisplayCostBreakdown(selectedOffer, sizeMode) ?? getDisplayCostBreakdown(selectedOffer)!}
+                    abortCost={getDisplayAbortCost(selectedOffer, sizeMode)}
                     priceDiffPct={getRawPremiumPercent(selectedOffer)}
-                    netPremiumPct={getNetPremiumPercent(selectedOffer, showCapped)}
+                    netPremiumPct={getNetPremiumPercent(selectedOffer, sizeMode)}
                     refPrice={getRefPrice(selectedOffer)}
                     offerPrice={getOfferPrice(selectedOffer)}
                     showCapitalAndAbort={!isOfferLive(selectedOffer)}
@@ -367,19 +371,20 @@ export function OffersPreviewTable() {
             <div className="flex-1 min-h-0 overflow-y-auto px-4 pb-4">
             {getDisplayCostBreakdown(selectedOffer) ? (
               <div className="flex flex-col gap-3">
-                {hasCappedScenario(selectedOffer) && (
+                {(hasCappedScenario(selectedOffer) || hasMinScenario(selectedOffer)) && (
                   <SizeToggle
-                    showCapped={showCapped}
-                    onToggle={enabled => setCappedSelection({ offerKey: selectedOfferKey, enabled })}
+                    mode={sizeMode}
+                    onModeChange={mode => setSizeSelection({ offerKey: selectedOfferKey, mode })}
                     cappedBtc={getCappedTradeSizeBtc(selectedOffer)}
+                    minBtc={getMinTradeSizeBtc(selectedOffer)}
                     refPrice={getRefPrice(selectedOffer)}
                   />
                 )}
                 <CostBreakdownPanel
-                  bd={getDisplayCostBreakdown(selectedOffer, showCapped) ?? getDisplayCostBreakdown(selectedOffer)!}
-                  abortCost={getDisplayAbortCost(selectedOffer, showCapped)}
+                  bd={getDisplayCostBreakdown(selectedOffer, sizeMode) ?? getDisplayCostBreakdown(selectedOffer)!}
+                  abortCost={getDisplayAbortCost(selectedOffer, sizeMode)}
                   priceDiffPct={getRawPremiumPercent(selectedOffer)}
-                  netPremiumPct={getNetPremiumPercent(selectedOffer, showCapped)}
+                  netPremiumPct={getNetPremiumPercent(selectedOffer, sizeMode)}
                   refPrice={getRefPrice(selectedOffer)}
                   offerPrice={getOfferPrice(selectedOffer)}
                   showCapitalAndAbort={!isOfferLive(selectedOffer)}

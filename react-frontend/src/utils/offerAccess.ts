@@ -74,36 +74,63 @@ export function hasZeroTrustScore(offer: Offer): boolean {
   return score === 0;
 }
 
-export function getNetPremiumPercent(offer: Offer, capped = false): number | null {
+// Which precomputed trade-size scenario to read: the offer's full size, the
+// operator's fiat-cap size, or the offer's minimum amount. Boolean values are
+// accepted for backwards compatibility (true = 'capped', false = 'full').
+export type ScenarioKind = 'full' | 'capped' | 'min';
+export type ScenarioSelector = ScenarioKind | boolean;
+
+function scenarioKind(sel: ScenarioSelector): ScenarioKind {
+  if (sel === true) return 'capped';
+  if (sel === false) return 'full';
+  return sel;
+}
+
+function pickScenario(offer: Offer, sel: ScenarioSelector) {
+  switch (scenarioKind(sel)) {
+    case 'capped':
+      return offer.analysis?.capped_volume;
+    case 'min':
+      return offer.analysis?.min_volume;
+    default:
+      return offer.analysis?.full_volume;
+  }
+}
+
+export function getNetPremiumPercent(offer: Offer, sel: ScenarioSelector = false): number | null {
   if (offer.analysis) {
-    const scenario = capped ? offer.analysis.capped_volume : offer.analysis.full_volume;
+    const scenario = pickScenario(offer, sel);
     return scenario?.premium.net_percent ?? scenario?.premium.avg_net_percent ?? null;
   }
-  return capped ? offer.net_premium_percent_capped ?? null : offer.net_premium_percent ?? null;
+  if (scenarioKind(sel) === 'min') return null;
+  return scenarioKind(sel) === 'capped' ? offer.net_premium_percent_capped ?? null : offer.net_premium_percent ?? null;
 }
 
-export function getTradeCostPercent(offer: Offer, capped = false): number | null {
+export function getTradeCostPercent(offer: Offer, sel: ScenarioSelector = false): number | null {
   if (offer.analysis) {
-    const scenario = capped ? offer.analysis.capped_volume : offer.analysis.full_volume;
+    const scenario = pickScenario(offer, sel);
     return scenario?.premium.trade_cost_percent ?? scenario?.premium.avg_trade_cost_percent ?? null;
   }
-  return capped ? offer.trade_cost_percent_capped ?? null : offer.trade_cost_percent ?? null;
+  if (scenarioKind(sel) === 'min') return null;
+  return scenarioKind(sel) === 'capped' ? offer.trade_cost_percent_capped ?? null : offer.trade_cost_percent ?? null;
 }
 
-export function getEstimatedProfitBtc(offer: Offer, capped = false): number | null {
+export function getEstimatedProfitBtc(offer: Offer, sel: ScenarioSelector = false): number | null {
   if (offer.analysis) {
-    const scenario = capped ? offer.analysis.capped_volume : offer.analysis.full_volume;
+    const scenario = pickScenario(offer, sel);
     return scenario?.profit.btc ?? scenario?.profit.avg_btc ?? null;
   }
-  return capped ? offer.estimated_profit_btc_capped ?? null : offer.estimated_profit_btc ?? null;
+  if (scenarioKind(sel) === 'min') return null;
+  return scenarioKind(sel) === 'capped' ? offer.estimated_profit_btc_capped ?? null : offer.estimated_profit_btc ?? null;
 }
 
-export function getEstimatedProfitFiat(offer: Offer, capped = false): number | null {
+export function getEstimatedProfitFiat(offer: Offer, sel: ScenarioSelector = false): number | null {
   if (offer.analysis) {
-    const scenario = capped ? offer.analysis.capped_volume : offer.analysis.full_volume;
+    const scenario = pickScenario(offer, sel);
     return scenario?.profit.fiat ?? scenario?.profit.avg_fiat ?? null;
   }
-  return capped ? offer.estimated_profit_fiat_capped ?? null : offer.estimated_profit_fiat ?? null;
+  if (scenarioKind(sel) === 'min') return null;
+  return scenarioKind(sel) === 'capped' ? offer.estimated_profit_fiat_capped ?? null : offer.estimated_profit_fiat ?? null;
 }
 
 export function getCappedTradeSizeBtc(offer: Offer): number | null {
@@ -115,10 +142,21 @@ export function hasCappedScenario(offer: Offer): boolean {
   return !!offer.analysis?.capped_volume || !!offer.cost_breakdown_capped;
 }
 
-export function getDisplayCostBreakdown(offer: Offer, capped = false): CostBreakdown | null {
-  if (!offer.analysis) return capped ? offer.cost_breakdown_capped ?? null : offer.cost_breakdown ?? null;
+export function getMinTradeSizeBtc(offer: Offer): number | null {
+  return offer.analysis?.min_volume?.trade_size_btc ?? null;
+}
 
-  const scenario = capped ? offer.analysis.capped_volume : offer.analysis.full_volume;
+export function hasMinScenario(offer: Offer): boolean {
+  return !!offer.analysis?.min_volume;
+}
+
+export function getDisplayCostBreakdown(offer: Offer, sel: ScenarioSelector = false): CostBreakdown | null {
+  if (!offer.analysis) {
+    if (scenarioKind(sel) === 'min') return null;
+    return scenarioKind(sel) === 'capped' ? offer.cost_breakdown_capped ?? null : offer.cost_breakdown ?? null;
+  }
+
+  const scenario = pickScenario(offer, sel);
   if (!scenario) return null;
 
   const networkFee = offer.btc_network_fee;
@@ -196,9 +234,12 @@ export function pastProfitableOrderAsOffer(order: PastProfitableOrder): Offer {
   };
 }
 
-export function getDisplayAbortCost(offer: Offer, capped = false): AbortCostBreakdown | null {
-  if (!offer.analysis) return capped ? offer.abort_cost_capped ?? null : offer.abort_cost ?? null;
+export function getDisplayAbortCost(offer: Offer, sel: ScenarioSelector = false): AbortCostBreakdown | null {
+  if (!offer.analysis) {
+    if (scenarioKind(sel) === 'min') return null;
+    return scenarioKind(sel) === 'capped' ? offer.abort_cost_capped ?? null : offer.abort_cost ?? null;
+  }
 
-  const scenario = capped ? offer.analysis.capped_volume : offer.analysis.full_volume;
+  const scenario = pickScenario(offer, sel);
   return scenario?.abort_cost ?? null;
 }

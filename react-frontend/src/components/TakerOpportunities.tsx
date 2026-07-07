@@ -811,8 +811,8 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
         <div className="flex flex-col gap-3">
           {hasCappedScenario(offer) && (
             <SizeToggle
-              showCapped={showCappedEffective}
-              onToggle={onToggleCapped}
+              mode={showCappedEffective ? 'capped' : 'full'}
+              onModeChange={mode => onToggleCapped(mode === 'capped')}
               cappedBtc={getCappedTradeSizeBtc(offer)}
               refPrice={refPrice}
             />
