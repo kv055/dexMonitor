@@ -4,7 +4,7 @@ import { useTimezone } from '../hooks/useTimezone';
 import type { PremiumFilterMode } from '../types';
 import { ExchangeTag } from './ExchangeTag';
 import { formatTimeOnly } from '../utils/formatters';
-import { getLastSeen, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
+import { getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
 
 const PAYMENT_PALETTE = [
   '#f7931a', '#3fb950', '#bc8cff', '#58a6ff', '#f85149',
@@ -351,79 +351,6 @@ function DirectionDropdown({ value, onChange, inputCls }: DirectionDropdownProps
   );
 }
 
-interface StatusDropdownProps {
-  value: string;
-  onChange: (v: string) => void;
-  inputCls: string;
-}
-
-function StatusDropdown({ value, onChange, inputCls }: StatusDropdownProps) {
-  const { offers, filters } = useFilters();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  const counts = useMemo(() => {
-    let f = offers;
-    if (filters.direction) f = f.filter(o => o.direction === filters.direction);
-    if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
-    if (filters.payment)   f = f.filter(o => o.payment_methods?.includes(filters.payment));
-    const pMin = parseFloat(filters.premiumMin);
-    const pMax = parseFloat(filters.premiumMax);
-    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
-    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
-
-    return {
-      all:    f.length,
-      open:   f.filter(o => isOfferLive(o)).length,
-      closed: f.filter(o => !isOfferLive(o)).length,
-    };
-  }, [offers, filters]);
-
-  const OPTIONS = [
-    { value: '',       label: 'All Orders', count: counts.all },
-    { value: 'open',   label: 'Open',       count: counts.open },
-    { value: 'closed', label: 'Closed',     count: counts.closed },
-  ];
-  const selected = OPTIONS.find(o => o.value === value) ?? OPTIONS[0];
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className={`${inputCls} flex items-center gap-1.5 w-full`}
-      >
-        <span className="text-[0.8rem]">{selected.label}</span>
-        <span className="text-muted text-[0.75rem]">{selected.count}</span>
-        <span className="ml-auto text-muted text-[0.65rem]">▾</span>
-      </button>
-
-      {open && (
-        <div className="absolute top-full left-0 mt-1 z-50 bg-surface border border-border rounded-md overflow-hidden min-w-full shadow-lg">
-          {OPTIONS.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => { onChange(opt.value); setOpen(false); }}
-              className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors flex items-center justify-between gap-3 ${value === opt.value ? 'text-accent' : 'text-text'}`}
-            >
-              <span className="text-[0.8rem]">{opt.label}</span>
-              <span className="text-muted text-[0.75rem]">{opt.count}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 interface ExchangeDropdownProps {
   value: string;
   onChange: (v: string) => void;
@@ -509,89 +436,6 @@ function ExchangeDropdown({ value, onChange, inputCls }: ExchangeDropdownProps) 
   );
 }
 
-const TIMEFRAME_OPTIONS = [
-  { value: '1',   label: 'Last 1h' },
-  { value: '6',   label: 'Last 6h' },
-  { value: '24',  label: 'Last 24h' },
-  { value: '48',  label: 'Last 48h' },
-  { value: '168', label: 'Last 7d' },
-];
-
-interface TimeframeDropdownProps {
-  value: string;
-  onChange: (v: string) => void;
-  inputCls: string;
-}
-
-function TimeframeDropdown({ value, onChange, inputCls }: TimeframeDropdownProps) {
-  const { offers, filters } = useFilters();
-  const [open, setOpen] = useState(false);
-  const [referenceNowMs] = useState(() => Date.now());
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  const counts = useMemo(() => {
-    let f = offers;
-    if (filters.direction) f = f.filter(o => o.direction === filters.direction);
-    if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
-    if (filters.payment)   f = f.filter(o => o.payment_methods?.includes(filters.payment));
-    if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
-    if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
-    const pMin = parseFloat(filters.premiumMin);
-    const pMax = parseFloat(filters.premiumMax);
-    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
-    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
-
-    const result: Record<string, number> = {};
-    for (const opt of TIMEFRAME_OPTIONS) {
-      // Normalize to DB timestamp format ("2024-01-15 13:00:00") so string
-      // comparison works correctly — DB uses space, not T.
-      const cutoff = new Date(referenceNowMs - parseInt(opt.value) * 3600 * 1000)
-        .toISOString().replace('T', ' ').slice(0, 19);
-      result[opt.value] = f.filter(o => getLastSeen(o) != null && getLastSeen(o)! >= cutoff).length;
-    }
-    return result;
-  }, [offers, filters, referenceNowMs]);
-
-  const selected = TIMEFRAME_OPTIONS.find(o => o.value === value) ?? TIMEFRAME_OPTIONS[2];
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className={`${inputCls} flex items-center gap-1.5 w-full`}
-      >
-        <span className="text-[0.8rem]">{selected.label}</span>
-        <span className="text-muted text-[0.75rem]">{counts[value]}</span>
-        <span className="ml-auto text-muted text-[0.65rem]">▾</span>
-      </button>
-
-      {open && (
-        <div className="absolute top-full left-0 mt-1 z-50 bg-surface border border-border rounded-md overflow-hidden min-w-full shadow-lg">
-          {TIMEFRAME_OPTIONS.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => { onChange(opt.value); setOpen(false); }}
-              className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors flex items-center justify-between gap-3 ${value === opt.value ? 'text-accent' : 'text-text'}`}
-            >
-              <span className="text-[0.8rem]">{opt.label}</span>
-              <span className="text-muted text-[0.75rem]">{counts[opt.value]}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 const labelCls = "text-[0.6rem] text-muted uppercase tracking-wide whitespace-nowrap";
 
 export function ControlPanel({ onRefresh, lastUpdatedAt }: Props) {
@@ -606,7 +450,7 @@ export function ControlPanel({ onRefresh, lastUpdatedAt }: Props) {
   return (
     <div ref={panelRef} className="relative flex flex-col gap-2.5 min-w-0">
 
-      {/* Config + Timeframe: label | control */}
+      {/* Config: label | control */}
       <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1">
         <span className={labelCls}>Currency</span>
         <select className={disabledInputCls} disabled defaultValue="EUR">
@@ -624,9 +468,6 @@ export function ControlPanel({ onRefresh, lastUpdatedAt }: Props) {
           <option value="bitstamp">BTC/EUR — Bitstamp</option>
           <option value="coinbase">BTC/EUR — Coinbase</option>
         </select>
-
-        <span className={labelCls}>Timeframe</span>
-        <TimeframeDropdown value={filters.hours} onChange={v => setFilters({ hours: v })} inputCls={inputCls} />
       </div>
 
       <div className="border-t border-border" />
@@ -641,9 +482,6 @@ export function ControlPanel({ onRefresh, lastUpdatedAt }: Props) {
 
         <span className={labelCls}>Payment</span>
         <PaymentDropdown value={filters.payment} onChange={v => setFilters({ payment: v })} inputCls={inputCls} containerRef={panelRef} />
-
-        <span className={labelCls}>Status</span>
-        <StatusDropdown value={filters.status} onChange={v => setFilters({ status: v })} inputCls={inputCls} />
 
         <span className={labelCls}>Premium</span>
         <PremiumModeDropdown
