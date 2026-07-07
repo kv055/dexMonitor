@@ -105,16 +105,34 @@ function formatDurationMinutes(totalMinutes: number): string {
   return remHours > 0 ? `${days}d ${remHours}h` : `${days}d`;
 }
 
-type ProfitableOrderSortKey =
-  | 'last_seen_desc'
-  | 'last_seen_asc'
-  | 'net_profit_desc'
-  | 'net_profit_asc'
-  | 'volume_btc_desc'
-  | 'net_pct_desc'
-  | 'duration_desc'
-  | 'payment_method_asc'
-  | 'exchange_asc';
+type SortColumn =
+  | 'exchange'
+  | 'direction'
+  | 'payment_method'
+  | 'first_seen'
+  | 'last_seen'
+  | 'duration'
+  | 'size'
+  | 'net_profit';
+
+type SortDir = 'asc' | 'desc';
+
+interface SortState {
+  column: SortColumn;
+  dir: SortDir;
+}
+
+// Direction a column starts with on first click: text columns A–Z, metrics newest/largest first.
+const DEFAULT_SORT_DIR: Record<SortColumn, SortDir> = {
+  exchange: 'asc',
+  direction: 'asc',
+  payment_method: 'asc',
+  first_seen: 'desc',
+  last_seen: 'desc',
+  duration: 'desc',
+  size: 'desc',
+  net_profit: 'desc',
+};
 
 type NetProfitUnit = 'btc' | 'fiat';
 type SizeUnit = 'btc' | 'fiat';
@@ -126,7 +144,8 @@ interface PersistedInsightsFilters {
   directionFilter: DirectionFilter;
   disabledExchanges: string[];
   mode: TakerOpportunityMode;
-  sortBy: ProfitableOrderSortKey;
+  sortColumn: SortColumn;
+  sortDir: SortDir;
   netProfitUnit: NetProfitUnit;
   sizeUnit: SizeUnit;
   summaryUnit: SizeUnit;
@@ -141,7 +160,8 @@ const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
   directionFilter: 'both',
   disabledExchanges: [],
   mode: 'net_full',
-  sortBy: 'last_seen_desc',
+  sortColumn: 'last_seen',
+  sortDir: 'desc',
   netProfitUnit: 'fiat',
   sizeUnit: 'btc',
   summaryUnit: 'btc',
@@ -156,17 +176,44 @@ const VALID_DIRECTIONS = new Set<DirectionFilter>(['both', 'buy', 'sell']);
 const VALID_MODES = new Set<TakerOpportunityMode>(['net_full', 'net_capped']);
 const VALID_NET_PROFIT_UNITS = new Set<NetProfitUnit>(['btc', 'fiat']);
 const VALID_SIZE_UNITS = new Set<SizeUnit>(['btc', 'fiat']);
-const VALID_SORT_KEYS = new Set<ProfitableOrderSortKey>([
-  'last_seen_desc',
-  'last_seen_asc',
-  'net_profit_desc',
-  'net_profit_asc',
-  'volume_btc_desc',
-  'net_pct_desc',
-  'duration_desc',
-  'payment_method_asc',
-  'exchange_asc',
+const VALID_SORT_COLUMNS = new Set<SortColumn>([
+  'exchange',
+  'direction',
+  'payment_method',
+  'first_seen',
+  'last_seen',
+  'duration',
+  'size',
+  'net_profit',
 ]);
+const VALID_SORT_DIRS = new Set<SortDir>(['asc', 'desc']);
+
+// Migration for the retired sidebar sort dropdown persisted as `sortBy` before
+// the column-header sorters landed. `net_pct_desc` has no table column and
+// falls back to the default sort.
+const LEGACY_SORT_KEY_MAP: Record<string, SortState> = {
+  last_seen_desc: { column: 'last_seen', dir: 'desc' },
+  last_seen_asc: { column: 'last_seen', dir: 'asc' },
+  net_profit_desc: { column: 'net_profit', dir: 'desc' },
+  net_profit_asc: { column: 'net_profit', dir: 'asc' },
+  volume_btc_desc: { column: 'size', dir: 'desc' },
+  duration_desc: { column: 'duration', dir: 'desc' },
+  payment_method_asc: { column: 'payment_method', dir: 'asc' },
+  exchange_asc: { column: 'exchange', dir: 'asc' },
+};
+
+function readPersistedSort(parsed: Partial<PersistedInsightsFilters> & { sortBy?: string }): SortState {
+  if (
+    VALID_SORT_COLUMNS.has(parsed.sortColumn as SortColumn)
+    && VALID_SORT_DIRS.has(parsed.sortDir as SortDir)
+  ) {
+    return { column: parsed.sortColumn as SortColumn, dir: parsed.sortDir as SortDir };
+  }
+  if (parsed.sortBy != null && LEGACY_SORT_KEY_MAP[parsed.sortBy]) {
+    return LEGACY_SORT_KEY_MAP[parsed.sortBy];
+  }
+  return { column: DEFAULT_INSIGHTS_FILTERS.sortColumn, dir: DEFAULT_INSIGHTS_FILTERS.sortDir };
+}
 
 function readStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
@@ -187,7 +234,8 @@ function readPersistedInsightsFilters(): PersistedInsightsFilters {
   try {
     const raw = localStorage.getItem(INSIGHTS_FILTERS_STORAGE_KEY);
     if (!raw) return DEFAULT_INSIGHTS_FILTERS;
-    const parsed = JSON.parse(raw) as Partial<PersistedInsightsFilters>;
+    const parsed = JSON.parse(raw) as Partial<PersistedInsightsFilters> & { sortBy?: string };
+    const sort = readPersistedSort(parsed);
     return {
       selectedTimeframe: VALID_TIMEFRAMES.has(parsed.selectedTimeframe ?? '')
         ? parsed.selectedTimeframe!
@@ -199,9 +247,8 @@ function readPersistedInsightsFilters(): PersistedInsightsFilters {
       mode: VALID_MODES.has(parsed.mode as TakerOpportunityMode)
         ? parsed.mode as TakerOpportunityMode
         : DEFAULT_INSIGHTS_FILTERS.mode,
-      sortBy: VALID_SORT_KEYS.has(parsed.sortBy as ProfitableOrderSortKey)
-        ? parsed.sortBy as ProfitableOrderSortKey
-        : DEFAULT_INSIGHTS_FILTERS.sortBy,
+      sortColumn: sort.column,
+      sortDir: sort.dir,
       netProfitUnit: VALID_NET_PROFIT_UNITS.has(parsed.netProfitUnit as NetProfitUnit)
         ? parsed.netProfitUnit as NetProfitUnit
         : DEFAULT_INSIGHTS_FILTERS.netProfitUnit,
@@ -275,67 +322,52 @@ function computeProfitFiatBounds(
 
 function sortProfitableOrders(
   orders: PastProfitableOrder[],
-  sortKey: ProfitableOrderSortKey,
+  sort: SortState,
   mode: TakerOpportunityMode,
   netProfitUnit: NetProfitUnit,
+  sizeUnit: SizeUnit,
 ): PastProfitableOrder[] {
-  const sorted = [...orders];
-  sorted.sort((a, b) => {
-    const scenarioA = pickScenario(a, mode);
-    const scenarioB = pickScenario(b, mode);
-    switch (sortKey) {
-      case 'last_seen_desc': {
-        const ta = parseUtcTimestamp(a.status.last_seen)?.getTime() ?? 0;
-        const tb = parseUtcTimestamp(b.status.last_seen)?.getTime() ?? 0;
-        return tb - ta;
+  // Each comparator sorts ascending; the sign flip below applies the direction.
+  const compare = (a: PastProfitableOrder, b: PastProfitableOrder): number => {
+    switch (sort.column) {
+      case 'exchange':
+        return a.exchange.localeCompare(b.exchange, 'de');
+      case 'direction':
+        return a.direction.localeCompare(b.direction, 'de');
+      case 'payment_method':
+        return (a.payment_methods?.join(', ') ?? '').localeCompare(b.payment_methods?.join(', ') ?? '', 'de');
+      case 'first_seen': {
+        const ta = parseUtcTimestamp(a.status.first_seen)?.getTime() ?? 0;
+        const tb = parseUtcTimestamp(b.status.first_seen)?.getTime() ?? 0;
+        return ta - tb;
       }
-      case 'last_seen_asc': {
+      case 'last_seen': {
         const ta = parseUtcTimestamp(a.status.last_seen)?.getTime() ?? 0;
         const tb = parseUtcTimestamp(b.status.last_seen)?.getTime() ?? 0;
         return ta - tb;
       }
-      case 'net_profit_desc': {
-        const va = netProfitUnit === 'btc' ? scenarioA.profit.avg_btc : scenarioA.profit.avg_fiat;
-        const vb = netProfitUnit === 'btc' ? scenarioB.profit.avg_btc : scenarioB.profit.avg_fiat;
-        return (vb ?? 0) - (va ?? 0);
+      case 'duration':
+        return orderDurationMinutes(a) - orderDurationMinutes(b);
+      case 'size': {
+        const scenarioA = pickScenario(a, mode);
+        const scenarioB = pickScenario(b, mode);
+        const va = sizeUnit === 'btc' ? scenarioA.trade_size_btc : scenarioA.trade_size_fiat;
+        const vb = sizeUnit === 'btc' ? scenarioB.trade_size_btc : scenarioB.trade_size_fiat;
+        return (va ?? 0) - (vb ?? 0);
       }
-      case 'net_profit_asc': {
+      case 'net_profit': {
+        const scenarioA = pickScenario(a, mode);
+        const scenarioB = pickScenario(b, mode);
         const va = netProfitUnit === 'btc' ? scenarioA.profit.avg_btc : scenarioA.profit.avg_fiat;
         const vb = netProfitUnit === 'btc' ? scenarioB.profit.avg_btc : scenarioB.profit.avg_fiat;
         return (va ?? 0) - (vb ?? 0);
       }
-      case 'volume_btc_desc':
-        return (scenarioB.trade_size_btc ?? 0) - (scenarioA.trade_size_btc ?? 0);
-      case 'net_pct_desc':
-        return (scenarioB.premium.avg_net_percent ?? 0) - (scenarioA.premium.avg_net_percent ?? 0);
-      case 'duration_desc': {
-        const durA = orderDurationMinutes(a);
-        const durB = orderDurationMinutes(b);
-        return durB - durA;
-      }
-      case 'payment_method_asc':
-        return (a.payment_methods?.join(', ') ?? '').localeCompare(b.payment_methods?.join(', ') ?? '', 'de');
-      case 'exchange_asc':
-        return a.exchange.localeCompare(b.exchange, 'de');
       default:
         return 0;
     }
-  });
-  return sorted;
-}
-
-function profitableOrderSortOptions(): { value: ProfitableOrderSortKey; label: string }[] {
-  return [
-    { value: 'last_seen_desc', label: 'Last seen (newest)' },
-    { value: 'last_seen_asc', label: 'Last seen (oldest)' },
-    { value: 'net_profit_desc', label: 'Net profit (highest)' },
-    { value: 'net_profit_asc', label: 'Net profit (lowest)' },
-    { value: 'volume_btc_desc', label: 'Volume BTC (largest)' },
-    { value: 'net_pct_desc', label: 'Net premium % (highest)' },
-    { value: 'duration_desc', label: 'Duration (longest)' },
-    { value: 'payment_method_asc', label: 'Payment method (A–Z)' },
-    { value: 'exchange_asc', label: 'Exchange (A–Z)' },
-  ];
+  };
+  const sign = sort.dir === 'desc' ? -1 : 1;
+  return [...orders].sort((a, b) => sign * compare(a, b));
 }
 
 interface FilteredSummary {
@@ -622,7 +654,7 @@ function DualRangeFilter({
 }
 
 const PROFITABLE_TRADES_GRID_COLS =
-  'grid w-full min-w-0 grid-cols-[minmax(0,1.2fr)_minmax(0,0.8fr)_minmax(0,0.8fr)_minmax(0,0.55fr)_minmax(0,0.7fr)_minmax(0,0.95fr)_1.25rem] items-center gap-2 sm:gap-3';
+  'grid w-full min-w-0 grid-cols-[minmax(0,0.55fr)_minmax(0,0.28fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.65fr)_minmax(0,0.55fr)_minmax(0,0.95fr)_minmax(0,1.15fr)_1.25rem] items-center gap-2 sm:gap-3';
 
 interface TradeRowMetricProps {
   value: string;
@@ -651,26 +683,54 @@ function UnitToggle({ fiat, unit, onChange }: { fiat: string; unit: SizeUnit; on
   );
 }
 
-function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUnit, onNetProfitUnitChange }: {
+function SortHeaderButton({ label, column, sort, onSort, align = 'right' }: {
+  label: string;
+  column: SortColumn;
+  sort: SortState;
+  onSort: (column: SortColumn) => void;
+  align?: 'left' | 'right';
+}) {
+  const active = sort.column === column;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(column)}
+      title={`Sort by ${label.toLowerCase()}`}
+      aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
+      className={`flex min-w-0 items-center gap-1 border-none bg-transparent p-0 text-[0.65rem] font-semibold uppercase tracking-wide transition-colors ${align === 'right' ? 'justify-end text-right' : 'justify-start text-left'} ${active ? 'text-accent' : 'text-muted hover:text-text'}`}
+    >
+      <span className="truncate">{label}</span>
+      <span className={`shrink-0 text-[0.55rem] leading-none ${active ? '' : 'opacity-50'}`} aria-hidden>
+        {active ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}
+      </span>
+    </button>
+  );
+}
+
+function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUnit, onNetProfitUnitChange, sort, onSort }: {
   fiat: string;
   sizeUnit: SizeUnit;
   onSizeUnitChange: (unit: SizeUnit) => void;
   netProfitUnit: NetProfitUnit;
   onNetProfitUnitChange: (unit: NetProfitUnit) => void;
+  sort: SortState;
+  onSort: (column: SortColumn) => void;
 }) {
   const th = 'truncate text-[0.65rem] font-semibold uppercase tracking-wide text-muted';
   return (
     <div className={`${PROFITABLE_TRADES_GRID_COLS} shrink-0 border-b border-border bg-surface/70 px-3 py-1.5`}>
-      <span className={th}>Offer</span>
-      <span className={`${th} text-right`}>First seen</span>
-      <span className={`${th} text-right`}>Last seen</span>
-      <span className={`${th} text-right`}>Duration</span>
+      <SortHeaderButton label="Offer" column="exchange" sort={sort} onSort={onSort} align="left" />
+      <SortHeaderButton label="Dir" column="direction" sort={sort} onSort={onSort} align="left" />
+      <SortHeaderButton label="Payment method" column="payment_method" sort={sort} onSort={onSort} align="left" />
+      <SortHeaderButton label="First seen" column="first_seen" sort={sort} onSort={onSort} />
+      <SortHeaderButton label="Last seen" column="last_seen" sort={sort} onSort={onSort} />
+      <SortHeaderButton label="Duration" column="duration" sort={sort} onSort={onSort} />
       <span className={`${th} flex items-center justify-end gap-1`}>
-        <span>Size</span>
+        <SortHeaderButton label="Size" column="size" sort={sort} onSort={onSort} />
         <UnitToggle fiat={fiat} unit={sizeUnit} onChange={onSizeUnitChange} />
       </span>
       <span className={`${th} flex items-center justify-end gap-1`}>
-        <span>Net profit</span>
+        <SortHeaderButton label="Net profit" column="net_profit" sort={sort} onSort={onSort} />
         <UnitToggle fiat={fiat} unit={netProfitUnit} onChange={onNetProfitUnitChange} />
       </span>
       <span className="shrink-0" aria-hidden />
@@ -844,7 +904,7 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>(initialFilters.directionFilter);
   const [disabledExchanges, setDisabledExchanges] = useState<string[]>(initialFilters.disabledExchanges);
   const [mode, setMode] = useState<TakerOpportunityMode>(initialFilters.mode);
-  const [sortBy, setSortBy] = useState<ProfitableOrderSortKey>(initialFilters.sortBy);
+  const [sort, setSort] = useState<SortState>({ column: initialFilters.sortColumn, dir: initialFilters.sortDir });
   const [netProfitUnit, setNetProfitUnit] = useState<NetProfitUnit>(initialFilters.netProfitUnit);
   const [sizeUnit, setSizeUnit] = useState<SizeUnit>(initialFilters.sizeUnit);
   const [summaryUnit, setSummaryUnit] = useState<SizeUnit>(initialFilters.summaryUnit);
@@ -1024,7 +1084,8 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
       directionFilter,
       disabledExchanges,
       mode,
-      sortBy,
+      sortColumn: sort.column,
+      sortDir: sort.dir,
       netProfitUnit,
       sizeUnit,
       summaryUnit,
@@ -1047,7 +1108,7 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
     directionFilter,
     disabledExchanges,
     mode,
-    sortBy,
+    sort,
     netProfitUnit,
     sizeUnit,
     summaryUnit,
@@ -1078,9 +1139,15 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
   );
 
   const sortedOrders = useMemo(
-    () => sortProfitableOrders(filteredOrders, sortBy, mode, netProfitUnit),
-    [filteredOrders, sortBy, mode, netProfitUnit],
+    () => sortProfitableOrders(filteredOrders, sort, mode, netProfitUnit, sizeUnit),
+    [filteredOrders, sort, mode, netProfitUnit, sizeUnit],
   );
+
+  const handleSort = useCallback((column: SortColumn) => {
+    setSort(prev => prev.column === column
+      ? { column, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
+      : { column, dir: DEFAULT_SORT_DIR[column] });
+  }, []);
 
   // TanStack Virtual returns refs that React Compiler cannot memoize; usage here is localized.
   // eslint-disable-next-line react-hooks/incompatible-library -- scroll virtualization only
@@ -1106,7 +1173,7 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
     setDirectionFilter(DEFAULT_INSIGHTS_FILTERS.directionFilter);
     setDisabledExchanges([]);
     setMode(DEFAULT_INSIGHTS_FILTERS.mode);
-    setSortBy(DEFAULT_INSIGHTS_FILTERS.sortBy);
+    setSort({ column: DEFAULT_INSIGHTS_FILTERS.sortColumn, dir: DEFAULT_INSIGHTS_FILTERS.sortDir });
     setNetProfitUnit(DEFAULT_INSIGHTS_FILTERS.netProfitUnit);
     setSizeUnit(DEFAULT_INSIGHTS_FILTERS.sizeUnit);
     setSummaryUnit(DEFAULT_INSIGHTS_FILTERS.summaryUnit);
@@ -1194,13 +1261,6 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
             options={(activeStats ?? stats).timeframes.map(r => ({ value: r.timeframe, label: labelForTimeframe(r.timeframe) }))}
             selected={selected?.timeframe ?? selectedTimeframe}
             onChange={setSelectedTimeframe}
-          />
-          <SelectGroup
-            label="Sort"
-            description="Sort the profitable trades list"
-            options={profitableOrderSortOptions()}
-            selected={sortBy}
-            onChange={v => setSortBy(v as ProfitableOrderSortKey)}
           />
           <PillGroup
             label="Direction"
@@ -1294,6 +1354,8 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
                 onSizeUnitChange={setSizeUnit}
                 netProfitUnit={netProfitUnit}
                 onNetProfitUnitChange={setNetProfitUnit}
+                sort={sort}
+                onSort={handleSort}
               />
             )}
             <div ref={tradesListRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
@@ -1339,15 +1401,15 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
                         className={`w-full min-w-0 bg-transparent border-none px-3 py-2 text-left transition-colors ${isOpen ? 'bg-bg/40' : 'hover:bg-white/5'}`}
                       >
                         <div className={`${PROFITABLE_TRADES_GRID_COLS} text-[0.72rem]`}>
-                          <div className="flex min-w-0 items-center gap-1.5 overflow-hidden sm:gap-2">
+                          <div className="min-w-0 overflow-hidden">
                             <ExchangeTag exchange={order.exchange} />
-                            <span className={`shrink-0 text-[0.65rem] font-semibold uppercase ${order.direction === 'buy' ? 'text-green' : 'text-red'}`}>
-                              {order.direction === 'buy' ? 'Bid' : 'Ask'}
-                            </span>
-                            <span className="min-w-0 truncate font-medium text-text" title={paymentMethod}>
-                              {paymentMethod}
-                            </span>
                           </div>
+                          <span className={`truncate text-[0.65rem] font-semibold uppercase ${order.direction === 'buy' ? 'text-green' : 'text-red'}`}>
+                            {order.direction === 'buy' ? 'Bid' : 'Ask'}
+                          </span>
+                          <span className="min-w-0 truncate font-medium text-text" title={paymentMethod}>
+                            {paymentMethod}
+                          </span>
                           <TradeRowMetric value={firstSeenLabel} />
                           <TradeRowMetric value={seenLabel} />
                           <TradeRowMetric value={order.status.duration?.display || '—'} />
