@@ -20,6 +20,11 @@ export interface FiltersContextValue {
   refPrice: number | null;
   /** Score-0 offers in the current monitor filter view (premium, direction, etc.). */
   zeroTrustHiddenCount: number;
+  /** Stable offer keys (see buildStableOfferKey) excluded from the OHLC chart overlay via the table's checkboxes. */
+  hiddenChartOfferKeys: Set<string>;
+  toggleChartOfferKey: (key: string) => void;
+  /** Shows/hides all of `keys` on the chart (used by the table's header "select all" checkbox). */
+  setChartOfferKeysVisible: (keys: string[], visible: boolean) => void;
 }
 
 export const FiltersContext = createContext<FiltersContextValue | null>(null);

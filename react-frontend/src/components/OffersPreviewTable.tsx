@@ -6,7 +6,7 @@ import { useTimezone } from '../hooks/useTimezone';
 import { useFilters } from '../hooks/useFilters';
 import { LoadingSpinner } from './LoadingSpinner';
 import { CostBreakdownPanel, OfferTimeMeta, SizeToggle } from './OfferBreakdownPanel';
-import { buildOfferKeys } from '../utils/offerIdentity';
+import { buildOfferKeys, buildStableOfferKey } from '../utils/offerIdentity';
 import {
   getBtcMax,
   getBtcMin,
@@ -29,6 +29,19 @@ import {
 const TH_BASE = "sticky top-0 z-10 bg-surface px-2 py-1 border-b border-border text-muted text-[0.65rem] uppercase text-left whitespace-nowrap";
 const TD = "px-2 py-1 whitespace-nowrap";
 
+/** Header checkbox for the chart-visibility column; renders the native tri-state (checked/unchecked/indeterminate). */
+function ChartVisibilityHeaderCheckbox({ checked, indeterminate, onChange }: { checked: boolean; indeterminate: boolean; onChange: (checked: boolean) => void }) {
+  return (
+    <input
+      type="checkbox"
+      checked={checked}
+      ref={el => { if (el) el.indeterminate = indeterminate; }}
+      onChange={e => onChange(e.target.checked)}
+      title="Show/hide all offers on the OHLC chart"
+    />
+  );
+}
+
 function useGroupLabel() {
   const { groups } = useFilters();
   return (methods: string[] | null | undefined): string => {
@@ -42,7 +55,7 @@ function useGroupLabel() {
 }
 
 export function OffersPreviewTable() {
-  const { filteredOffers: offers, selectedOfferKey, setSelectedOfferKey, loading } = useFilters();
+  const { filteredOffers: offers, selectedOfferKey, setSelectedOfferKey, loading, hiddenChartOfferKeys, toggleChartOfferKey, setChartOfferKeysVisible } = useFilters();
   const groupLabel = useGroupLabel();
   const { timezone } = useTimezone();
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
@@ -52,6 +65,13 @@ export function OffersPreviewTable() {
     enabled: false,
   });
   const offerKeys = useMemo(() => buildOfferKeys(offers), [offers]);
+  const stableOfferKeys = useMemo(() => offers.map(buildStableOfferKey), [offers]);
+  const visibleCount = useMemo(
+    () => stableOfferKeys.filter(k => !hiddenChartOfferKeys.has(k)).length,
+    [stableOfferKeys, hiddenChartOfferKeys],
+  );
+  const allChartVisible = offers.length > 0 && visibleCount === offers.length;
+  const someChartVisible = visibleCount > 0 && visibleCount < offers.length;
   const showCapped = cappedSelection.offerKey === selectedOfferKey && cappedSelection.enabled;
 
   useEffect(() => {
@@ -80,6 +100,13 @@ export function OffersPreviewTable() {
           <table className="w-full border-collapse text-[0.72rem]">
             <thead>
               <tr>
+                <th className={`${TH_BASE} w-[1%]`}>
+                  <ChartVisibilityHeaderCheckbox
+                    checked={allChartVisible}
+                    indeterminate={someChartVisible}
+                    onChange={visible => setChartOfferKeysVisible(stableOfferKeys, visible)}
+                  />
+                </th>
                 <th className={TH_BASE}>Exch</th>
                 <th className={TH_BASE}>Side</th>
                 <th className={`${TH_BASE} text-right`}>Prem.</th>
@@ -90,9 +117,10 @@ export function OffersPreviewTable() {
             </thead>
             <tbody>
               {offers.length === 0 ? (
-                !loading && <tr><td colSpan={6} className="p-4 text-center text-muted">No offers</td></tr>
+                !loading && <tr><td colSpan={7} className="p-4 text-center text-muted">No offers</td></tr>
               ) : offers.map((o, index) => {
                 const offerKey = offerKeys[index];
+                const stableKey = stableOfferKeys[index];
                 const isSelected = offerKey === selectedOfferKey;
                 const rawPremium = getRawPremiumPercent(o);
                 return (
@@ -104,6 +132,14 @@ export function OffersPreviewTable() {
                       isSelected ? 'offer-row-selected' : 'offer-row-hover'
                     }`}
                   >
+                    <td className={TD} onClick={e => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={!hiddenChartOfferKeys.has(stableKey)}
+                        onChange={() => toggleChartOfferKey(stableKey)}
+                        title="Show on OHLC chart"
+                      />
+                    </td>
                     <td className={`${TD} overflow-hidden`}>
                       <ExchangeTag exchange={o.exchange} />
                     </td>
@@ -201,6 +237,13 @@ export function OffersPreviewTable() {
         <table className={`w-full border-collapse ${hasSelection ? 'text-[0.68rem]' : 'text-[0.72rem]'}`}>
           <thead>
             <tr>
+              <th className={`${TH_BASE} w-[1%]`}>
+                <ChartVisibilityHeaderCheckbox
+                  checked={allChartVisible}
+                  indeterminate={someChartVisible}
+                  onChange={visible => setChartOfferKeysVisible(stableOfferKeys, visible)}
+                />
+              </th>
               <th className={`${TH_BASE} ${hasSelection ? 'w-[1%]' : ''}`}>Exch</th>
               <th className={`${TH_BASE} ${hasSelection ? 'w-[1%]' : ''}`}>Side</th>
               <th className={`${TH_BASE} text-right ${hasSelection ? 'w-[1%]' : ''}`}>Prem.</th>
@@ -216,9 +259,10 @@ export function OffersPreviewTable() {
           </thead>
           <tbody>
             {offers.length === 0 ? (
-              !loading && <tr><td colSpan={11} className="p-4 text-center text-muted">No offers</td></tr>
+              !loading && <tr><td colSpan={12} className="p-4 text-center text-muted">No offers</td></tr>
             ) : offers.map((o, index) => {
               const offerKey = offerKeys[index];
+              const stableKey = stableOfferKeys[index];
               const isSelected = offerKey === selectedOfferKey;
               const rawPremium = getRawPremiumPercent(o);
               return (
@@ -230,6 +274,14 @@ export function OffersPreviewTable() {
                     isSelected ? 'offer-row-selected' : 'offer-row-hover'
                   }`}
                 >
+                  <td className={TD} onClick={e => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={!hiddenChartOfferKeys.has(stableKey)}
+                      onChange={() => toggleChartOfferKey(stableKey)}
+                      title="Show on OHLC chart"
+                    />
+                  </td>
                   <td className={`${TD} overflow-hidden`}>
                     <ExchangeTag exchange={o.exchange} />
                   </td>
