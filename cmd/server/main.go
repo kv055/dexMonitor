@@ -226,6 +226,9 @@ func main() {
 	mux.HandleFunc("GET /api/trading/payment_methods", handleTradingPaymentMethods)
 	mux.HandleFunc("PUT /api/trading/payment_methods/{id}", handleTradingPaymentMethodByID)
 	mux.HandleFunc("DELETE /api/trading/payment_methods/{id}", handleTradingPaymentMethodByID)
+	mux.HandleFunc("GET /api/trading/payment_methods/{id}/chat_templates", handleTradingPaymentMethodChatTemplates)
+	mux.HandleFunc("PUT /api/trading/payment_methods/{id}/chat_templates/{exchange}", handleTradingPaymentMethodChatTemplateByExchange)
+	mux.HandleFunc("DELETE /api/trading/payment_methods/{id}/chat_templates/{exchange}", handleTradingPaymentMethodChatTemplateByExchange)
 	mux.HandleFunc("GET /api/trading/wallet_addresses", handleTradingWalletAddresses)
 	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
 	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
@@ -241,6 +244,10 @@ func main() {
 	mux.HandleFunc("GET /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
 	mux.HandleFunc("POST /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
 	mux.HandleFunc("DELETE /api/mm-controller/bisq/payment-accounts/{id}", handleMmControllerBisqPaymentAccountByID)
+	mux.HandleFunc("GET /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
+	mux.HandleFunc("PUT /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
+	mux.HandleFunc("POST /api/mm-controller/telegram/set-webhook", handleMmControllerTelegramSetWebhook)
+	mux.HandleFunc("POST /api/mm-controller/telegram/test", handleMmControllerTelegramTest)
 	mux.HandleFunc("GET /ws/cex/hedge-stream", handleMmControllerHedgeStreamWS)
 	mux.HandleFunc("GET /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("POST /api/trading/accounts", handleTradingAccounts)
@@ -1984,6 +1991,59 @@ func handleTradingPaymentMethodByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleTradingPaymentMethodChatTemplates serves the chat templates for one
+// payment method. The panel uses this to populate the per-exchange editors.
+func handleTradingPaymentMethodChatTemplates(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	rows, err := pmRepo.ListChatTemplates(r.Context(), int64(id))
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"chat_templates": rows})
+}
+
+// handleTradingPaymentMethodChatTemplateByExchange creates, updates, or deletes
+// the chat template for one payment method / exchange pair.
+func handleTradingPaymentMethodChatTemplateByExchange(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	exchange := r.PathValue("exchange")
+	switch r.Method {
+	case http.MethodPut:
+		var payload paymentmethods.ChatTemplatePayload
+		if err := decodeJSON(r, &payload); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		if err := pmRepo.UpsertChatTemplate(r.Context(), int64(id), exchange, payload); err != nil {
+			writeRepoError(w, err)
+			return
+		}
+		rows, err := pmRepo.ListChatTemplates(r.Context(), int64(id))
+		if err != nil {
+			writeError(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"chat_templates": rows})
+	case http.MethodDelete:
+		if err := pmRepo.DeleteChatTemplate(r.Context(), int64(id), exchange); err != nil {
+			writeRepoError(w, err)
+			return
+		}
+		writeJSON(w, map[string]any{"ok": true})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 // handleTradingWalletAddresses serves the wallet_addresses list for the
 // panel's Crypto link dropdown (read-only; dexMmController owns writes).
 func handleTradingWalletAddresses(w http.ResponseWriter, r *http.Request) {
@@ -2081,6 +2141,23 @@ func handleMmControllerBisqPaymentAccountByID(w http.ResponseWriter, r *http.Req
 		return
 	}
 	forwardMMControllerJSON(w, r, "/api/bisq/payment-accounts/"+url.PathEscape(id))
+}
+
+// handleMmControllerTelegramConfig proxies GET/PUT of the shared Telegram bot
+// configuration (token, chat_id, per-service webhook URLs) to dexMmController.
+func handleMmControllerTelegramConfig(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/telegram/config")
+}
+
+// handleMmControllerTelegramSetWebhook proxies POST set-webhook?service=dexmm|pushpush.
+func handleMmControllerTelegramSetWebhook(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/telegram/set-webhook")
+}
+
+// handleMmControllerTelegramTest proxies POST test?service=dexmm|pushpush to send a
+// one-way test message to the configured chat.
+func handleMmControllerTelegramTest(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/telegram/test")
 }
 
 func handleMmControllerCexTradeflow(w http.ResponseWriter, r *http.Request) {
