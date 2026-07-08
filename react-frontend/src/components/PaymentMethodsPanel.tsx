@@ -47,6 +47,7 @@ const compactPrimaryButtonCls =
 interface Draft {
   category: string;
   merge_regex: string;
+  alias_list: string;
   link_id: number | null;
   is_active: boolean;
   priority: string;
@@ -56,6 +57,7 @@ function draftFromRow(row: PaymentMethodRow): Draft {
   return {
     category: row.category,
     merge_regex: row.merge_regex ?? '',
+    alias_list: (row.alias_list ?? []).join('\n'),
     link_id: row.bank_account_id ?? row.account_id ?? row.wallet_address_id,
     is_active: row.is_active,
     priority: String(row.priority),
@@ -66,6 +68,10 @@ function payloadFromDraft(draft: Draft): PaymentMethodUpdatePayload {
   const link = LINKABLE[draft.category] ?? null;
   return {
     merge_regex: draft.merge_regex.trim() === '' ? null : draft.merge_regex.trim(),
+    alias_list: draft.alias_list
+      .split('\n')
+      .map(alias => alias.trim())
+      .filter(alias => alias.length > 0),
     category: draft.category,
     bank_account_id: link === 'bank' ? draft.link_id : null,
     account_id: link === 'account' ? draft.link_id : null,
@@ -393,6 +399,11 @@ export function PaymentMethodsPanel() {
                           {row.priority !== 0 && (
                             <span className="text-[0.62rem] text-muted">prio {row.priority}</span>
                           )}
+                          {(row.alias_list?.length ?? 0) > 0 && (
+                            <span className="text-[0.62rem] text-muted">
+                              {row.alias_list.length} {row.alias_list.length === 1 ? 'alias' : 'aliases'}
+                            </span>
+                          )}
                         </div>
                         <button
                           type="button"
@@ -435,6 +446,15 @@ export function PaymentMethodsPanel() {
                               value={draft.merge_regex}
                               onChange={e => setDraft({ ...draft, merge_regex: e.target.value })}
                               placeholder="(?i)^(?:paypal|pay pal)$"
+                            />
+                          </label>
+                          <label className="flex flex-col gap-1 text-[0.68rem] text-muted">
+                            Aliases (one exact alias per line)
+                            <textarea
+                              className={`${compactInputCls} min-h-[4.5rem]`}
+                              value={draft.alias_list}
+                              onChange={e => setDraft({ ...draft, alias_list: e.target.value })}
+                              placeholder={`Paypal\npay pal f & f`}
                             />
                           </label>
                           {renderLinkSelect(draft)}

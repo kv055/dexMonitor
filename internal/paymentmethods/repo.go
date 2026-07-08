@@ -22,20 +22,21 @@ func (e ValidationError) Unwrap() error { return e.err }
 // AdminRow is one payment_methods catalog row as served to the categorization
 // panel, including a human-readable label for whatever the row links to.
 type AdminRow struct {
-	ID              int64   `json:"id"`
-	Name            string  `json:"name"`
-	MergeRegex      *string `json:"merge_regex"`
-	Category        string  `json:"category"`
-	BankAccountID   *int64  `json:"bank_account_id"`
-	AccountID       *int64  `json:"account_id"`
-	WalletAddressID *int64  `json:"wallet_address_id"`
-	IsActive        bool    `json:"is_active"`
-	IsLinked        bool    `json:"is_linked"`
-	Priority        int     `json:"priority"`
-	MatchOrder      int     `json:"match_order"`
-	LinkLabel       *string `json:"link_label"`
-	CreatedAt       string  `json:"created_at"`
-	UpdatedAt       string  `json:"updated_at"`
+	ID              int64    `json:"id"`
+	Name            string   `json:"name"`
+	MergeRegex      *string  `json:"merge_regex"`
+	AliasList       []string `json:"alias_list"`
+	Category        string   `json:"category"`
+	BankAccountID   *int64   `json:"bank_account_id"`
+	AccountID       *int64   `json:"account_id"`
+	WalletAddressID *int64   `json:"wallet_address_id"`
+	IsActive        bool     `json:"is_active"`
+	IsLinked        bool     `json:"is_linked"`
+	Priority        int      `json:"priority"`
+	MatchOrder      int      `json:"match_order"`
+	LinkLabel       *string  `json:"link_label"`
+	CreatedAt       string   `json:"created_at"`
+	UpdatedAt       string   `json:"updated_at"`
 }
 
 // UpdatePayload is the editable subset of a payment_methods row. Name,
@@ -43,13 +44,14 @@ type AdminRow struct {
 // would orphan the names already stored in offers.payment_methods, match_order
 // is seeded matching data, and is_linked is a generated column.
 type UpdatePayload struct {
-	MergeRegex      *string `json:"merge_regex"`
-	Category        string  `json:"category"`
-	BankAccountID   *int64  `json:"bank_account_id"`
-	AccountID       *int64  `json:"account_id"`
-	WalletAddressID *int64  `json:"wallet_address_id"`
-	IsActive        bool    `json:"is_active"`
-	Priority        int     `json:"priority"`
+	MergeRegex      *string  `json:"merge_regex"`
+	AliasList       []string `json:"alias_list"`
+	Category        string   `json:"category"`
+	BankAccountID   *int64   `json:"bank_account_id"`
+	AccountID       *int64   `json:"account_id"`
+	WalletAddressID *int64   `json:"wallet_address_id"`
+	IsActive        bool     `json:"is_active"`
+	Priority        int      `json:"priority"`
 }
 
 // WalletAddressRow is a wallet_addresses row for the Crypto link dropdown.
@@ -70,7 +72,7 @@ type Repo struct {
 // account provider, wallet address label).
 func (r *Repo) List(ctx context.Context) ([]AdminRow, error) {
 	rows, err := r.DB.QueryContext(ctx, `
-		SELECT pm.id, pm.name, pm.merge_regex, pm.category,
+		SELECT pm.id, pm.name, pm.merge_regex, pm.alias_list, pm.category,
 		       pm.bank_account_id, pm.account_id, pm.wallet_address_id,
 		       pm.is_active, pm.is_linked, pm.priority, pm.match_order,
 		       CASE
@@ -94,12 +96,14 @@ func (r *Repo) List(ctx context.Context) ([]AdminRow, error) {
 	out := make([]AdminRow, 0)
 	for rows.Next() {
 		var row AdminRow
-		if err := rows.Scan(&row.ID, &row.Name, &row.MergeRegex, &row.Category,
+		var aliases commonpm.TextArray
+		if err := rows.Scan(&row.ID, &row.Name, &row.MergeRegex, &aliases, &row.Category,
 			&row.BankAccountID, &row.AccountID, &row.WalletAddressID,
 			&row.IsActive, &row.IsLinked, &row.Priority, &row.MatchOrder,
 			&row.LinkLabel, &row.CreatedAt, &row.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan payment method: %w", err)
 		}
+		row.AliasList = []string(aliases)
 		out = append(out, row)
 	}
 	return out, rows.Err()
@@ -133,6 +137,7 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 			p.MergeRegex = &trimmed
 		}
 	}
+	aliasList := cleanAliasList(p.AliasList)
 
 	links := 0
 	for _, l := range []*int64{p.BankAccountID, p.AccountID, p.WalletAddressID} {
@@ -162,10 +167,11 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 			wallet_address_id = $5,
 			is_active = $6,
 			priority = $7,
+			alias_list = $8,
 			updated_at = CURRENT_TIMESTAMP
-		WHERE id = $8`,
+		WHERE id = $9`,
 		p.MergeRegex, category, p.BankAccountID, p.AccountID, p.WalletAddressID,
-		p.IsActive, p.Priority, id)
+		p.IsActive, p.Priority, commonpm.TextArray(aliasList), id)
 	if err != nil {
 		return fmt.Errorf("update payment method %d: %w", id, err)
 	}
@@ -173,6 +179,30 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 		return ValidationError{fmt.Errorf("payment method %d does not exist", id)}
 	}
 	return nil
+}
+
+func cleanAliasList(in []string) []string {
+	out := make([]string, 0, len(in))
+	seen := make(map[string]bool, len(in))
+	for _, alias := range in {
+		trimmed := strings.TrimSpace(alias)
+		if trimmed == "" {
+			continue
+		}
+		norm := normalizeAlias(trimmed)
+		if norm == "" || seen[norm] {
+			continue
+		}
+		seen[norm] = true
+		out = append(out, trimmed)
+	}
+	return out
+}
+
+func normalizeAlias(s string) string {
+	s = strings.ToLower(strings.TrimSpace(s))
+	s = strings.ReplaceAll(s, "_", " ")
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // Delete removes a row — only inactive Others rows (junk from the unknown-

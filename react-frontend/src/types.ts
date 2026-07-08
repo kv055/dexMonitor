@@ -624,6 +624,7 @@ export interface PaymentMethodRow {
   id: number;
   name: string;
   merge_regex: string | null;
+  alias_list: string[];
   category: string;
   bank_account_id: number | null;
   account_id: number | null;
@@ -659,6 +660,7 @@ export interface BisqCreateSepaPayload {
 
 export interface PaymentMethodUpdatePayload {
   merge_regex: string | null;
+  alias_list: string[];
   category: string;
   bank_account_id: number | null;
   account_id: number | null;
