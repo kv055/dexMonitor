@@ -22,6 +22,7 @@ import {
   fetchCexWithdrawalAddresses,
   fetchLNDWalletState,
   fetchLNDWalletStatus,
+  fetchPaymentMethods,
   fetchTradingAccounts,
   fetchBisqPaymentAccounts,
   createBisqPaymentAccount,
@@ -32,6 +33,7 @@ import {
   updateAccount,
   updateAPIKey,
   updateBankAccount,
+  updatePaymentMethod,
   updatePasskey,
   updateSeed,
   updateTOTPSecret,
@@ -50,6 +52,8 @@ import type {
   TradingAccountKeyPermissionResult,
   TradingBankAccount,
   BisqPaymentAccount,
+  PaymentMethodRow,
+  PaymentMethodUpdatePayload,
 } from '../types';
 
 type ProviderOption = { value: string; label: string };
@@ -496,6 +500,23 @@ function formatCexBalanceSummary(balances: CexBalancesResponse | null | undefine
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
+function paymentMethodUpdatePayload(row: PaymentMethodRow, priority: number): PaymentMethodUpdatePayload {
+  return {
+    merge_regex: row.merge_regex,
+    alias_list: row.alias_list,
+    category: row.category,
+    bank_account_id: row.bank_account_id,
+    account_id: row.account_id,
+    wallet_address_id: row.wallet_address_id,
+    is_active: row.is_active,
+    priority,
+  };
+}
+
+function sortPaymentMethods(rows: PaymentMethodRow[]) {
+  return [...rows].sort((left, right) => right.priority - left.priority || left.name.localeCompare(right.name));
+}
+
 function cexSliceField(section: CexDataSectionKey): keyof CexAccountSlice {
   switch (section) {
     case 'cexDepositAddresses':
@@ -682,6 +703,7 @@ type AccountSectionKey =
   | 'passkeys'
   | 'seeds'
   | 'apiKeys'
+  | 'paymentMethodPriority'
   | 'bisqPaymentMethods'
   | 'lndBackup'
   | 'lightningManagement'
@@ -1514,6 +1536,7 @@ function AccountDetailPane({
 
 export function TradingAccountsPanel() {
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
+  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
   const [activeTab, setActiveTab] = useState<'payment' | 'trading' | 'communication'>(() => {
     if (typeof window !== 'undefined') {
       const stored = window.localStorage.getItem(TAB_STORAGE_KEY);
@@ -1545,6 +1568,10 @@ export function TradingAccountsPanel() {
   const [bisqPmError, setBisqPmError] = useState<string | null>(null);
   const [bisqPmLoaded, setBisqPmLoaded] = useState(false);
   const [bisqPmBusyKey, setBisqPmBusyKey] = useState<string | null>(null);
+  const [paymentMethodsError, setPaymentMethodsError] = useState<string | null>(null);
+  const [paymentPriorityDrafts, setPaymentPriorityDrafts] = useState<Record<number, string>>({});
+  const [paymentPriorityErrors, setPaymentPriorityErrors] = useState<Record<number, string>>({});
+  const [paymentPrioritySavingId, setPaymentPrioritySavingId] = useState<number | null>(null);
   const [uiState, dispatchUi] = useReducer(tradingPanelUiReducer, undefined, () => ({
     expandedId: null,
     showNewAccountForm: false,
@@ -1796,11 +1823,40 @@ export function TradingAccountsPanel() {
     [groupedAccounts],
   );
 
+  const paymentMethodsByAccount = useMemo(() => {
+    const bankAccountOwnerById = new Map<number, number>();
+    for (const account of accounts) {
+      for (const bankAccount of account.bank_accounts) {
+        bankAccountOwnerById.set(bankAccount.id, account.id);
+      }
+    }
+    const byAccount = new Map<number, PaymentMethodRow[]>();
+    for (const row of paymentMethods) {
+      const ownerId = row.account_id ?? (row.bank_account_id != null ? bankAccountOwnerById.get(row.bank_account_id) ?? null : null);
+      if (ownerId == null) {
+        continue;
+      }
+      byAccount.set(ownerId, [...(byAccount.get(ownerId) ?? []), row]);
+    }
+    for (const [accountId, rows] of byAccount.entries()) {
+      byAccount.set(accountId, sortPaymentMethods(rows));
+    }
+    return byAccount;
+  }, [accounts, paymentMethods]);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
+    setPaymentMethodsError(null);
     try {
-      const next = withInfrastructureAccounts(await fetchTradingAccounts());
+      const [accountsRes, paymentMethodsRes] = await Promise.allSettled([
+        fetchTradingAccounts(),
+        fetchPaymentMethods(),
+      ]);
+      if (accountsRes.status !== 'fulfilled') {
+        throw accountsRes.reason;
+      }
+      const next = withInfrastructureAccounts(accountsRes.value);
       setAccounts(next);
       setExpandedId(current => current != null && !next.some(account => account.id === current) ? null : current);
       dispatchUi({
@@ -1813,6 +1869,23 @@ export function TradingAccountsPanel() {
           return { ...state, healthMessageByAccount };
         },
       });
+      if (paymentMethodsRes.status === 'fulfilled') {
+        const nextRows = paymentMethodsRes.value.payment_methods;
+        const ids = new Set(nextRows.map(row => row.id));
+        setPaymentMethods(nextRows);
+        setPaymentPriorityDrafts(prev =>
+          Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(Number(id)))),
+        );
+        setPaymentPriorityErrors(prev =>
+          Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(Number(id)))),
+        );
+      } else {
+        setPaymentMethodsError(
+          paymentMethodsRes.reason instanceof Error
+            ? paymentMethodsRes.reason.message
+            : 'Failed to load payment method priorities',
+        );
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load trading accounts');
     } finally {
@@ -1989,6 +2062,106 @@ export function TradingAccountsPanel() {
       setError(err instanceof Error ? err.message : 'Trading accounts request failed');
     }
   };
+
+  const savePaymentPriority = useCallback(async (row: PaymentMethodRow) => {
+    const raw = paymentPriorityDrafts[row.id] ?? String(row.priority);
+    const nextPriority = Number.parseInt(raw, 10) || 0;
+    setPaymentPrioritySavingId(row.id);
+    setPaymentPriorityErrors(prev => {
+      const next = { ...prev };
+      delete next[row.id];
+      return next;
+    });
+    try {
+      const res = await updatePaymentMethod(row.id, paymentMethodUpdatePayload(row, nextPriority));
+      setPaymentMethods(res.payment_methods);
+      setPaymentPriorityDrafts(prev => ({ ...prev, [row.id]: String(nextPriority) }));
+    } catch (err) {
+      setPaymentPriorityErrors(prev => ({
+        ...prev,
+        [row.id]: err instanceof Error ? err.message : 'Failed to save payment priority',
+      }));
+    } finally {
+      setPaymentPrioritySavingId(null);
+    }
+  }, [paymentPriorityDrafts]);
+
+  const renderPaymentPrioritySection = useCallback((account: TradingAccount) => {
+    if (!isPaymentCategory(account.category || 'Uncategorized')) {
+      return null;
+    }
+    const linkedMethods = paymentMethodsByAccount.get(account.id) ?? [];
+    const open = openSectionsByAccount[account.id]?.paymentMethodPriority ?? true;
+    return (
+      <CollapsibleSection
+        title="Offer priority"
+        count={linkedMethods.length || undefined}
+        open={open}
+        onToggle={() => toggleSection(account.id, 'paymentMethodPriority')}
+      >
+        <p className="text-[0.65rem] text-muted leading-relaxed px-1">
+          Controls which linked payment method wins automatically when an offer accepts more than one.
+        </p>
+        {paymentMethodsError ? (
+          <div className="text-[0.65rem] text-red px-1">{paymentMethodsError}</div>
+        ) : null}
+        {!paymentMethodsError && linkedMethods.length === 0 ? (
+          <div className="text-[0.65rem] text-muted px-1">
+            No linked payment methods on this account yet. Link them in the Payment Method Catalog first.
+          </div>
+        ) : null}
+        {!paymentMethodsError && linkedMethods.length > 0 ? (
+          <div className="grid gap-1.5">
+            {linkedMethods.map(row => {
+              const draftValue = paymentPriorityDrafts[row.id] ?? String(row.priority);
+              const dirty = draftValue !== String(row.priority);
+              const saving = paymentPrioritySavingId === row.id;
+              return (
+                <ResourceCard
+                  key={row.id}
+                  title={row.name}
+                  meta={`${row.is_active ? 'Active' : 'Inactive'}${row.link_label ? ` · ${row.link_label}` : ''}`}
+                >
+                  <div className="grid gap-1.5 sm:grid-cols-[minmax(0,1fr)_5rem_auto] sm:items-center">
+                    <div className="text-[0.65rem] text-muted">
+                      Higher value wins when the backend auto-picks among accepted methods.
+                    </div>
+                    <input
+                      type="number"
+                      className={compactInputCls}
+                      value={draftValue}
+                      onChange={e => setPaymentPriorityDrafts(prev => ({ ...prev, [row.id]: e.target.value }))}
+                      aria-label={`${row.name} priority`}
+                    />
+                    <button
+                      type="button"
+                      className={compactButtonCls}
+                      disabled={!dirty || saving}
+                      onClick={() => void savePaymentPriority(row)}
+                    >
+                      {saving ? 'Saving…' : 'Save'}
+                    </button>
+                  </div>
+                  {paymentPriorityErrors[row.id] ? (
+                    <div className="text-[0.65rem] text-red">{paymentPriorityErrors[row.id]}</div>
+                  ) : null}
+                </ResourceCard>
+              );
+            })}
+          </div>
+        ) : null}
+      </CollapsibleSection>
+    );
+  }, [
+    openSectionsByAccount,
+    paymentMethodsByAccount,
+    paymentMethodsError,
+    paymentPriorityDrafts,
+    paymentPriorityErrors,
+    paymentPrioritySavingId,
+    savePaymentPriority,
+    toggleSection,
+  ]);
 
   // runBisqAction wraps a bisq payment-account mutation: it marks the row busy, surfaces any
   // error inside the section (not the global banner), and reloads the reconciled lists.
@@ -3572,6 +3745,7 @@ export function TradingAccountsPanel() {
           )
         }
       >
+        {renderPaymentPrioritySection(account)}
         {isBisqProvider(account.provider) ? renderAccountFileSection(account) : null}
         {isBisq1Provider(account.provider) ? renderSavedPaymentMethodsSection(account) : null}
         {showDexIdentitySections(account.provider) ? renderTOTPSection(account) : null}

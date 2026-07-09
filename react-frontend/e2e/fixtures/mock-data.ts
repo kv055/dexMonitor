@@ -349,6 +349,45 @@ export const MOCK_TRADING_ACCOUNTS = [
   },
 ];
 
+export const MOCK_TRADING_PAYMENT_METHODS = {
+  payment_methods: [
+    {
+      id: 1001,
+      name: 'Revolut',
+      merge_regex: null,
+      alias_list: [],
+      category: 'Fiat Transmitter',
+      bank_account_id: null,
+      account_id: 11,
+      wallet_address_id: null,
+      is_active: true,
+      is_linked: true,
+      priority: 8,
+      match_order: 10,
+      link_label: 'Revolut',
+      created_at: ts(96),
+      updated_at: ts(12),
+    },
+    {
+      id: 1002,
+      name: 'Revolut Instant',
+      merge_regex: '(?i)^revolut instant$',
+      alias_list: ['Revolut instant'],
+      category: 'Fiat Transmitter',
+      bank_account_id: null,
+      account_id: 11,
+      wallet_address_id: null,
+      is_active: true,
+      is_linked: true,
+      priority: 4,
+      match_order: 11,
+      link_label: 'Revolut',
+      created_at: ts(48),
+      updated_at: ts(8),
+    },
+  ],
+};
+
 export const MOCK_BISQ_PAYMENT_ACCOUNTS = {
   payment_accounts: [
     {

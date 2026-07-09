@@ -46,6 +46,10 @@ body {
   line-height: 1.5;
 }
 
+#root {
+  min-height: 100dvh;
+}
+
 .mono-nums {
   font-family: 'JetBrains Mono', 'Fira Mono', 'Consolas', monospace;
   font-feature-settings: "tnum";
@@ -68,36 +72,41 @@ body {
   }
 }
 
-/* Scrollbar styling */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: var(--app-bg);
 }
+
 ::-webkit-scrollbar-thumb {
   background: var(--app-border);
   border-radius: 3px;
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: var(--app-subtle);
 }
+
 * {
   scrollbar-width: thin;
   scrollbar-color: var(--app-border) var(--app-bg);
 }
 
-/* Offers table selected/hover row highlighting driven by [data-theme] */
 [data-theme='light'] .offer-row-selected {
   background: rgba(0, 0, 0, 0.10);
 }
+
 [data-theme='dark'] .offer-row-selected {
   background: rgba(255, 255, 255, 0.34);
 }
+
 [data-theme='light'] .offer-row-hover:hover {
   background: rgba(0, 0, 0, 0.04);
 }
+
 [data-theme='dark'] .offer-row-hover:hover {
   background: rgba(255, 255, 255, 0.08);
 }

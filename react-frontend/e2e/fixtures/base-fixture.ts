@@ -17,6 +17,7 @@ import {
   MOCK_SNAPSHOT_LOG_DETAIL,
   MOCK_TRADE_COST_CONFIG,
   MOCK_TRADING_ACCOUNTS,
+  MOCK_TRADING_PAYMENT_METHODS,
   MOCK_BISQ_PAYMENT_ACCOUNTS,
   MOCK_CEX_DEPOSIT_ADDRESSES,
   MOCK_CEX_BALANCES,
@@ -105,9 +106,33 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/payment_method_groups', route =>
       route.fulfill({ json: MOCK_PAYMENT_METHOD_GROUPS }),
     );
+    let paymentMethodsState = structuredClone(MOCK_TRADING_PAYMENT_METHODS);
     await page.route('**/api/trading/accounts', route =>
       route.fulfill({ json: MOCK_TRADING_ACCOUNTS }),
     );
+    await page.route('**/api/trading/payment_methods', route =>
+      route.fulfill({ json: paymentMethodsState }),
+    );
+    await page.route('**/api/trading/payment_methods/*', async route => {
+      if (route.request().method() !== 'PUT') {
+        await route.fulfill({ json: { ok: true } });
+        return;
+      }
+      const id = Number(new URL(route.request().url()).pathname.match(/\/api\/trading\/payment_methods\/(\d+)$/)?.[1]);
+      const payload = await route.request().postDataJSON() as { priority?: number };
+      paymentMethodsState = {
+        payment_methods: paymentMethodsState.payment_methods.map(row =>
+          row.id === id
+            ? {
+                ...row,
+                priority: payload.priority ?? row.priority,
+                updated_at: new Date(FIXED_TIME).toISOString(),
+              }
+            : row,
+        ),
+      };
+      await route.fulfill({ json: paymentMethodsState });
+    });
     await page.route('**/api/trading/accounts/*/cex/deposit-addresses', route => {
       const id = Number(new URL(route.request().url()).pathname.match(/\/api\/trading\/accounts\/(\d+)\/cex\/deposit-addresses$/)?.[1]);
       return route.fulfill({ json: MOCK_CEX_DEPOSIT_ADDRESSES[id] ?? [] });

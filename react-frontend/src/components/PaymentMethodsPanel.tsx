@@ -364,8 +364,8 @@ export function PaymentMethodsPanel() {
         <div className="max-h-[50vh] overflow-y-auto flex flex-col gap-2 pr-1">
           {error && <p className="text-xs text-red">{error}</p>}
           <p className="text-[0.68rem] text-muted">
-            Categorize payment methods and link them to your saved payment solutions. Offers are taken with the
-            highest-priority linked method they accept. New methods from offers land in Others as inactive.
+            Categorize payment methods and link them to your saved payment solutions. Offer-method priority now lives
+            in the Payments tab account list. New methods from offers land in Others as inactive.
           </p>
           {grouped.map(({ category, rows: catRows }) => (
             <div key={category} className="rounded-md border border-border bg-bg">
@@ -401,9 +401,6 @@ export function PaymentMethodsPanel() {
                           ) : (
                             <span className="rounded bg-border/50 px-1.5 py-0.5 text-[0.62rem] text-muted">inactive</span>
                           )}
-                          {row.priority !== 0 && (
-                            <span className="text-[0.62rem] text-muted">prio {row.priority}</span>
-                          )}
                           {(row.alias_list?.length ?? 0) > 0 && (
                             <span className="text-[0.62rem] text-muted">
                               {row.alias_list.length} {row.alias_list.length === 1 ? 'alias' : 'aliases'}
@@ -421,29 +418,18 @@ export function PaymentMethodsPanel() {
 
                       {editingId === row.id && draft && (
                         <div className="mt-2 flex flex-col gap-2 rounded-md border border-border bg-surface p-2">
-                          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
-                            <label className="flex flex-col gap-1 text-[0.68rem] text-muted">
-                              Category
-                              <select
-                                className={compactInputCls}
-                                value={draft.category}
-                                onChange={e => setDraft({ ...draft, category: e.target.value, link_id: null })}
-                              >
-                                {CATEGORIES.map(c => (
-                                  <option key={c} value={c}>{c}</option>
-                                ))}
-                              </select>
-                            </label>
-                            <label className="flex flex-col gap-1 text-[0.68rem] text-muted">
-                              Priority (higher wins on multi-method offers)
-                              <input
-                                type="number"
-                                className={compactInputCls}
-                                value={draft.priority}
-                                onChange={e => setDraft({ ...draft, priority: e.target.value })}
-                              />
-                            </label>
-                          </div>
+                          <label className="flex flex-col gap-1 text-[0.68rem] text-muted">
+                            Category
+                            <select
+                              className={compactInputCls}
+                              value={draft.category}
+                              onChange={e => setDraft({ ...draft, category: e.target.value, link_id: null })}
+                            >
+                              {CATEGORIES.map(c => (
+                                <option key={c} value={c}>{c}</option>
+                              ))}
+                            </select>
+                          </label>
                           <label className="flex flex-col gap-1 text-[0.68rem] text-muted">
                             Merge regex (raw offer labels matching this become “{row.name}”)
                             <input

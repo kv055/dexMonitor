@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useStatistics, type StatisticsLoadParams } from '../hooks/useStatistics';
 import { useFilters } from '../hooks/useFilters';
 import { usePreferences } from '../hooks/usePreferences';
@@ -35,10 +35,13 @@ function formatBuiltAt(value: string | null): string | null {
   return `${diffDays}d ago`;
 }
 
+type StatisticsMode = 'live' | 'past' | 'shared';
+
 export function StatisticsView() {
   const { filters } = useFilters();
   const { excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit } = usePreferences();
   const { data, loading, error, cacheState, builtAt, load } = useStatistics();
+  const [mode, setMode] = useState<StatisticsMode>('live');
 
   useEffect(() => {
     const params: StatisticsLoadParams = {
@@ -81,6 +84,70 @@ export function StatisticsView() {
 
   const { live, past, shared } = data;
   const builtAtLabel = formatBuiltAt(builtAt);
+  const activeFilters = [
+    filters.cex.toUpperCase(),
+    `${shared.hours}h window`,
+    excludedMethods.length > 0 ? `${excludedMethods.length} methods hidden` : null,
+    excludedCEXes.length > 0 ? `${excludedCEXes.length} CEX excluded` : null,
+  ].filter(Boolean).join(' · ');
+  const metaLabel = cacheState === 'stale'
+    ? `Refreshed ${builtAtLabel ?? 'recently'} · refreshing in background`
+    : builtAtLabel
+      ? `Refreshed ${builtAtLabel}`
+      : 'Loaded from cache';
+  const modeOptions: { value: StatisticsMode; label: string }[] = [
+    { value: 'live', label: 'Live Offers' },
+    { value: 'past', label: 'Past Offers' },
+    { value: 'shared', label: 'All Offers' },
+  ];
+
+  let title = 'Live Offers';
+  let subtitle = `${live.active_offers} active · ${live.exchanges_live} exchanges`;
+  let cards: React.ReactNode;
+
+  if (mode === 'past') {
+    title = 'Past Offers';
+    subtitle = `${past.total_offers} closed summary in window`;
+    cards = (
+      <>
+        <PastPremiumsCard frames={past.past_premiums} />
+        <LifetimeCard lifetimes={past.premium_lifetimes} />
+        <PaymentMethodsCard counts={past.payment_method_counts} />
+      </>
+    );
+  } else if (mode === 'shared') {
+    title = 'All Offers';
+    subtitle = `${shared.total_offers} in last ${shared.hours}h (live + past)`;
+    cards = (
+      <>
+        <ExchangesCard exchangesLive={shared.exchanges_live} offersByExchange={shared.offers_by_exchange} />
+        <PaymentMethodsCard counts={shared.payment_method_counts} />
+        <div className="relative bg-bg border border-border rounded-lg px-3 py-2.5 flex flex-col gap-1.5 overflow-hidden min-w-0">
+          <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-border" />
+          <span className="text-[0.65rem] uppercase tracking-widest text-muted font-semibold leading-none">
+            Window
+          </span>
+          <div className="flex items-baseline gap-2 flex-wrap">
+            <span className="text-sm font-bold tabular-nums mono-nums leading-none text-text">
+              {shared.total_offers}
+            </span>
+            <span className="text-[0.68rem] text-muted">offers</span>
+            <span className="text-[0.68rem] tabular-nums mono-nums text-muted">
+              · {shared.active_offers} active · {shared.exchanges_live} exchanges
+            </span>
+          </div>
+        </div>
+      </>
+    );
+  } else {
+    cards = (
+      <>
+        <ExchangesCard exchangesLive={live.exchanges_live} offersByExchange={live.offers_by_exchange} />
+        <PremiumsCard premium={live.premium_summary} />
+        <PaymentMethodsCard counts={live.payment_method_counts} />
+      </>
+    );
+  }
 
   return (
     <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-3 sm:gap-4 overflow-y-auto lg:overflow-y-auto pr-0.5">
@@ -89,60 +156,38 @@ export function StatisticsView() {
           {error}
         </div>
       )}
-      {(builtAtLabel || cacheState === 'stale') && (
-        <div className="bg-bg border border-border rounded-lg px-3 py-2 text-[0.72rem] text-muted shrink-0">
-          {cacheState === 'stale'
-            ? `Statistics last refreshed ${builtAtLabel ?? 'recently'} and are being refreshed in the background.`
-            : builtAtLabel
-              ? `Statistics last refreshed ${builtAtLabel}.`
-              : 'Statistics loaded from cache.'}
-        </div>
-      )}
 
-      {/* Live dimension */}
-      <section className="bg-surface border border-border rounded-lg p-3 flex flex-col gap-2 shrink-0">
-        <SectionHeader title="Live Offers" subtitle="Currently open across exchanges" />
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-1.5">
-          <ExchangesCard exchangesLive={live.exchanges_live} offersByExchange={live.offers_by_exchange} />
-          <PremiumsCard premium={live.premium_summary} />
-          <PaymentMethodsCard counts={live.payment_method_counts} />
+      <div className="bg-surface border border-border rounded-lg px-3 py-2 flex items-center justify-between gap-3 shrink-0">
+        <div className="min-w-0 flex items-center gap-2">
+          <h1 className="text-[0.76rem] font-semibold text-text shrink-0">Statistics</h1>
+          <span className="text-[0.68rem] text-muted truncate">{activeFilters}</span>
         </div>
-      </section>
+        {(builtAtLabel || cacheState === 'stale') && (
+          <span className="text-[0.65rem] text-muted shrink-0 whitespace-nowrap">{metaLabel}</span>
+        )}
+      </div>
 
-      {/* Past dimension */}
-      <section className="bg-surface border border-border rounded-lg p-3 flex flex-col gap-2 shrink-0">
-        <SectionHeader title="Past Offers" subtitle={`${past.total_offers} closed summary in window`} />
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-1.5">
-          <PastPremiumsCard frames={past.past_premiums} />
-          <LifetimeCard lifetimes={past.premium_lifetimes} />
-          <PaymentMethodsCard counts={past.payment_method_counts} />
-        </div>
-      </section>
-
-      {/* Shared dimension */}
-      <section className="bg-surface border border-border rounded-lg p-3 flex flex-col gap-2 shrink-0">
-        <SectionHeader
-          title="All Offers"
-          subtitle={`${shared.total_offers} in last ${shared.hours}h (live + past)`}
-        />
-        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-1.5">
-          <ExchangesCard exchangesLive={shared.exchanges_live} offersByExchange={shared.offers_by_exchange} />
-          <PaymentMethodsCard counts={shared.payment_method_counts} />
-          <div className="relative bg-bg border border-border rounded-lg px-3 py-2.5 flex flex-col gap-1.5 overflow-hidden min-w-0">
-            <div className="absolute left-0 top-2 bottom-2 w-0.5 rounded-full bg-border" />
-            <span className="text-[0.65rem] uppercase tracking-widest text-muted font-semibold leading-none">
-              Window
-            </span>
-            <div className="flex items-baseline gap-2 flex-wrap">
-              <span className="text-sm font-bold tabular-nums mono-nums leading-none text-text">
-                {shared.total_offers}
-              </span>
-              <span className="text-[0.68rem] text-muted">offers</span>
-              <span className="text-[0.68rem] tabular-nums mono-nums text-muted">
-                · {shared.active_offers} active · {shared.exchanges_live} exchanges
-              </span>
-            </div>
+      <section className="bg-surface border border-border rounded-lg p-3 flex flex-col gap-2 lg:flex-1 lg:min-h-0">
+        <div className="flex items-center justify-between gap-3 shrink-0">
+          <SectionHeader title={title} subtitle={subtitle} />
+          <div className="flex items-center gap-1 flex-wrap justify-end">
+            {modeOptions.map(option => (
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setMode(option.value)}
+                className={mode === option.value
+                  ? 'rounded-md border border-accent bg-accent px-2 py-0.5 text-[0.68rem] font-medium text-black transition-colors'
+                  : 'rounded-md border border-border bg-bg/40 px-2 py-0.5 text-[0.68rem] font-medium text-muted transition-colors hover:text-text'}
+                aria-pressed={mode === option.value}
+              >
+                {option.label}
+              </button>
+            ))}
           </div>
+        </div>
+        <div className="grid grid-cols-1 gap-1.5 md:grid-cols-2 xl:grid-cols-3 lg:flex-1 lg:min-h-0 auto-rows-fr">
+          {cards}
         </div>
       </section>
     </div>

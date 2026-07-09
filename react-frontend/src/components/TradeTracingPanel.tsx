@@ -653,7 +653,7 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
 
             {!resolvedPaymentMethod && (offer.payment_methods?.length ?? 0) > 1 && (
               <p className="text-[0.68rem] text-muted">
-                This offer accepts multiple payment methods — the highest-priority linked method from the payment methods panel is used automatically.
+                This offer accepts multiple payment methods — the highest-priority linked method from the Payments tab is used automatically.
               </p>
             )}
 
