@@ -6,9 +6,6 @@ import type {
   OHLCData,
   PastOrderStats,
   GeneralStatsData,
-  GeneralStatsOverviewData,
-  PremiumLifetimeModes,
-  PastPremiumTimeframeStats,
   PastProfitableOrder,
 } from '../types';
 
@@ -45,28 +42,7 @@ function loadCoreKey(params: LoadParams): string {
   return JSON.stringify(params);
 }
 
-function buildGeneralStatsData(
-  overview: GeneralStatsOverviewData,
-  pastPremiums: PastPremiumTimeframeStats[],
-  premiumLifetimes: PremiumLifetimeModes,
-): GeneralStatsData {
-  return {
-    ...overview,
-    best_ask_premium_pct: null,
-    avg_ask_premium_pct: null,
-    best_bid_premium_pct: null,
-    avg_bid_premium_pct: null,
-    premium_lifetimes: premiumLifetimes,
-    avg_offer_lifetime_ms: premiumLifetimes.raw.avg_offer_lifetime_ms,
-    avg_offer_lifetime_ms_by_exchange: premiumLifetimes.raw.avg_offer_lifetime_ms_by_exchange,
-    past_premiums: pastPremiums,
-  };
-}
-
 type AnalyticsOverviewResponse = {
-  general_stats_overview?: GeneralStatsOverviewData;
-  past_premiums?: PastPremiumTimeframeStats[];
-  premium_lifetimes?: PremiumLifetimeModes;
   past_order_stats_all?: PastOrderStats;
   past_order_stats?: PastOrderStats;
   past_order_stats_all_net_capped?: PastOrderStats;
@@ -107,6 +83,7 @@ interface DashboardState {
   loading: boolean;
   analyticsOverviewLoading: boolean;
   analyticsOrdersLoading: boolean;
+  analyticsCappedLoading: boolean;
   initialLoadComplete: boolean;
 }
 
@@ -126,6 +103,7 @@ type DashboardAction =
   | { type: 'ANALYTICS_LOAD_START' }
   | { type: 'ANALYTICS_OVERVIEW_SUCCESS'; payload: AnalyticsOverviewPayload }
   | { type: 'ANALYTICS_ORDERS_SUCCESS'; pastProfitableOrders: PastProfitableOrder[] }
+  | { type: 'ANALYTICS_CAPPED_SUCCESS'; payload: Pick<DashboardState, 'pastOrderStatsNetCapped' | 'pastOrderStatsAllNetCapped' | 'pastProfitableOrders'> }
   | { type: 'ANALYTICS_LOAD_ERROR'; error: string }
   | { type: 'EXTEND_OHLC_SUCCESS'; ohlcData: OHLCData };
 
@@ -145,6 +123,7 @@ const initialDashboardState: DashboardState = {
   loading: true,
   analyticsOverviewLoading: false,
   analyticsOrdersLoading: false,
+  analyticsCappedLoading: false,
   initialLoadComplete: false,
 };
 
@@ -165,6 +144,7 @@ function dashboardReducer(state: DashboardState, action: DashboardAction): Dashb
         ...state,
         analyticsOverviewLoading: true,
         analyticsOrdersLoading: true,
+        analyticsCappedLoading: true,
         analyticsError: null,
       };
     case 'ANALYTICS_OVERVIEW_SUCCESS':
@@ -181,11 +161,19 @@ function dashboardReducer(state: DashboardState, action: DashboardAction): Dashb
         analyticsOrdersLoading: false,
         analyticsError: null,
       };
+    case 'ANALYTICS_CAPPED_SUCCESS':
+      return {
+        ...state,
+        ...action.payload,
+        analyticsCappedLoading: false,
+        analyticsError: null,
+      };
     case 'ANALYTICS_LOAD_ERROR':
       return {
         ...state,
         analyticsOverviewLoading: false,
         analyticsOrdersLoading: false,
+        analyticsCappedLoading: false,
         analyticsError: action.error,
       };
     case 'EXTEND_OHLC_SUCCESS':
@@ -274,40 +262,29 @@ export function useDashboard() {
     const { excludedQuery } = buildLoadQueries(params);
     const promise = (async () => {
       try {
-        const overview = await apiPost<AnalyticsOverviewResponse>(
+        // Fire the fast/full requests together. Both stay on persisted offer-row
+        // fields so the insights view can paint before capped calculations finish.
+        let cappedArrived = false;
+        const statsFull = apiPost<AnalyticsOverviewResponse>(
           '/api/dashboard/analytics',
-          buildAnalyticsBody(params, ['overview', 'taker_stats']),
+          buildAnalyticsBody(params, ['taker_stats_full']),
           { signal },
-        );
-        if (signal.aborted) return;
-        const generalStats = overview.general_stats_overview && overview.past_premiums && overview.premium_lifetimes
-          ? buildGeneralStatsData(
-              overview.general_stats_overview,
-              overview.past_premiums,
-              overview.premium_lifetimes,
-            )
-          : null;
-        dispatch({
-          type: 'ANALYTICS_OVERVIEW_SUCCESS',
-          payload: {
-            pastOrderStatsAll: overview.past_order_stats_all ?? null,
-            pastOrderStats: excludedQuery && overview.past_order_stats
-              ? overview.past_order_stats
-              : overview.past_order_stats_all ?? null,
-            pastOrderStatsAllNetCapped: overview.past_order_stats_all_net_capped ?? null,
-            pastOrderStatsNetCapped: excludedQuery && overview.past_order_stats_net_capped
-              ? overview.past_order_stats_net_capped
-              : overview.past_order_stats_all_net_capped ?? null,
-            generalStats,
-          },
+        ).then((res) => {
+          if (signal.aborted) return;
+          dispatch({
+            type: 'ANALYTICS_OVERVIEW_SUCCESS',
+            payload: {
+              pastOrderStatsAll: res.past_order_stats_all ?? null,
+              pastOrderStats: excludedQuery && res.past_order_stats
+                ? res.past_order_stats
+                : res.past_order_stats_all ?? null,
+              pastOrderStatsAllNetCapped: null,
+              pastOrderStatsNetCapped: null,
+              generalStats: null,
+            },
+          });
         });
 
-        // Render full-volume orders as soon as they're ready — that pass
-        // needs only the offers table, no order_lifecycle query — instead
-        // of leaving the table blank until the capped-aware pass (which
-        // does need that query) finishes too. `cappedArrived` stops the
-        // fast response from overwriting the capped one if it lands late.
-        let cappedArrived = false;
         const fastOrders = apiPost<AnalyticsOrdersResponse>(
           '/api/dashboard/analytics',
           buildAnalyticsBody(params, ['taker_orders_full']),
@@ -322,22 +299,28 @@ export function useDashboard() {
           });
         });
 
-        const cappedOrders = apiPost<AnalyticsOrdersResponse>(
+        const cappedAnalytics = apiPost<AnalyticsOverviewResponse & AnalyticsOrdersResponse>(
           '/api/dashboard/analytics',
-          buildAnalyticsBody(params, ['taker_orders']),
+          buildAnalyticsBody(params, ['taker_stats', 'taker_orders']),
           { signal },
         ).then((res) => {
           if (signal.aborted) return;
           cappedArrived = true;
           startTransition(() => {
             dispatch({
-              type: 'ANALYTICS_ORDERS_SUCCESS',
-              pastProfitableOrders: res.past_profitable_orders ?? [],
+              type: 'ANALYTICS_CAPPED_SUCCESS',
+              payload: {
+                pastOrderStatsAllNetCapped: res.past_order_stats_all_net_capped ?? null,
+                pastOrderStatsNetCapped: excludedQuery && res.past_order_stats_net_capped
+                  ? res.past_order_stats_net_capped
+                  : res.past_order_stats_all_net_capped ?? null,
+                pastProfitableOrders: res.past_profitable_orders ?? [],
+              },
             });
           });
         });
 
-        await Promise.all([fastOrders, cappedOrders]);
+        await Promise.all([statsFull, fastOrders, cappedAnalytics]);
       } catch (e: unknown) {
         if (signal.aborted) return;
         const message = e instanceof Error ? e.message : String(e);

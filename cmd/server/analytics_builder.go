@@ -15,6 +15,7 @@ const analyticsResultCacheTTL = 10 * time.Minute
 
 const (
 	analyticsSectionOverview        = "overview"
+	analyticsSectionTakerStatsFull  = "taker_stats_full"
 	analyticsSectionTakerStats      = "taker_stats"
 	analyticsSectionTakerOrdersFull = "taker_orders_full"
 	analyticsSectionTakerOrders     = "taker_orders"
@@ -29,6 +30,7 @@ type analyticsResultCacheEntry struct {
 	response        dashboardAnalyticsResponse
 	expiry          time.Time
 	builtOverview   bool
+	builtStatsFull  bool
 	builtStats      bool
 	builtOrdersFull bool
 	builtOrders     bool
@@ -38,6 +40,7 @@ type analyticsBuildTimings struct {
 	cacheHit          bool
 	loadContextMs     float64
 	buildOverviewMs   float64
+	buildStatsFullMs  float64
 	buildStatsMs      float64
 	buildOrdersFullMs float64
 	buildOrdersMs     float64
@@ -149,9 +152,11 @@ func filterDashboardAnalyticsResponse(full dashboardAnalyticsResponse, p dashboa
 		filtered.PastPremiums = full.PastPremiums
 		filtered.PremiumLifetimes = full.PremiumLifetimes
 	}
-	if p.wantsSection(analyticsSectionTakerStats) {
+	if p.wantsSection(analyticsSectionTakerStatsFull) || p.wantsSection(analyticsSectionTakerStats) {
 		filtered.PastOrderStatsAll = full.PastOrderStatsAll
 		filtered.PastOrderStats = full.PastOrderStats
+	}
+	if p.wantsSection(analyticsSectionTakerStats) {
 		filtered.PastOrderStatsAllNetCapped = full.PastOrderStatsAllNetCapped
 		filtered.PastOrderStatsNetCapped = full.PastOrderStatsNetCapped
 	}
@@ -234,6 +239,35 @@ func premiumOrderFromAnalysis(o map[string]any, analysis pastOfferAnalysis, mode
 		NetProfitFiatCapped: analysis.estimatedProfitBTCCapped * analysis.refPrice,
 		HasCap:              mode == takerOpportunityModeNetCapped && analysis.hasCap,
 	}
+}
+
+// buildTakerStatsFullOnly derives full-volume stats from the persisted offer
+// row only. It avoids the order_lifecycle aggregate query entirely so the
+// frontend can render summary cards immediately from DB-backed fields.
+func (bc *analyticsBuildContext) buildTakerStatsFullOnly() (pastorders.StatsResponse, pastorders.StatsResponse) {
+	now := time.Now()
+	hasExclusions := len(bc.params.ExcludePaymentMethods) > 0
+	fullAll := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
+	fullFiltered := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
+
+	for _, o := range bc.closedOffers {
+		analysis := addPastOfferCostFieldsFull(o, pastLifecycleAggregate{}, bc.params.Confirmations, bc.params.ExcludeCEXes, bc.params.FeeTier, 0)
+		if !analysis.profitableInMode(takerOpportunityModeNetFull) {
+			continue
+		}
+		po := premiumOrderFromAnalysis(o, analysis, takerOpportunityModeNetFull)
+		fullAll = append(fullAll, po)
+		if !hasExclusions || !offerHasExcludedPaymentMethod(o, bc.params.ExcludePaymentMethods) {
+			fullFiltered = append(fullFiltered, po)
+		}
+	}
+
+	excludedMethods := []string(nil)
+	if hasExclusions {
+		excludedMethods = bc.params.ExcludePaymentMethods
+	}
+
+	return pastorders.BuildStats(fullAll, now, bc.params.Fiat, nil), pastorders.BuildStats(fullFiltered, now, bc.params.Fiat, excludedMethods)
 }
 
 func (bc *analyticsBuildContext) buildTakerStatsOnly() takerAnalyticsResult {
@@ -359,6 +393,10 @@ func (bc *analyticsBuildContext) applyTakerStatsSections(resp *dashboardAnalytic
 	resp.PastOrderStatsNetCapped = taker.statsFilteredCapped
 }
 
+func (bc *analyticsBuildContext) applyTakerStatsFullSection(resp *dashboardAnalyticsResponse) {
+	resp.PastOrderStatsAll, resp.PastOrderStats = bc.buildTakerStatsFullOnly()
+}
+
 func (bc *analyticsBuildContext) applyTakerOrdersFullSection(resp *dashboardAnalyticsResponse) {
 	resp.PastProfitableOrders = bc.buildTakerOrdersFullOnly()
 }
@@ -373,6 +411,12 @@ func (p dashboardAnalyticsParams) needsOverviewBuild() bool {
 
 func (p dashboardAnalyticsParams) needsStatsBuild() bool {
 	return len(p.Sections) == 0 || p.wantsSection(analyticsSectionTakerStats)
+}
+
+// needsStatsFullBuild reports whether the fast, full-volume-only stats
+// section was requested. A completed capped-aware stats build supersedes it.
+func (p dashboardAnalyticsParams) needsStatsFullBuild() bool {
+	return len(p.Sections) == 0 || p.wantsSection(analyticsSectionTakerStatsFull)
 }
 
 // needsOrdersFullBuild reports whether the fast, full-volume-only orders
@@ -391,6 +435,9 @@ func analyticsSectionsSatisfied(p dashboardAnalyticsParams, entry analyticsResul
 	if p.needsOverviewBuild() && !entry.builtOverview {
 		return false
 	}
+	if p.needsStatsFullBuild() && !entry.builtStatsFull && !entry.builtStats {
+		return false
+	}
 	if p.needsStatsBuild() && !entry.builtStats {
 		return false
 	}
@@ -405,10 +452,11 @@ func analyticsSectionsSatisfied(p dashboardAnalyticsParams, entry analyticsResul
 
 func writeAnalyticsServerTiming(w http.ResponseWriter, timings analyticsBuildTimings) {
 	w.Header().Add("Server-Timing", fmt.Sprintf(
-		"cache;desc=\"hit=%t\", ctx;dur=%.1f, overview;dur=%.1f, stats;dur=%.1f, ordersFull;dur=%.1f, orders;dur=%.1f",
+		"cache;desc=\"hit=%t\", ctx;dur=%.1f, overview;dur=%.1f, statsFull;dur=%.1f, stats;dur=%.1f, ordersFull;dur=%.1f, orders;dur=%.1f",
 		timings.cacheHit,
 		timings.loadContextMs,
 		timings.buildOverviewMs,
+		timings.buildStatsFullMs,
 		timings.buildStatsMs,
 		timings.buildOrdersFullMs,
 		timings.buildOrdersMs,
@@ -431,12 +479,14 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 
 	merged := dashboardAnalyticsResponse{}
 	builtOverview := false
+	builtStatsFull := false
 	builtStats := false
 	builtOrdersFull := false
 	builtOrders := false
 	if cached && now.Before(entry.expiry) {
 		merged = entry.response
 		builtOverview = entry.builtOverview
+		builtStatsFull = entry.builtStatsFull
 		builtStats = entry.builtStats
 		builtOrdersFull = entry.builtOrdersFull
 		builtOrders = entry.builtOrders
@@ -445,11 +495,12 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 
 	needOverview := p.needsOverviewBuild() && !builtOverview
 	needStats := p.needsStatsBuild() && !builtStats
+	needStatsFull := p.needsStatsFullBuild() && !builtStatsFull && !builtStats && !needStats
 	needOrders := p.needsOrdersBuild() && !builtOrders
 	// A completed capped-aware build already covers the full-volume-only
 	// section, so skip redoing it in that case.
 	needOrdersFull := p.needsOrdersFullBuild() && !builtOrdersFull && !builtOrders && !needOrders
-	if !needOverview && !needStats && !needOrdersFull && !needOrders {
+	if !needOverview && !needStatsFull && !needStats && !needOrdersFull && !needOrders {
 		timings.cacheHit = true
 		return filterDashboardAnalyticsResponse(merged, p), timings, nil
 	}
@@ -467,10 +518,17 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 		timings.buildOverviewMs = float64(time.Since(start).Microseconds()) / 1000
 		builtOverview = true
 	}
+	if needStatsFull {
+		start := time.Now()
+		bc.applyTakerStatsFullSection(&merged)
+		timings.buildStatsFullMs = float64(time.Since(start).Microseconds()) / 1000
+		builtStatsFull = true
+	}
 	if needStats {
 		start := time.Now()
 		bc.applyTakerStatsSections(&merged)
 		timings.buildStatsMs = float64(time.Since(start).Microseconds()) / 1000
+		builtStatsFull = true
 		builtStats = true
 	}
 	if needOrdersFull {
@@ -501,6 +559,7 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 		response:        merged,
 		expiry:          now.Add(analyticsResultCacheTTL),
 		builtOverview:   builtOverview,
+		builtStatsFull:  builtStatsFull,
 		builtStats:      builtStats,
 		builtOrdersFull: builtOrdersFull,
 		builtOrders:     builtOrders,

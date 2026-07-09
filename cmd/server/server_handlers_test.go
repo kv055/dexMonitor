@@ -1001,6 +1001,38 @@ func TestDashboardAnalyticsOverviewSectionOmitsOrders(t *testing.T) {
 	}
 }
 
+func TestDashboardAnalyticsStatsFullSectionOmitsCappedAndOrders(t *testing.T) {
+	withTempOrdersDB(t)
+
+	body := `{"hours":48,"cex":"kraken","sections":["overview","taker_stats_full"],"fiat":"EUR"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handleDashboardAnalytics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp dashboardAnalyticsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.GeneralStatsOverview.TotalOffers == 0 {
+		t.Fatal("expected overview stats in overview+taker_stats_full response")
+	}
+	if len(resp.PastOrderStatsAll.Timeframes) == 0 {
+		t.Fatal("expected full taker stats in taker_stats_full response")
+	}
+	if len(resp.PastOrderStatsAllNetCapped.Timeframes) != 0 || len(resp.PastOrderStatsNetCapped.Timeframes) != 0 {
+		t.Fatal("expected capped taker stats omitted for taker_stats_full response")
+	}
+	if resp.PastProfitableOrders != nil {
+		t.Fatalf("expected orders omitted, got %d orders", len(resp.PastProfitableOrders))
+	}
+}
+
 func TestDashboardAnalyticsOrdersSectionReusesCache(t *testing.T) {
 	withTempOrdersDB(t)
 

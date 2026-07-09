@@ -69,7 +69,7 @@ func normalizeAnalyticsSections(sections []string) []string {
 			continue
 		}
 		switch section {
-		case analyticsSectionOverview, analyticsSectionTakerStats, analyticsSectionTakerOrders:
+		case analyticsSectionOverview, analyticsSectionTakerStatsFull, analyticsSectionTakerStats, analyticsSectionTakerOrdersFull, analyticsSectionTakerOrders:
 			seen[section] = struct{}{}
 			result = append(result, section)
 		}

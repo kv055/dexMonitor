@@ -131,7 +131,7 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, loadAnalytics }: {
+function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics }: {
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
   pastOrderStatsNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsNetCapped'];
@@ -139,6 +139,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
   pastProfitableOrders: ReturnType<typeof useDashboard>['pastProfitableOrders'];
   analyticsOverviewLoading: boolean;
   analyticsOrdersLoading: boolean;
+  analyticsCappedLoading: boolean;
   loadAnalytics: ReturnType<typeof useDashboard>['loadAnalytics'];
 }) {
   const { filters } = useFilters();
@@ -160,6 +161,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           orders={pastProfitableOrders}
           statsLoading={analyticsOverviewLoading}
           ordersLoading={analyticsOrdersLoading}
+          cappedLoading={analyticsCappedLoading}
           maxFiatLimit={maxFiatLimit}
         />
       </div>
@@ -200,6 +202,7 @@ function AppShell() {
     loading,
     analyticsOverviewLoading,
     analyticsOrdersLoading,
+    analyticsCappedLoading,
     loadAnalytics,
     loadCore,
     extendOhlc,
@@ -264,6 +267,7 @@ function AppShell() {
             pastProfitableOrders={pastProfitableOrders}
             analyticsOverviewLoading={analyticsOverviewLoading}
             analyticsOrdersLoading={analyticsOrdersLoading}
+            analyticsCappedLoading={analyticsCappedLoading}
             loadAnalytics={loadAnalytics}
           />
         )}

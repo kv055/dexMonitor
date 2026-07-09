@@ -35,6 +35,7 @@ interface Props {
   orders: PastProfitableOrder[];
   statsLoading: boolean;
   ordersLoading: boolean;
+  cappedLoading: boolean;
   maxFiatLimit: number | null;
 }
 
@@ -893,7 +894,7 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
   );
 }
 
-export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading, ordersLoading, maxFiatLimit }: Props) {
+export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading, ordersLoading, cappedLoading, maxFiatLimit }: Props) {
   const deferredOrders = useDeferredValue(orders);
   const ordersPending = deferredOrders !== orders;
   const { timezone } = useTimezone();
@@ -927,14 +928,17 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
   const tradesListRef = useRef<HTMLDivElement>(null);
 
   const hasExcluded = (stats?.excluded_payment_methods?.length ?? 0) > 0;
-  const activeStats = mode === 'net_capped' ? statsNetCapped : stats;
+  const cappedDataPending = mode === 'net_capped' && cappedLoading && statsNetCapped == null;
+  const activeStats = mode === 'net_capped' ? (statsNetCapped ?? stats) : stats;
   const activeOrders = useMemo(() => {
-    let list = deferredOrders.filter(order => isProfitableInMode(order, mode));
+    let list = cappedDataPending
+      ? deferredOrders
+      : deferredOrders.filter(order => isProfitableInMode(order, mode));
     if (hasExcluded) {
       list = list.filter(order => !order.payment_methods?.some(m => excludedMethods.includes(m)));
     }
     return list;
-  }, [deferredOrders, mode, hasExcluded, excludedMethods]);
+  }, [cappedDataPending, deferredOrders, mode, hasExcluded, excludedMethods]);
 
   // Capped mode is only meaningful when the global Max Position Size is set.
   const capAvailable = maxFiatLimit != null && maxFiatLimit > 0;
@@ -1028,8 +1032,10 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
   }, [ordersBeforeDurationFilter, durationRange]);
 
   const profitFiatBounds = useMemo(
-    () => computeProfitFiatBounds(ordersAfterDurationFilter, mode),
-    [ordersAfterDurationFilter, mode],
+    () => cappedDataPending
+      ? { minCents: 0, maxCents: 0, sliderMaxCents: 0, hasData: false }
+      : computeProfitFiatBounds(ordersAfterDurationFilter, mode),
+    [cappedDataPending, ordersAfterDurationFilter, mode],
   );
 
   useEffect(() => {
@@ -1201,7 +1207,7 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
     profitFiatBounds.maxCents,
   ]);
 
-  if (statsLoading && !stats) {
+  if (statsLoading && !stats && ordersLoading && orders.length === 0) {
     return (
       <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
         <LoadingSpinner size={112} label="Loading taker opportunities" />
@@ -1220,37 +1226,34 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
   }
 
   const summaryRows = [
-    { label: 'Orders', value: filteredSummary.premium_order_count.toLocaleString('de-DE'), className: 'text-text' },
+    { label: 'Orders', value: cappedDataPending ? 'Calculating…' : filteredSummary.premium_order_count.toLocaleString('de-DE'), className: 'text-text' },
     {
       label: 'Net profit',
-      value: summaryUnit === 'btc' ? fmtBTC(filteredSummary.total_net_profit_btc) : fmtFiat(filteredSummary.total_net_profit_fiat, fiat),
+      value: cappedDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.total_net_profit_btc) : fmtFiat(filteredSummary.total_net_profit_fiat, fiat),
       className: 'text-green',
     },
     {
       label: 'Avg Size',
-      value: summaryUnit === 'btc' ? fmtBTC(filteredSummary.average_order_size_btc) : fmtFiat(filteredSummary.average_order_size_fiat, fiat),
+      value: cappedDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.average_order_size_btc) : fmtFiat(filteredSummary.average_order_size_fiat, fiat),
       className: 'text-text',
     },
     {
       label: 'Smallest',
-      value: summaryUnit === 'btc' ? fmtBTC(filteredSummary.smallest_order_size_btc) : fmtFiat(filteredSummary.smallest_order_size_fiat, fiat),
+      value: cappedDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.smallest_order_size_btc) : fmtFiat(filteredSummary.smallest_order_size_fiat, fiat),
       className: 'text-muted',
     },
     {
       label: 'Biggest',
-      value: summaryUnit === 'btc' ? fmtBTC(filteredSummary.biggest_order_size_btc) : fmtFiat(filteredSummary.biggest_order_size_fiat, fiat),
+      value: cappedDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.biggest_order_size_btc) : fmtFiat(filteredSummary.biggest_order_size_fiat, fiat),
       className: 'text-muted',
     },
   ];
 
   return (
     <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
-      {ordersLoading && orders.length === 0 && (
-        <LoadingSpinner size={112} label="Loading profitable trades" />
-      )}
-      {ordersPending && orders.length > 0 && (
+      {(ordersPending || cappedDataPending) && orders.length > 0 && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 border-b border-border bg-surface/80 px-3 py-1 text-[0.68rem] text-muted">
-          Updating profitable trades…
+          {cappedDataPending ? 'Calculating capped-volume profits…' : 'Updating profitable trades…'}
         </div>
       )}
       <div className="flex flex-1 min-h-0 flex-col gap-3 lg:flex-row">
@@ -1303,7 +1306,7 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
             onChange={setProfitFiatRangeCents}
             formatValue={value => fmtFiat(profitFiatFromCents(value), fiat)}
             disabled={!profitFiatBounds.hasData || profitFiatRangeCents == null}
-            disabledMessage="No profit data in this window"
+            disabledMessage={cappedDataPending ? 'Capped profit is still being calculated' : 'No profit data in this window'}
           />
           <PillGroup
             label="Premium mode"
@@ -1359,7 +1362,11 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
               />
             )}
             <div ref={tradesListRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
-              {sortedOrders.length === 0 ? (
+              {ordersLoading && orders.length === 0 ? (
+                <div className="relative min-h-64">
+                  <LoadingSpinner size={112} label="Loading profitable trades" />
+                </div>
+              ) : sortedOrders.length === 0 ? (
                 <div className="px-3 py-4 text-[0.75rem] text-muted">No profitable closed trades in this window for the selected net mode.</div>
               ) : (
                 <div
@@ -1414,10 +1421,10 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
                           <TradeRowMetric value={seenLabel} />
                           <TradeRowMetric value={order.status.duration?.display || '—'} />
                           <TradeRowMetric
-                            value={sizeUnit === 'btc' ? fmtBTC(activeScenario.trade_size_btc) : fmtFiat(activeScenario.trade_size_fiat, fiat)}
+                            value={cappedDataPending ? 'Calculating…' : sizeUnit === 'btc' ? fmtBTC(activeScenario.trade_size_btc) : fmtFiat(activeScenario.trade_size_fiat, fiat)}
                           />
                           <TradeRowMetric
-                            value={netProfitUnit === 'btc' ? fmtBTC(activeScenario.profit.avg_btc) : fmtFiat(activeScenario.profit.avg_fiat, fiat)}
+                            value={cappedDataPending ? 'Calculating…' : netProfitUnit === 'btc' ? fmtBTC(activeScenario.profit.avg_btc) : fmtFiat(activeScenario.profit.avg_fiat, fiat)}
                             valueClassName="text-green"
                           />
                           <span className="shrink-0 text-right text-muted">{isOpen ? '▲' : '▼'}</span>
@@ -1426,11 +1433,18 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
 
                       {isOpen && (
                         <div className="border-t border-border bg-bg/20 px-3 py-3">
-                          <PastOrderBreakdown
-                            order={order}
-                            showCapped={expandedShowCapped}
-                            onToggleCapped={setExpandedShowCapped}
-                          />
+                          {cappedDataPending ? (
+                            <div className="flex items-center gap-3 px-1 py-2 text-[0.78rem] text-muted">
+                              <LoadingSpinner size={28} />
+                              <span>Capped-volume breakdown is still being calculated.</span>
+                            </div>
+                          ) : (
+                            <PastOrderBreakdown
+                              order={order}
+                              showCapped={expandedShowCapped}
+                              onToggleCapped={setExpandedShowCapped}
+                            />
+                          )}
                         </div>
                       )}
                     </div>
