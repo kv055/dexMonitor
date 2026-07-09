@@ -505,7 +505,9 @@ func analyticsSectionsSatisfied(p dashboardAnalyticsParams, entry analyticsResul
 	if p.needsStatsBuild() && !entry.builtStats {
 		return false
 	}
-	if p.needsOrdersFullBuild() && !entry.builtOrdersFull && !entry.builtOrders {
+	// builtOrders does NOT satisfy ordersFull: the capped orders build fills
+	// PastProfitableOrders only, never PastProfitableOrdersCompact.
+	if p.needsOrdersFullBuild() && !entry.builtOrdersFull {
 		return false
 	}
 	if p.needsOrdersBuild() && !entry.builtOrders {
@@ -514,13 +516,61 @@ func analyticsSectionsSatisfied(p dashboardAnalyticsParams, entry analyticsResul
 	return true
 }
 
-func (p analyticsBuildPlan) asEntry() analyticsResultCacheEntry {
-	return analyticsResultCacheEntry{
-		builtOverview:   p.overview,
-		builtStatsFull:  p.statsFull,
-		builtStats:      p.stats,
-		builtOrdersFull: p.ordersFull,
-		builtOrders:     p.orders,
+// planCoversSections reports whether waiting on an in-flight build with this
+// plan would satisfy every section the request needs. Unlike
+// analyticsSectionsSatisfied, an in-flight capped build (stats/orders) only
+// counts toward its fast variant (statsFull/ordersFull) when the request needs
+// the capped section anyway: the capped build can take many seconds (it
+// aggregates order_lifecycle), while a fast section builds in milliseconds, so
+// a fast-only request must self-build rather than queue behind it.
+func planCoversSections(p dashboardAnalyticsParams, plan analyticsBuildPlan) bool {
+	if p.needsOverviewBuild() && !plan.overview {
+		return false
+	}
+	if p.needsStatsFullBuild() && !plan.statsFull && !(plan.stats && p.needsStatsBuild()) {
+		return false
+	}
+	if p.needsStatsBuild() && !plan.stats {
+		return false
+	}
+	if p.needsOrdersFullBuild() && !plan.ordersFull {
+		return false
+	}
+	if p.needsOrdersBuild() && !plan.orders {
+		return false
+	}
+	return true
+}
+
+// overlayBuiltSections copies the sections this plan built from src into dst
+// and marks them built. Concurrent builds for the same cache key finish in any
+// order (a fast section build races the multi-second capped build), so each
+// writer must overlay only what it produced onto the latest cached entry
+// instead of replacing the entry wholesale from its own stale snapshot.
+func (p analyticsBuildPlan) overlayBuiltSections(dst *analyticsResultCacheEntry, src dashboardAnalyticsResponse) {
+	if p.overview {
+		dst.response.GeneralStatsOverview = src.GeneralStatsOverview
+		dst.response.PastPremiums = src.PastPremiums
+		dst.response.PremiumLifetimes = src.PremiumLifetimes
+		dst.builtOverview = true
+	}
+	if p.statsFull || p.stats {
+		dst.response.PastOrderStatsAll = src.PastOrderStatsAll
+		dst.response.PastOrderStats = src.PastOrderStats
+		dst.builtStatsFull = true
+	}
+	if p.stats {
+		dst.response.PastOrderStatsAllNetCapped = src.PastOrderStatsAllNetCapped
+		dst.response.PastOrderStatsNetCapped = src.PastOrderStatsNetCapped
+		dst.builtStats = true
+	}
+	if p.ordersFull {
+		dst.response.PastProfitableOrdersCompact = src.PastProfitableOrdersCompact
+		dst.builtOrdersFull = true
+	}
+	if p.orders {
+		dst.response.PastProfitableOrders = src.PastProfitableOrders
+		dst.builtOrders = true
 	}
 }
 
@@ -553,7 +603,7 @@ func analyticsMissingBuildPlan(p dashboardAnalyticsParams, entry analyticsResult
 	needStats := p.needsStatsBuild() && !entry.builtStats
 	needStatsFull := p.needsStatsFullBuild() && !entry.builtStatsFull && !entry.builtStats && !needStats
 	needOrders := p.needsOrdersBuild() && !entry.builtOrders
-	needOrdersFull := p.needsOrdersFullBuild() && !entry.builtOrdersFull && !entry.builtOrders && !needOrders
+	needOrdersFull := p.needsOrdersFullBuild() && !entry.builtOrdersFull
 	return analyticsBuildPlan{
 		overview:   needOverview,
 		statsFull:  needStatsFull,
@@ -609,7 +659,7 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 
 		waited := false
 		for _, inflight := range analyticsResultCache.inFlight[cacheKey] {
-			if analyticsSectionsSatisfied(p, inflight.plan.asEntry()) {
+			if planCoversSections(p, inflight.plan) {
 				analyticsResultCache.Unlock()
 				waitStart := time.Now()
 				<-inflight.done
@@ -646,33 +696,26 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 				start := time.Now()
 				bc.applyOverviewSections(&merged, p)
 				timings.buildOverviewMs = float64(time.Since(start).Microseconds()) / 1000
-				current.builtOverview = true
 			}
 			if plan.statsFull {
 				start := time.Now()
 				bc.applyTakerStatsFullSection(&merged)
 				timings.buildStatsFullMs = float64(time.Since(start).Microseconds()) / 1000
-				current.builtStatsFull = true
 			}
 			if plan.stats {
 				start := time.Now()
 				bc.applyTakerStatsSections(&merged)
 				timings.buildStatsMs = float64(time.Since(start).Microseconds()) / 1000
-				current.builtStatsFull = true
-				current.builtStats = true
 			}
 			if plan.ordersFull {
 				start := time.Now()
 				bc.applyTakerOrdersFullSection(&merged)
 				timings.buildOrdersFullMs = float64(time.Since(start).Microseconds()) / 1000
-				current.builtOrdersFull = true
 			}
 			if plan.orders {
 				start := time.Now()
 				bc.applyTakerOrdersSection(&merged)
 				timings.buildOrdersMs = float64(time.Since(start).Microseconds()) / 1000
-				current.builtOrders = true
-				current.builtOrdersFull = true
 			}
 
 			analyticsResultCache.Lock()
@@ -684,15 +727,13 @@ func buildDashboardAnalyticsResponse(p dashboardAnalyticsParams) (dashboardAnaly
 					delete(analyticsResultCache.entries, k)
 				}
 			}
-			analyticsResultCache.entries[cacheKey] = analyticsResultCacheEntry{
-				response:        merged,
-				expiry:          now.Add(analyticsResultCacheTTL),
-				builtOverview:   current.builtOverview,
-				builtStatsFull:  current.builtStatsFull,
-				builtStats:      current.builtStats,
-				builtOrdersFull: current.builtOrdersFull,
-				builtOrders:     current.builtOrders,
+			final, ok := analyticsResultCache.entries[cacheKey]
+			if !ok || !now.Before(final.expiry) {
+				final = analyticsResultCacheEntry{}
 			}
+			plan.overlayBuiltSections(&final, merged)
+			final.expiry = now.Add(analyticsResultCacheTTL)
+			analyticsResultCache.entries[cacheKey] = final
 			entries := analyticsResultCache.inFlight[cacheKey]
 			for i, candidate := range entries {
 				if candidate == inflight {

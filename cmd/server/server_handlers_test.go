@@ -35,7 +35,6 @@ CREATE TABLE offers (
     exchange TEXT NOT NULL,
     direction TEXT NOT NULL,
     price REAL NOT NULL,
-    price_diff_percent REAL,
     btc_min REAL,
     btc_max REAL,
     fiat_min INTEGER,
@@ -1106,6 +1105,97 @@ func TestDashboardAnalyticsOrdersSectionReusesCache(t *testing.T) {
 	}
 	if buildElapsed > 2*time.Second {
 		t.Fatalf("initial taker_orders build took %v, want <= 2s on temp DB", buildElapsed)
+	}
+}
+
+// TestDashboardAnalyticsFastSectionsDoNotWaitOnCappedBuild guards against the
+// offers table queueing behind the slow capped build: when the three page
+// requests race and the capped one registers its in-flight build first, the
+// taker_orders_full request must self-build (milliseconds) instead of waiting
+// for the capped build's order_lifecycle aggregate (seconds).
+func TestDashboardAnalyticsFastSectionsDoNotWaitOnCappedBuild(t *testing.T) {
+	withTempOrdersDB(t)
+
+	p := dashboardAnalyticsParams{
+		Hours:    48,
+		Cex:      "kraken",
+		Fiat:     "EUR",
+		Sections: []string{analyticsSectionTakerOrdersFull},
+	}
+	key := p.analyticsResultCacheKey()
+
+	// A capped-sections build that never completes.
+	stuck := &analyticsInFlightEntry{
+		plan: analyticsBuildPlan{stats: true, orders: true},
+		done: make(chan struct{}),
+	}
+	analyticsResultCache.Lock()
+	if analyticsResultCache.inFlight == nil {
+		analyticsResultCache.inFlight = make(map[string][]*analyticsInFlightEntry)
+	}
+	analyticsResultCache.inFlight[key] = append(analyticsResultCache.inFlight[key], stuck)
+	analyticsResultCache.Unlock()
+	t.Cleanup(func() { resetAnalyticsCaches() })
+
+	type buildResult struct {
+		resp    dashboardAnalyticsResponse
+		timings analyticsBuildTimings
+		err     error
+	}
+	results := make(chan buildResult, 1)
+	go func() {
+		resp, timings, err := buildDashboardAnalyticsResponse(p)
+		results <- buildResult{resp, timings, err}
+	}()
+
+	select {
+	case got := <-results:
+		if got.err != nil {
+			t.Fatalf("fast build failed: %v", got.err)
+		}
+		if got.timings.waitedOnInFlight {
+			t.Fatal("fast section waited on the in-flight capped build")
+		}
+		if len(got.resp.PastProfitableOrdersCompact) == 0 {
+			t.Fatal("expected compact profitable orders from self-built fast section")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("taker_orders_full request blocked behind the stuck capped build")
+	}
+}
+
+// TestDashboardAnalyticsCappedBuildDoesNotSatisfyOrdersFull guards against a
+// capped-only build being cached as if it also produced the compact orders
+// list: the capped orders build fills past_profitable_orders only, so a
+// following taker_orders_full request must build (and get) real compact rows
+// rather than an empty list served from the capped entry.
+func TestDashboardAnalyticsCappedBuildDoesNotSatisfyOrdersFull(t *testing.T) {
+	withTempOrdersDB(t)
+
+	cappedBody := `{"hours":48,"cex":"kraken","sections":["taker_stats","taker_orders"],"fiat":"EUR"}`
+	cappedReq := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(cappedBody))
+	cappedReq.Header.Set("Content-Type", "application/json")
+	cappedRec := httptest.NewRecorder()
+	handleDashboardAnalytics(cappedRec, cappedReq)
+	if cappedRec.Code != http.StatusOK {
+		t.Fatalf("capped status = %d; body=%s", cappedRec.Code, cappedRec.Body.String())
+	}
+
+	fastBody := `{"hours":48,"cex":"kraken","sections":["taker_orders_full"],"fiat":"EUR"}`
+	fastReq := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(fastBody))
+	fastReq.Header.Set("Content-Type", "application/json")
+	fastRec := httptest.NewRecorder()
+	handleDashboardAnalytics(fastRec, fastReq)
+	if fastRec.Code != http.StatusOK {
+		t.Fatalf("fast status = %d; body=%s", fastRec.Code, fastRec.Body.String())
+	}
+
+	var resp dashboardAnalyticsResponse
+	if err := json.Unmarshal(fastRec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.PastProfitableOrdersCompact) == 0 {
+		t.Fatal("expected compact profitable orders after a capped-only build was cached")
 	}
 }
 

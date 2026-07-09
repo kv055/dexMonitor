@@ -66,7 +66,7 @@ const defaultCEX = "kraken"
 const closedAnalyzedOffersQuery = "SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? AND historical_analysis_status = 'analyzed' ORDER BY last_seen DESC"
 const analyticsOffersQuery = `
 SELECT
-	id, exchange, direction, price, price_diff_percent,
+	id, exchange, direction, price,
 	btc_min, btc_max, fiat_min, fiat_max,
 	payment_methods, offer_id,
 	first_seen, last_seen, is_live, duration, historical_analysis_status,
@@ -521,7 +521,12 @@ func fetchPastOfferLifecycleAggregates(ids []int64) map[int64]pastLifecycleAggre
 	if lifecycleRepo.DB != db && db != nil {
 		lifecycleRepo = lifecycle.NewRepository(db)
 	}
-	aggregates, err := lifecycleRepo.LoadPastAggregates(context.Background(), ids)
+	// The order_lifecycle aggregate can take many seconds on tens of millions
+	// of rows; without a deadline a mis-planned query pins one of the pool's
+	// few connections indefinitely.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	aggregates, err := lifecycleRepo.LoadPastAggregates(ctx, ids)
 	if err != nil {
 		return result
 	}
