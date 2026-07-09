@@ -23,10 +23,6 @@ import {
   fetchLNDWalletState,
   fetchLNDWalletStatus,
   fetchTradingAccounts,
-  fetchPaymentMethods,
-  fetchPaymentMethodChatTemplates,
-  updatePaymentMethodChatTemplate,
-  deletePaymentMethodChatTemplate,
   fetchBisqPaymentAccounts,
   createBisqPaymentAccount,
   deleteBisqPaymentAccount,
@@ -54,8 +50,6 @@ import type {
   TradingAccountKeyPermissionResult,
   TradingBankAccount,
   BisqPaymentAccount,
-  PaymentMethodRow,
-  PaymentMethodChatTemplate,
 } from '../types';
 
 type ProviderOption = { value: string; label: string };
@@ -300,21 +294,6 @@ function isBisqProvider(value: string) {
 function isBisq1Provider(value: string) {
   return value.trim().toLowerCase() === 'bisq';
 }
-
-// chatVenueForProvider maps a DEX provider to its chat-template venue key, or null if the
-// provider doesn't exchange payment details via free-text trade chat. The returned string
-// MUST match payment_method_chat_templates.exchange (RoboSats / Bisq2).
-function chatVenueForProvider(value: string): 'RoboSats' | 'Bisq2' | null {
-  const normalized = value.trim().toLowerCase();
-  if (normalized === 'bisq2') return 'Bisq2';
-  if (normalized === 'robosats') return 'RoboSats';
-  return null;
-}
-
-// Placeholder shown in the collapsed template preview and as the editor placeholder until the
-// user writes a real template. TODO: replace with a sensible per-venue default.
-const LOREM_TEMPLATE =
-  'Lorem ipsum dolor sit amet, consectetur adipiscing elit. Sed do eiusmod tempor incididunt ut labore et dolore magna aliqua.';
 
 function normalizeIban(iban: string | null | undefined) {
   return (iban ?? '').replace(/\s+/g, '').toUpperCase();
@@ -704,7 +683,6 @@ type AccountSectionKey =
   | 'seeds'
   | 'apiKeys'
   | 'bisqPaymentMethods'
-  | 'chatTemplates'
   | 'lndBackup'
   | 'lightningManagement'
   | 'walletAddresses'
@@ -1229,6 +1207,311 @@ function ResourceCard({
   );
 }
 
+type AccountsSubview = 'payment' | 'trading' | 'communication';
+
+type AccountGroup = {
+  category: string;
+  accounts: TradingAccount[];
+};
+
+type AccountSummaryViewModel = {
+  providerName: string;
+  category: string;
+  createdLabel: string;
+  updatedLabel: string;
+  capabilityBadges: string[];
+};
+
+function buildAccountSummaryViewModel(account: TradingAccount): AccountSummaryViewModel {
+  const capabilityBadges: string[] = [];
+  const localWallet = isLocalWalletProvider(account.provider);
+  const dexIdentity = showDexIdentitySections(account.provider);
+  const backupItems = Number(Boolean(account.password)) + Number(Boolean(account.seeds[0])) + Number(Boolean(account.lnd_channel_backup));
+
+  if (dexIdentity && account.totp_secrets.length > 0) {
+    capabilityBadges.push(`${account.totp_secrets.length} TOTP`);
+  }
+  if (dexIdentity && account.passkey_credentials.length > 0) {
+    capabilityBadges.push(`${account.passkey_credentials.length} Passkeys`);
+  }
+  if (dexIdentity && !isBankAccount(account) && account.category !== 'Fiat Transmitter' && account.seeds.length > 0) {
+    capabilityBadges.push(`${account.seeds.length} Seeds`);
+  }
+  if (!localWallet && !isBankAccount(account) && account.category !== 'Fiat Transmitter' && account.api_keys.length > 0) {
+    capabilityBadges.push(`${account.api_keys.length} ${apiKeyFormProfile(account.provider).countLabel}`);
+  }
+  if (isBisqProvider(account.provider) && account.account_file_backup) {
+    capabilityBadges.push('Account file');
+  }
+  if (isLndWalletProvider(account.provider) && backupItems > 0) {
+    capabilityBadges.push(`${backupItems} Backups`);
+  }
+  if (account.bank_accounts.length > 0) {
+    capabilityBadges.push(`${account.bank_accounts.length} Bank accounts`);
+  }
+
+  return {
+    providerName: providerLabel(account.provider),
+    category: account.category || 'Uncategorized',
+    createdLabel: formatAccountHeaderDate(account.created_at),
+    updatedLabel: formatAccountHeaderDate(account.updated_at),
+    capabilityBadges,
+  };
+}
+
+function accountCredentialSummary(account: TradingAccount) {
+  const parts: string[] = [];
+  if (showDexIdentitySections(account.provider)) {
+    if (account.email) parts.push('Email stored');
+    if (account.password) parts.push('Password stored');
+    if (account.phone) parts.push('Phone stored');
+  }
+  if (isLndWalletProvider(account.provider)) {
+    parts.push(account.password ? 'Wallet password stored' : 'Wallet password missing');
+  }
+  if (account.api_keys.length > 0) {
+    parts.push(`${account.api_keys.length} API keys`);
+  }
+  if (account.totp_secrets.length > 0) {
+    parts.push(`${account.totp_secrets.length} TOTP`);
+  }
+  if (account.passkey_credentials.length > 0) {
+    parts.push(`${account.passkey_credentials.length} passkeys`);
+  }
+  if (account.seeds.length > 0) {
+    parts.push(`${account.seeds.length} seeds`);
+  }
+  return parts.length > 0 ? parts.join(' · ') : 'No stored credentials';
+}
+
+function AccountsToolbar({
+  activeTab,
+  paymentAccountCount,
+  tradingAccountCount,
+  showActions,
+  showNewAccountForm,
+  onToggleNewAccount,
+  onRefresh,
+}: {
+  activeTab: AccountsSubview;
+  paymentAccountCount: number;
+  tradingAccountCount: number;
+  showActions: boolean;
+  showNewAccountForm: boolean;
+  onToggleNewAccount: () => void;
+  onRefresh: () => void;
+}) {
+  const activeLabel =
+    activeTab === 'payment'
+      ? `${paymentAccountCount} payment account${paymentAccountCount === 1 ? '' : 's'}`
+      : activeTab === 'trading'
+        ? `${tradingAccountCount} trading account${tradingAccountCount === 1 ? '' : 's'}`
+        : 'Telegram gateway';
+
+  return (
+    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+      <div className="min-w-0">
+        <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">Trading Accounts</h3>
+        <p className="mt-1 text-xs text-muted">{activeLabel}</p>
+      </div>
+      {showActions ? (
+        <div className="flex flex-wrap gap-1.5 md:justify-end">
+          <button type="button" className={compactPrimaryButtonCls} onClick={onToggleNewAccount}>
+            {showNewAccountForm ? 'Cancel' : 'Add Account'}
+          </button>
+          <button type="button" className={compactButtonCls} onClick={onRefresh}>
+            Refresh
+          </button>
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function AccountsSubtabBar({
+  activeTab,
+  paymentAccountCount,
+  tradingAccountCount,
+  onSelect,
+}: {
+  activeTab: AccountsSubview;
+  paymentAccountCount: number;
+  tradingAccountCount: number;
+  onSelect: (tab: AccountsSubview) => void;
+}) {
+  const tabs: Array<{ id: AccountsSubview; label: string; count: number | null }> = [
+    { id: 'payment', label: 'Payments', count: paymentAccountCount },
+    { id: 'trading', label: 'Trading', count: tradingAccountCount },
+    { id: 'communication', label: 'Communication', count: null },
+  ];
+
+  return (
+    <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-bg p-1">
+      {tabs.map(tab => {
+        const active = activeTab === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            className={`min-w-0 rounded-md px-2 py-2 text-xs font-medium transition ${
+              active ? 'bg-accent/10 text-accent shadow-sm' : 'text-muted hover:bg-surface hover:text-text'
+            }`}
+            onClick={() => onSelect(tab.id)}
+          >
+            <span className="block truncate">{tab.label}</span>
+            {tab.count != null ? <span className="mt-0.5 block text-[0.65rem] opacity-70">{tab.count}</span> : null}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function AccountSummaryCard({
+  account,
+  viewModel,
+  selected,
+  onSelect,
+}: {
+  account: TradingAccount;
+  viewModel: AccountSummaryViewModel;
+  selected: boolean;
+  onSelect: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      data-testid={`account-summary-card-${account.id}`}
+      className={`w-full rounded-lg border p-3 text-left transition ${
+        selected
+          ? 'border-accent bg-accent/5 shadow-sm'
+          : 'border-border bg-bg hover:border-accent/40 hover:bg-surface'
+      }`}
+      onClick={onSelect}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-text">{viewModel.providerName}</div>
+          <div className="mt-1 text-[0.68rem] text-muted">{viewModel.category}</div>
+        </div>
+        <div className="shrink-0">
+          <HealthBadge account={account} compact />
+        </div>
+      </div>
+      <div className="mt-2 flex flex-wrap gap-1">
+        {viewModel.capabilityBadges.map(badge => (
+          <span key={badge} className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted">
+            {badge}
+          </span>
+        ))}
+      </div>
+      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[0.65rem] text-muted">
+        <span>Created {viewModel.createdLabel}</span>
+        <span>Updated {viewModel.updatedLabel}</span>
+      </div>
+    </button>
+  );
+}
+
+function AccountsList({
+  groups,
+  selectedAccountId,
+  onSelectAccount,
+}: {
+  groups: AccountGroup[];
+  selectedAccountId: number | null;
+  onSelectAccount: (accountId: number) => void;
+}) {
+  return (
+    <div data-testid="accounts-list" className="grid content-start gap-3">
+      {groups.map(group => (
+        <section key={group.category} className="grid gap-2">
+          <div className="flex items-center justify-between gap-2">
+            <div className="text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-muted">{group.category}</div>
+            <div className="h-px flex-1 bg-border" />
+          </div>
+          <div className="grid gap-2">
+            {group.accounts.map(account => (
+              <AccountSummaryCard
+                key={account.id}
+                account={account}
+                viewModel={buildAccountSummaryViewModel(account)}
+                selected={selectedAccountId === account.id}
+                onSelect={() => onSelectAccount(account.id)}
+              />
+            ))}
+          </div>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function AccountDetailPane({
+  account,
+  summaryView,
+  actions,
+  healthMessage,
+  onDismissHealthMessage,
+  overview,
+  children,
+}: {
+  account: TradingAccount;
+  summaryView: AccountSummaryViewModel;
+  actions: ReactNode;
+  healthMessage?: AccountHealthMessage;
+  onDismissHealthMessage?: () => void;
+  overview: ReactNode;
+  children: ReactNode;
+}) {
+  const healthMessageHealthy = healthMessage?.healthy === true;
+
+  return (
+    <div data-testid="account-detail-pane" className="rounded-lg border border-border bg-bg p-3">
+      <div className="flex flex-col gap-3 border-b border-border pb-3">
+        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+          <div className="min-w-0">
+            <div className="flex flex-wrap items-center gap-2">
+              <h4 className="text-base font-semibold text-text">{summaryView.providerName}</h4>
+              <span className="rounded-full border border-border px-2 py-0.5 text-[0.68rem] text-muted">
+                {summaryView.category}
+              </span>
+              <HealthBadge account={account} />
+            </div>
+            <div className="mt-2 text-[0.68rem] text-muted">
+              Created {summaryView.createdLabel} · Updated {summaryView.updatedLabel}
+            </div>
+          </div>
+          <div className="flex flex-wrap gap-1.5">{actions}</div>
+        </div>
+        {healthMessage ? (
+          <div
+            className={`flex items-start gap-2 rounded-lg border px-3 py-2 ${
+              healthMessageHealthy ? 'border-green/30 bg-green/5' : 'border-red/30 bg-red/5'
+            }`}
+          >
+            <p className={`min-w-0 flex-1 text-xs leading-relaxed ${healthMessageHealthy ? 'text-green' : 'text-red'}`}>
+              {healthCheckDisplayMessage(healthMessage.message, healthMessage.keys, account.api_keys)}
+            </p>
+            {onDismissHealthMessage ? (
+              <button
+                type="button"
+                className={`${compactButtonCls} shrink-0 px-1.5 ${healthMessageHealthy ? 'text-green' : 'text-red'}`}
+                aria-label="Dismiss health check message"
+                onClick={onDismissHealthMessage}
+              >
+                ✕
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        <div className="rounded-lg border border-border bg-surface p-3">{overview}</div>
+      </div>
+      <div className="mt-3 grid gap-2">{children}</div>
+    </div>
+  );
+}
+
 export function TradingAccountsPanel() {
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
   const [activeTab, setActiveTab] = useState<'payment' | 'trading' | 'communication'>(() => {
@@ -1262,21 +1545,6 @@ export function TradingAccountsPanel() {
   const [bisqPmError, setBisqPmError] = useState<string | null>(null);
   const [bisqPmLoaded, setBisqPmLoaded] = useState(false);
   const [bisqPmBusyKey, setBisqPmBusyKey] = useState<string | null>(null);
-  // Chat-message-template editing state for DEX account cards (RoboSats / Bisq2). Templates are
-  // keyed per payment method + venue; all maps/sets are keyed by `${venue}:${paymentMethodId}`.
-  const [chatTplCatalog, setChatTplCatalog] = useState<PaymentMethodRow[] | null>(null);
-  const [chatTplDrafts, setChatTplDrafts] = useState<Record<string, string>>({});
-  const [chatTplActive, setChatTplActive] = useState<Record<string, boolean>>({});
-  // Keys currently rendered as rows (saved-on-load ∪ added this session), and the subset that
-  // exist on the server (drives whether a preview is backed by a real template + delete-on-remove).
-  const [chatTplShown, setChatTplShown] = useState<Set<string>>(() => new Set());
-  const [chatTplServer, setChatTplServer] = useState<Set<string>>(() => new Set());
-  const [chatTplEditing, setChatTplEditing] = useState<Set<string>>(() => new Set());
-  const [chatTplLoadedVenues, setChatTplLoadedVenues] = useState<Set<string>>(() => new Set());
-  const [chatTplAddingVenue, setChatTplAddingVenue] = useState<string | null>(null);
-  const [chatTplLoading, setChatTplLoading] = useState(false);
-  const [chatTplError, setChatTplError] = useState<string | null>(null);
-  const [chatTplBusyKey, setChatTplBusyKey] = useState<string | null>(null);
   const [uiState, dispatchUi] = useReducer(tradingPanelUiReducer, undefined, () => ({
     expandedId: null,
     showNewAccountForm: false,
@@ -1515,6 +1783,10 @@ export function TradingAccountsPanel() {
     ),
     [groupedAccounts],
   );
+  const activeAccounts = useMemo(
+    () => activeGroups.flatMap(group => group.accounts),
+    [activeGroups],
+  );
   const tradingAccountCount = useMemo(
     () => groupedAccounts.reduce(
       (total, group) =>
@@ -1578,10 +1850,25 @@ export function TradingAccountsPanel() {
     }
   }, [activeTab]);
 
-  const expandedAccount = useMemo(
+  const selectedAccount = useMemo(
     () => accounts.find(account => account.id === expandedId) ?? null,
     [accounts, expandedId],
   );
+
+  useEffect(() => {
+    if (activeTab === 'communication' || loading) {
+      return;
+    }
+    if (activeAccounts.length === 0) {
+      if (expandedId != null) {
+        setExpandedId(null);
+      }
+      return;
+    }
+    if (!activeAccounts.some(account => account.id === expandedId)) {
+      setExpandedId(activeAccounts[0].id);
+    }
+  }, [activeAccounts, activeTab, expandedId, loading, setExpandedId]);
 
   const loadLndWalletStatus = useCallback(async () => {
     setLndWalletLoading(true);
@@ -1672,7 +1959,7 @@ export function TradingAccountsPanel() {
   }, [loadLndWalletStatus]);
 
   useEffect(() => {
-    if (!expandedAccount || !isLndWalletProvider(expandedAccount.provider)) {
+    if (!selectedAccount || !isLndWalletProvider(selectedAccount.provider)) {
       return;
     }
     void (async () => {
@@ -1683,15 +1970,15 @@ export function TradingAccountsPanel() {
         setLndWalletStatus(null);
       }
     })();
-  }, [expandedAccount, loadLndWalletState, loadLndWalletStatus]);
+  }, [selectedAccount, loadLndWalletState, loadLndWalletStatus]);
 
   useEffect(() => {
-    if (!expandedAccount || !isCexAccount(expandedAccount)) {
+    if (!selectedAccount || !isCexAccount(selectedAccount)) {
       return;
     }
-    void loadCexSection(expandedAccount.id, 'cexDepositAddresses');
-    void loadCexSection(expandedAccount.id, 'cexBalances');
-  }, [expandedAccount, loadCexSection]);
+    void loadCexSection(selectedAccount.id, 'cexDepositAddresses');
+    void loadCexSection(selectedAccount.id, 'cexBalances');
+  }, [selectedAccount, loadCexSection]);
 
   const withReload = async (fn: () => Promise<void>) => {
     try {
@@ -1715,147 +2002,6 @@ export function TradingAccountsPanel() {
       setBisqPmError(err instanceof Error ? err.message : 'Bisq payment request failed');
     } finally {
       setBisqPmBusyKey(null);
-    }
-  };
-
-  // loadAccountChatTemplates fetches the payment-method catalog (once) and every active method's
-  // chat template for the given venue. Only methods that ALREADY have a saved template become
-  // rows — a fresh account shows none, just the "Add provider" button. Per-method requests run
-  // in parallel; the section only loads when a card is expanded.
-  const loadAccountChatTemplates = useCallback(async (venue: 'RoboSats' | 'Bisq2') => {
-    setChatTplLoading(true);
-    setChatTplError(null);
-    try {
-      let catalog = chatTplCatalog;
-      if (!catalog) {
-        const res = await fetchPaymentMethods();
-        catalog = res.payment_methods;
-        setChatTplCatalog(catalog);
-      }
-      // Candidates for templating: active methods, linked instruments, and every Bank Transfer
-      // method (so a template saved against an inactive/unlinked bank method still loads back).
-      const candidates = catalog.filter(
-        row => row.is_active || row.is_linked || row.category === 'Bank Transfer',
-      );
-      const results = await Promise.all(
-        candidates.map(async row => {
-          const res = await fetchPaymentMethodChatTemplates(row.id);
-          const t = res.chat_templates.find((tpl: PaymentMethodChatTemplate) => tpl.exchange === venue);
-          return t ? { key: `${venue}:${row.id}`, template: t.template, isActive: t.is_active } : null;
-        }),
-      );
-      const found = results.filter((r): r is { key: string; template: string; isActive: boolean } => r !== null);
-      setChatTplDrafts(prev => {
-        const next = { ...prev };
-        for (const r of found) next[r.key] = r.template;
-        return next;
-      });
-      setChatTplActive(prev => {
-        const next = { ...prev };
-        for (const r of found) next[r.key] = r.isActive;
-        return next;
-      });
-      // Rebuild this venue's server truth from scratch; preserve other venues and any unsaved
-      // rows the user added this session.
-      const serverKeys = new Set(found.map(r => r.key));
-      setChatTplServer(prev => {
-        const next = new Set([...prev].filter(k => !k.startsWith(`${venue}:`)));
-        for (const k of serverKeys) next.add(k);
-        return next;
-      });
-      setChatTplShown(prev => {
-        const next = new Set(prev);
-        for (const k of serverKeys) next.add(k);
-        return next;
-      });
-      setChatTplLoadedVenues(prev => new Set(prev).add(venue));
-    } catch (err) {
-      setChatTplError(err instanceof Error ? err.message : 'Failed to load chat templates');
-    } finally {
-      setChatTplLoading(false);
-    }
-  }, [chatTplCatalog]);
-
-  // addChatTemplateProvider adds a chosen payment method as a new (unsaved) row and opens its
-  // editor. Nothing is persisted until the user saves a non-empty template.
-  const addChatTemplateProvider = (venue: 'RoboSats' | 'Bisq2', pmId: number) => {
-    const key = `${venue}:${pmId}`;
-    setChatTplShown(prev => new Set(prev).add(key));
-    setChatTplDrafts(prev => (key in prev ? prev : { ...prev, [key]: '' }));
-    setChatTplActive(prev => (key in prev ? prev : { ...prev, [key]: true }));
-    setChatTplEditing(prev => new Set(prev).add(key));
-    setChatTplAddingVenue(null);
-  };
-
-  const setChatTemplateEditing = (key: string, on: boolean) => {
-    setChatTplEditing(prev => {
-      const next = new Set(prev);
-      if (on) next.add(key);
-      else next.delete(key);
-      return next;
-    });
-  };
-
-  // saveAccountChatTemplate upserts the template for one payment method + venue (an emptied draft
-  // deletes it → falls back to the default). Templates live on the payment method, so the edit is
-  // shared with the global Payment Methods panel and any other card on the same venue.
-  const saveAccountChatTemplate = async (venue: 'RoboSats' | 'Bisq2', pmId: number) => {
-    const key = `${venue}:${pmId}`;
-    setChatTplBusyKey(key);
-    setChatTplError(null);
-    try {
-      const template = chatTplDrafts[key]?.trim() ?? '';
-      if (template === '') {
-        await deletePaymentMethodChatTemplate(pmId, venue);
-        setChatTplServer(prev => {
-          const n = new Set(prev);
-          n.delete(key);
-          return n;
-        });
-      } else {
-        await updatePaymentMethodChatTemplate(pmId, venue, {
-          template,
-          is_active: chatTplActive[key] ?? true,
-        });
-        setChatTplServer(prev => new Set(prev).add(key));
-      }
-      setChatTemplateEditing(key, false);
-    } catch (err) {
-      setChatTplError(err instanceof Error ? err.message : 'Failed to save chat template');
-    } finally {
-      setChatTplBusyKey(null);
-    }
-  };
-
-  // removeChatTemplate drops a row from the list, deleting the server template if one exists.
-  const removeChatTemplate = async (venue: 'RoboSats' | 'Bisq2', pmId: number) => {
-    const key = `${venue}:${pmId}`;
-    setChatTplBusyKey(key);
-    setChatTplError(null);
-    try {
-      if (chatTplServer.has(key)) {
-        await deletePaymentMethodChatTemplate(pmId, venue);
-      }
-      setChatTplServer(prev => {
-        const n = new Set(prev);
-        n.delete(key);
-        return n;
-      });
-      setChatTplShown(prev => {
-        const n = new Set(prev);
-        n.delete(key);
-        return n;
-      });
-      setChatTemplateEditing(key, false);
-      setChatTplDrafts(prev => {
-        const n = { ...prev };
-        delete n[key];
-        return n;
-      });
-    } catch (err) {
-      setChatTplError(err instanceof Error ? err.message : 'Failed to remove chat template');
-    } finally {
-      setChatTplBusyKey(null);
     }
   };
 
@@ -2886,194 +3032,6 @@ export function TradingAccountsPanel() {
     );
   };
 
-  // renderChatTemplatesSection surfaces the per-payment-method chat request templates for a
-  // chat-venue DEX account (RoboSats / Bisq2). It starts empty — the user adds a linked payment
-  // method via "Add provider", and each row shows the template text with an Edit affordance.
-  // Templates live on the payment method, so an edit here is shared with the global Payment
-  // Methods panel and any other card on the same venue.
-  const renderChatTemplatesSection = (account: TradingAccount) => {
-    const venue = chatVenueForProvider(account.provider);
-    if (!venue) return null;
-    const open = !!openSectionsByAccount[account.id]?.chatTemplates;
-    const loaded = chatTplLoadedVenues.has(venue);
-
-    const onToggle = () => {
-      toggleSection(account.id, 'chatTemplates');
-      if (!loaded && !chatTplLoading) void loadAccountChatTemplates(venue);
-    };
-
-    const catalog = chatTplCatalog ?? [];
-    const byId = new Map(catalog.map(row => [row.id, row] as const));
-    const shownIds = [...chatTplShown]
-      .filter(k => k.startsWith(`${venue}:`))
-      .map(k => Number(k.slice(venue.length + 1)))
-      .filter(id => byId.has(id))
-      .sort((a, b) => {
-        const ra = byId.get(a)!;
-        const rb = byId.get(b)!;
-        return ra.priority - rb.priority || ra.name.localeCompare(rb.name);
-      });
-
-    // "Add provider" choices, not already added: linked/active instruments (PayPal, Revolut, …)
-    // plus every Bank Transfer method when a bank account is saved — bank accounts aren't
-    // auto-linked to the catalog, so their method would otherwise never appear here.
-    const hasBankAccounts = accounts.some(acc => acc.bank_accounts.length > 0);
-    const addable = catalog
-      .filter(row => {
-        if (chatTplShown.has(`${venue}:${row.id}`)) return false;
-        if (row.is_active && row.is_linked) return true;
-        return hasBankAccounts && row.category === 'Bank Transfer';
-      })
-      .sort((a, b) => a.priority - b.priority || a.name.localeCompare(b.name));
-    const adding = chatTplAddingVenue === venue;
-
-    return (
-      <CollapsibleSection
-        title="Chat message templates"
-        count={loaded ? shownIds.length : undefined}
-        open={open}
-        onToggle={onToggle}
-        actions={
-          <button
-            type="button"
-            className={compactButtonCls}
-            disabled={chatTplLoading}
-            onClick={() => { void loadAccountChatTemplates(venue); }}
-          >
-            {chatTplLoading ? 'Refreshing…' : 'Refresh'}
-          </button>
-        }
-      >
-        <div className="text-[0.62rem] text-muted px-1">
-          Message sent to the counterparty on {venue} for each payment method. Use{' '}
-          <code className="text-accent">{'{{amount}}'}</code> and{' '}
-          <code className="text-accent">{'{{currency}}'}</code> as placeholders.
-        </div>
-        {chatTplError ? <div className="text-[0.65rem] text-red px-1">{chatTplError}</div> : null}
-        {!loaded && chatTplLoading ? <div className="text-[0.65rem] text-muted px-1">Loading…</div> : null}
-
-        {loaded
-          ? shownIds.map(pmId => {
-              const key = `${venue}:${pmId}`;
-              const row = byId.get(pmId)!;
-              const busy = chatTplBusyKey === key;
-              const editing = chatTplEditing.has(key);
-              const draft = chatTplDrafts[key] ?? '';
-              const hasText = draft.trim() !== '';
-              return (
-                <ResourceCard key={key} title={row.name} meta={row.link_label ?? row.category}>
-                  {editing ? (
-                    <div className="flex flex-col gap-1.5">
-                      <textarea
-                        className={`${textareaCls} font-mono`}
-                        value={draft}
-                        onChange={e => setChatTplDrafts(prev => ({ ...prev, [key]: e.target.value }))}
-                        placeholder={LOREM_TEMPLATE}
-                        disabled={busy}
-                      />
-                      <div className="flex items-center justify-between gap-1.5">
-                        <label className="flex items-center gap-1 text-[0.62rem] text-muted">
-                          <input
-                            type="checkbox"
-                            checked={chatTplActive[key] ?? true}
-                            onChange={e => setChatTplActive(prev => ({ ...prev, [key]: e.target.checked }))}
-                            disabled={busy}
-                          />
-                          Active
-                        </label>
-                        <div className="flex gap-1">
-                          <button
-                            type="button"
-                            className={compactButtonCls}
-                            disabled={busy}
-                            onClick={() => void saveAccountChatTemplate(venue, pmId)}
-                          >
-                            {busy ? 'Saving…' : 'Save'}
-                          </button>
-                          <button
-                            type="button"
-                            className={compactButtonCls}
-                            disabled={busy}
-                            onClick={() => setChatTemplateEditing(key, false)}
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            type="button"
-                            className={`${compactButtonCls} text-red`}
-                            disabled={busy}
-                            onClick={() => void removeChatTemplate(venue, pmId)}
-                          >
-                            Remove
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  ) : (
-                    <div className="flex items-start justify-between gap-2">
-                      <p className={`whitespace-pre-wrap text-[0.68rem] ${hasText ? 'text-text' : 'text-muted italic'}`}>
-                        {hasText ? draft : LOREM_TEMPLATE}
-                      </p>
-                      <button
-                        type="button"
-                        className={compactButtonCls}
-                        disabled={busy}
-                        onClick={() => setChatTemplateEditing(key, true)}
-                      >
-                        Edit
-                      </button>
-                    </div>
-                  )}
-                </ResourceCard>
-              );
-            })
-          : null}
-
-        {loaded && shownIds.length === 0 && !adding ? (
-          <div className="text-[0.65rem] text-muted px-1">No payment methods added yet.</div>
-        ) : null}
-
-        {loaded && adding ? (
-          <div className="flex flex-col gap-1 px-1">
-            <div className="flex items-center gap-1.5">
-              <select
-                className={compactInputCls}
-                defaultValue=""
-                onChange={e => { const v = e.target.value; if (v) addChatTemplateProvider(venue, Number(v)); }}
-              >
-                <option value="" disabled>Select a payment method…</option>
-                {addable.map(row => (
-                  <option key={row.id} value={row.id}>
-                    {row.link_label ? `${row.name} · ${row.link_label}` : row.name}
-                  </option>
-                ))}
-              </select>
-              <button type="button" className={compactButtonCls} onClick={() => setChatTplAddingVenue(null)}>
-                Cancel
-              </button>
-            </div>
-            {addable.length === 0 ? (
-              <div className="text-[0.6rem] text-muted">
-                No more linked payment methods. Link one in the Payment Methods panel first.
-              </div>
-            ) : null}
-          </div>
-        ) : null}
-
-        {loaded && !adding ? (
-          <button
-            type="button"
-            className={compactButtonCls}
-            disabled={chatTplLoading}
-            onClick={() => setChatTplAddingVenue(venue)}
-          >
-            + Add provider
-          </button>
-        ) : null}
-      </CollapsibleSection>
-    );
-  };
-
   const renderBankAccountsSection = (account: TradingAccount) => {
     if (!isBankAccount(account)) return null;
     const draft = newBankAccountByAccount[account.id] ?? emptyBankAccountForm();
@@ -3468,71 +3426,199 @@ export function TradingAccountsPanel() {
     );
   };
 
+  const handleToggleNewAccountForm = () => {
+    if (showNewAccountForm) {
+      resetNewAccountForm();
+    }
+    setShowNewAccountForm(prev => !prev);
+  };
+
+  const handleSubtabSelect = (tab: AccountsSubview) => {
+    setActiveTab(tab);
+    if (showNewAccountForm && newAccount.category && tab !== 'communication') {
+      const catIsPayment = isPaymentCategory(newAccount.category);
+      if ((tab === 'payment') !== catIsPayment) {
+        resetNewAccountForm();
+      }
+    }
+  };
+
+  const renderSelectedAccountDetail = (account: TradingAccount) => {
+    const isEditingAccount = editingAccountId === account.id;
+    const isLocalWallet = isLocalWalletProvider(account.provider);
+    const accountHealthMessage = healthMessageByAccount[account.id];
+    const cexDepositSlice = cexDataByAccount[account.id]?.depositAddresses;
+    const cexBalancesSlice = cexDataByAccount[account.id]?.balances;
+    const cexMainnetDeposit = pickMainnetDepositAddress(cexDepositSlice?.data ?? []);
+    const cexBalanceSummary = formatCexBalanceSummary(cexBalancesSlice?.data);
+    const summaryView = buildAccountSummaryViewModel(account);
+
+    return (
+      <AccountDetailPane
+        account={account}
+        summaryView={summaryView}
+        healthMessage={accountHealthMessage}
+        onDismissHealthMessage={() => dismissHealthMessage(account.id)}
+        actions={
+          <>
+            <button
+              type="button"
+              className={`${compactButtonCls} disabled:cursor-not-allowed disabled:opacity-50`}
+              disabled={isPaymentCategory(account.category || 'Uncategorized') || !!checkingHealthByAccount[account.id]}
+              title={isPaymentCategory(account.category || 'Uncategorized') ? 'Health checks are not available for payment accounts' : undefined}
+              onClick={() => void triggerHealthCheck(account)}
+            >
+              {checkingHealthByAccount[account.id] ? 'Checking…' : 'Healthcheck'}
+            </button>
+            {!isEditingAccount && (showDexIdentitySections(account.provider) || isLndWalletProvider(account.provider)) ? (
+              <button type="button" className={compactButtonCls} onClick={() => startAccountEdit(account)}>
+                Edit
+              </button>
+            ) : null}
+            {!isLocalWalletProvider(account.provider) ? (
+              <button
+                type="button"
+                className={`${compactButtonCls} text-red`}
+                onClick={() => withReload(async () => { await deleteAccount(account.id); })}
+              >
+                Delete
+              </button>
+            ) : null}
+          </>
+        }
+        overview={
+          isEditingAccount ? (
+            <AccountEditor
+              value={editingAccount}
+              onChange={setEditingAccount}
+              submitLabel="Save"
+              compact
+              submitDisabled={isLndWalletProvider(account.provider) && !editingAccount.password.trim()}
+              showContactFields={showDexIdentitySections(account.provider)}
+              showWalletPasswordOnly={isLndWalletProvider(account.provider)}
+              onCancel={() => setEditingAccountId(null)}
+              onSubmit={() =>
+                withReload(async () => {
+                  if (account.id > 0) {
+                    await updateAccount(account.id, editingAccount);
+                  } else {
+                    await createAccount(editingAccount);
+                  }
+                  setEditingAccountId(null);
+                })
+              }
+            />
+          ) : (
+            <div className="grid gap-3">
+              {summaryView.capabilityBadges.length > 0 ? (
+                <div className="flex flex-wrap gap-1.5">
+                  {summaryView.capabilityBadges.map(badge => (
+                    <span key={badge} className="rounded-full border border-border px-2 py-0.5 text-[0.68rem] text-muted">
+                      {badge}
+                    </span>
+                  ))}
+                </div>
+              ) : null}
+              <div className="grid gap-2 text-xs text-muted sm:grid-cols-2 xl:grid-cols-3">
+                <div>
+                  <span className="text-text">Last check:</span> {formatDate(account.last_health_check)}
+                </div>
+                <div className="sm:col-span-2 xl:col-span-2">
+                  <span className="text-text">Credentials:</span> {accountCredentialSummary(account)}
+                </div>
+                {showDexIdentitySections(account.provider) ? (
+                  <>
+                    <div><span className="text-text">Email:</span> {account.email || '—'}</div>
+                    <div><span className="text-text">Password:</span> {account.password ? '••••••••' : '—'}</div>
+                    <div><span className="text-text">Phone:</span> {account.phone || '—'}</div>
+                  </>
+                ) : null}
+                {isLndWalletProvider(account.provider) ? (
+                  <div>
+                    <span className="text-text">Wallet password:</span>{' '}
+                    {account.password ? '••••••••' : <span className="text-red">Not set</span>}
+                  </div>
+                ) : null}
+                {isCexAccount(account) ? (
+                  <>
+                    <div className="sm:col-span-2 xl:col-span-3">
+                      <span className="text-text">Deposit address:</span>{' '}
+                      {cexDepositSlice?.loading && !cexMainnetDeposit ? (
+                        <span>Loading…</span>
+                      ) : cexDepositSlice?.error && !cexMainnetDeposit ? (
+                        <span className="text-red">{cexDepositSlice.error}</span>
+                      ) : cexMainnetDeposit ? (
+                        <span className="font-mono break-all text-text">{cexMainnetDeposit.address}</span>
+                      ) : (
+                        '—'
+                      )}
+                    </div>
+                    <div className="sm:col-span-2 xl:col-span-3">
+                      <span className="text-text">Balances:</span>{' '}
+                      {cexBalancesSlice?.loading && !cexBalanceSummary ? (
+                        <span>Loading…</span>
+                      ) : cexBalancesSlice?.error && !cexBalanceSummary ? (
+                        <span className="text-red">{cexBalancesSlice.error}</span>
+                      ) : cexBalanceSummary ? (
+                        <span className="text-text">{cexBalanceSummary}</span>
+                      ) : (
+                        '—'
+                      )}
+                    </div>
+                  </>
+                ) : null}
+              </div>
+            </div>
+          )
+        }
+      >
+        {isBisqProvider(account.provider) ? renderAccountFileSection(account) : null}
+        {isBisq1Provider(account.provider) ? renderSavedPaymentMethodsSection(account) : null}
+        {showDexIdentitySections(account.provider) ? renderTOTPSection(account) : null}
+        {showDexIdentitySections(account.provider) ? renderPasskeysSection(account) : null}
+        {renderSeedsSection(account)}
+        {isLndWalletProvider(account.provider) ? renderLNDBackupSection(account) : null}
+        {isLndWalletProvider(account.provider) ? renderLightningManagementSection(account) : null}
+        {isLndWalletProvider(account.provider) ? renderWalletAddressesSection(account) : null}
+        {isCexAccount(account) ? renderCexWithdrawalAddressesSection(account) : null}
+        {isCexAccount(account) ? renderCexHedgingSection(account) : null}
+        {isCexAccount(account) ? renderCexSpotTradesSection(account) : null}
+        {renderBankAccountsSection(account)}
+        {!isLocalWallet && !isBankAccount(account) && account.category !== 'Fiat Transmitter' ? renderAPIKeysSection(account) : null}
+      </AccountDetailPane>
+    );
+  };
+
   return (
     <div className="h-full min-h-0 overflow-hidden">
-      <div className="h-full min-h-0 rounded-lg border border-border bg-surface p-3 flex flex-col gap-3 overflow-hidden">
-        <div className={`flex items-center justify-between gap-3 ${showNewAccountForm ? 'mb-3' : ''}`}>
-          <div>
-            <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">Accounts Management</h3>
-          </div>
-          {activeTab !== 'communication' ? (
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                className={compactPrimaryButtonCls}
-                onClick={() => {
-                  if (showNewAccountForm) {
-                    resetNewAccountForm();
-                  }
-                  setShowNewAccountForm(prev => !prev);
-                }}
-              >
-                {showNewAccountForm ? 'Cancel' : 'Add Account'}
-              </button>
-              <button type="button" className={compactButtonCls} onClick={() => void load()}>
-                Refresh
-              </button>
-            </div>
-          ) : null}
-        </div>
+      <div
+        data-testid="trading-accounts-panel"
+        className="h-full min-h-0 rounded-lg border border-border bg-surface p-3 flex flex-col gap-3 overflow-hidden"
+      >
+        <AccountsToolbar
+          activeTab={activeTab}
+          paymentAccountCount={paymentAccountCount}
+          tradingAccountCount={tradingAccountCount}
+          showActions={activeTab !== 'communication'}
+          showNewAccountForm={showNewAccountForm}
+          onToggleNewAccount={handleToggleNewAccountForm}
+          onRefresh={() => void load()}
+        />
 
-        <div className="flex items-center gap-1 border-b border-border">
-          {(['payment', 'trading', 'communication'] as const).map(tab => {
-            const active = activeTab === tab;
-            const count = tab === 'payment' ? paymentAccountCount : tab === 'trading' ? tradingAccountCount : null;
-            const label = tab === 'payment' ? 'Payment Accounts' : tab === 'trading' ? 'Trading Accounts' : 'Comunication Gateway';
-            return (
-              <button
-                key={tab}
-                type="button"
-                onClick={() => {
-                  setActiveTab(tab);
-                  if (showNewAccountForm && newAccount.category && tab !== 'communication') {
-                    const catIsPayment = isPaymentCategory(newAccount.category);
-                    if ((tab === 'payment') !== catIsPayment) {
-                      resetNewAccountForm();
-                    }
-                  }
-                }}
-                className={`-mb-px border-b-2 px-3 py-1.5 text-xs font-medium transition ${
-                  active
-                    ? 'border-accent text-text'
-                    : 'border-transparent text-muted hover:text-text'
-                }`}
-              >
-                {label}{count != null ? ` (${count})` : ''}
-              </button>
-            );
-          })}
-        </div>
+        <AccountsSubtabBar
+          activeTab={activeTab}
+          paymentAccountCount={paymentAccountCount}
+          tradingAccountCount={tradingAccountCount}
+          onSelect={handleSubtabSelect}
+        />
 
         {activeTab === 'communication' ? (
           <div className="min-h-0 flex-1 overflow-y-auto pr-1">
             <TelegramBotSection />
           </div>
         ) : showNewAccountForm ? (
-          <div className="grid gap-2">
-            <label className="grid min-w-0 gap-1 text-xs text-muted w-40">
+          <div className="grid gap-2 rounded-lg border border-border bg-bg p-3">
+            <label className="grid min-w-0 gap-1 text-xs text-muted sm:w-48">
               <span>Category</span>
               <select
                 className={compactInputCls}
@@ -3554,59 +3640,59 @@ export function TradingAccountsPanel() {
                 )}
               </select>
             </label>
-          <AccountEditor
-            value={newAccount}
-            onChange={next => {
-              if (next.provider !== newAccount.provider) {
-                setNewAccountAPIKey(emptyAPIKeyForm());
-              }
-              setNewAccount({ ...next, category: newAccount.category });
-            }}
-            submitLabel="Add New Account"
-            compact
-            groupedProviders
-            freeFormProvider={newAccount.category === 'Bank' || newAccount.category === 'Wallet addresses'}
-            showContactFields={newAccount.category === 'Bank' || showContactFieldsForProvider(newAccount.provider)}
-            submitDisabled={
-              !newAccount.provider
-              || (usesAPIKeysAtCreate(newAccount.provider) && (
-                !newAccountAPIKey.api_key.trim()
-                || (apiKeyFormProfile(newAccount.provider).showSecret && !newAccountAPIKey.api_secret.trim())
-              ))
-            }
-            extraContent={
-              usesAPIKeysAtCreate(newAccount.provider) ? (
-                <APIKeyDraftFields
-                  provider={newAccount.provider}
-                  value={newAccountAPIKey}
-                  onChange={setNewAccountAPIKey}
-                />
-              ) : null
-            }
-            onSubmit={() =>
-              withReload(async () => {
-                const usesAPIKeys = usesAPIKeysAtCreate(newAccount.provider);
-                const created = await createAccount({
-                  provider: newAccount.provider,
-                  category: newAccount.category || undefined,
-                  email: newAccount.email,
-                  password: newAccount.password,
-                  phone: newAccount.phone,
-                });
-                if (usesAPIKeys && newAccountAPIKey.api_key.trim()) {
-                  const profile = apiKeyFormProfile(newAccount.provider);
-                  await createAPIKey(created.id, {
-                    name: newAccountAPIKey.name,
-                    api_key: newAccountAPIKey.api_key,
-                    ...apiKeyPayloadExtras(profile, newAccountAPIKey),
-                    is_active: newAccountAPIKey.is_active,
-                  });
+            <AccountEditor
+              value={newAccount}
+              onChange={next => {
+                if (next.provider !== newAccount.provider) {
+                  setNewAccountAPIKey(emptyAPIKeyForm());
                 }
-                resetNewAccountForm();
-                setShowNewAccountForm(false);
-              })
-            }
-          />
+                setNewAccount({ ...next, category: newAccount.category });
+              }}
+              submitLabel="Add New Account"
+              compact
+              groupedProviders
+              freeFormProvider={newAccount.category === 'Bank' || newAccount.category === 'Wallet addresses'}
+              showContactFields={newAccount.category === 'Bank' || showContactFieldsForProvider(newAccount.provider)}
+              submitDisabled={
+                !newAccount.provider
+                || (usesAPIKeysAtCreate(newAccount.provider) && (
+                  !newAccountAPIKey.api_key.trim()
+                  || (apiKeyFormProfile(newAccount.provider).showSecret && !newAccountAPIKey.api_secret.trim())
+                ))
+              }
+              extraContent={
+                usesAPIKeysAtCreate(newAccount.provider) ? (
+                  <APIKeyDraftFields
+                    provider={newAccount.provider}
+                    value={newAccountAPIKey}
+                    onChange={setNewAccountAPIKey}
+                  />
+                ) : null
+              }
+              onSubmit={() =>
+                withReload(async () => {
+                  const usesAPIKeys = usesAPIKeysAtCreate(newAccount.provider);
+                  const created = await createAccount({
+                    provider: newAccount.provider,
+                    category: newAccount.category || undefined,
+                    email: newAccount.email,
+                    password: newAccount.password,
+                    phone: newAccount.phone,
+                  });
+                  if (usesAPIKeys && newAccountAPIKey.api_key.trim()) {
+                    const profile = apiKeyFormProfile(newAccount.provider);
+                    await createAPIKey(created.id, {
+                      name: newAccountAPIKey.name,
+                      api_key: newAccountAPIKey.api_key,
+                      ...apiKeyPayloadExtras(profile, newAccountAPIKey),
+                      is_active: newAccountAPIKey.is_active,
+                    });
+                  }
+                  resetNewAccountForm();
+                  setShowNewAccountForm(false);
+                })
+              }
+            />
           </div>
         ) : null}
 
@@ -3615,227 +3701,44 @@ export function TradingAccountsPanel() {
         ) : null}
 
         {activeTab === 'communication' ? null : (
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1 grid content-start gap-1.5">
-          {loading ? (
-            <div className="rounded-lg border border-border bg-bg p-4 text-sm text-muted">Loading trading accounts…</div>
-          ) : null}
-          {!loading && accounts.length === 0 ? (
-            <div className="rounded-lg border border-border bg-bg p-4 text-sm text-muted">No accounts yet.</div>
-          ) : null}
-          {!loading && accounts.length > 0 && activeGroups.length === 0 ? (
-            <div className="rounded-lg border border-border bg-bg p-4 text-sm text-muted">
-              {activeTab === 'payment' ? 'No payment accounts yet.' : 'No trading accounts yet.'}
-            </div>
-          ) : null}
-          {activeGroups.map(group => (
-            <div key={group.category} className="grid gap-1.5">
-              {group.category !== 'Uncategorized' ? (
-                <div className="flex items-center gap-2 py-0.5">
-                  <div className="h-px flex-1 bg-border" />
-                  <div className="text-[0.6rem] font-semibold uppercase tracking-widest text-muted">
-                    {group.category}
-                  </div>
-                  <div className="h-px flex-1 bg-border" />
-                </div>
-              ) : null}
-              {group.accounts.map(account => {
-                const expanded = expandedId === account.id;
-                const isEditingAccount = editingAccountId === account.id;
-                const isLocalWallet = isLocalWalletProvider(account.provider);
-                const accountHealthMessage = healthMessageByAccount[account.id];
-                const healthMessageHealthy = accountHealthMessage?.healthy === true;
-                const cexDepositSlice = cexDataByAccount[account.id]?.depositAddresses;
-                const cexBalancesSlice = cexDataByAccount[account.id]?.balances;
-                const cexMainnetDeposit = pickMainnetDepositAddress(cexDepositSlice?.data ?? []);
-                const cexBalanceSummary = formatCexBalanceSummary(cexBalancesSlice?.data);
-                return (
-                  <div key={account.id} className="rounded-lg border border-border bg-bg">
-                    <div className="flex items-center gap-2 px-2.5 py-1.5 min-w-0">
-                      <div className="flex min-w-0 items-baseline gap-1.5 truncate">
-                        <div className="truncate text-sm font-semibold text-text">{providerLabel(account.provider)}</div>
-                        <div className="shrink-0 text-[0.68rem] text-muted whitespace-nowrap">
-                          {formatAccountHeaderDate(account.created_at)}
-                        </div>
-                      </div>
-                      <div className="ml-auto flex shrink-0 flex-wrap items-center justify-end gap-1">
-                        <HealthBadge account={account} compact />
-                        <button
-                          type="button"
-                          className={`${compactButtonCls} disabled:opacity-50 disabled:cursor-not-allowed`}
-                          disabled={isPaymentCategory(account.category || 'Uncategorized') || !!checkingHealthByAccount[account.id]}
-                          title={isPaymentCategory(account.category || 'Uncategorized') ? 'Health checks are not available for payment accounts' : undefined}
-                          onClick={() => void triggerHealthCheck(account)}
-                        >
-                          {checkingHealthByAccount[account.id] ? '…' : 'Healthcheck'}
-                        </button>
-                        {showDexIdentitySections(account.provider) ? (
-                          <>
-                            <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
-                              {account.totp_secrets.length} TOTP
-                            </span>
-                            <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
-                              {account.passkey_credentials.length} Passkeys
-                            </span>
-                          </>
-                        ) : null}
-                        {showDexIdentitySections(account.provider) && !isBankAccount(account) && account.category !== 'Fiat Transmitter' ? (
-                          <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
-                            {`${account.seeds.length} Seeds`}
-                          </span>
-                        ) : null}
-                        {isBisqProvider(account.provider) ? (
-                          <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
-                            {account.account_file_backup ? 'Account file' : 'No file'}
-                          </span>
-                        ) : null}
-                        {isLndWalletProvider(account.provider) ? (
-                          <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
-                            Backup
-                          </span>
-                        ) : null}
-                        {!isLocalWallet && !isBankAccount(account) && account.category !== 'Fiat Transmitter' ? (
-                          <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted whitespace-nowrap">
-                            {account.api_keys.length} {apiKeyFormProfile(account.provider).countLabel}
-                          </span>
-                        ) : null}
-                        <button type="button" className={compactButtonCls} onClick={() => setExpandedId(expanded ? null : account.id)}>
-                          {expanded ? '−' : '+'}
-                        </button>
-                      </div>
+          <div className="min-h-0 flex-1 overflow-y-auto pr-1 xl:overflow-hidden">
+            {loading ? (
+              <div className="rounded-lg border border-border bg-bg p-4 text-sm text-muted">Loading trading accounts…</div>
+            ) : null}
+            {!loading && accounts.length === 0 ? (
+              <div className="rounded-lg border border-border bg-bg p-4 text-sm text-muted">No accounts yet.</div>
+            ) : null}
+            {!loading && accounts.length > 0 && activeGroups.length === 0 ? (
+              <div className="rounded-lg border border-border bg-bg p-4 text-sm text-muted">
+                {activeTab === 'payment' ? 'No payment accounts yet.' : 'No trading accounts yet.'}
+              </div>
+            ) : null}
+            {!loading && activeGroups.length > 0 ? (
+              <div className="grid min-h-full content-start gap-3 xl:h-full xl:grid-cols-[minmax(19rem,24rem)_minmax(0,1fr)] xl:gap-4">
+                <div className="grid content-start gap-3 xl:min-h-0 xl:overflow-y-auto xl:pr-1">
+                  <AccountsList
+                    groups={activeGroups}
+                    selectedAccountId={expandedId}
+                    onSelectAccount={accountId => setExpandedId(accountId)}
+                  />
+                  {selectedAccount ? (
+                    <div className="xl:hidden">
+                      {renderSelectedAccountDetail(selectedAccount)}
                     </div>
-                    {accountHealthMessage ? (
-                      <div
-                        className={`border-t px-2.5 py-2 flex items-start gap-2 ${
-                          healthMessageHealthy
-                            ? 'border-green/30 bg-green/5'
-                            : 'border-red/30 bg-red/5'
-                        }`}
-                      >
-                        <div className="flex-1 min-w-0">
-                          <p className={`text-xs leading-relaxed break-words ${healthMessageHealthy ? 'text-green' : 'text-red'}`}>
-                            {healthCheckDisplayMessage(accountHealthMessage.message, accountHealthMessage.keys, account.api_keys)}
-                          </p>
-                        </div>
-                        <button
-                          type="button"
-                          className={`${compactButtonCls} shrink-0 px-1.5 ${healthMessageHealthy ? 'text-green' : 'text-red'}`}
-                          aria-label="Dismiss health check message"
-                          onClick={() => dismissHealthMessage(account.id)}
-                        >
-                          ✕
-                        </button>
-                      </div>
-                    ) : null}
-                    {expanded ? (
-                      <div className="border-t border-border px-2 py-2 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-3 sm:items-start">
-                        <div className="grid gap-1.5 pb-1.5 border-b border-border sm:col-span-2 xl:col-span-3">
-                          <div className="flex items-center justify-between gap-2">
-                            <span className="text-xs font-semibold text-text">Account</span>
-                            <div className="flex gap-1">
-                              {!isEditingAccount && (showDexIdentitySections(account.provider) || isLndWalletProvider(account.provider)) ? (
-                                <button type="button" className={compactButtonCls} onClick={() => startAccountEdit(account)}>
-                                  Edit
-                                </button>
-                              ) : null}
-                              {!isLocalWalletProvider(account.provider) ? (
-                                <button type="button" className={`${compactButtonCls} text-red`} onClick={() => withReload(async () => { await deleteAccount(account.id); })}>
-                                  Delete
-                                </button>
-                              ) : null}
-                            </div>
-                          </div>
-                          {isEditingAccount ? (
-                            <AccountEditor
-                              value={editingAccount}
-                              onChange={setEditingAccount}
-                              submitLabel="Save"
-                              compact
-                              submitDisabled={isLndWalletProvider(account.provider) && !editingAccount.password.trim()}
-                              showContactFields={showDexIdentitySections(account.provider)}
-                              showWalletPasswordOnly={isLndWalletProvider(account.provider)}
-                              onCancel={() => setEditingAccountId(null)}
-                              onSubmit={() =>
-                                withReload(async () => {
-                                  if (account.id > 0) {
-                                    await updateAccount(account.id, editingAccount);
-                                  } else {
-                                    await createAccount(editingAccount);
-                                  }
-                                  setEditingAccountId(null);
-                                })
-                              }
-                            />
-                          ) : (
-                            <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
-                              <div><span className="text-text">Health:</span> <span className={account.is_healthy ? 'text-green' : 'text-red'}>{account.is_healthy ? 'Healthy' : 'Unhealthy'}</span></div>
-                              <div><span className="text-text">Last check:</span> {formatDate(account.last_health_check)}</div>
-                              {isCexAccount(account) ? (
-                                <>
-                                  <div className="sm:col-span-2">
-                                    <span className="text-text">Deposit address:</span>{' '}
-                                    {cexDepositSlice?.loading && !cexMainnetDeposit ? (
-                                      <span>Loading…</span>
-                                    ) : cexDepositSlice?.error && !cexMainnetDeposit ? (
-                                      <span className="text-red">{cexDepositSlice.error}</span>
-                                    ) : cexMainnetDeposit ? (
-                                      <span className="font-mono text-[0.65rem] break-all text-text">{cexMainnetDeposit.address}</span>
-                                    ) : (
-                                      '—'
-                                    )}
-                                  </div>
-                                  <div className="sm:col-span-2">
-                                    <span className="text-text">Balance:</span>{' '}
-                                    {cexBalancesSlice?.loading && !cexBalanceSummary ? (
-                                      <span>Loading…</span>
-                                    ) : cexBalancesSlice?.error && !cexBalanceSummary ? (
-                                      <span className="text-red">{cexBalancesSlice.error}</span>
-                                    ) : cexBalanceSummary ? (
-                                      <span className="text-text">{cexBalanceSummary}</span>
-                                    ) : (
-                                      '—'
-                                    )}
-                                  </div>
-                                </>
-                              ) : null}
-                              {showDexIdentitySections(account.provider) ? (
-                                <>
-                                  <div><span className="text-text">Email:</span> {account.email || '—'}</div>
-                                  <div><span className="text-text">Password:</span> {account.password ? '••••••••' : '—'}</div>
-                                  <div className="sm:col-span-2"><span className="text-text">Phone:</span> {account.phone || '—'}</div>
-                                </>
-                              ) : null}
-                              {isLndWalletProvider(account.provider) ? (
-                                <div>
-                                  <span className="text-text">Wallet password:</span>{' '}
-                                  {account.password ? '••••••••' : <span className="text-red">Not set</span>}
-                                </div>
-                              ) : null}
-                            </div>
-                          )}
-                        </div>
-
-                        {isBisqProvider(account.provider) ? renderAccountFileSection(account) : null}
-                        {isBisq1Provider(account.provider) ? renderSavedPaymentMethodsSection(account) : null}
-                        {chatVenueForProvider(account.provider) ? renderChatTemplatesSection(account) : null}
-                        {showDexIdentitySections(account.provider) ? renderTOTPSection(account) : null}
-                        {showDexIdentitySections(account.provider) ? renderPasskeysSection(account) : null}
-                        {renderSeedsSection(account)}
-                        {isLndWalletProvider(account.provider) ? renderLNDBackupSection(account) : null}
-                        {isLndWalletProvider(account.provider) ? renderLightningManagementSection(account) : null}
-                        {isLndWalletProvider(account.provider) ? renderWalletAddressesSection(account) : null}
-                        {isCexAccount(account) ? renderCexWithdrawalAddressesSection(account) : null}
-                        {isCexAccount(account) ? renderCexHedgingSection(account) : null}
-                        {isCexAccount(account) ? renderCexSpotTradesSection(account) : null}
-                        {renderBankAccountsSection(account)}
-                        {!isLocalWallet && !isBankAccount(account) && account.category !== 'Fiat Transmitter' ? renderAPIKeysSection(account) : null}
-                      </div>
-                    ) : null}
-                  </div>
-                );
-              })}
-            </div>
-          ))}
-        </div>
+                  ) : null}
+                </div>
+                <div className="hidden xl:block xl:min-h-0 xl:overflow-y-auto xl:pl-1">
+                  {selectedAccount ? (
+                    renderSelectedAccountDetail(selectedAccount)
+                  ) : (
+                    <div className="rounded-lg border border-border bg-bg p-6 text-sm text-muted">
+                      Select an account to inspect its details.
+                    </div>
+                  )}
+                </div>
+              </div>
+            ) : null}
+          </div>
         )}
       </div>
     </div>

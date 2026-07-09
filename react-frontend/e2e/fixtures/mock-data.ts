@@ -235,6 +235,168 @@ export const MOCK_PAYMENT_METHOD_GROUPS = {
   ],
 };
 
+export const MOCK_TRADING_ACCOUNTS = [
+  {
+    id: 11,
+    provider: 'Revolut',
+    category: 'Fiat Transmitter',
+    email: 'ops@desk.test',
+    password: 'secret',
+    phone: '+49123456789',
+    is_healthy: false,
+    last_health_check: null,
+    created_at: ts(96),
+    updated_at: ts(12),
+    totp_secrets: [],
+    passkey_credentials: [],
+    seeds: [],
+    api_keys: [],
+    account_file_backup: null,
+    lnd_channel_backup: null,
+    bank_accounts: [],
+  },
+  {
+    id: 22,
+    provider: 'Bisq',
+    category: 'DEX',
+    email: null,
+    password: null,
+    phone: null,
+    is_healthy: true,
+    last_health_check: ts(2),
+    created_at: ts(120),
+    updated_at: ts(4),
+    totp_secrets: [
+      { id: 501, account_id: 22, secret: 'JBSWY3DPEHPK3PXP', is_active: true, created_at: ts(100), rotated_at: null },
+    ],
+    passkey_credentials: [],
+    seeds: [
+      { id: 601, account_id: 22, seed_phrase: 'alpha beta gamma delta', wallet_created_at: ts(200), created_at: ts(200) },
+    ],
+    api_keys: [],
+    account_file_backup: {
+      id: 701,
+      account_id: 22,
+      file_name: 'bisq-account.dat',
+      file_sha256: 'abcdef1234567890',
+      file_size_bytes: 2048,
+      modified_at: ts(10),
+      created_at: ts(10),
+    },
+    lnd_channel_backup: null,
+    bank_accounts: [],
+  },
+  {
+    id: 33,
+    provider: 'Kraken',
+    category: 'CEX',
+    email: null,
+    password: null,
+    phone: null,
+    is_healthy: true,
+    last_health_check: ts(1),
+    created_at: ts(72),
+    updated_at: ts(1),
+    totp_secrets: [],
+    passkey_credentials: [],
+    seeds: [],
+    api_keys: [
+      {
+        id: 801,
+        account_id: 33,
+        name: 'Primary',
+        api_key: 'kraken-key',
+        api_secret: 'kraken-secret',
+        passphrase: null,
+        is_active: true,
+        permissions: { read_balances: 'granted', spot_trading: 'granted' },
+        permissions_checked_at: ts(1),
+        created_at: ts(72),
+        updated_at: ts(1),
+      },
+    ],
+    account_file_backup: null,
+    lnd_channel_backup: null,
+    bank_accounts: [],
+  },
+  {
+    id: 44,
+    provider: 'LND wallet',
+    category: 'Internal Infrastructure',
+    email: null,
+    password: 'wallet-password',
+    phone: null,
+    is_healthy: true,
+    last_health_check: ts(5),
+    created_at: ts(240),
+    updated_at: ts(5),
+    totp_secrets: [],
+    passkey_credentials: [],
+    seeds: [
+      { id: 901, account_id: 44, seed_phrase: 'able acid actor adapt', wallet_created_at: ts(240), created_at: ts(240) },
+    ],
+    api_keys: [],
+    account_file_backup: null,
+    lnd_channel_backup: {
+      id: 902,
+      account_id: 44,
+      backup_sha256: '0123456789abcdef',
+      backup_size_bytes: 512,
+      channel_count: 1,
+      created_at: ts(5),
+    },
+    bank_accounts: [],
+  },
+];
+
+export const MOCK_BISQ_PAYMENT_ACCOUNTS = {
+  payment_accounts: [
+    {
+      id: 'bisq-sepa-1',
+      account_name: 'Alice Example · SEPA · DE12345678901234567890',
+      payment_method_id: 'SEPA',
+    },
+  ],
+};
+
+export const MOCK_CEX_DEPOSIT_ADDRESSES: Record<number, Array<{
+  asset: string;
+  network: string;
+  address: string;
+  method?: string;
+}>> = {
+  33: [
+    {
+      asset: 'BTC',
+      network: 'Bitcoin',
+      address: 'bc1qexamplekrakenaddress000000000000000000000',
+      method: 'onchain',
+    },
+  ],
+};
+
+export const MOCK_CEX_BALANCES: Record<number, {
+  bitcoin?: { asset: string; available: number; total: number };
+  fiat: Array<{ asset: string; available: number; total: number }>;
+  source: string;
+}> = {
+  33: {
+    bitcoin: { asset: 'BTC', available: 0.245, total: 0.245 },
+    fiat: [{ asset: 'EUR', available: 12450.32, total: 12450.32 }],
+    source: 'mock',
+  },
+};
+
+export const MOCK_TELEGRAM_CONFIG = {
+  bot_token_present: true,
+  chat_id: '123456789',
+  dexmm_webhook_url: 'https://dexmm.example.test/telegram',
+  pushpush_webhook_url: 'https://pushpush.example.test/telegram',
+  dexmm_webhook_set: true,
+  pushpush_webhook_set: false,
+  config_version: 3,
+};
+
 export const MOCK_SNAPSHOT_LOG_COMPACT = [
   {
     id: 1,

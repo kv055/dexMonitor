@@ -16,6 +16,11 @@ import {
   MOCK_SNAPSHOT_LOG_COMPACT,
   MOCK_SNAPSHOT_LOG_DETAIL,
   MOCK_TRADE_COST_CONFIG,
+  MOCK_TRADING_ACCOUNTS,
+  MOCK_BISQ_PAYMENT_ACCOUNTS,
+  MOCK_CEX_DEPOSIT_ADDRESSES,
+  MOCK_CEX_BALANCES,
+  MOCK_TELEGRAM_CONFIG,
 } from './mock-data';
 
 type Fixtures = {
@@ -98,6 +103,55 @@ export const test = base.extend<Fixtures>({
     );
     await page.route('**/api/payment_method_groups', route =>
       route.fulfill({ json: MOCK_PAYMENT_METHOD_GROUPS }),
+    );
+    await page.route('**/api/trading/accounts', route =>
+      route.fulfill({ json: MOCK_TRADING_ACCOUNTS }),
+    );
+    await page.route('**/api/trading/accounts/*/cex/deposit-addresses', route => {
+      const id = Number(new URL(route.request().url()).pathname.match(/\/api\/trading\/accounts\/(\d+)\/cex\/deposit-addresses$/)?.[1]);
+      return route.fulfill({ json: MOCK_CEX_DEPOSIT_ADDRESSES[id] ?? [] });
+    });
+    await page.route('**/api/trading/accounts/*/cex/balances', route => {
+      const id = Number(new URL(route.request().url()).pathname.match(/\/api\/trading\/accounts\/(\d+)\/cex\/balances$/)?.[1]);
+      return route.fulfill({ json: MOCK_CEX_BALANCES[id] ?? { fiat: [], source: 'mock' } });
+    });
+    await page.route('**/api/trading/accounts/*/cex/withdrawal-addresses', route =>
+      route.fulfill({ json: [] }),
+    );
+    await page.route('**/api/trading/accounts/*/cex/hedge-positions', route =>
+      route.fulfill({ json: { active: [], past: [] } }),
+    );
+    await page.route('**/api/trading/accounts/*/cex/spot-trades*', route =>
+      route.fulfill({ json: [] }),
+    );
+    await page.route('**/api/mm-controller/bisq/payment-accounts', route =>
+      route.fulfill({ json: MOCK_BISQ_PAYMENT_ACCOUNTS }),
+    );
+    await page.route('**/api/mm-controller/lnd/wallet/state', route =>
+      route.fulfill({ json: { lnd_reachable: true, lnd_state: 'RUNNING', wallet_exists: true, password_set: true, client_ready: true, can_create: false } }),
+    );
+    await page.route('**/api/mm-controller/lnd/wallet', route =>
+      route.fulfill({
+        json: {
+          node: {
+            identity_pubkey: '02abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567',
+            alias: 'Desk LND',
+            num_peers: 1,
+            num_active_channels: 1,
+            synced_to_chain: true,
+            synced_to_graph: true,
+            block_height: 900000,
+          },
+          peers: [],
+          channels: [],
+          pending_channels: [],
+          addresses: [],
+          checked_at: new Date(FIXED_TIME).toISOString(),
+        },
+      }),
+    );
+    await page.route('**/api/mm-controller/telegram/config', route =>
+      route.fulfill({ json: MOCK_TELEGRAM_CONFIG }),
     );
     await page.route('**/api/past_order_stats*', route =>
       route.fulfill({ json: MOCK_PAST_ORDER_STATS }),

@@ -109,14 +109,19 @@ export function PaymentMethodsPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [pm, accts, wallets] = await Promise.all([
+      const [pm, accts, wallets] = await Promise.allSettled([
         fetchPaymentMethods(),
         fetchTradingAccounts(),
         fetchTradingWalletAddresses(),
       ]);
-      setRows(pm.payment_methods);
-      setAccounts(accts);
-      setWalletAddresses(wallets.wallet_addresses);
+
+      if (pm.status !== 'fulfilled') {
+        throw pm.reason;
+      }
+
+      setRows(pm.value.payment_methods);
+      setAccounts(accts.status === 'fulfilled' ? accts.value : []);
+      setWalletAddresses(wallets.status === 'fulfilled' ? wallets.value.wallet_addresses : []);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load payment methods');
     } finally {

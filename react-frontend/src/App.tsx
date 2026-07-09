@@ -175,7 +175,12 @@ function TradingView() {
       <div className="flex-1 min-h-0 overflow-hidden">
         <TradingAccountsPanel />
       </div>
-      <PaymentMethodsPanel />
+      <div className="shrink-0 pt-1">
+        <div className="mb-2 px-1 text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-muted">
+          Payment Method Catalog
+        </div>
+        <PaymentMethodsPanel />
+      </div>
       {/* Trade Flow Monitor — temporarily disabled
       <div className="min-h-0 rounded-lg border border-border bg-surface p-3 flex flex-col">
         <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">Trade Flow Monitor</h3>
