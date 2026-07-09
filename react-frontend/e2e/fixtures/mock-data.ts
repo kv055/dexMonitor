@@ -617,3 +617,77 @@ export const MOCK_OHLC_DATA_1D_WINDOW = {
   interval_min: 1440,
   candles: windowCandles(2880, 24),
 };
+
+// Response for POST /api/statistics (Statistics tab).
+export const MOCK_STATISTICS = {
+  live: {
+    total_offers: 12,
+    active_offers: 12,
+    exchanges_live: 2,
+    offers_by_exchange: [
+      { name: 'robosats', count: 8 },
+      { name: 'hodlhodl', count: 4 },
+    ],
+    payment_method_counts: [
+      { name: 'SEPA', count: 7 },
+      { name: 'Revolut', count: 5 },
+    ],
+    premium_summary: {
+      best_ask_premium_pct: 1.2,
+      avg_ask_premium_pct: 2.4,
+      best_bid_premium_pct: -0.8,
+      avg_bid_premium_pct: -1.6,
+    },
+  },
+  past: {
+    total_offers: 34,
+    offers_by_exchange: [
+      { name: 'robosats', count: 20 },
+      { name: 'hodlhodl', count: 14 },
+    ],
+    payment_method_counts: [
+      { name: 'SEPA', count: 18 },
+      { name: 'Revolut', count: 16 },
+    ],
+    past_premiums: [
+      {
+        timeframe: '24h',
+        hours: 24,
+        avg_premium_by_exchange: [{ name: 'robosats', avg_premium_pct: 2.1 }],
+        modes: {
+          raw: [{ name: 'robosats', avg_premium_pct: 2.1 }],
+          net_full: [{ name: 'robosats', avg_premium_pct: 1.4 }],
+          net_capped: [{ name: 'robosats', avg_premium_pct: 1.1 }],
+        },
+      },
+    ],
+    premium_lifetimes: {
+      raw: {
+        avg_offer_lifetime_ms: 3_600_000,
+        avg_offer_lifetime_ms_by_exchange: [{ name: 'robosats', ms: 3_600_000 }],
+      },
+      net_full: {
+        avg_offer_lifetime_ms: 3_500_000,
+        avg_offer_lifetime_ms_by_exchange: [{ name: 'robosats', ms: 3_500_000 }],
+      },
+      net_capped: {
+        avg_offer_lifetime_ms: 3_400_000,
+        avg_offer_lifetime_ms_by_exchange: [{ name: 'robosats', ms: 3_400_000 }],
+      },
+    },
+  },
+  shared: {
+    hours: 168,
+    total_offers: 46,
+    active_offers: 12,
+    exchanges_live: 2,
+    offers_by_exchange: [
+      { name: 'robosats', count: 28 },
+      { name: 'hodlhodl', count: 18 },
+    ],
+    payment_method_counts: [
+      { name: 'SEPA', count: 25 },
+      { name: 'Revolut', count: 21 },
+    ],
+  },
+};

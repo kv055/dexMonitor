@@ -84,7 +84,10 @@ export function useStatistics() {
     const key = paramsKey(params);
     const cached = statisticsClientCache.get(key);
     const inFlight = inFlightRef.current;
-    if (inFlight?.key === key) {
+    // An aborted request never dispatches, so deduping onto it would leave the
+    // spinner up forever (StrictMode's dev double-mount aborts + reloads
+    // synchronously, before the aborted fetch has settled and cleared the ref).
+    if (inFlight?.key === key && !inFlight.controller.signal.aborted) {
       return inFlight.promise;
     }
     inFlight?.controller.abort();

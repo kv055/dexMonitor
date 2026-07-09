@@ -21,6 +21,7 @@ import {
   MOCK_CEX_DEPOSIT_ADDRESSES,
   MOCK_CEX_BALANCES,
   MOCK_TELEGRAM_CONFIG,
+  MOCK_STATISTICS,
 } from './mock-data';
 
 type Fixtures = {
@@ -152,6 +153,12 @@ export const test = base.extend<Fixtures>({
     );
     await page.route('**/api/mm-controller/telegram/config', route =>
       route.fulfill({ json: MOCK_TELEGRAM_CONFIG }),
+    );
+    await page.route('**/api/statistics', route =>
+      route.fulfill({
+        json: MOCK_STATISTICS,
+        headers: { 'X-Stats-Cache': 'miss', 'X-Stats-Built-At': new Date(FIXED_TIME).toISOString() },
+      }),
     );
     await page.route('**/api/past_order_stats*', route =>
       route.fulfill({ json: MOCK_PAST_ORDER_STATS }),
