@@ -20,10 +20,25 @@ function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }
   );
 }
 
+function formatBuiltAt(value: string | null): string | null {
+  if (!value) return null;
+  const builtAt = new Date(value);
+  if (Number.isNaN(builtAt.getTime())) return null;
+  const diffMs = Date.now() - builtAt.getTime();
+  if (diffMs < 0) return 'just now';
+  const diffMin = Math.floor(diffMs / 60_000);
+  if (diffMin < 1) return 'just now';
+  if (diffMin < 60) return `${diffMin}m ago`;
+  const diffHours = Math.floor(diffMin / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  return `${diffDays}d ago`;
+}
+
 export function StatisticsView() {
   const { filters } = useFilters();
   const { excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit } = usePreferences();
-  const { data, loading, error, load } = useStatistics();
+  const { data, loading, error, cacheState, builtAt, load } = useStatistics();
 
   useEffect(() => {
     const params: StatisticsLoadParams = {
@@ -40,7 +55,7 @@ export function StatisticsView() {
 
   if (loading && !data) {
     return (
-      <div className="lg:flex-1 lg:min-h-0 flex items-center justify-center">
+      <div className="relative lg:flex-1 lg:min-h-0 flex items-center justify-center">
         <LoadingSpinner size={88} label="Loading statistics" />
       </div>
     );
@@ -65,12 +80,22 @@ export function StatisticsView() {
   }
 
   const { live, past, shared } = data;
+  const builtAtLabel = formatBuiltAt(builtAt);
 
   return (
     <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-3 sm:gap-4 overflow-y-auto lg:overflow-y-auto pr-0.5">
       {error && (
         <div className="bg-error border border-red rounded-lg px-3 py-2 text-red text-sm shrink-0">
           {error}
+        </div>
+      )}
+      {(builtAtLabel || cacheState === 'stale') && (
+        <div className="bg-bg border border-border rounded-lg px-3 py-2 text-[0.72rem] text-muted shrink-0">
+          {cacheState === 'stale'
+            ? `Statistics last refreshed ${builtAtLabel ?? 'recently'} and are being refreshed in the background.`
+            : builtAtLabel
+              ? `Statistics last refreshed ${builtAtLabel}.`
+              : 'Statistics loaded from cache.'}
         </div>
       )}
 
@@ -86,7 +111,7 @@ export function StatisticsView() {
 
       {/* Past dimension */}
       <section className="bg-surface border border-border rounded-lg p-3 flex flex-col gap-2 shrink-0">
-        <SectionHeader title="Past Offers" subtitle={`${past.total_offers} closed in window`} />
+        <SectionHeader title="Past Offers" subtitle={`${past.total_offers} closed summary in window`} />
         <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-1.5">
           <PastPremiumsCard frames={past.past_premiums} />
           <LifetimeCard lifetimes={past.premium_lifetimes} />

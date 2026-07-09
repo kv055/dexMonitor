@@ -32,7 +32,12 @@ import type {
 
 const API_BASE = '';
 
-async function request<T>(path: string, init?: RequestInit): Promise<T> {
+export interface ApiResponseWithHeaders<T> {
+  data: T;
+  headers: Headers;
+}
+
+async function fetchResponse(path: string, init?: RequestInit): Promise<Response> {
   const headers = new Headers(init?.headers);
   if (init?.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
@@ -61,7 +66,18 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     }
     throw new Error(message);
   }
+  return res;
+}
+
+async function request<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await fetchResponse(path, init);
   return res.json();
+}
+
+async function requestWithHeaders<T>(path: string, init?: RequestInit): Promise<ApiResponseWithHeaders<T>> {
+  const res = await fetchResponse(path, init);
+  const data = await res.json() as T;
+  return { data, headers: res.headers };
 }
 
 export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> {
@@ -70,6 +86,14 @@ export async function apiFetch<T>(path: string, init?: RequestInit): Promise<T> 
 
 export async function apiPost<T>(path: string, body: unknown, init?: Omit<RequestInit, 'method' | 'body'>): Promise<T> {
   return request<T>(path, {
+    ...init,
+    method: 'POST',
+    body: JSON.stringify(body),
+  });
+}
+
+export async function apiPostWithHeaders<T>(path: string, body: unknown, init?: Omit<RequestInit, 'method' | 'body'>): Promise<ApiResponseWithHeaders<T>> {
+  return requestWithHeaders<T>(path, {
     ...init,
     method: 'POST',
     body: JSON.stringify(body),

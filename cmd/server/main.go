@@ -64,15 +64,38 @@ const dashboardCacheTTL = 30 * time.Second
 const defaultCEX = "kraken"
 
 const closedAnalyzedOffersQuery = "SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? AND historical_analysis_status = 'analyzed' ORDER BY last_seen DESC"
+const analyticsOffersQuery = `
+SELECT
+	id, exchange, direction, price, price_diff_percent,
+	btc_min, btc_max, fiat_min, fiat_max,
+	payment_methods, offer_id,
+	first_seen, last_seen, is_live, duration, historical_analysis_status,
+	avg_ref_price, avg_premium_pct, avg_trade_cost_pct, avg_trade_cost_btc,
+	avg_hedge_fee_sum_btc, cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc,
+	hedge_open_fee_btc, hedge_close_fee_btc, hedge_funding_fee_btc, hedge_fee_sum_btc,
+	hedge_venue, hedge_instrument, hedge_transfer_minutes, dex_fee_btc,
+	avg_net_premium_pct, avg_estimated_profit_btc, avg_estimated_profit_fiat, avg_btc_amount,
+	price_type, best_route_cex, best_route_method
+FROM offers
+WHERE last_seen >= ?
+ORDER BY last_seen DESC
+`
 
 var generalStatsCache struct {
 	sync.Mutex
-	entries map[string]generalStatsCacheEntry
+	entries  map[string]generalStatsCacheEntry
+	inFlight map[string]*generalStatsInFlightEntry
 }
 
 type generalStatsCacheEntry struct {
 	ctx    generalStatsContext
 	expiry time.Time
+}
+
+type generalStatsInFlightEntry struct {
+	done chan struct{}
+	ctx  generalStatsContext
+	err  error
 }
 
 // sweepGeneralStatsCache drops expired entries. Caller must hold the lock. These
@@ -200,6 +223,7 @@ func main() {
 	pmService = paymentmethods.NewService(db)
 	pmRepo = &paymentmethods.Repo{DB: db}
 	go pmService.RefreshLoop(ctx, time.Hour)
+	go runStatisticsRefreshLoop(ctx.Done())
 
 	mux := http.NewServeMux()
 
@@ -534,16 +558,27 @@ type pastProfitableOrderSummary struct {
 }
 
 type pastProfitableOrderAPI struct {
-	ID            int64                      `json:"id"`
-	Exchange      string                     `json:"exchange"`
-	OfferID       *string                    `json:"offer_id"`
-	PaymentMethods []string                  `json:"payment_methods"`
-	Direction     string                     `json:"direction"`
-	Status        pastOfferStatus            `json:"status"`
-	Pricing       pastOfferPricing           `json:"pricing"`
-	Summary       pastProfitableOrderSummary `json:"summary"`
-	Analysis      pastOfferAnalysisAPI       `json:"analysis"`
-	Offer         map[string]any             `json:"offer"`
+	ID             int64                      `json:"id"`
+	Exchange       string                     `json:"exchange"`
+	OfferID        *string                    `json:"offer_id"`
+	PaymentMethods []string                   `json:"payment_methods"`
+	Direction      string                     `json:"direction"`
+	Status         pastOfferStatus            `json:"status"`
+	Pricing        pastOfferPricing           `json:"pricing"`
+	Summary        pastProfitableOrderSummary `json:"summary"`
+	Analysis       pastOfferAnalysisAPI       `json:"analysis"`
+	Offer          map[string]any             `json:"offer"`
+}
+
+type pastProfitableOrderCompactAPI struct {
+	ID             int64                      `json:"id"`
+	Exchange       string                     `json:"exchange"`
+	OfferID        *string                    `json:"offer_id"`
+	PaymentMethods []string                   `json:"payment_methods"`
+	Direction      string                     `json:"direction"`
+	Status         pastOfferStatus            `json:"status"`
+	Pricing        pastOfferPricing           `json:"pricing"`
+	Summary        pastProfitableOrderSummary `json:"summary"`
 }
 
 func handlePastProfitableOrders(w http.ResponseWriter, r *http.Request) {
@@ -583,27 +618,48 @@ func generalStatsCacheKey(r *http.Request) string {
 func loadGeneralStatsContext(r *http.Request) (generalStatsContext, error) {
 	key := generalStatsCacheKey(r)
 	now := time.Now()
-	generalStatsCache.Lock()
-	if entry, ok := generalStatsCache.entries[key]; ok && now.Before(entry.expiry) {
-		ctx := entry.ctx
+	for {
+		generalStatsCache.Lock()
+		if entry, ok := generalStatsCache.entries[key]; ok && now.Before(entry.expiry) {
+			ctx := entry.ctx
+			generalStatsCache.Unlock()
+			return ctx, nil
+		}
+		if inflight, ok := generalStatsCache.inFlight[key]; ok {
+			generalStatsCache.Unlock()
+			<-inflight.done
+			if inflight.err != nil {
+				return generalStatsContext{}, inflight.err
+			}
+			return inflight.ctx, nil
+		}
+		if generalStatsCache.inFlight == nil {
+			generalStatsCache.inFlight = make(map[string]*generalStatsInFlightEntry)
+		}
+		inflight := &generalStatsInFlightEntry{done: make(chan struct{})}
+		generalStatsCache.inFlight[key] = inflight
 		generalStatsCache.Unlock()
+
+		ctx, err := loadGeneralStatsContextUncached(r)
+		inflight.ctx = ctx
+		inflight.err = err
+
+		generalStatsCache.Lock()
+		delete(generalStatsCache.inFlight, key)
+		if err == nil {
+			if generalStatsCache.entries == nil {
+				generalStatsCache.entries = make(map[string]generalStatsCacheEntry)
+			}
+			sweepGeneralStatsCache(now)
+			generalStatsCache.entries[key] = generalStatsCacheEntry{ctx: ctx, expiry: now.Add(dashboardCacheTTL)}
+		}
+		generalStatsCache.Unlock()
+		close(inflight.done)
+		if err != nil {
+			return generalStatsContext{}, err
+		}
 		return ctx, nil
 	}
-	generalStatsCache.Unlock()
-
-	ctx, err := loadGeneralStatsContextUncached(r)
-	if err != nil {
-		return generalStatsContext{}, err
-	}
-
-	generalStatsCache.Lock()
-	if generalStatsCache.entries == nil {
-		generalStatsCache.entries = make(map[string]generalStatsCacheEntry)
-	}
-	sweepGeneralStatsCache(now)
-	generalStatsCache.entries[key] = generalStatsCacheEntry{ctx: ctx, expiry: now.Add(dashboardCacheTTL)}
-	generalStatsCache.Unlock()
-	return ctx, nil
 }
 
 func loadGeneralStatsContextUncached(r *http.Request) (generalStatsContext, error) {
@@ -615,10 +671,7 @@ func loadGeneralStatsContextUncached(r *http.Request) (generalStatsContext, erro
 	cutoff := time.Now().Add(-time.Duration(historyHours) * time.Hour)
 	excludedPaymentMethods := queryExcludedPaymentMethods(r)
 
-	rows, err := db.Query(
-		rebind("SELECT * FROM offers WHERE last_seen >= ? ORDER BY last_seen DESC"),
-		cutoff,
-	)
+	rows, err := db.Query(rebind(analyticsOffersQuery), cutoff)
 	if err != nil {
 		return generalStatsContext{}, err
 	}
@@ -744,6 +797,48 @@ func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]p
 		feeTier,
 	)
 	return lifetimes
+}
+
+func persistedLifecycleAggregateForOffer(offer map[string]any) pastLifecycleAggregate {
+	return pastLifecycleAggregate{
+		AvgRefPrice:       tradecost.Round4(offerFloat(offer, "avg_ref_price")),
+		AvgPremiumPercent: tradecost.Round4(offerFloat(offer, "avg_premium_pct")),
+		AvgTradeCostPct:   tradecost.Round4(offerFloat(offer, "avg_trade_cost_pct")),
+		AvgTradeCostBTC:   tradecost.Round8(offerFloat(offer, "avg_trade_cost_btc")),
+		AvgNetPercent:     tradecost.Round4(offerFloat(offer, "avg_net_premium_pct")),
+		AvgProfitBTC:      tradecost.Round8(offerFloat(offer, "avg_estimated_profit_btc")),
+		AvgProfitFiat:     tradecost.Round4(offerFloat(offer, "avg_estimated_profit_fiat")),
+		AvgBTCAmount:      tradecost.Round8(offerFloat(offer, "avg_btc_amount")),
+	}
+}
+
+func buildPastPremiumAndLifetimeStatsFromPersistedOffers(
+	offers []map[string]any,
+	now time.Time,
+	excludedPaymentMethods []string,
+	maxFiatLimitEUR float64,
+	requiredConfirmations int,
+	excludedCEXes []string,
+	feeTier string,
+) ([]pastorders.PastPremiumTimeframeStats, pastorders.PremiumLifetimeModes) {
+	lifecycleAgg := make(map[int64]pastLifecycleAggregate, len(offers))
+	for _, offer := range offers {
+		id := int64(offerFloat(offer, "id"))
+		if id <= 0 {
+			continue
+		}
+		lifecycleAgg[id] = persistedLifecycleAggregateForOffer(offer)
+	}
+	return buildPastPremiumAndLifetimeStats(
+		offers,
+		lifecycleAgg,
+		now,
+		excludedPaymentMethods,
+		maxFiatLimitEUR,
+		requiredConfirmations,
+		excludedCEXes,
+		feeTier,
+	)
 }
 
 func buildPastPremiumAndLifetimeStats(
@@ -1092,22 +1187,22 @@ type pastOfferAnalysisAPI struct {
 }
 
 type pastOfferAPI struct {
-	ID            int64                  `json:"id"`
-	Exchange      string                 `json:"exchange"`
-	OfferID       *string                `json:"offer_id"`
-	PaymentMethods []string              `json:"payment_methods"`
-	Direction     string                 `json:"direction"`
-	Status        pastOfferStatus        `json:"status"`
-	Pricing       pastOfferPricing       `json:"pricing"`
-	VolumeLimits  pastOfferVolumeLimits  `json:"volume_limits"`
-	BTCNetworkFee pastOfferBTCNetworkFee `json:"btc_network_fee"`
-	Analysis      pastOfferAnalysisAPI   `json:"analysis"`
+	ID             int64                  `json:"id"`
+	Exchange       string                 `json:"exchange"`
+	OfferID        *string                `json:"offer_id"`
+	PaymentMethods []string               `json:"payment_methods"`
+	Direction      string                 `json:"direction"`
+	Status         pastOfferStatus        `json:"status"`
+	Pricing        pastOfferPricing       `json:"pricing"`
+	VolumeLimits   pastOfferVolumeLimits  `json:"volume_limits"`
+	BTCNetworkFee  pastOfferBTCNetworkFee `json:"btc_network_fee"`
+	Analysis       pastOfferAnalysisAPI   `json:"analysis"`
 }
 
 type pastOfferCompactAPI struct {
-	ID            int64                 `json:"id"`
-	Exchange      string                `json:"exchange"`
-	OfferID       *string               `json:"offer_id"`
+	ID             int64                 `json:"id"`
+	Exchange       string                `json:"exchange"`
+	OfferID        *string               `json:"offer_id"`
 	PaymentMethods []string              `json:"payment_methods"`
 	Direction      string                `json:"direction"`
 	Status         pastOfferStatus       `json:"status"`
@@ -1315,9 +1410,9 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 	}
 
 	return pastOfferAPI{
-		ID:            id,
-		Exchange:      offerString(o, "exchange"),
-		OfferID:       offerStringPtr(o, "offer_id"),
+		ID:             id,
+		Exchange:       offerString(o, "exchange"),
+		OfferID:        offerStringPtr(o, "offer_id"),
 		PaymentMethods: offerStringSlice(o, "payment_methods"),
 		Direction:      offerString(o, "direction"),
 		Status: pastOfferStatus{
@@ -1362,9 +1457,9 @@ func buildPastOfferCompactAPI(o map[string]any) pastOfferCompactAPI {
 	}
 
 	return pastOfferCompactAPI{
-		ID:            int64(offerFloat(o, "id")),
-		Exchange:      offerString(o, "exchange"),
-		OfferID:       offerStringPtr(o, "offer_id"),
+		ID:             int64(offerFloat(o, "id")),
+		Exchange:       offerString(o, "exchange"),
+		OfferID:        offerStringPtr(o, "offer_id"),
 		PaymentMethods: offerStringSlice(o, "payment_methods"),
 		Direction:      offerString(o, "direction"),
 		Status: pastOfferStatus{
@@ -1391,32 +1486,64 @@ func buildPastOfferCompactAPI(o map[string]any) pastOfferCompactAPI {
 
 func buildPastProfitableOrderAPI(o map[string]any, analysis pastOfferAnalysis, agg pastLifecycleAggregate, requiredConfirmations int, excludedCEXes []string, feeTier string, maxFiatLimitEUR float64, mode takerOpportunityMode) pastProfitableOrderAPI {
 	pastOffer := buildPastOfferAPI(o, agg, requiredConfirmations, excludedCEXes, feeTier, maxFiatLimitEUR)
+	summary := buildPastProfitableOrderSummary(analysis, pastOffer.Analysis, mode)
+
+	return pastProfitableOrderAPI{
+		ID:             pastOffer.ID,
+		Exchange:       pastOffer.Exchange,
+		OfferID:        pastOffer.OfferID,
+		PaymentMethods: pastOffer.PaymentMethods,
+		Direction:      pastOffer.Direction,
+		Status:         pastOffer.Status,
+		Pricing:        pastOffer.Pricing,
+		Summary:        summary,
+		Analysis:       pastOffer.Analysis,
+		Offer:          buildOfferTablePayload(o),
+	}
+}
+
+func buildPastProfitableOrderSummary(analysis pastOfferAnalysis, offerAnalysis pastOfferAnalysisAPI, mode takerOpportunityMode) pastProfitableOrderSummary {
 	tradeSizeBTC, netProfitBTC := analysis.valuesForMode(mode)
 	summary := pastProfitableOrderSummary{
 		NetProfitBTC:  tradecost.Round8(netProfitBTC),
 		NetProfitFiat: tradecost.Round4(netProfitBTC * analysis.refPrice),
 		TradeSizeBTC:  tradecost.Round8(tradeSizeBTC),
 		TradeSizeFiat: tradecost.Round4(tradeSizeBTC * analysis.refPrice),
-		NetPercent:    pastOffer.Analysis.FullVolume.Premium.AvgNetPercent,
+		NetPercent:    offerAnalysis.FullVolume.Premium.AvgNetPercent,
 	}
-	if mode == takerOpportunityModeNetCapped && pastOffer.Analysis.CappedVolume != nil {
-		summary.NetPercent = pastOffer.Analysis.CappedVolume.Premium.AvgNetPercent
+	if mode == takerOpportunityModeNetCapped && offerAnalysis.CappedVolume != nil {
+		summary.NetPercent = offerAnalysis.CappedVolume.Premium.AvgNetPercent
 	}
-	if pastOffer.Analysis.CappedVolume != nil {
-		summary.CapFiat = pastOffer.Analysis.CappedVolume.CapFiat
+	if offerAnalysis.CappedVolume != nil {
+		summary.CapFiat = offerAnalysis.CappedVolume.CapFiat
 	}
+	return summary
+}
 
-	return pastProfitableOrderAPI{
-		ID:            pastOffer.ID,
-		Exchange:      pastOffer.Exchange,
-		OfferID:       pastOffer.OfferID,
+func buildPastProfitableOrderCompactAPI(o map[string]any, analysis pastOfferAnalysis) pastProfitableOrderCompactAPI {
+	pastOffer := buildPastOfferCompactAPI(o)
+	offerAnalysis := pastOfferAnalysisAPI{
+		FullVolume: pastOfferScenario{
+			TradeSizeBTC:  tradecost.Round8(analysis.btcSize),
+			TradeSizeFiat: tradecost.Round4(analysis.btcSize * analysis.refPrice),
+			Premium: pastOfferPremium{
+				AvgNetPercent: tradecost.Round4(nonZeroFloat(offerFloat(o, "avg_net_premium_pct"), offerFloat(o, "net_premium_percent"))),
+			},
+			Profit: pastOfferProfit{
+				AvgBTC:  tradecost.Round8(analysis.estimatedProfitBTC),
+				AvgFiat: tradecost.Round4(analysis.estimatedProfitBTC * analysis.refPrice),
+			},
+		},
+	}
+	return pastProfitableOrderCompactAPI{
+		ID:             pastOffer.ID,
+		Exchange:       pastOffer.Exchange,
+		OfferID:        pastOffer.OfferID,
 		PaymentMethods: pastOffer.PaymentMethods,
-		Direction:     pastOffer.Direction,
-		Status:        pastOffer.Status,
-		Pricing:       pastOffer.Pricing,
-		Summary:       summary,
-		Analysis:      pastOffer.Analysis,
-		Offer:         buildOfferTablePayload(o),
+		Direction:      pastOffer.Direction,
+		Status:         pastOffer.Status,
+		Pricing:        pastOffer.Pricing,
+		Summary:        buildPastProfitableOrderSummary(analysis, offerAnalysis, takerOpportunityModeNetFull),
 	}
 }
 

@@ -131,12 +131,13 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics }: {
+function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, fastPastProfitableOrders, detailedPastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics }: {
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
   pastOrderStatsNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsNetCapped'];
   pastOrderStatsAllNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsAllNetCapped'];
-  pastProfitableOrders: ReturnType<typeof useDashboard>['pastProfitableOrders'];
+  fastPastProfitableOrders: ReturnType<typeof useDashboard>['fastPastProfitableOrders'];
+  detailedPastProfitableOrders: ReturnType<typeof useDashboard>['detailedPastProfitableOrders'];
   analyticsOverviewLoading: boolean;
   analyticsOrdersLoading: boolean;
   analyticsCappedLoading: boolean;
@@ -158,7 +159,8 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           statsAll={pastOrderStatsAll}
           statsNetCapped={pastOrderStatsNetCapped}
           statsAllNetCapped={pastOrderStatsAllNetCapped}
-          orders={pastProfitableOrders}
+          fastOrders={fastPastProfitableOrders}
+          detailedOrders={detailedPastProfitableOrders}
           statsLoading={analyticsOverviewLoading}
           ordersLoading={analyticsOrdersLoading}
           cappedLoading={analyticsCappedLoading}
@@ -200,7 +202,8 @@ function AppShell() {
     pastOrderStatsAll,
     pastOrderStatsNetCapped,
     pastOrderStatsAllNetCapped,
-    pastProfitableOrders,
+    fastPastProfitableOrders,
+    detailedPastProfitableOrders,
     ohlcData,
     lastUpdatedAt,
     error,
@@ -269,7 +272,8 @@ function AppShell() {
             pastOrderStatsAll={pastOrderStatsAll}
             pastOrderStatsNetCapped={pastOrderStatsNetCapped}
             pastOrderStatsAllNetCapped={pastOrderStatsAllNetCapped}
-            pastProfitableOrders={pastProfitableOrders}
+            fastPastProfitableOrders={fastPastProfitableOrders}
+            detailedPastProfitableOrders={detailedPastProfitableOrders}
             analyticsOverviewLoading={analyticsOverviewLoading}
             analyticsOrdersLoading={analyticsOrdersLoading}
             analyticsCappedLoading={analyticsCappedLoading}

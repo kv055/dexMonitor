@@ -8,13 +8,33 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"dexmonitor/internal/pastorders"
 )
+
+func resetStatisticsCache() {
+	statisticsResultCache.Lock()
+	statisticsResultCache.entries = nil
+	statisticsResultCache.Unlock()
+}
+
+func findStatisticsPastPremiumFrame(t *testing.T, frames []pastorders.PastPremiumTimeframeStats, label string) pastorders.PastPremiumTimeframeStats {
+	t.Helper()
+	for _, frame := range frames {
+		if frame.Timeframe == label {
+			return frame
+		}
+	}
+	t.Fatalf("statistics timeframe %q not found", label)
+	return pastorders.PastPremiumTimeframeStats{}
+}
 
 // TestStatisticsRESTReturnsLivePastShared verifies the new /api/statistics
 // endpoint returns the three dimensions in one call and that the live premium
 // summary is populated (the field the old GeneralStats card was missing).
 func TestStatisticsRESTReturnsLivePastShared(t *testing.T) {
 	withTempOrdersDB(t)
+	resetStatisticsCache()
 
 	// Seed a currently-live offer so the live dimension is exercised. The default
 	// withTempOrdersDB fixture only inserts closed (is_live=0) offers.
@@ -34,6 +54,15 @@ func TestStatisticsRESTReturnsLivePastShared(t *testing.T) {
 
 	if rec.Code != http.StatusOK {
 		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	if got := rec.Header().Get(statisticsCacheHeader); got != string(statisticsCacheStatusMiss) {
+		t.Fatalf("%s = %q, want %q", statisticsCacheHeader, got, statisticsCacheStatusMiss)
+	}
+	if rec.Header().Get(statisticsBuiltAtHeader) == "" {
+		t.Fatalf("expected %s header to be set", statisticsBuiltAtHeader)
+	}
+	if rec.Header().Get("Server-Timing") == "" {
+		t.Fatal("expected Server-Timing header to be set")
 	}
 
 	var resp statisticsResponse
@@ -80,10 +109,95 @@ func TestStatisticsRESTReturnsLivePastShared(t *testing.T) {
 	}
 }
 
+func TestStatisticsUsesPersistedOfferSummariesWithoutLifecycleTable(t *testing.T) {
+	withTempOrdersDB(t)
+	resetStatisticsCache()
+
+	if _, err := db.Exec(`DROP TABLE order_lifecycle`); err != nil {
+		t.Fatalf("drop order_lifecycle: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, avg_premium_pct, avg_net_premium_pct, first_seen, last_seen, is_live)
+		VALUES ('bisq', 'sell', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
+	`); err != nil {
+		t.Fatalf("insert live offer: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/statistics", strings.NewReader(`{"hours":48,"cex":"kraken","fiat":"EUR"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handleStatistics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp statisticsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Past.PastPremiums) == 0 {
+		t.Fatal("expected past premiums without lifecycle table")
+	}
+}
+
+func TestStatisticsPastPremiumsAndLifetimesUsePersistedOfferFields(t *testing.T) {
+	withTempOrdersDB(t)
+	resetStatisticsCache()
+
+	resp, _, err := buildStatisticsResponse(dashboardAnalyticsParams{Hours: 48, Cex: "kraken", Fiat: "EUR"})
+	if err != nil {
+		t.Fatalf("buildStatisticsResponse: %v", err)
+	}
+
+	frame := findStatisticsPastPremiumFrame(t, resp.Past.PastPremiums, "6h")
+	if len(frame.Modes.Raw) != 1 || frame.Modes.Raw[0].AvgPremiumPct != 5 {
+		t.Fatalf("6h raw premiums = %#v, want bisq=5", frame.Modes.Raw)
+	}
+	if len(frame.Modes.NetFull) != 1 || frame.Modes.NetFull[0].AvgPremiumPct != 4.4567 {
+		t.Fatalf("6h net_full premiums = %#v, want bisq=4.4567", frame.Modes.NetFull)
+	}
+	if resp.Past.PremiumLifetimes.NetFull.AvgOfferLifetimeMs == nil || *resp.Past.PremiumLifetimes.NetFull.AvgOfferLifetimeMs != 7200000 {
+		t.Fatalf("net_full lifetime = %#v, want 7200000ms", resp.Past.PremiumLifetimes.NetFull.AvgOfferLifetimeMs)
+	}
+}
+
+func TestStatisticsCappedModeUsesPersistedOfferFields(t *testing.T) {
+	withTempOrdersDB(t)
+	resetStatisticsCache()
+
+	if _, err := db.Exec(`DROP TABLE order_lifecycle`); err != nil {
+		t.Fatalf("drop order_lifecycle: %v", err)
+	}
+
+	resp, _, err := buildStatisticsResponse(dashboardAnalyticsParams{
+		Hours:           48,
+		Cex:             "kraken",
+		Fiat:            "EUR",
+		MaxFiatLimitEUR: 10,
+	})
+	if err != nil {
+		t.Fatalf("buildStatisticsResponse: %v", err)
+	}
+
+	frame := findStatisticsPastPremiumFrame(t, resp.Past.PastPremiums, "48h")
+	if len(frame.Modes.NetCapped) != 1 {
+		t.Fatalf("48h net_capped premiums = %#v, want one bisq entry", frame.Modes.NetCapped)
+	}
+	if frame.Modes.NetFull[0].AvgPremiumPct != 4.3425 {
+		t.Fatalf("48h net_full premiums = %#v, want bisq=4.3425", frame.Modes.NetFull)
+	}
+	if frame.Modes.NetCapped[0].AvgPremiumPct != 4.405 {
+		t.Fatalf("48h net_capped premiums = %#v, want bisq=4.405", frame.Modes.NetCapped)
+	}
+}
+
 // TestStatisticsRejectsInvalidBody confirms the endpoint fails closed on a
 // malformed request body rather than panicking.
 func TestStatisticsRejectsInvalidBody(t *testing.T) {
 	withTempOrdersDB(t)
+	resetStatisticsCache()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/statistics", strings.NewReader("{not json"))
 	req.Header.Set("Content-Type", "application/json")
@@ -97,12 +211,11 @@ func TestStatisticsRejectsInvalidBody(t *testing.T) {
 }
 
 // TestStatisticsCachesResultByParams confirms the second identical request is
-// served from statisticsResultCache: it returns byte-for-byte the same response
-// and stays well under the build latency a cache miss would incur. A different
-// param set must miss and produce its own (different) result, proving the cache
-// is keyed by params rather than a single global entry.
+// served from statisticsResultCache with cache headers intact, and a different
+// param set is cached independently.
 func TestStatisticsCachesResultByParams(t *testing.T) {
 	withTempOrdersDB(t)
+	resetStatisticsCache()
 
 	if _, err := db.Exec(`
 		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, avg_premium_pct, avg_net_premium_pct, first_seen, last_seen, is_live)
@@ -120,6 +233,9 @@ func TestStatisticsCachesResultByParams(t *testing.T) {
 	if buildRec.Code != http.StatusOK {
 		t.Fatalf("build status = %d, want %d; body=%s", buildRec.Code, http.StatusOK, buildRec.Body.String())
 	}
+	if got := buildRec.Header().Get(statisticsCacheHeader); got != string(statisticsCacheStatusMiss) {
+		t.Fatalf("build %s = %q, want %q", statisticsCacheHeader, got, statisticsCacheStatusMiss)
+	}
 	buildBytes := buildRec.Body.Bytes()
 
 	cacheStart := time.Now()
@@ -130,6 +246,9 @@ func TestStatisticsCachesResultByParams(t *testing.T) {
 	cacheElapsed := time.Since(cacheStart)
 	if cacheRec.Code != http.StatusOK {
 		t.Fatalf("cache status = %d, want %d; body=%s", cacheRec.Code, http.StatusOK, cacheRec.Body.String())
+	}
+	if got := cacheRec.Header().Get(statisticsCacheHeader); got != string(statisticsCacheStatusHit) {
+		t.Fatalf("cache %s = %q, want %q", statisticsCacheHeader, got, statisticsCacheStatusHit)
 	}
 	if !bytes.Equal(cacheRec.Body.Bytes(), buildBytes) {
 		t.Fatal("cached response body differs from initial build response")
@@ -150,6 +269,9 @@ func TestStatisticsCachesResultByParams(t *testing.T) {
 	if otherRec.Code != http.StatusOK {
 		t.Fatalf("other status = %d, want %d; body=%s", otherRec.Code, http.StatusOK, otherRec.Body.String())
 	}
+	if got := otherRec.Header().Get(statisticsCacheHeader); got != string(statisticsCacheStatusMiss) {
+		t.Fatalf("other %s = %q, want %q", statisticsCacheHeader, got, statisticsCacheStatusMiss)
+	}
 
 	statisticsResultCache.Lock()
 	entryCount := len(statisticsResultCache.entries)
@@ -166,7 +288,67 @@ func TestStatisticsCachesResultByParams(t *testing.T) {
 	if repeatRec.Code != http.StatusOK {
 		t.Fatalf("repeat status = %d, want %d", repeatRec.Code, http.StatusOK)
 	}
+	if got := repeatRec.Header().Get(statisticsCacheHeader); got != string(statisticsCacheStatusHit) {
+		t.Fatalf("repeat %s = %q, want %q", statisticsCacheHeader, got, statisticsCacheStatusHit)
+	}
 	if !bytes.Equal(repeatRec.Body.Bytes(), buildBytes) {
 		t.Fatal("repeat kraken response body differs from initial build response")
+	}
+}
+
+func TestStatisticsServesStaleWhileRefreshing(t *testing.T) {
+	withTempOrdersDB(t)
+	resetStatisticsCache()
+
+	if _, err := db.Exec(`
+		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, avg_premium_pct, avg_net_premium_pct, first_seen, last_seen, is_live)
+		VALUES ('bisq', 'sell', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
+	`); err != nil {
+		t.Fatalf("insert live offer: %v", err)
+	}
+
+	body := `{"hours":48,"cex":"kraken","fiat":"EUR"}`
+	buildReq := httptest.NewRequest(http.MethodPost, "/api/statistics", strings.NewReader(body))
+	buildReq.Header.Set("Content-Type", "application/json")
+	buildRec := httptest.NewRecorder()
+	handleStatistics(buildRec, buildReq)
+	if buildRec.Code != http.StatusOK {
+		t.Fatalf("build status = %d, want %d", buildRec.Code, http.StatusOK)
+	}
+
+	cacheKey := dashboardAnalyticsParams{Hours: 48, Cex: "kraken", Fiat: "EUR"}.cacheKey()
+	statisticsResultCache.Lock()
+	entry := statisticsResultCache.entries[cacheKey]
+	if entry == nil {
+		statisticsResultCache.Unlock()
+		t.Fatal("expected cache entry to exist")
+	}
+	entry.expiry = time.Now().Add(-time.Minute)
+	statisticsResultCache.Unlock()
+
+	staleReq := httptest.NewRequest(http.MethodPost, "/api/statistics", strings.NewReader(body))
+	staleReq.Header.Set("Content-Type", "application/json")
+	staleRec := httptest.NewRecorder()
+	handleStatistics(staleRec, staleReq)
+	if staleRec.Code != http.StatusOK {
+		t.Fatalf("stale status = %d, want %d", staleRec.Code, http.StatusOK)
+	}
+	if got := staleRec.Header().Get(statisticsCacheHeader); got != string(statisticsCacheStatusStale) {
+		t.Fatalf("stale %s = %q, want %q", statisticsCacheHeader, got, statisticsCacheStatusStale)
+	}
+
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		hitReq := httptest.NewRequest(http.MethodPost, "/api/statistics", strings.NewReader(body))
+		hitReq.Header.Set("Content-Type", "application/json")
+		hitRec := httptest.NewRecorder()
+		handleStatistics(hitRec, hitReq)
+		if hitRec.Code == http.StatusOK && hitRec.Header().Get(statisticsCacheHeader) == string(statisticsCacheStatusHit) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("expected stale refresh to complete and return %q within deadline", statisticsCacheStatusHit)
+		}
+		time.Sleep(25 * time.Millisecond)
 	}
 }

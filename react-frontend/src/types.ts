@@ -560,6 +560,17 @@ export interface PastProfitableOrder {
   offer: Record<string, string | number | boolean | null>;
 }
 
+export interface PastProfitableOrderCompact {
+  id: number;
+  exchange: string;
+  offer_id?: string | null;
+  payment_methods?: string[] | null;
+  direction: string;
+  status: LiveOfferStatus;
+  pricing: LiveOfferPricing;
+  summary: PastProfitableOrderSummary;
+}
+
 export type TakerOpportunityMode = 'net_full' | 'net_capped';
 
 export interface NamedCount {

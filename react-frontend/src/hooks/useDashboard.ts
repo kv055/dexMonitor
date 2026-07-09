@@ -7,6 +7,7 @@ import type {
   PastOrderStats,
   GeneralStatsData,
   PastProfitableOrder,
+  PastProfitableOrderCompact,
 } from '../types';
 
 function excludedPaymentQuery(excludedPaymentMethods: string[]): string {
@@ -51,6 +52,7 @@ type AnalyticsOverviewResponse = {
 
 type AnalyticsOrdersResponse = {
   past_profitable_orders?: PastProfitableOrder[];
+  past_profitable_orders_compact?: PastProfitableOrderCompact[];
 };
 
 function buildAnalyticsBody(params: LoadParams, sections?: string[]) {
@@ -74,6 +76,8 @@ interface DashboardState {
   pastOrderStatsAll: PastOrderStats | null;
   pastOrderStatsNetCapped: PastOrderStats | null;
   pastOrderStatsAllNetCapped: PastOrderStats | null;
+  fastPastProfitableOrders: PastProfitableOrderCompact[];
+  detailedPastProfitableOrders: PastProfitableOrder[];
   pastProfitableOrders: PastProfitableOrder[];
   generalStats: GeneralStatsData | null;
   ohlcData: OHLCData | null;
@@ -102,8 +106,8 @@ type DashboardAction =
   | { type: 'CORE_LOAD_ERROR'; error: string }
   | { type: 'ANALYTICS_LOAD_START' }
   | { type: 'ANALYTICS_OVERVIEW_SUCCESS'; payload: AnalyticsOverviewPayload }
-  | { type: 'ANALYTICS_ORDERS_SUCCESS'; pastProfitableOrders: PastProfitableOrder[] }
-  | { type: 'ANALYTICS_CAPPED_SUCCESS'; payload: Pick<DashboardState, 'pastOrderStatsNetCapped' | 'pastOrderStatsAllNetCapped' | 'pastProfitableOrders'> }
+  | { type: 'ANALYTICS_ORDERS_SUCCESS'; fastPastProfitableOrders: PastProfitableOrderCompact[] }
+  | { type: 'ANALYTICS_CAPPED_SUCCESS'; payload: Pick<DashboardState, 'pastOrderStatsNetCapped' | 'pastOrderStatsAllNetCapped' | 'detailedPastProfitableOrders' | 'pastProfitableOrders'> }
   | { type: 'ANALYTICS_LOAD_ERROR'; error: string }
   | { type: 'EXTEND_OHLC_SUCCESS'; ohlcData: OHLCData };
 
@@ -114,6 +118,8 @@ const initialDashboardState: DashboardState = {
   pastOrderStatsAll: null,
   pastOrderStatsNetCapped: null,
   pastOrderStatsAllNetCapped: null,
+  fastPastProfitableOrders: [],
+  detailedPastProfitableOrders: [],
   pastProfitableOrders: [],
   generalStats: null,
   ohlcData: null,
@@ -146,6 +152,9 @@ function dashboardReducer(state: DashboardState, action: DashboardAction): Dashb
         analyticsOrdersLoading: true,
         analyticsCappedLoading: true,
         analyticsError: null,
+        fastPastProfitableOrders: [],
+        detailedPastProfitableOrders: [],
+        pastProfitableOrders: [],
       };
     case 'ANALYTICS_OVERVIEW_SUCCESS':
       return {
@@ -157,7 +166,7 @@ function dashboardReducer(state: DashboardState, action: DashboardAction): Dashb
     case 'ANALYTICS_ORDERS_SUCCESS':
       return {
         ...state,
-        pastProfitableOrders: action.pastProfitableOrders,
+        fastPastProfitableOrders: action.fastPastProfitableOrders,
         analyticsOrdersLoading: false,
         analyticsError: null,
       };
@@ -271,6 +280,7 @@ export function useDashboard() {
           { signal },
         ).then((res) => {
           if (signal.aborted) return;
+          console.debug('[analytics] fast stats arrived', { key, at: new Date().toISOString() });
           dispatch({
             type: 'ANALYTICS_OVERVIEW_SUCCESS',
             payload: {
@@ -291,10 +301,11 @@ export function useDashboard() {
           { signal },
         ).then((res) => {
           if (signal.aborted || cappedArrived) return;
+          console.debug('[analytics] fast orders arrived', { key, at: new Date().toISOString() });
           startTransition(() => {
             dispatch({
               type: 'ANALYTICS_ORDERS_SUCCESS',
-              pastProfitableOrders: res.past_profitable_orders ?? [],
+              fastPastProfitableOrders: res.past_profitable_orders_compact ?? [],
             });
           });
         });
@@ -306,6 +317,7 @@ export function useDashboard() {
         ).then((res) => {
           if (signal.aborted) return;
           cappedArrived = true;
+          console.debug('[analytics] capped analytics arrived', { key, at: new Date().toISOString() });
           startTransition(() => {
             dispatch({
               type: 'ANALYTICS_CAPPED_SUCCESS',
@@ -314,6 +326,7 @@ export function useDashboard() {
                 pastOrderStatsNetCapped: excludedQuery && res.past_order_stats_net_capped
                   ? res.past_order_stats_net_capped
                   : res.past_order_stats_all_net_capped ?? null,
+                detailedPastProfitableOrders: res.past_profitable_orders ?? [],
                 pastProfitableOrders: res.past_profitable_orders ?? [],
               },
             });
@@ -321,6 +334,9 @@ export function useDashboard() {
         });
 
         await Promise.all([statsFull, fastOrders, cappedAnalytics]);
+        if (!signal.aborted) {
+          console.debug('[analytics] completed', { key, at: new Date().toISOString() });
+        }
       } catch (e: unknown) {
         if (signal.aborted) return;
         const message = e instanceof Error ? e.message : String(e);

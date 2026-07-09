@@ -969,6 +969,35 @@ func TestDashboardAnalyticsSectionsFiltersPayload(t *testing.T) {
 	}
 }
 
+func TestDashboardAnalyticsOrdersFullSectionReturnsCompactRows(t *testing.T) {
+	withTempOrdersDB(t)
+
+	body := `{"hours":48,"cex":"kraken","sections":["taker_orders_full"],"fiat":"EUR"}`
+	req := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handleDashboardAnalytics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp dashboardAnalyticsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.PastProfitableOrdersCompact) == 0 {
+		t.Fatal("expected compact profitable orders for taker_orders_full section")
+	}
+	if resp.PastProfitableOrders != nil {
+		t.Fatalf("expected detailed past_profitable_orders omitted, got %d orders", len(resp.PastProfitableOrders))
+	}
+	if resp.PastProfitableOrdersCompact[0].Summary.TradeSizeBTC <= 0 {
+		t.Fatalf("expected compact summary trade size, got %+v", resp.PastProfitableOrdersCompact[0].Summary)
+	}
+}
+
 func TestDashboardAnalyticsOverviewSectionOmitsOrders(t *testing.T) {
 	withTempOrdersDB(t)
 
@@ -1541,6 +1570,7 @@ func TestPaymentMethodChatTemplatesCRUD(t *testing.T) {
 func resetAnalyticsCaches() {
 	analyticsResultCache.Lock()
 	analyticsResultCache.entries = nil
+	analyticsResultCache.inFlight = nil
 	analyticsResultCache.Unlock()
 
 	statisticsResultCache.Lock()
@@ -1549,6 +1579,7 @@ func resetAnalyticsCaches() {
 
 	generalStatsCache.Lock()
 	generalStatsCache.entries = nil
+	generalStatsCache.inFlight = nil
 	generalStatsCache.Unlock()
 
 	lifecycleAggCache.Lock()

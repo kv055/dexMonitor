@@ -24,14 +24,15 @@ type dashboardAnalyticsParams struct {
 }
 
 type dashboardAnalyticsResponse struct {
-	GeneralStatsOverview       pastorders.GeneralStatsOverview        `json:"general_stats_overview,omitempty"`
-	PastPremiums               []pastorders.PastPremiumTimeframeStats `json:"past_premiums,omitempty"`
-	PremiumLifetimes           pastorders.PremiumLifetimeModes        `json:"premium_lifetimes,omitempty"`
-	PastOrderStatsAll          pastorders.StatsResponse               `json:"past_order_stats_all,omitempty"`
-	PastOrderStats             pastorders.StatsResponse               `json:"past_order_stats,omitempty"`
-	PastOrderStatsAllNetCapped pastorders.StatsResponse               `json:"past_order_stats_all_net_capped,omitempty"`
-	PastOrderStatsNetCapped    pastorders.StatsResponse               `json:"past_order_stats_net_capped,omitempty"`
-	PastProfitableOrders       []pastProfitableOrderAPI               `json:"past_profitable_orders,omitempty"`
+	GeneralStatsOverview        pastorders.GeneralStatsOverview        `json:"general_stats_overview,omitempty"`
+	PastPremiums                []pastorders.PastPremiumTimeframeStats `json:"past_premiums,omitempty"`
+	PremiumLifetimes            pastorders.PremiumLifetimeModes        `json:"premium_lifetimes,omitempty"`
+	PastOrderStatsAll           pastorders.StatsResponse               `json:"past_order_stats_all,omitempty"`
+	PastOrderStats              pastorders.StatsResponse               `json:"past_order_stats,omitempty"`
+	PastOrderStatsAllNetCapped  pastorders.StatsResponse               `json:"past_order_stats_all_net_capped,omitempty"`
+	PastOrderStatsNetCapped     pastorders.StatsResponse               `json:"past_order_stats_net_capped,omitempty"`
+	PastProfitableOrders        []pastProfitableOrderAPI               `json:"past_profitable_orders,omitempty"`
+	PastProfitableOrdersCompact []pastProfitableOrderCompactAPI        `json:"past_profitable_orders_compact,omitempty"`
 }
 
 func parseDashboardAnalyticsParams(r *http.Request) (dashboardAnalyticsParams, error) {
@@ -113,27 +114,48 @@ func (p dashboardAnalyticsParams) cacheKey() string {
 func loadGeneralStatsContextForParams(p dashboardAnalyticsParams) (generalStatsContext, error) {
 	key := p.cacheKey()
 	now := time.Now()
-	generalStatsCache.Lock()
-	if entry, ok := generalStatsCache.entries[key]; ok && now.Before(entry.expiry) {
-		ctx := entry.ctx
+	for {
+		generalStatsCache.Lock()
+		if entry, ok := generalStatsCache.entries[key]; ok && now.Before(entry.expiry) {
+			ctx := entry.ctx
+			generalStatsCache.Unlock()
+			return ctx, nil
+		}
+		if inflight, ok := generalStatsCache.inFlight[key]; ok {
+			generalStatsCache.Unlock()
+			<-inflight.done
+			if inflight.err != nil {
+				return generalStatsContext{}, inflight.err
+			}
+			return inflight.ctx, nil
+		}
+		if generalStatsCache.inFlight == nil {
+			generalStatsCache.inFlight = make(map[string]*generalStatsInFlightEntry)
+		}
+		inflight := &generalStatsInFlightEntry{done: make(chan struct{})}
+		generalStatsCache.inFlight[key] = inflight
 		generalStatsCache.Unlock()
+
+		ctx, err := loadGeneralStatsContextUncachedForParams(p)
+		inflight.ctx = ctx
+		inflight.err = err
+
+		generalStatsCache.Lock()
+		delete(generalStatsCache.inFlight, key)
+		if err == nil {
+			if generalStatsCache.entries == nil {
+				generalStatsCache.entries = make(map[string]generalStatsCacheEntry)
+			}
+			sweepGeneralStatsCache(now)
+			generalStatsCache.entries[key] = generalStatsCacheEntry{ctx: ctx, expiry: now.Add(dashboardCacheTTL)}
+		}
+		generalStatsCache.Unlock()
+		close(inflight.done)
+		if err != nil {
+			return generalStatsContext{}, err
+		}
 		return ctx, nil
 	}
-	generalStatsCache.Unlock()
-
-	ctx, err := loadGeneralStatsContextUncachedForParams(p)
-	if err != nil {
-		return generalStatsContext{}, err
-	}
-
-	generalStatsCache.Lock()
-	if generalStatsCache.entries == nil {
-		generalStatsCache.entries = make(map[string]generalStatsCacheEntry)
-	}
-	sweepGeneralStatsCache(now)
-	generalStatsCache.entries[key] = generalStatsCacheEntry{ctx: ctx, expiry: now.Add(dashboardCacheTTL)}
-	generalStatsCache.Unlock()
-	return ctx, nil
 }
 
 func loadGeneralStatsContextUncachedForParams(p dashboardAnalyticsParams) (generalStatsContext, error) {
@@ -143,10 +165,7 @@ func loadGeneralStatsContextUncachedForParams(p dashboardAnalyticsParams) (gener
 	}
 	cutoff := time.Now().Add(-time.Duration(historyHours) * time.Hour)
 
-	rows, err := db.Query(
-		rebind("SELECT * FROM offers WHERE last_seen >= ? ORDER BY last_seen DESC"),
-		cutoff,
-	)
+	rows, err := db.Query(rebind(analyticsOffersQuery), cutoff)
 	if err != nil {
 		return generalStatsContext{}, err
 	}

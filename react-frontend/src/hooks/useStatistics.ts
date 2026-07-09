@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
-import { apiPost } from '../utils/api';
+import { apiPostWithHeaders } from '../utils/api';
 import type { StatisticsResponse } from '../types';
 
 export interface StatisticsLoadParams {
@@ -16,25 +16,44 @@ interface StatisticsState {
   data: StatisticsResponse | null;
   loading: boolean;
   error: string | null;
+  cacheState: 'hit' | 'stale' | 'miss' | null;
+  builtAt: string | null;
+}
+
+interface StatisticsCacheEntry {
+  data: StatisticsResponse;
+  cacheState: 'hit' | 'stale' | 'miss' | null;
+  builtAt: string | null;
 }
 
 type StatisticsAction =
   | { type: 'LOAD_START' }
-  | { type: 'LOAD_SUCCESS'; data: StatisticsResponse }
+  | { type: 'LOAD_SUCCESS'; data: StatisticsResponse; cacheState: 'hit' | 'stale' | 'miss' | null; builtAt: string | null }
   | { type: 'LOAD_ERROR'; error: string };
 
 const initialState: StatisticsState = {
   data: null,
   loading: false,
   error: null,
+  cacheState: null,
+  builtAt: null,
 };
+
+const statisticsClientCache = new Map<string, StatisticsCacheEntry>();
 
 function reducer(state: StatisticsState, action: StatisticsAction): StatisticsState {
   switch (action.type) {
     case 'LOAD_START':
       return { ...state, loading: state.data == null, error: null };
     case 'LOAD_SUCCESS':
-      return { ...state, data: action.data, loading: false, error: null };
+      return {
+        ...state,
+        data: action.data,
+        loading: false,
+        error: null,
+        cacheState: action.cacheState,
+        builtAt: action.builtAt,
+      };
     case 'LOAD_ERROR':
       return { ...state, loading: false, error: action.error };
   }
@@ -63,6 +82,7 @@ export function useStatistics() {
 
   const load = useCallback(async (params: StatisticsLoadParams) => {
     const key = paramsKey(params);
+    const cached = statisticsClientCache.get(key);
     const inFlight = inFlightRef.current;
     if (inFlight?.key === key) {
       return inFlight.promise;
@@ -71,13 +91,38 @@ export function useStatistics() {
 
     const controller = new AbortController();
     const { signal } = controller;
-    dispatch({ type: 'LOAD_START' });
+    if (cached) {
+      dispatch({
+        type: 'LOAD_SUCCESS',
+        data: cached.data,
+        cacheState: cached.cacheState,
+        builtAt: cached.builtAt,
+      });
+    } else {
+      dispatch({ type: 'LOAD_START' });
+    }
 
     const promise = (async () => {
       try {
-        const data = await apiPost<StatisticsResponse>('/api/statistics', buildBody(params), { signal });
+        const { data, headers } = await apiPostWithHeaders<StatisticsResponse>('/api/statistics', buildBody(params), { signal });
         if (signal.aborted) return;
-        dispatch({ type: 'LOAD_SUCCESS', data });
+        const rawCacheState = headers.get('X-Stats-Cache');
+        const cacheState =
+          rawCacheState === 'hit' || rawCacheState === 'stale' || rawCacheState === 'miss'
+            ? rawCacheState
+            : null;
+        const builtAt = headers.get('X-Stats-Built-At');
+        statisticsClientCache.set(key, {
+          data,
+          cacheState,
+          builtAt,
+        });
+        dispatch({
+          type: 'LOAD_SUCCESS',
+          data,
+          cacheState,
+          builtAt,
+        });
       } catch (e: unknown) {
         if (signal.aborted) return;
         const message = e instanceof Error ? e.message : String(e);

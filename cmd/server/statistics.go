@@ -1,6 +1,8 @@
 package main
 
 import (
+	"fmt"
+	"log/slog"
 	"net/http"
 	"sync"
 	"time"
@@ -8,21 +10,40 @@ import (
 	"dexmonitor/internal/pastorders"
 )
 
-// statisticsResultCacheTTL mirrors analyticsResultCacheTTL: the past-premium
-// and lifetime aggregation is expensive and only depends on the param set
-// (filters + fee/cap config) and the 168h offer window, so a 10-minute TTL
-// trades a tiny staleness window for eliminating the per-request rebuild that
-// made /api/statistics slow enough to time out under load.
-const statisticsResultCacheTTL = 10 * time.Minute
+const (
+	statisticsResultCacheTTL       = 4 * time.Hour
+	statisticsRefreshSweepInterval = 15 * time.Minute
+	statisticsCacheRetention       = 48 * time.Hour
+	statisticsCacheMaxEntries      = 32
+)
+
+const (
+	statisticsCacheHeader   = "X-Stats-Cache"
+	statisticsBuiltAtHeader = "X-Stats-Built-At"
+)
+
+type statisticsCacheStatus string
+
+const (
+	statisticsCacheStatusHit   statisticsCacheStatus = "hit"
+	statisticsCacheStatusStale statisticsCacheStatus = "stale"
+	statisticsCacheStatusMiss  statisticsCacheStatus = "miss"
+)
 
 var statisticsResultCache struct {
 	sync.Mutex
-	entries map[string]statisticsResultCacheEntry
+	entries map[string]*statisticsResultCacheEntry
 }
 
 type statisticsResultCacheEntry struct {
-	response statisticsResponse
-	expiry   time.Time
+	params            dashboardAnalyticsParams
+	response          statisticsResponse
+	builtAt           time.Time
+	expiry            time.Time
+	lastAccessed      time.Time
+	refreshInProgress bool
+	lastError         string
+	refreshDone       chan struct{}
 }
 
 // liveStatistics holds the statistics that only make sense for currently-live
@@ -31,11 +52,11 @@ type statisticsResultCacheEntry struct {
 // computed by generalStatsContext.premiumSummary() but never surfaced, which is
 // why the old GeneralStats "Open Premiums" card always rendered "—".
 type liveStatistics struct {
-	TotalOffers         int                              `json:"total_offers"`
-	ActiveOffers        int                              `json:"active_offers"`
-	ExchangesLive       int                              `json:"exchanges_live"`
-	OffersByExchange    []pastorders.Count               `json:"offers_by_exchange"`
-	PaymentMethodCounts []pastorders.Count               `json:"payment_method_counts"`
+	TotalOffers         int                                   `json:"total_offers"`
+	ActiveOffers        int                                   `json:"active_offers"`
+	ExchangesLive       int                                   `json:"exchanges_live"`
+	OffersByExchange    []pastorders.Count                    `json:"offers_by_exchange"`
+	PaymentMethodCounts []pastorders.Count                    `json:"payment_method_counts"`
 	PremiumSummary      pastorders.GeneralStatsPremiumSummary `json:"premium_summary"`
 }
 
@@ -44,11 +65,11 @@ type liveStatistics struct {
 // the premium-weighted offer lifetime averages, plus a past-only exchange and
 // payment-method breakdown.
 type pastStatistics struct {
-	TotalOffers         int                                   `json:"total_offers"`
-	OffersByExchange    []pastorders.Count                    `json:"offers_by_exchange"`
-	PaymentMethodCounts []pastorders.Count                    `json:"payment_method_counts"`
+	TotalOffers         int                                    `json:"total_offers"`
+	OffersByExchange    []pastorders.Count                     `json:"offers_by_exchange"`
+	PaymentMethodCounts []pastorders.Count                     `json:"payment_method_counts"`
 	PastPremiums        []pastorders.PastPremiumTimeframeStats `json:"past_premiums"`
-	PremiumLifetimes    pastorders.PremiumLifetimeModes       `json:"premium_lifetimes"`
+	PremiumLifetimes    pastorders.PremiumLifetimeModes        `json:"premium_lifetimes"`
 }
 
 // sharedStatistics holds aggregates that span both live and past offers in the
@@ -69,9 +90,64 @@ type statisticsResponse struct {
 	Shared sharedStatistics `json:"shared"`
 }
 
+type statisticsBuildTimings struct {
+	cacheHit        bool
+	loadContextMs   float64
+	buildLiveMs     float64
+	buildPastMs     float64
+	buildSharedMs   float64
+	buildResponseMs float64
+}
+
+type statisticsContext struct {
+	hours                  int
+	excludedPaymentMethods []string
+	offers                 []map[string]any
+	generalOffers          []pastorders.Offer
+	now                    time.Time
+}
+
+const statisticsOffersQuery = `
+SELECT
+	id,
+	exchange,
+	direction,
+	price,
+	btc_min,
+	btc_max,
+	payment_methods,
+	first_seen,
+	last_seen,
+	is_live,
+	avg_ref_price,
+	avg_premium_pct,
+	avg_net_premium_pct,
+	avg_trade_cost_pct,
+	avg_trade_cost_btc,
+	cex_taker_fee_btc,
+	cex_withdraw_fee_btc,
+	network_fee_btc,
+	hedge_open_fee_btc,
+	hedge_close_fee_btc,
+	hedge_funding_fee_btc,
+	hedge_fee_sum_btc,
+	hedge_venue,
+	hedge_instrument,
+	hedge_transfer_minutes,
+	dex_fee_btc,
+	avg_estimated_profit_btc,
+	avg_estimated_profit_fiat,
+	avg_btc_amount,
+	best_route_cex,
+	best_route_method
+FROM offers
+WHERE last_seen >= ?
+ORDER BY last_seen DESC
+`
+
 // splitGeneralOffersByLiveness partitions ctx.generalOffers into live and past
 // slices by the IsLive flag set when the context was built.
-func splitGeneralOffersByLiveness(ctx generalStatsContext) (live, past []pastorders.Offer) {
+func splitGeneralOffersByLiveness(ctx statisticsContext) (live, past []pastorders.Offer) {
 	for _, o := range ctx.generalOffers {
 		if o.IsLive {
 			live = append(live, o)
@@ -82,28 +158,91 @@ func splitGeneralOffersByLiveness(ctx generalStatsContext) (live, past []pastord
 	return live, past
 }
 
-func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, error) {
-	ctx, err := loadGeneralStatsContextForParams(p)
+func loadStatisticsContextForParams(p dashboardAnalyticsParams) (statisticsContext, error) {
+	historyHours := p.Hours
+	if historyHours < 168 {
+		historyHours = 168
+	}
+	cutoff := time.Now().Add(-time.Duration(historyHours) * time.Hour)
+
+	rows, err := db.Query(rebind(statisticsOffersQuery), cutoff)
 	if err != nil {
-		return statisticsResponse{}, err
+		return statisticsContext{}, err
+	}
+	defer rows.Close()
+
+	offers, err := scanOffers(rows)
+	if err != nil {
+		return statisticsContext{}, err
+	}
+
+	generalOffers := make([]pastorders.Offer, 0, len(offers))
+	for _, o := range offers {
+		direction := offerString(o, "direction")
+		price := offerFloat(o, "price")
+		refPrice := offerRefPrice(o)
+		priceDiff := computeDirectionalPremiumPct(direction, price, refPrice)
+		var priceDiffPtr *float64
+		if refPrice > 0 {
+			priceDiffPtr = &priceDiff
+		}
+		generalOffers = append(generalOffers, pastorders.Offer{
+			Exchange:         offerString(o, "exchange"),
+			Direction:        direction,
+			PaymentMethods:   offerStringSlice(o, "payment_methods"),
+			PriceDiffPercent: priceDiffPtr,
+			FirstSeen:        parseDBTime(offerString(o, "first_seen")),
+			LastSeen:         parseDBTime(offerString(o, "last_seen")),
+			IsLive:           offerBool(o, "is_live"),
+		})
+	}
+
+	return statisticsContext{
+		hours:                  p.Hours,
+		excludedPaymentMethods: p.ExcludePaymentMethods,
+		offers:                 offers,
+		generalOffers:          generalOffers,
+		now:                    time.Now(),
+	}, nil
+}
+
+func writeStatisticsServerTiming(w http.ResponseWriter, timings statisticsBuildTimings) {
+	w.Header().Add("Server-Timing", fmt.Sprintf(
+		"cache;desc=\"hit=%t\", ctx;dur=%.1f, live;dur=%.1f, past;dur=%.1f, shared;dur=%.1f, total;dur=%.1f",
+		timings.cacheHit,
+		timings.loadContextMs,
+		timings.buildLiveMs,
+		timings.buildPastMs,
+		timings.buildSharedMs,
+		timings.buildResponseMs,
+	))
+}
+
+func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, statisticsBuildTimings, error) {
+	timings := statisticsBuildTimings{}
+	start := time.Now()
+	ctxStart := time.Now()
+	ctx, err := loadStatisticsContextForParams(p)
+	timings.loadContextMs = float64(time.Since(ctxStart).Milliseconds())
+	if err != nil {
+		return statisticsResponse{}, timings, err
 	}
 
 	liveOffers, pastOffers := splitGeneralOffersByLiveness(ctx)
 
 	// Live dimension: overview (active/live counts + exchange distribution) and
 	// the previously-unused premium summary, both scoped to currently-live offers.
+	liveStart := time.Now()
 	liveOverview := pastorders.BuildGeneralStatsOverview(liveOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
 	livePremiums := pastorders.BuildGeneralStatsPremiumSummary(liveOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
+	timings.buildLiveMs = float64(time.Since(liveStart).Milliseconds())
 
 	// Past dimension: per-timeframe past premiums and premium-weighted lifetimes.
-	// buildPastPremiumAndLifetimeStats already skips is_live rows internally, but
-	// it iterates the full 168h offer set so it can bucket by last_seen; pass the
-	// whole context offer slice. The lifecycle aggregate is needed for net/capped
-	// premium math.
-	lifecycleAgg := fetchPastOfferLifecycleAggregates(ctx.closedOfferIDs)
-	pastPremiums, premiumLifetimes := buildPastPremiumAndLifetimeStats(
+	// This summary endpoint intentionally uses only persisted per-offer averages
+	// from offers and avoids order_lifecycle aggregation.
+	pastStart := time.Now()
+	pastPremiums, premiumLifetimes := buildPastPremiumAndLifetimeStatsFromPersistedOffers(
 		ctx.offers,
-		lifecycleAgg,
 		ctx.now,
 		ctx.excludedPaymentMethods,
 		p.MaxFiatLimitEUR,
@@ -111,6 +250,7 @@ func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, er
 		p.ExcludeCEXes,
 		p.FeeTier,
 	)
+	timings.buildPastMs = float64(time.Since(pastStart).Milliseconds())
 
 	// Past-only exchange + payment method breakdown. BuildGeneralStatsOverview's
 	// active/exchangesLive fields are meaningless on a closed-only set, so only
@@ -119,9 +259,11 @@ func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, er
 	pastOverview := pastorders.BuildGeneralStatsOverview(pastOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
 
 	// Shared dimension: the full-window overview (live + past combined).
-	sharedOverview := ctx.overview()
+	sharedStart := time.Now()
+	sharedOverview := pastorders.BuildGeneralStatsOverview(ctx.generalOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
+	timings.buildSharedMs = float64(time.Since(sharedStart).Milliseconds())
 
-	return statisticsResponse{
+	resp := statisticsResponse{
 		Live: liveStatistics{
 			TotalOffers:         liveOverview.TotalOffers,
 			ActiveOffers:        liveOverview.ActiveOffers,
@@ -145,16 +287,173 @@ func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, er
 			OffersByExchange:    sharedOverview.OffersByExchange,
 			PaymentMethodCounts: sharedOverview.PaymentMethodCounts,
 		},
-	}, nil
+	}
+	timings.buildResponseMs = float64(time.Since(start).Milliseconds())
+	return resp, timings, nil
+}
+
+func ensureStatisticsCacheEntry(cacheKey string, params dashboardAnalyticsParams, now time.Time) *statisticsResultCacheEntry {
+	if statisticsResultCache.entries == nil {
+		statisticsResultCache.entries = make(map[string]*statisticsResultCacheEntry)
+	}
+	entry := statisticsResultCache.entries[cacheKey]
+	if entry == nil {
+		entry = &statisticsResultCacheEntry{}
+		statisticsResultCache.entries[cacheKey] = entry
+	}
+	entry.params = params
+	entry.lastAccessed = now
+	return entry
+}
+
+func statisticsCacheEntryUsable(entry *statisticsResultCacheEntry) bool {
+	return entry != nil && !entry.builtAt.IsZero()
+}
+
+func beginStatisticsRefreshLocked(entry *statisticsResultCacheEntry) chan struct{} {
+	if entry.refreshInProgress {
+		return entry.refreshDone
+	}
+	entry.refreshInProgress = true
+	entry.refreshDone = make(chan struct{})
+	return entry.refreshDone
+}
+
+func finishStatisticsRefresh(cacheKey string, params dashboardAnalyticsParams, resp statisticsResponse, err error) {
+	now := time.Now()
+	statisticsResultCache.Lock()
+	entry := ensureStatisticsCacheEntry(cacheKey, params, now)
+	done := entry.refreshDone
+	entry.refreshInProgress = false
+	entry.refreshDone = nil
+	if err != nil {
+		entry.lastError = err.Error()
+	} else {
+		entry.response = resp
+		entry.builtAt = now
+		entry.expiry = now.Add(statisticsResultCacheTTL)
+		entry.lastError = ""
+	}
+	sweepStatisticsResultCacheLocked(now)
+	statisticsResultCache.Unlock()
+
+	if done != nil {
+		close(done)
+	}
+}
+
+func triggerStatisticsRefresh(cacheKey string, params dashboardAnalyticsParams) {
+	go func() {
+		start := time.Now()
+		resp, timings, err := buildStatisticsResponse(params)
+		finishStatisticsRefresh(cacheKey, params, resp, err)
+		if err != nil {
+			slog.Warn("statistics refresh failed", "cache_key", cacheKey, "duration_ms", time.Since(start).Milliseconds(), "err", err)
+			return
+		}
+		slog.Debug(
+			"statistics refresh completed",
+			"cache_key", cacheKey,
+			"duration_ms", time.Since(start).Milliseconds(),
+			"ctx_ms", timings.loadContextMs,
+			"live_ms", timings.buildLiveMs,
+			"past_ms", timings.buildPastMs,
+			"shared_ms", timings.buildSharedMs,
+		)
+	}()
+}
+
+func sweepStatisticsResultCacheLocked(now time.Time) {
+	for key, entry := range statisticsResultCache.entries {
+		if entry.refreshInProgress {
+			continue
+		}
+		if !entry.lastAccessed.IsZero() && now.Sub(entry.lastAccessed) > statisticsCacheRetention {
+			delete(statisticsResultCache.entries, key)
+		}
+	}
+	if len(statisticsResultCache.entries) <= statisticsCacheMaxEntries {
+		return
+	}
+	type cacheAge struct {
+		key          string
+		lastAccessed time.Time
+	}
+	ages := make([]cacheAge, 0, len(statisticsResultCache.entries))
+	for key, entry := range statisticsResultCache.entries {
+		if entry.refreshInProgress {
+			continue
+		}
+		ages = append(ages, cacheAge{key: key, lastAccessed: entry.lastAccessed})
+	}
+	for len(statisticsResultCache.entries) > statisticsCacheMaxEntries && len(ages) > 0 {
+		oldestIdx := 0
+		for i := 1; i < len(ages); i++ {
+			if ages[i].lastAccessed.Before(ages[oldestIdx].lastAccessed) {
+				oldestIdx = i
+			}
+		}
+		delete(statisticsResultCache.entries, ages[oldestIdx].key)
+		ages = append(ages[:oldestIdx], ages[oldestIdx+1:]...)
+	}
+}
+
+func writeStatisticsCacheHeaders(w http.ResponseWriter, status statisticsCacheStatus, builtAt time.Time) {
+	w.Header().Set(statisticsCacheHeader, string(status))
+	if !builtAt.IsZero() {
+		w.Header().Set(statisticsBuiltAtHeader, builtAt.UTC().Format(time.RFC3339))
+	}
+}
+
+func runStatisticsRefreshLoop(stop <-chan struct{}) {
+	ticker := time.NewTicker(statisticsRefreshSweepInterval)
+	defer ticker.Stop()
+
+	refreshExpired := func(now time.Time) {
+		type refreshTask struct {
+			cacheKey string
+			params   dashboardAnalyticsParams
+		}
+		tasks := make([]refreshTask, 0)
+		statisticsResultCache.Lock()
+		sweepStatisticsResultCacheLocked(now)
+		for cacheKey, entry := range statisticsResultCache.entries {
+			if entry.refreshInProgress {
+				continue
+			}
+			if entry.lastAccessed.IsZero() || now.Sub(entry.lastAccessed) > statisticsCacheRetention {
+				continue
+			}
+			if !entry.expiry.IsZero() && now.Before(entry.expiry) {
+				continue
+			}
+			beginStatisticsRefreshLocked(entry)
+			tasks = append(tasks, refreshTask{cacheKey: cacheKey, params: entry.params})
+		}
+		statisticsResultCache.Unlock()
+
+		for _, task := range tasks {
+			triggerStatisticsRefresh(task.cacheKey, task.params)
+		}
+	}
+
+	for {
+		select {
+		case <-stop:
+			return
+		case now := <-ticker.C:
+			refreshExpired(now)
+		}
+	}
 }
 
 // handleStatistics serves POST /api/statistics: a single-call breakdown of the
-// offer window into live, past, and shared statistics. It reuses the cached
-// generalStatsContext (30s TTL) and the same body schema as
-// /api/dashboard/analytics. The full statisticsResponse is additionally cached
-// per param set for statisticsResultCacheTTL, since buildStatisticsResponse
-// rebuilds the past-premium/lifetime aggregation from scratch on every call —
-// the dominant cost that made the Statistics page slow.
+// offer window into live, past, and shared statistics. This endpoint is a
+// persisted-summary surface: it builds from selected offers columns only, keeps
+// the same body schema as /api/dashboard/analytics, and avoids lifecycle
+// replay. Statistics are served stale-while-revalidate: the first request for a
+// key builds synchronously, later expired snapshots are returned immediately
+// while a background refresh rebuilds them.
 func handleStatistics(w http.ResponseWriter, r *http.Request) {
 	p, err := parseDashboardAnalyticsParams(r)
 	if err != nil {
@@ -163,36 +462,64 @@ func handleStatistics(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cacheKey := p.cacheKey()
-	now := time.Now()
-	statisticsResultCache.Lock()
-	if entry, ok := statisticsResultCache.entries[cacheKey]; ok && now.Before(entry.expiry) {
-		resp := entry.response
-		statisticsResultCache.Unlock()
-		writeJSON(w, resp)
-		return
-	}
-	statisticsResultCache.Unlock()
+	for {
+		now := time.Now()
+		statisticsResultCache.Lock()
+		entry := ensureStatisticsCacheEntry(cacheKey, p, now)
+		sweepStatisticsResultCacheLocked(now)
 
-	resp, err := buildStatisticsResponse(p)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
+		if statisticsCacheEntryUsable(entry) && now.Before(entry.expiry) {
+			resp := entry.response
+			builtAt := entry.builtAt
+			statisticsResultCache.Unlock()
+			writeStatisticsCacheHeaders(w, statisticsCacheStatusHit, builtAt)
+			writeStatisticsServerTiming(w, statisticsBuildTimings{cacheHit: true})
+			writeJSON(w, resp)
+			return
+		}
+		if statisticsCacheEntryUsable(entry) {
+			resp := entry.response
+			builtAt := entry.builtAt
+			startRefresh := !entry.refreshInProgress
+			if startRefresh {
+				beginStatisticsRefreshLocked(entry)
+			}
+			statisticsResultCache.Unlock()
+			if startRefresh {
+				triggerStatisticsRefresh(cacheKey, p)
+			}
+			writeStatisticsCacheHeaders(w, statisticsCacheStatusStale, builtAt)
+			writeStatisticsServerTiming(w, statisticsBuildTimings{cacheHit: true})
+			writeJSON(w, resp)
+			return
+		}
+		if entry.refreshInProgress {
+			done := entry.refreshDone
+			statisticsResultCache.Unlock()
+			if done != nil {
+				<-done
+				continue
+			}
+		} else {
+			beginStatisticsRefreshLocked(entry)
+			statisticsResultCache.Unlock()
 
-	statisticsResultCache.Lock()
-	if statisticsResultCache.entries == nil {
-		statisticsResultCache.entries = make(map[string]statisticsResultCacheEntry)
-	}
-	for k, e := range statisticsResultCache.entries {
-		if !now.Before(e.expiry) {
-			delete(statisticsResultCache.entries, k)
+			resp, timings, err := buildStatisticsResponse(p)
+			finishStatisticsRefresh(cacheKey, p, resp, err)
+			if err != nil {
+				writeError(w, err)
+				return
+			}
+			statisticsResultCache.Lock()
+			builtAt := time.Time{}
+			if refreshed := statisticsResultCache.entries[cacheKey]; refreshed != nil {
+				builtAt = refreshed.builtAt
+			}
+			statisticsResultCache.Unlock()
+			writeStatisticsCacheHeaders(w, statisticsCacheStatusMiss, builtAt)
+			writeStatisticsServerTiming(w, timings)
+			writeJSON(w, resp)
+			return
 		}
 	}
-	statisticsResultCache.entries[cacheKey] = statisticsResultCacheEntry{
-		response: resp,
-		expiry:   now.Add(statisticsResultCacheTTL),
-	}
-	statisticsResultCache.Unlock()
-
-	writeJSON(w, resp)
 }
