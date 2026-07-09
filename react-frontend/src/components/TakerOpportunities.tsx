@@ -655,16 +655,17 @@ function DualRangeFilter({
 }
 
 const PROFITABLE_TRADES_GRID_COLS =
-  'grid w-full min-w-0 grid-cols-[minmax(0,0.55fr)_minmax(0,0.28fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.65fr)_minmax(0,0.55fr)_minmax(0,0.95fr)_minmax(0,1.15fr)_1.25rem] items-center gap-2 sm:gap-3';
+  'grid min-w-[40rem] grid-cols-[minmax(7rem,0.85fr)_minmax(2.75rem,0.3fr)_minmax(8rem,1fr)_minmax(5.5rem,0.75fr)_minmax(6.75rem,0.95fr)_1.25rem] items-center gap-2 sm:min-w-[48rem] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(2.75rem,0.3fr)_minmax(8rem,1fr)_minmax(5.25rem,0.6fr)_minmax(5.75rem,0.75fr)_minmax(6.5rem,0.85fr)_1.25rem] lg:min-w-0 lg:w-full lg:grid-cols-[minmax(0,0.55fr)_minmax(0,0.28fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.65fr)_minmax(0,0.55fr)_minmax(0,0.95fr)_minmax(0,1.15fr)_1.25rem] sm:gap-3';
 
 interface TradeRowMetricProps {
   value: string;
   valueClassName?: string;
+  className?: string;
 }
 
-function TradeRowMetric({ value, valueClassName = 'text-text' }: TradeRowMetricProps) {
+function TradeRowMetric({ value, valueClassName = 'text-text', className = '' }: TradeRowMetricProps) {
   return (
-    <span className={`block min-w-0 truncate text-right mono-nums tabular-nums ${valueClassName}`} title={value}>
+    <span className={`block min-w-0 truncate text-right mono-nums tabular-nums ${valueClassName} ${className}`} title={value}>
       {value}
     </span>
   );
@@ -723,14 +724,37 @@ function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUni
       <SortHeaderButton label="Offer" column="exchange" sort={sort} onSort={onSort} align="left" />
       <SortHeaderButton label="Dir" column="direction" sort={sort} onSort={onSort} align="left" />
       <SortHeaderButton label="Payment method" column="payment_method" sort={sort} onSort={onSort} align="left" />
-      <SortHeaderButton label="First seen" column="first_seen" sort={sort} onSort={onSort} />
-      <SortHeaderButton label="Last seen" column="last_seen" sort={sort} onSort={onSort} />
-      <SortHeaderButton label="Duration" column="duration" sort={sort} onSort={onSort} />
-      <span className={`${th} flex items-center justify-end gap-1`}>
+      <span className="hidden lg:flex">
+        <SortHeaderButton label="First seen" column="first_seen" sort={sort} onSort={onSort} align="right" />
+      </span>
+      <span className="hidden lg:flex">
+        <SortHeaderButton label="Last seen" column="last_seen" sort={sort} onSort={onSort} align="right" />
+      </span>
+      <span className="hidden sm:flex lg:hidden">
+        <SortHeaderButton label="Duration" column="duration" sort={sort} onSort={onSort} />
+      </span>
+      <span className="hidden lg:flex">
+        <SortHeaderButton label="Duration" column="duration" sort={sort} onSort={onSort} />
+      </span>
+      <span className={`${th} hidden items-center justify-end gap-1 sm:flex lg:hidden`}>
         <SortHeaderButton label="Size" column="size" sort={sort} onSort={onSort} />
         <UnitToggle fiat={fiat} unit={sizeUnit} onChange={onSizeUnitChange} />
       </span>
-      <span className={`${th} flex items-center justify-end gap-1`}>
+      <span className={`${th} hidden items-center justify-end gap-1 sm:flex lg:hidden`}>
+        <SortHeaderButton label="Net profit" column="net_profit" sort={sort} onSort={onSort} />
+        <UnitToggle fiat={fiat} unit={netProfitUnit} onChange={onNetProfitUnitChange} />
+      </span>
+      <span className={`${th} flex items-center justify-end gap-1 sm:hidden`}>
+        <SortHeaderButton label="Size" column="size" sort={sort} onSort={onSort} />
+      </span>
+      <span className={`${th} flex items-center justify-end gap-1 sm:hidden`}>
+        <SortHeaderButton label="Profit" column="net_profit" sort={sort} onSort={onSort} />
+      </span>
+      <span className={`${th} hidden items-center justify-end gap-1 lg:flex`}>
+        <SortHeaderButton label="Size" column="size" sort={sort} onSort={onSort} />
+        <UnitToggle fiat={fiat} unit={sizeUnit} onChange={onSizeUnitChange} />
+      </span>
+      <span className={`${th} hidden items-center justify-end gap-1 lg:flex`}>
         <SortHeaderButton label="Net profit" column="net_profit" sort={sort} onSort={onSort} />
         <UnitToggle fiat={fiat} unit={netProfitUnit} onChange={onNetProfitUnitChange} />
       </span>
@@ -1361,7 +1385,7 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
                 onSort={handleSort}
               />
             )}
-            <div ref={tradesListRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden">
+            <div ref={tradesListRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-auto">
               {ordersLoading && orders.length === 0 ? (
                 <div className="relative min-h-64">
                   <LoadingSpinner size={112} label="Loading profitable trades" />
@@ -1370,7 +1394,7 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
                 <div className="px-3 py-4 text-[0.75rem] text-muted">No profitable closed trades in this window for the selected net mode.</div>
               ) : (
                 <div
-                  className="relative w-full"
+                  className="relative min-w-[40rem] sm:min-w-[48rem] lg:min-w-0 lg:w-full"
                   style={{ height: `${rowVirtualizer.getTotalSize()}px` }}
                 >
                 {rowVirtualizer.getVirtualItems().map(virtualRow => {
@@ -1417,9 +1441,9 @@ export function TakerOpportunities({ stats, statsNetCapped, orders, statsLoading
                           <span className="min-w-0 truncate font-medium text-text" title={paymentMethod}>
                             {paymentMethod}
                           </span>
-                          <TradeRowMetric value={firstSeenLabel} />
-                          <TradeRowMetric value={seenLabel} />
-                          <TradeRowMetric value={order.status.duration?.display || '—'} />
+                          <TradeRowMetric value={firstSeenLabel} className="hidden lg:block" />
+                          <TradeRowMetric value={seenLabel} className="hidden lg:block" />
+                          <TradeRowMetric value={order.status.duration?.display || '—'} className="hidden sm:block" />
                           <TradeRowMetric
                             value={cappedDataPending ? 'Calculating…' : sizeUnit === 'btc' ? fmtBTC(activeScenario.trade_size_btc) : fmtFiat(activeScenario.trade_size_fiat, fiat)}
                           />
