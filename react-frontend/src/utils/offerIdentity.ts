@@ -34,6 +34,6 @@ export function buildOfferKeys(offers: Offer[]): string[] {
  * every snapshot cycle for live offers) so a user's checkbox choice
  * survives polling instead of resetting every ~15s.
  */
-export function buildStableOfferKey(offer: Offer): string {
+export function buildStableOfferKey(offer: Pick<Offer, 'exchange' | 'offer_id' | 'id' | 'direction'>): string {
   return [offer.exchange, offer.offer_id ?? `id:${offer.id}`, offer.direction].join('|');
 }

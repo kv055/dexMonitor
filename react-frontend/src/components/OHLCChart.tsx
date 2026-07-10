@@ -10,7 +10,7 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import type { LifecyclePoint, OHLCCandle, OHLCData } from '../types';
+import type { LifecyclePoint, Offer, OHLCCandle, OHLCData } from '../types';
 import { useFilters } from '../hooks/useFilters';
 import { usePreferences } from '../hooks/usePreferences';
 import { getFirstSeen, getLastSeen, getOfferPrice, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
@@ -25,6 +25,12 @@ interface Props {
   loadedHours: number;
   onNeedMoreData: (newHours: number, intervalMin?: number) => void;
   allowExtend?: boolean;
+  /**
+   * Offers plotted in addition to the FiltersContext set — e.g. the Insights
+   * tab's past profitable orders. Deduped against the context offers by id
+   * and subject to the same premium and chart-visibility guards.
+   */
+  extraOffers?: Offer[];
 }
 
 type PendingVisibleRange = {
@@ -144,7 +150,7 @@ function requiredHoursForCandleSize(candleMin: number): number {
  * per update — the previous design — reset the user's pan/zoom continuously
  * and burned CPU on full canvas teardowns.
  */
-function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true }: Props) {
+function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true, extraOffers }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -170,12 +176,14 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
   // offers left ticked in the table's chart-visibility checkboxes. The
   // "Incl. non premium offers" filter may let non-premium offers into the
   // table, but they must never reach the overlay.
-  const premiumOffers = useMemo(
-    () => filteredOffers.filter((o) =>
-      (getPremiumMetricValue(o, premiumMode) ?? 0) > 0 && !hiddenChartOfferKeys.has(buildStableOfferKey(o))
-    ),
-    [filteredOffers, premiumMode, hiddenChartOfferKeys]
-  );
+  const premiumOffers = useMemo(() => {
+    const isPlottable = (o: Offer) =>
+      (getPremiumMetricValue(o, premiumMode) ?? 0) > 0 && !hiddenChartOfferKeys.has(buildStableOfferKey(o));
+    const base = filteredOffers.filter(isPlottable);
+    if (!extraOffers || extraOffers.length === 0) return base;
+    const seenIds = new Set(base.map((o) => o.id));
+    return [...base, ...extraOffers.filter((o) => !seenIds.has(o.id) && isPlottable(o))];
+  }, [filteredOffers, premiumMode, hiddenChartOfferKeys, extraOffers]);
   const { timezone } = useTimezone();
   const [lifecycleCache, setLifecycleCache] = useState<Record<number, LifecycleCacheEntry>>({});
   const lifecycleLoadingRef = useRef<Set<number>>(new Set());
@@ -258,8 +266,6 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
   const offerKeys = useMemo(() => buildOfferKeys(premiumOffers), [premiumOffers]);
 
   useEffect(() => {
-    let cancelled = false;
-
     async function loadMissingLifecycles() {
       const now = Date.now();
       const needed = premiumOffers.filter((offer) => {
@@ -281,7 +287,12 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
         }))
       );
 
-      if (cancelled) return;
+      // Release the in-flight guard and commit results even if the effect was
+      // re-run mid-fetch (offer identities change often, e.g. while the
+      // Insights analytics phases stream in): the fetched points are valid
+      // regardless, and bailing out before this cleanup used to leave the ids
+      // marked as loading forever — permanently stuck on fallback markers.
+      toFetch.forEach((offer) => lifecycleLoadingRef.current.delete(offer.id));
 
       setLifecycleCache((prev) => {
         const fulfilled = results.filter(
@@ -298,15 +309,9 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true 
         }
         return next;
       });
-
-      toFetch.forEach((offer) => lifecycleLoadingRef.current.delete(offer.id));
     }
 
     void loadMissingLifecycles();
-
-    return () => {
-      cancelled = true;
-    };
   }, [premiumOffers, lifecycleCache]);
 
   // Keep chart sized to container

@@ -167,14 +167,15 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           ordersLoading={analyticsOrdersLoading}
           cappedLoading={analyticsCappedLoading}
           maxFiatLimit={maxFiatLimit}
-          chart={
+          chart={extraOffers => (
             <OHLCChart
               data={ohlcData}
               loadedHours={Number(filters.hours)}
               allowExtend={allowOhlcExtend}
               onNeedMoreData={(hours, intervalMin) => extendOhlc(hours, filters.cex, intervalMin)}
+              extraOffers={extraOffers}
             />
-          }
+          )}
         />
       </div>
     </div>

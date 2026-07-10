@@ -2,7 +2,9 @@ import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, use
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCompact, TakerOpportunityMode } from '../types';
 import { usePreferences } from '../hooks/usePreferences';
+import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
+import { buildStableOfferKey } from '../utils/offerIdentity';
 import { durationMinutes, formatDateTimeLabel, parseUtcTimestamp } from '../utils/formatters';
 import {
   getBtcMax,
@@ -38,7 +40,8 @@ interface Props {
   ordersLoading: boolean;
   cappedLoading: boolean;
   maxFiatLimit: number | null;
-  chart?: ReactNode;
+  /** Renders the OHLC chart panel; receives the filtered orders as chart overlays. */
+  chart?: (extraOffers: Offer[]) => ReactNode;
 }
 
 type DisplayOrder = PastProfitableOrder | PastProfitableOrderCompact;
@@ -94,6 +97,18 @@ function isProfitableInMode(order: PastProfitableOrder, mode: TakerOpportunityMo
 
 function isDetailedOrder(order: DisplayOrder): order is PastProfitableOrder {
   return 'analysis' in order && 'offer' in order;
+}
+
+// Chart-visibility identity for a trades-list order. Uses the same key builder
+// as the OHLC chart applies to the converted offer, so ticking a row's checkbox
+// toggles exactly the overlay that pastProfitableOrderAsOffer produces.
+function orderStableChartKey(order: DisplayOrder): string {
+  return buildStableOfferKey({
+    id: order.id,
+    exchange: order.exchange,
+    direction: order.direction,
+    offer_id: order.offer_id ?? null,
+  });
 }
 
 function orderDurationMinutes(order: DisplayOrder): number {
@@ -690,7 +705,7 @@ function DualRangeFilter({
 }
 
 const PROFITABLE_TRADES_GRID_COLS =
-  'grid min-w-[40rem] grid-cols-[minmax(7rem,0.85fr)_minmax(2.75rem,0.3fr)_minmax(8rem,1fr)_minmax(5.5rem,0.75fr)_minmax(6.75rem,0.95fr)_1.25rem] items-center gap-2 sm:min-w-[48rem] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(2.75rem,0.3fr)_minmax(8rem,1fr)_minmax(5.25rem,0.6fr)_minmax(5.75rem,0.75fr)_minmax(6.5rem,0.85fr)_1.25rem] lg:min-w-0 lg:w-full lg:grid-cols-[minmax(0,0.55fr)_minmax(0,0.28fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.65fr)_minmax(0,0.55fr)_minmax(0,0.95fr)_minmax(0,1.15fr)_1.25rem] sm:gap-3';
+  'grid min-w-[40rem] grid-cols-[minmax(7rem,0.85fr)_minmax(2.75rem,0.3fr)_minmax(8rem,1fr)_minmax(5.5rem,0.75fr)_minmax(6.75rem,0.95fr)_1.25rem_1.25rem] items-center gap-2 sm:min-w-[48rem] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(2.75rem,0.3fr)_minmax(8rem,1fr)_minmax(5.25rem,0.6fr)_minmax(5.75rem,0.75fr)_minmax(6.5rem,0.85fr)_1.25rem_1.25rem] lg:min-w-0 lg:w-full lg:grid-cols-[minmax(0,0.55fr)_minmax(0,0.28fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.65fr)_minmax(0,0.55fr)_minmax(0,0.95fr)_minmax(0,1.15fr)_1.25rem_1.25rem] sm:gap-3';
 
 interface TradeRowMetricProps {
   value: string;
@@ -744,7 +759,7 @@ function SortHeaderButton({ label, column, sort, onSort, align = 'right' }: {
   );
 }
 
-function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUnit, onNetProfitUnitChange, sort, onSort }: {
+function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUnit, onNetProfitUnitChange, sort, onSort, showChartColumn, allChartVisible, someChartVisible, onToggleAllChartVisible }: {
   fiat: string;
   sizeUnit: SizeUnit;
   onSizeUnitChange: (unit: SizeUnit) => void;
@@ -752,6 +767,10 @@ function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUni
   onNetProfitUnitChange: (unit: NetProfitUnit) => void;
   sort: SortState;
   onSort: (column: SortColumn) => void;
+  showChartColumn: boolean;
+  allChartVisible: boolean;
+  someChartVisible: boolean;
+  onToggleAllChartVisible: (visible: boolean) => void;
 }) {
   const th = 'truncate text-[0.65rem] font-semibold uppercase tracking-wide text-muted';
   return (
@@ -792,6 +811,17 @@ function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUni
       <span className={`${th} hidden items-center justify-end gap-1 lg:flex`}>
         <SortHeaderButton label="Net profit" column="net_profit" sort={sort} onSort={onSort} />
         <UnitToggle fiat={fiat} unit={netProfitUnit} onChange={onNetProfitUnitChange} />
+      </span>
+      <span className="flex shrink-0 items-center justify-center">
+        {showChartColumn && (
+          <input
+            type="checkbox"
+            checked={allChartVisible}
+            ref={el => { if (el) el.indeterminate = someChartVisible; }}
+            onChange={e => onToggleAllChartVisible(e.target.checked)}
+            title="Show/hide all orders on the OHLC chart"
+          />
+        )}
       </span>
       <span className="shrink-0" aria-hidden />
     </div>
@@ -960,6 +990,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   const ordersPending = deferredOrders !== displayedOrders;
   const { timezone } = useTimezone();
   const { excludedMethods } = usePreferences();
+  const { hiddenChartOfferKeys, toggleChartOfferKey, setChartOfferKeysVisible } = useFilters();
   const [initialFilters] = useState(readPersistedInsightsFilters);
   const initialCapAvailable = maxFiatLimit != null && maxFiatLimit > 0;
   const initialCappedModePending = initialFilters.mode === 'net_capped' && cappedLoading && detailedOrders.length === 0;
@@ -1222,11 +1253,41 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
     [filteredOrders, sort, mode, netProfitUnit, sizeUnit],
   );
 
+  // The filtered orders double as chart overlays. Only detailed orders carry
+  // the pricing/analysis payload the chart needs; compact rows join once the
+  // detailed pass lands. Per-offer visibility is applied by the chart itself
+  // via hiddenChartOfferKeys.
+  const plottedChartOffers = useMemo(() => {
+    const offers: Offer[] = [];
+    for (const order of filteredOrders) {
+      const detailed = isDetailedOrder(order) ? order : detailedOrdersByID.get(order.id);
+      if (detailed) offers.push(pastProfitableOrderAsOffer(detailed));
+    }
+    return offers;
+  }, [filteredOrders, detailedOrdersByID]);
+
+  const sortedStableKeys = useMemo(() => sortedOrders.map(orderStableChartKey), [sortedOrders]);
+  const chartVisibleCount = useMemo(
+    () => sortedStableKeys.filter(k => !hiddenChartOfferKeys.has(k)).length,
+    [sortedStableKeys, hiddenChartOfferKeys],
+  );
+  const allChartVisible = sortedOrders.length > 0 && chartVisibleCount === sortedOrders.length;
+  const someChartVisible = chartVisibleCount > 0 && chartVisibleCount < sortedOrders.length;
+
   const handleSort = useCallback((column: SortColumn) => {
     setSort(prev => prev.column === column
       ? { column, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
       : { column, dir: DEFAULT_SORT_DIR[column] });
   }, []);
+
+  const toggleExpanded = useCallback((order: DisplayOrder, isOpen: boolean, detailedOrder: PastProfitableOrder | undefined) => {
+    if (isOpen) {
+      setExpandedId(null);
+      return;
+    }
+    setExpandedId(order.id);
+    setExpandedShowCapped(mode === 'net_capped' && !!detailedOrder?.analysis.capped_volume);
+  }, [mode]);
 
   // TanStack Virtual returns refs that React Compiler cannot memoize; usage here is localized.
   // eslint-disable-next-line react-hooks/incompatible-library -- scroll virtualization only
@@ -1478,7 +1539,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                 >
                   ▴
                 </button>
-                {chart}
+                {chart(plottedChartOffers)}
               </div>
             </div>
           ))}
@@ -1494,6 +1555,10 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                 onNetProfitUnitChange={setNetProfitUnit}
                 sort={sort}
                 onSort={handleSort}
+                showChartColumn={chart != null}
+                allChartVisible={allChartVisible}
+                someChartVisible={someChartVisible}
+                onToggleAllChartVisible={visible => setChartOfferKeysVisible(sortedStableKeys, visible)}
               />
             )}
             <div ref={tradesListRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-auto">
@@ -1510,6 +1575,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                 >
                 {rowVirtualizer.getVirtualItems().map(virtualRow => {
                   const order = sortedOrders[virtualRow.index];
+                  const stableKey = sortedStableKeys[virtualRow.index];
                   const isOpen = expandedId === order.id;
                   const activeScenario = orderScenarioSummary(order, mode);
                   const detailedOrder = isDetailedOrder(order) ? order : detailedOrdersByID.get(order.id);
@@ -1532,17 +1598,17 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                         transform: `translateY(${virtualRow.start}px)`,
                       }}
                     >
-                      <button
-                        type="button"
-                        onClick={() => {
-                          if (isOpen) {
-                            setExpandedId(null);
-                            return;
+                      <div
+                        role="button"
+                        tabIndex={0}
+                        onClick={() => toggleExpanded(order, isOpen, detailedOrder)}
+                        onKeyDown={event => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault();
+                            toggleExpanded(order, isOpen, detailedOrder);
                           }
-                          setExpandedId(order.id);
-                          setExpandedShowCapped(mode === 'net_capped' && !!detailedOrder?.analysis.capped_volume);
                         }}
-                        className={`w-full min-w-0 bg-transparent border-none px-3 py-2 text-left transition-colors ${isOpen ? 'bg-bg/40' : 'hover:bg-white/5'}`}
+                        className={`w-full min-w-0 cursor-pointer px-3 py-2 text-left transition-colors ${isOpen ? 'bg-bg/40' : 'hover:bg-white/5'}`}
                       >
                         <div className={`${PROFITABLE_TRADES_GRID_COLS} text-[0.72rem]`}>
                           <div className="min-w-0 overflow-hidden">
@@ -1564,9 +1630,19 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                             value={cappedDataPending ? 'Calculating…' : netProfitUnit === 'btc' ? fmtBTC(activeScenario.profitBTC) : fmtFiat(activeScenario.profitFiat, fiat)}
                             valueClassName="text-green"
                           />
+                          <span className="flex shrink-0 items-center justify-center" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
+                            {chart != null && (
+                              <input
+                                type="checkbox"
+                                checked={!hiddenChartOfferKeys.has(stableKey)}
+                                onChange={() => toggleChartOfferKey(stableKey)}
+                                title="Show on OHLC chart"
+                              />
+                            )}
+                          </span>
                           <span className="shrink-0 text-right text-muted">{isOpen ? '▲' : detailReady ? '▼' : '…'}</span>
                         </div>
-                      </button>
+                      </div>
 
                       {isOpen && (
                         <div className="border-t border-border bg-bg/20 px-3 py-3">
