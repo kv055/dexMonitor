@@ -38,6 +38,7 @@ interface Props {
   ordersLoading: boolean;
   cappedLoading: boolean;
   maxFiatLimit: number | null;
+  chart?: ReactNode;
 }
 
 type DisplayOrder = PastProfitableOrder | PastProfitableOrderCompact;
@@ -932,6 +933,7 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
             <SizeToggle
               mode={showCappedEffective ? 'capped' : 'full'}
               onModeChange={mode => onToggleCapped(mode === 'capped')}
+              fullBtc={getDisplayCostBreakdown(offer, 'full')?.btc_amount ?? getBtcMax(offer)}
               cappedBtc={getCappedTradeSizeBtc(offer)}
               refPrice={refPrice}
             />
@@ -952,18 +954,24 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
   );
 }
 
-export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailedOrders, ordersLoading, cappedLoading, maxFiatLimit }: Props) {
+export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailedOrders, ordersLoading, cappedLoading, maxFiatLimit, chart }: Props) {
   const displayedOrders = detailedOrders.length > 0 ? detailedOrders : fastOrders;
   const deferredOrders = useDeferredValue(displayedOrders);
   const ordersPending = deferredOrders !== displayedOrders;
   const { timezone } = useTimezone();
   const { excludedMethods } = usePreferences();
   const [initialFilters] = useState(readPersistedInsightsFilters);
+  const initialCapAvailable = maxFiatLimit != null && maxFiatLimit > 0;
+  const initialCappedModePending = initialFilters.mode === 'net_capped' && cappedLoading && detailedOrders.length === 0;
   const [referenceNowMs] = useState(() => Date.now());
   const [selectedTimeframe, setSelectedTimeframe] = useState(initialFilters.selectedTimeframe);
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>(initialFilters.directionFilter);
   const [disabledExchanges, setDisabledExchanges] = useState<string[]>(initialFilters.disabledExchanges);
-  const [mode, setMode] = useState<TakerOpportunityMode>(initialFilters.mode);
+  const [mode, setMode] = useState<TakerOpportunityMode>(
+    initialFilters.mode === 'net_capped' && (!initialCapAvailable || initialCappedModePending)
+      ? 'net_full'
+      : initialFilters.mode,
+  );
   const [sort, setSort] = useState<SortState>({ column: initialFilters.sortColumn, dir: initialFilters.sortDir });
   const [netProfitUnit, setNetProfitUnit] = useState<NetProfitUnit>(initialFilters.netProfitUnit);
   const [sizeUnit, setSizeUnit] = useState<SizeUnit>(initialFilters.sizeUnit);
@@ -972,6 +980,8 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   const [profitFiatRangeCents, setProfitFiatRangeCents] = useState<[number, number] | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedShowCapped, setExpandedShowCapped] = useState(false);
+  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
+  const [chartCollapsed, setChartCollapsed] = useState(false);
   const persistedDurationRef = useRef({
     min: initialFilters.durationMin,
     max: initialFilters.durationMax,
@@ -988,7 +998,8 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   const detailedOrdersByID = useMemo(() => new Map(detailedOrders.map(order => [order.id, order])), [detailedOrders]);
 
   const hasExcluded = (stats?.excluded_payment_methods?.length ?? 0) > 0;
-  const cappedDataPending = mode === 'net_capped' && cappedLoading && detailedOrders.length === 0;
+  const cappedOffersPending = cappedLoading && detailedOrders.length === 0;
+  const cappedDataPending = mode === 'net_capped' && cappedOffersPending;
   const activeStats = mode === 'net_capped' ? (statsNetCapped ?? stats) : stats;
   const activeOrders = useMemo(() => {
     if (cappedDataPending) {
@@ -1003,13 +1014,14 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
 
   // Capped mode is only meaningful when the global Max Position Size is set.
   const capAvailable = maxFiatLimit != null && maxFiatLimit > 0;
-  // If the cap is cleared (or never set) while capped mode is selected, fall back
-  // to full mode so the toggle is never greyed-out-but-active.
+  const cappedModeAvailable = capAvailable && !cappedOffersPending;
+  // If capped mode is unavailable, fall back to full mode so the toggle is never
+  // greyed-out-but-active.
   useEffect(() => {
-    if (!capAvailable && mode === 'net_capped') {
+    if (!cappedModeAvailable && mode === 'net_capped') {
       setMode('net_full');
     }
-  }, [capAvailable, mode]);
+  }, [cappedModeAvailable, mode]);
 
   // Keep an expanded row's breakdown in sync with the control-panel mode, so
   // switching Net Full/Capped updates an already-open calculation in place.
@@ -1322,7 +1334,31 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
         </div>
       )}
       <div className="flex flex-1 min-h-0 flex-col gap-3 lg:flex-row">
-        <aside className="flex shrink-0 flex-col gap-3 rounded-lg border border-border bg-bg/20 p-3 lg:w-72 xl:w-80 lg:overflow-y-auto">
+        {filtersCollapsed ? (
+          <button
+            type="button"
+            aria-label="Show Insights filters"
+            aria-expanded={false}
+            onClick={() => setFiltersCollapsed(false)}
+            className="shrink-0 rounded-lg border border-border bg-bg/20 px-2 py-3 text-[0.68rem] font-semibold uppercase tracking-wide text-muted transition-colors hover:bg-surface hover:text-text lg:w-9 lg:[writing-mode:vertical-rl] lg:rotate-180"
+          >
+            Filters ▸
+          </button>
+        ) : (
+        <aside aria-label="Insights filters" className="flex shrink-0 flex-col gap-3 rounded-lg border border-border bg-bg/20 p-3 lg:w-72 xl:w-80 lg:overflow-y-auto">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">Filters</span>
+            <button
+              type="button"
+              aria-label="Hide Insights filters"
+              aria-expanded={true}
+              onClick={() => setFiltersCollapsed(true)}
+              className="rounded border border-border bg-surface px-1.5 py-0.5 text-[0.75rem] leading-none text-muted transition-colors hover:text-text"
+              title="Hide filters"
+            >
+              ◂
+            </button>
+          </div>
           <SelectGroup
             label="Timeframe"
             description="Show stats for orders closed within this window"
@@ -1381,8 +1417,12 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
               {
                 value: 'net_capped',
                 label: maxFiatLimit != null && maxFiatLimit > 0 ? `Net Capped €${maxFiatLimit.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : 'Net Capped',
-                disabled: !capAvailable,
-                title: capAvailable ? undefined : 'Set a Max Position Size (Fiat) in Settings to enable capped mode',
+                disabled: !cappedModeAvailable,
+                title: !capAvailable
+                  ? 'Set a Max Position Size (Fiat) in Settings to enable capped mode'
+                  : cappedOffersPending
+                    ? 'Capped offers are still loading'
+                    : undefined,
               },
             ]}
             selected={mode}
@@ -1412,8 +1452,38 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
             </div>
           </div>
         </aside>
+        )}
 
-        <div className="min-h-0 flex-1 rounded-lg border border-border overflow-hidden flex flex-col">
+        <div className="min-h-0 flex-1 flex flex-col gap-3">
+          {chart != null && (chartCollapsed ? (
+            <button
+              type="button"
+              aria-label="Show premium chart"
+              aria-expanded={false}
+              onClick={() => setChartCollapsed(false)}
+              className="shrink-0 rounded-lg border border-border bg-bg/20 px-3 py-2 text-left text-[0.68rem] font-semibold uppercase tracking-wide text-muted transition-colors hover:bg-surface hover:text-text"
+            >
+              DEX Premium Offer Overlay ▾
+            </button>
+          ) : (
+            <div className="min-h-72 lg:min-h-0 lg:flex-3 rounded-lg border border-border bg-surface p-3 flex flex-col">
+              <div className="flex-1 min-h-0 relative">
+                <button
+                  type="button"
+                  aria-label="Hide premium chart"
+                  aria-expanded={true}
+                  onClick={() => setChartCollapsed(true)}
+                  className="absolute right-1 top-1 z-10 rounded border border-border bg-surface px-1.5 py-0.5 text-[0.75rem] leading-none text-muted transition-colors hover:text-text"
+                  title="Hide chart"
+                >
+                  ▴
+                </button>
+                {chart}
+              </div>
+            </div>
+          ))}
+
+          <div className={`min-h-0 rounded-lg border border-border overflow-hidden flex flex-col ${chart != null && !chartCollapsed ? 'min-h-56 lg:min-h-0 lg:flex-2' : 'flex-1'}`}>
           <div className="min-h-0 flex-1 flex flex-col overflow-hidden">
             {sortedOrders.length > 0 && (
               <ProfitableTradesHeader
@@ -1525,6 +1595,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                 </div>
               )}
             </div>
+          </div>
           </div>
         </div>
       </div>

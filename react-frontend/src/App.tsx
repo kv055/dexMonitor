@@ -131,7 +131,7 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, fastPastProfitableOrders, detailedPastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics }: {
+function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, fastPastProfitableOrders, detailedPastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics, ohlcData, extendOhlc, allowOhlcExtend }: {
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
   pastOrderStatsNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsNetCapped'];
@@ -142,6 +142,9 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
   analyticsOrdersLoading: boolean;
   analyticsCappedLoading: boolean;
   loadAnalytics: ReturnType<typeof useDashboard>['loadAnalytics'];
+  ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
+  extendOhlc: (hours: number, cex?: string, intervalMin?: number) => void;
+  allowOhlcExtend: boolean;
 }) {
   const { filters } = useFilters();
   const { excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit } = usePreferences();
@@ -153,7 +156,6 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
   return (
     <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
       <div className="lg:flex-1 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
-        <span className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2">Taker Opportunities</span>
         <TakerOpportunities
           stats={pastOrderStats}
           statsAll={pastOrderStatsAll}
@@ -165,6 +167,14 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           ordersLoading={analyticsOrdersLoading}
           cappedLoading={analyticsCappedLoading}
           maxFiatLimit={maxFiatLimit}
+          chart={
+            <OHLCChart
+              data={ohlcData}
+              loadedHours={Number(filters.hours)}
+              allowExtend={allowOhlcExtend}
+              onNeedMoreData={(hours, intervalMin) => extendOhlc(hours, filters.cex, intervalMin)}
+            />
+          }
         />
       </div>
     </div>
@@ -278,6 +288,9 @@ function AppShell() {
             analyticsOrdersLoading={analyticsOrdersLoading}
             analyticsCappedLoading={analyticsCappedLoading}
             loadAnalytics={loadAnalytics}
+            ohlcData={ohlcData}
+            extendOhlc={extendOhlc}
+            allowOhlcExtend={initialLoadComplete}
           />
         )}
 
