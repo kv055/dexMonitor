@@ -210,8 +210,9 @@ export function OffersPreviewTable() {
                     <SizeToggle
                       mode={sizeMode}
                       onModeChange={mode => setSizeSelection({ offerKey: selectedOfferKey, mode })}
+                      fullBtc={getDisplayCostBreakdown(selectedOffer, 'full')?.btc_amount ?? getBtcMax(selectedOffer)}
                       cappedBtc={getCappedTradeSizeBtc(selectedOffer)}
-                      minBtc={getMinTradeSizeBtc(selectedOffer)}
+                      minBtc={getMinTradeSizeBtc(selectedOffer) ?? getBtcMin(selectedOffer)}
                       refPrice={getRefPrice(selectedOffer)}
                     />
                   )}
@@ -375,8 +376,9 @@ export function OffersPreviewTable() {
                   <SizeToggle
                     mode={sizeMode}
                     onModeChange={mode => setSizeSelection({ offerKey: selectedOfferKey, mode })}
+                    fullBtc={getDisplayCostBreakdown(selectedOffer, 'full')?.btc_amount ?? getBtcMax(selectedOffer)}
                     cappedBtc={getCappedTradeSizeBtc(selectedOffer)}
-                    minBtc={getMinTradeSizeBtc(selectedOffer)}
+                    minBtc={getMinTradeSizeBtc(selectedOffer) ?? getBtcMin(selectedOffer)}
                     refPrice={getRefPrice(selectedOffer)}
                   />
                 )}

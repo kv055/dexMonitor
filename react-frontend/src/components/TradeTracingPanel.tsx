@@ -177,10 +177,13 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
   const { filters } = useFilters();
   const hasCapped = hasCappedScenario(offer);
   const hasMin = hasMinScenario(offer);
+  const cappedBtc = getCappedTradeSizeBtc(offer);
+  const minBtc = getMinTradeSizeBtc(offer) ?? getBtcMin(offer);
+  const cappedAvailable = hasCapped && (minBtc == null || (cappedBtc != null && minBtc <= cappedBtc));
   // Default to the capped scenario when one actually applies (the offer's
   // full size exceeds the fiat cap); otherwise there's nothing to cap, so
   // fall back to the max position size.
-  const [sizeMode, setSizeMode] = useState<SizeMode>(() => (hasCapped ? 'capped' : 'full'));
+  const [sizeMode, setSizeMode] = useState<SizeMode>(() => (cappedAvailable ? 'capped' : 'full'));
 
   const bd = getDisplayCostBreakdown(offer, sizeMode);
   const abortCost = getDisplayAbortCost(offer, sizeMode);
@@ -192,7 +195,6 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
   const netPremium = getNetPremiumPercent(offer, sizeMode);
   const btcMin = getBtcMin(offer);
   const btcMax = getBtcMax(offer);
-  const cappedBtc = getCappedTradeSizeBtc(offer);
 
   const defaultBtc = bd?.btc_amount ?? btcMax ?? btcMin ?? 0;
   const canUseFiat = refPrice != null && refPrice > 0;
@@ -446,8 +448,9 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
                 <SizeToggle
                   mode={sizeMode}
                   onModeChange={toggleSize}
+                  fullBtc={getDisplayCostBreakdown(offer, 'full')?.btc_amount ?? btcMax}
                   cappedBtc={cappedBtc}
-                  minBtc={getMinTradeSizeBtc(offer)}
+                  minBtc={minBtc}
                   refPrice={refPrice}
                 />
               )}

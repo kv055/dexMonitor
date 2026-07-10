@@ -1364,7 +1364,7 @@ function AccountsSubtabBar({
   const tabs: Array<{ id: AccountsSubview; label: string; count: number | null }> = [
     { id: 'payment', label: 'Payments', count: paymentAccountCount },
     { id: 'trading', label: 'Trading', count: tradingAccountCount },
-    { id: 'communication', label: 'Communication', count: null },
+    { id: 'communication', label: 'Communication', count: 1 },
   ];
 
   return (
@@ -1439,19 +1439,23 @@ function AccountsList({
   groups,
   selectedAccountId,
   onSelectAccount,
+  showCategoryDividers = true,
 }: {
   groups: AccountGroup[];
   selectedAccountId: number | null;
   onSelectAccount: (accountId: number) => void;
+  showCategoryDividers?: boolean;
 }) {
   return (
     <div data-testid="accounts-list" className="grid content-start gap-3">
       {groups.map(group => (
         <section key={group.category} className="grid gap-2">
-          <div className="flex items-center justify-between gap-2">
-            <div className="text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-muted">{group.category}</div>
-            <div className="h-px flex-1 bg-border" />
-          </div>
+          {showCategoryDividers ? (
+            <div className="flex items-center justify-between gap-2">
+              <div className="text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-muted">{group.category}</div>
+              <div className="h-px flex-1 bg-border" />
+            </div>
+          ) : null}
           <div className="grid gap-2">
             {group.accounts.map(account => (
               <AccountSummaryCard
@@ -3894,6 +3898,7 @@ export function TradingAccountsPanel() {
                     groups={activeGroups}
                     selectedAccountId={expandedId}
                     onSelectAccount={accountId => setExpandedId(accountId)}
+                    showCategoryDividers={activeTab !== 'payment'}
                   />
                   {selectedAccount ? (
                     <div className="xl:hidden">

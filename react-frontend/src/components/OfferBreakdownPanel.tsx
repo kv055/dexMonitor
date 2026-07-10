@@ -348,21 +348,24 @@ function SizeModeButton({ active, onClick, children }: {
   );
 }
 
-export function SizeToggle({ mode, onModeChange, cappedBtc, minBtc, refPrice }: {
+export function SizeToggle({ mode, onModeChange, fullBtc, cappedBtc, minBtc, refPrice }: {
   mode: SizeMode;
   onModeChange: (v: SizeMode) => void;
+  fullBtc?: number | null;
   cappedBtc: number | null | undefined;
   minBtc?: number | null;
   refPrice: number | null;
 }) {
+  const fullEur = fullBtc != null && refPrice != null ? Math.round(fullBtc * refPrice) : null;
   const cappedEur = cappedBtc != null && refPrice != null ? Math.round(cappedBtc * refPrice) : null;
   const minEur = minBtc != null && refPrice != null ? Math.round(minBtc * refPrice) : null;
+  const cappedAvailable = cappedBtc != null && (minBtc == null || minBtc <= cappedBtc);
   return (
     <div className="flex items-center gap-1 self-start">
       <SizeModeButton active={mode === 'full'} onClick={() => onModeChange('full')}>
-        Full size
+        {fullEur != null ? `Max €${fullEur}` : 'Max'}
       </SizeModeButton>
-      {cappedBtc != null && (
+      {cappedAvailable && (
         <SizeModeButton active={mode === 'capped'} onClick={() => onModeChange('capped')}>
           {cappedEur != null ? `€${cappedEur} cap` : 'Capped'}
         </SizeModeButton>

@@ -191,6 +191,16 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/past_profitable_orders*', route =>
       route.fulfill({ json: [] }),
     );
+    await page.route('**/api/dashboard/analytics', route =>
+      route.fulfill({
+        json: {
+          past_order_stats_all: MOCK_PAST_ORDER_STATS,
+          past_order_stats_all_net_capped: MOCK_PAST_ORDER_STATS,
+          past_profitable_orders_compact: [],
+          past_profitable_orders: [],
+        },
+      }),
+    );
     await page.route('**/api/general_stats/overview*', route =>
       route.fulfill({ json: MOCK_GENERAL_STATS_OVERVIEW }),
     );
