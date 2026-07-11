@@ -193,9 +193,6 @@ function DepthChartInner() {
 
     const highestBid = rawBids[0]?.price ?? null;
     const lowestAsk = rawAsks[0]?.price ?? null;
-    const spreadText = highestBid && lowestAsk
-      ? ` · Spread €${(lowestAsk - highestBid).toLocaleString('de-DE')}`
-      : '';
 
     return {
       rawBids,
@@ -206,8 +203,9 @@ function DepthChartInner() {
       maxVol,
       priceMin,
       priceMax,
-      volumeInfo: `Bids ${visibleBidBtc.toFixed(3)} · Asks ${visibleAskBtc.toFixed(3)} BTC`,
-      midInfo: `Mid €${Math.round(midPrice).toLocaleString('de-DE')}${spreadText}`,
+      visibleBidBtc,
+      visibleAskBtc,
+      spread: highestBid && lowestAsk ? lowestAsk - highestBid : null,
     };
   }, [displayOffers, hoveredOhlcTime, yZoom, panFrac]);
 
@@ -356,16 +354,22 @@ function DepthChartInner() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="flex justify-between items-center mb-2 shrink-0">
-        <h3 className="text-[0.85rem] text-muted">
-          Orderbook Depth
-          <span className="ml-2 text-[0.75rem] text-accent">{headerTimestamp}</span>
-        </h3>
-        <div className="flex flex-col items-end gap-0.5">
-          {chartData?.volumeInfo && <span className="text-[0.75rem] text-muted">{chartData.volumeInfo}</span>}
-          <span className="text-[0.85rem] text-muted">{chartData?.midInfo ?? ''}</span>
+      <header className="mb-2 shrink-0">
+        <div className="flex items-baseline justify-between gap-2">
+          <h3 className="text-[0.65rem] font-semibold uppercase tracking-widest text-muted">Orderbook Depth</h3>
+          <span className="text-[0.6rem] tabular-nums text-accent">{headerTimestamp}</span>
         </div>
-      </div>
+        {chartData && (
+          <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[0.65rem] tabular-nums text-muted">
+            <span>Bids <span className="font-medium text-green">{chartData.visibleBidBtc.toFixed(3)}</span></span>
+            <span>Asks <span className="font-medium text-red">{chartData.visibleAskBtc.toFixed(3)}</span> BTC</span>
+            <span>Mid <span className="font-medium text-text">€{Math.round(chartData.midPrice).toLocaleString('de-DE')}</span></span>
+            {chartData.spread != null && (
+              <span>Spread <span className="font-medium text-text">€{chartData.spread.toLocaleString('de-DE')}</span></span>
+            )}
+          </div>
+        )}
+      </header>
       <div ref={containerRef} className="flex-1 min-h-0 relative">
         {loading && <LoadingSpinner size={104} label="Loading orderbook" />}
         <canvas
