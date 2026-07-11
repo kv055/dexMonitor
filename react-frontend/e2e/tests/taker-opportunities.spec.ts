@@ -20,4 +20,24 @@ test.describe('Taker opportunities', () => {
     await expect(filters).toBeVisible();
     await expect(page.getByRole('button', { name: 'Hide Insights filters' })).toHaveAttribute('aria-expanded', 'true');
   });
+
+  test('collapses the orderbook depth chart into a right side rail and restores it', async ({ page }) => {
+    await gotoAndWaitForData(page);
+    await page.getByRole('button', { name: 'dex Insights' }).click();
+
+    // Expanded panel renders the DepthChart with its own heading.
+    const depthHeading = page.locator('h3').filter({ hasText: 'Orderbook Depth' });
+    await expect(depthHeading).toBeVisible();
+
+    await page.getByRole('button', { name: 'Hide orderbook depth chart' }).click();
+    await expect(depthHeading).toHaveCount(0);
+
+    const showDepth = page.getByRole('button', { name: 'Show orderbook depth chart' });
+    await expect(showDepth).toBeVisible();
+    await expect(showDepth).toHaveAttribute('aria-expanded', 'false');
+
+    await showDepth.click();
+    await expect(depthHeading).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Hide orderbook depth chart' })).toHaveAttribute('aria-expanded', 'true');
+  });
 });

@@ -30,6 +30,7 @@ import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
 import { LiveOfferFilters } from './ControlPanel';
 import { OffersPreviewTable } from './OffersPreviewTable';
+import { DepthChart } from './DepthChart';
 
 interface Props {
   stats: PastOrderStats | null;
@@ -1047,6 +1048,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   const [expandedShowCapped, setExpandedShowCapped] = useState(false);
   const [filtersCollapsed, setFiltersCollapsed] = useState(false);
   const [chartCollapsed, setChartCollapsed] = useState(false);
+  const [depthCollapsed, setDepthCollapsed] = useState(false);
   const persistedDurationRef = useRef({
     min: initialFilters.durationMin,
     max: initialFilters.durationMax,
@@ -1628,35 +1630,67 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
         )}
 
         <div className="min-h-0 flex-1 flex flex-col gap-3">
-          {chart != null && (chartCollapsed ? (
-            <button
-              type="button"
-              aria-label="Show premium chart"
-              aria-expanded={false}
-              onClick={() => setChartCollapsed(false)}
-              className="shrink-0 rounded-lg border border-border bg-bg/20 px-3 py-2 text-left text-[0.68rem] font-semibold uppercase tracking-wide text-muted transition-colors hover:bg-surface hover:text-text"
-            >
-              DEX Premium Offer Overlay ▾
-            </button>
-          ) : (
-            <div className="min-h-72 lg:min-h-0 lg:flex-3 rounded-lg border border-border bg-surface p-3 flex flex-col">
-              <div className="flex-1 min-h-0 relative">
+          {chart != null && (
+            <div className={`flex flex-col gap-3 lg:flex-row ${!chartCollapsed || !depthCollapsed ? 'lg:min-h-0 lg:flex-3' : 'shrink-0'}`}>
+              {chartCollapsed ? (
                 <button
                   type="button"
-                  aria-label="Hide premium chart"
-                  aria-expanded={true}
-                  onClick={() => setChartCollapsed(true)}
-                  className="absolute right-1 top-1 z-10 rounded border border-border bg-surface px-1.5 py-0.5 text-[0.75rem] leading-none text-muted transition-colors hover:text-text"
-                  title="Hide chart"
+                  aria-label="Show premium chart"
+                  aria-expanded={false}
+                  onClick={() => setChartCollapsed(false)}
+                  className="shrink-0 rounded-lg border border-border bg-bg/20 px-3 py-2 text-left text-[0.68rem] font-semibold uppercase tracking-wide text-muted transition-colors hover:bg-surface hover:text-text lg:w-9 lg:px-2 lg:py-3 lg:[writing-mode:vertical-rl] lg:rotate-180"
                 >
-                  ▴
+                  DEX Premium Offer Overlay ▾
                 </button>
-                {chart(viewMode === 'past' ? plottedChartOffers : [], viewMode === 'live')}
-              </div>
-            </div>
-          ))}
+              ) : (
+                <div className="min-h-72 lg:min-h-0 flex-1 rounded-lg border border-border bg-surface p-3 flex flex-col">
+                  <div className="flex-1 min-h-0 relative">
+                    <button
+                      type="button"
+                      aria-label="Hide premium chart"
+                      aria-expanded={true}
+                      onClick={() => setChartCollapsed(true)}
+                      className="absolute right-1 top-1 z-10 rounded border border-border bg-surface px-1.5 py-0.5 text-[0.75rem] leading-none text-muted transition-colors hover:text-text"
+                      title="Hide chart"
+                    >
+                      ▴
+                    </button>
+                    {chart(viewMode === 'past' ? plottedChartOffers : [], viewMode === 'live')}
+                  </div>
+                </div>
+              )}
 
-          <div className={`min-h-0 rounded-lg border border-border overflow-hidden flex flex-col ${chart != null && !chartCollapsed ? 'min-h-56 lg:min-h-0 lg:flex-2' : 'flex-1'}`}>
+              {depthCollapsed ? (
+                <button
+                  type="button"
+                  aria-label="Show orderbook depth chart"
+                  aria-expanded={false}
+                  onClick={() => setDepthCollapsed(false)}
+                  className="shrink-0 rounded-lg border border-border bg-bg/20 px-3 py-2 text-left text-[0.68rem] font-semibold uppercase tracking-wide text-muted transition-colors hover:bg-surface hover:text-text lg:w-9 lg:px-2 lg:py-3 lg:[writing-mode:vertical-rl]"
+                >
+                  ◂ Orderbook Depth
+                </button>
+              ) : (
+                <div className="relative min-h-56 lg:min-h-0 lg:w-80 xl:w-96 shrink-0 rounded-lg border border-border bg-surface p-3 flex flex-col">
+                  <button
+                    type="button"
+                    aria-label="Hide orderbook depth chart"
+                    aria-expanded={true}
+                    onClick={() => setDepthCollapsed(true)}
+                    className="absolute right-1 top-1 z-10 rounded border border-border bg-surface px-1.5 py-0.5 text-[0.75rem] leading-none text-muted transition-colors hover:text-text"
+                    title="Hide depth chart"
+                  >
+                    ▸
+                  </button>
+                  <div className="flex-1 min-h-0 pr-5">
+                    <DepthChart />
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <div className={`min-h-0 rounded-lg border border-border overflow-hidden flex flex-col ${chart != null && (!chartCollapsed || !depthCollapsed) ? 'min-h-56 lg:min-h-0 lg:flex-2' : 'flex-1'}`}>
           {viewMode === 'live' ? (
             <div className="relative min-h-64 flex-1 bg-surface">
               <OffersPreviewTable chartScope="insights" />
