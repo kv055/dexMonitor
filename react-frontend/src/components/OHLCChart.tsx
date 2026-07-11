@@ -37,6 +37,13 @@ interface Props {
    * overlays would obscure the past orders under inspection.
    */
   includeContextOffers?: boolean;
+  /**
+   * Auto-fit the x-axis to the plotted offers whenever the offer source
+   * (includeContextOffers) flips: the window spans the oldest offer's start
+   * to the latest closure (or "now" for live offers), and the candle size is
+   * re-picked to keep roughly TARGET_VISIBLE_CANDLES on screen.
+   */
+  fitToOffers?: boolean;
 }
 
 type PendingVisibleRange = {
@@ -156,7 +163,7 @@ function requiredHoursForCandleSize(candleMin: number): number {
  * per update — the previous design — reset the user's pan/zoom continuously
  * and burned CPU on full canvas teardowns.
  */
-function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true, extraOffers, includeContextOffers = true }: Props) {
+function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true, extraOffers, includeContextOffers = true, fitToOffers = false }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -356,6 +363,67 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
     setShowReset(false);
   }, [applyDefaultRange]);
 
+  // ── Fit-to-offers (Insights) ───────────────────────────────────────────────
+  // Sizes the x-axis to the plotted offers: oldest first_seen → latest
+  // last_seen (live offers count as still open, so their end is "now"), then
+  // picks the smallest candle size that keeps the span within the visible
+  // candle budget. Data outside the loaded window is requested first and the
+  // range applied by the candle-sync effect once it lands (intendedRangeRef).
+  const fitRangeToOffers = useCallback(() => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const nowUtcSec = getNowUtcSec();
+
+    let minStart = Infinity;
+    let maxEnd = -Infinity;
+    for (const o of premiumOffers) {
+      const start = toUtcSec(getFirstSeen(o) ?? '');
+      const end = isOfferLive(o) ? nowUtcSec : (toUtcSec(getLastSeen(o) ?? '') || start);
+      if (start) minStart = Math.min(minStart, start);
+      if (end) maxEnd = Math.max(maxEnd, end);
+    }
+    if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd) || maxEnd <= minStart) {
+      applyDefaultRange(chart);
+      return;
+    }
+
+    // Pad the span so the outermost offer endpoints don't sit on the chart edge.
+    const pad = Math.max((maxEnd - minStart) * 0.05, 5 * 60);
+    const fromUtc = minStart - pad;
+    const toUtc = Math.min(maxEnd + pad, nowUtcSec);
+    const spanMin = (toUtc - fromUtc) / 60;
+    const targetCandleMin = CANDLE_OPTIONS.find(opt => spanMin / opt <= TARGET_VISIBLE_CANDLES)
+      ?? CANDLE_OPTIONS[CANDLE_OPTIONS.length - 1];
+    // Candles load backwards from "now", so coverage is measured from there
+    // even when the offer span ends in the past.
+    const visibleHours = Math.ceil((nowUtcSec - fromUtc) / 3600);
+    const range = {
+      from: shiftUtcSecForTimezone(fromUtc, timezone) as UTCTimestamp,
+      to: shiftUtcSecForTimezone(toUtc, timezone) as UTCTimestamp,
+    };
+
+    const needsFetch = allowExtend && (targetCandleMin < sourceIntervalMin || visibleHours > availableHours);
+    if (targetCandleMin !== candleMin || needsFetch) {
+      intendedRangeRef.current = { intervalMin: targetCandleMin, visibleHours, range };
+      setCandleMin(targetCandleMin);
+      if (needsFetch) onNeedMoreData(visibleHours, targetCandleMin);
+    } else {
+      try {
+        chart.timeScale().setVisibleRange(range);
+        // Stamp the window as applied so the candle-sync effect keeps this
+        // range (via prevRange) instead of resetting to the default window.
+        appliedWindowRef.current = `${effectiveVisibleHours}|${timezone}`;
+      } catch {
+        applyDefaultRange(chart);
+      }
+    }
+  }, [premiumOffers, timezone, sourceIntervalMin, availableHours, candleMin, effectiveVisibleHours, allowExtend, onNeedMoreData, applyDefaultRange]);
+
+  const fitRangeToOffersRef = useRef(fitRangeToOffers);
+  useEffect(() => {
+    fitRangeToOffersRef.current = fitRangeToOffers;
+  });
+
   // ── Chart lifetime (once per theme) ────────────────────────────────────────
   // Bumped after (re)creating the chart so the data-sync effects below re-run
   // against the fresh instance.
@@ -548,6 +616,29 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
       try { chart.timeScale().setVisibleRange(prevRange); } catch { /* keep whatever the chart chose */ }
     }
   }, [shiftedDisplay, chartEpoch, effectiveVisibleHours, timezone, sourceIntervalMin, loadedDataHours, applyDefaultRange]);
+
+  // ── Fit-to-offers trigger ──────────────────────────────────────────────────
+  // Runs AFTER the candle-sync effect so a fit is never overridden by its
+  // default-window application. Fits on every offer-source flip (Live ⇄ Past),
+  // on the first offers/candles of the current source (Past orders and OHLC
+  // data often stream in after the switch), and after a chart re-creation.
+  const lastFitSourceRef = useRef<boolean | null>(null);
+  const lastFitHadOffersRef = useRef(false);
+  const lastFitHadCandlesRef = useRef(false);
+  const lastFitEpochRef = useRef(0);
+  useEffect(() => {
+    if (!fitToOffers || !chartRef.current) return;
+    const sourceChanged = lastFitSourceRef.current !== includeContextOffers;
+    const offersArrived = !lastFitHadOffersRef.current && premiumOffers.length > 0;
+    const candlesArrived = !lastFitHadCandlesRef.current && shiftedDisplay.candles.length > 0;
+    const chartRecreated = lastFitEpochRef.current !== chartEpoch;
+    if (!sourceChanged && !offersArrived && !candlesArrived && !chartRecreated) return;
+    lastFitSourceRef.current = includeContextOffers;
+    lastFitHadOffersRef.current = premiumOffers.length > 0;
+    lastFitHadCandlesRef.current = shiftedDisplay.candles.length > 0;
+    lastFitEpochRef.current = chartEpoch;
+    fitRangeToOffersRef.current();
+  }, [fitToOffers, includeContextOffers, premiumOffers, shiftedDisplay, chartEpoch]);
 
   // ── Offer line sync (throttled) ────────────────────────────────────────────
   const renderOffersRef = useRef<() => void>(() => {});

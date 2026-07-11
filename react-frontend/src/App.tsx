@@ -179,6 +179,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
               onNeedMoreData={(hours, intervalMin) => extendOhlc(hours, filters.cex, intervalMin)}
               extraOffers={extraOffers}
               includeContextOffers={includeLiveOffers}
+              fitToOffers
             />
           )}
         />
