@@ -45,8 +45,12 @@ interface Props {
   /** Refreshes the live offers/core dataset (Live mode refresh button). */
   onRefreshLive: () => void;
   lastUpdatedAt: string;
-  /** Renders the OHLC chart panel; receives the filtered orders as chart overlays. */
-  chart?: (extraOffers: Offer[]) => ReactNode;
+  /**
+   * Renders the OHLC chart panel; receives the filtered orders as chart
+   * overlays plus whether the live (FiltersContext) offers should be plotted —
+   * true in Live mode, false in Past mode so past orders aren't obscured.
+   */
+  chart?: (extraOffers: Offer[], includeLiveOffers: boolean) => ReactNode;
 }
 
 type DisplayOrder = PastProfitableOrder | PastProfitableOrderCompact;
@@ -1628,7 +1632,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                 >
                   ▴
                 </button>
-                {chart(viewMode === 'past' ? plottedChartOffers : [])}
+                {chart(viewMode === 'past' ? plottedChartOffers : [], viewMode === 'live')}
               </div>
             </div>
           ))}

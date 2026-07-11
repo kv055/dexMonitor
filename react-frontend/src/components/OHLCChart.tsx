@@ -31,6 +31,12 @@ interface Props {
    * and subject to the same premium and chart-visibility guards.
    */
   extraOffers?: Offer[];
+  /**
+   * When false, the FiltersContext offers are not plotted and only
+   * extraOffers appear — the Insights tab's Past mode, where live offer
+   * overlays would obscure the past orders under inspection.
+   */
+  includeContextOffers?: boolean;
 }
 
 type PendingVisibleRange = {
@@ -150,7 +156,7 @@ function requiredHoursForCandleSize(candleMin: number): number {
  * per update — the previous design — reset the user's pan/zoom continuously
  * and burned CPU on full canvas teardowns.
  */
-function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true, extraOffers }: Props) {
+function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true, extraOffers, includeContextOffers = true }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -179,11 +185,11 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
   const premiumOffers = useMemo(() => {
     const isPlottable = (o: Offer) =>
       (getPremiumMetricValue(o, premiumMode) ?? 0) > 0 && !hiddenChartOfferKeys.has(buildStableOfferKey(o));
-    const base = filteredOffers.filter(isPlottable);
+    const base = includeContextOffers ? filteredOffers.filter(isPlottable) : [];
     if (!extraOffers || extraOffers.length === 0) return base;
     const seenIds = new Set(base.map((o) => o.id));
     return [...base, ...extraOffers.filter((o) => !seenIds.has(o.id) && isPlottable(o))];
-  }, [filteredOffers, premiumMode, hiddenChartOfferKeys, extraOffers]);
+  }, [includeContextOffers, filteredOffers, premiumMode, hiddenChartOfferKeys, extraOffers]);
   const { timezone } = useTimezone();
   const [lifecycleCache, setLifecycleCache] = useState<Record<number, LifecycleCacheEntry>>({});
   const lifecycleLoadingRef = useRef<Set<number>>(new Set());
