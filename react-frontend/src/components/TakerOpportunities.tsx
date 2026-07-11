@@ -1684,7 +1684,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                   DEX Premium Offer Overlay ▾
                 </button>
               ) : (
-                <div className="min-h-72 lg:min-h-0 flex-1 rounded-lg border border-border bg-surface p-3 flex flex-col">
+                <div className="min-h-72 lg:min-h-0 lg:min-w-0 flex-1 rounded-lg border border-border bg-surface p-3 flex flex-col">
                   <div className="flex-1 min-h-0 relative">
                     <button
                       type="button"
