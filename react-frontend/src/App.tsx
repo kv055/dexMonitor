@@ -14,101 +14,13 @@ import { LoadingSpinner } from './components/LoadingSpinner';
 import { Header } from './components/Header';
 import type { Tab } from './components/Header';
 import { SettingsOverlay } from './components/SettingsOverlay';
-import { OffersPreviewTable } from './components/OffersPreviewTable';
 import { OHLCChart } from './components/OHLCChart';
-import { DepthChart } from './components/DepthChart';
-import { TradeTracingPanel } from './components/TradeTracingPanel';
-import { buildOfferKeys } from './utils/offerIdentity';
-import { isOfferLive } from './utils/offerAccess';
 import { SnapshotLog } from './components/SnapshotLog';
 import { MmTransactionsLog } from './components/MmTransactionsLog';
 import { TakerOpportunities } from './components/TakerOpportunities';
 import { TradingAccountsPanel } from './components/TradingAccountsPanel';
 import { PaymentMethodsPanel } from './components/PaymentMethodsPanel';
 import { StatisticsView } from './components/StatisticsView';
-
-function OhlcPanelHeader() {
-  const { refPrice, filters } = useFilters();
-  const cexLabel = filters.cex.charAt(0).toUpperCase() + filters.cex.slice(1);
-  return (
-    <div className="flex items-center justify-between mb-2 shrink-0">
-      <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">DEX Premium Offer Overlay</h3>
-      <div className="flex items-center gap-1.5 text-[0.75rem]">
-        <span className="text-muted">BTC/EUR — {cexLabel}</span>
-        <span className={refPrice != null ? 'text-text font-medium' : 'text-muted'}>
-          {refPrice != null ? `€${refPrice.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : '—'}
-        </span>
-      </div>
-    </div>
-  );
-}
-
-// Inner component so it can consume FiltersContext
-function MonitorView({ ohlcData, error, loadCore, extendOhlc, refreshForCex, allowOhlcExtend }: {
-  ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
-  error: string | null;
-  loadCore: (hours: string, cex?: string, excludedPaymentMethods?: string[], excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
-  extendOhlc: (hours: number, cex?: string, intervalMin?: number) => void;
-  refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
-  allowOhlcExtend: boolean;
-}) {
-  const { filters, filteredOffers, selectedOfferKey } = useFilters();
-  const { excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit } = usePreferences();
-
-  // Resolve the selected offer (same key scheme as OffersPreviewTable). When a live
-  // order is selected/expanded, the orderbook slot becomes the Trade Tracing panel.
-  const selectedLiveOffer = useMemo(() => {
-    if (selectedOfferKey == null) return null;
-    const keys = buildOfferKeys(filteredOffers);
-    const idx = keys.indexOf(selectedOfferKey);
-    if (idx < 0) return null;
-    const offer = filteredOffers[idx];
-    return offer && isOfferLive(offer) ? offer : null;
-  }, [selectedOfferKey, filteredOffers]);
-
-  useEffect(() => {
-    refreshForCex(filters.cex, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
-    loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
-    const interval = setInterval(() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit), 5 * 60 * 1000);
-    return () => clearInterval(interval);
-  }, [filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadCore, refreshForCex]);
-
-  return (
-    <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
-      {error && (
-        <div className="bg-error border border-red rounded-lg px-3 py-2 text-red text-sm shrink-0">
-          {error}
-        </div>
-      )}
-
-      {/* Offers — full width */}
-      <div className="lg:flex-2 lg:min-h-0 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-0 overflow-hidden">
-        <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Offers</h3>
-        <div className="relative flex-1 min-h-64 sm:min-h-80 lg:min-h-0">
-          <OffersPreviewTable />
-        </div>
-      </div>
-
-      {/* Bottom row: OHLC chart + depth chart */}
-      <div className="lg:flex-5 lg:min-h-0 grid grid-cols-1 lg:grid-cols-3 gap-2 sm:gap-3">
-        <div className="lg:col-span-2 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-72 sm:min-h-80 lg:min-h-0">
-          <OhlcPanelHeader />
-          <div className="flex-1 min-h-0 relative">
-              <OHLCChart
-              data={ohlcData}
-              loadedHours={Number(filters.hours)}
-              allowExtend={allowOhlcExtend}
-              onNeedMoreData={(hours, intervalMin) => extendOhlc(hours, filters.cex, intervalMin)}
-            />
-          </div>
-        </div>
-        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-56 sm:min-h-64 lg:min-h-0">
-          {selectedLiveOffer ? <TradeTracingPanel offer={selectedLiveOffer} /> : <DepthChart />}
-        </div>
-      </div>
-    </div>
-  );
-}
 
 function MmControllerView() {
   return (
@@ -255,7 +167,7 @@ function AppShell() {
   const { liveOffers, wssConnected, pollError, refreshForCex } = useLiveOffers();
   const { groups } = usePaymentMethodGroups();
   const { preferredTimezone, excludedMethods, hideZeroTrustScore } = usePreferences();
-  const [activeTab, setActiveTab] = useState<Tab>('monitor');
+  const [activeTab, setActiveTab] = useState<Tab>('insights');
   const [settingsOpen, setSettingsOpen] = useState(false);
 
   const allOffers = useMemo(() => {
@@ -284,17 +196,6 @@ function AppShell() {
           onClose={() => setSettingsOpen(false)}
           groups={groups}
         />
-
-        {activeTab === 'monitor' && (
-          <MonitorView
-            ohlcData={ohlcData}
-            error={error}
-            loadCore={loadCore}
-            extendOhlc={extendOhlc}
-            refreshForCex={refreshForCex}
-            allowOhlcExtend={initialLoadComplete}
-          />
-        )}
 
         {activeTab === 'mmcontroller' && (
           <MmControllerView />

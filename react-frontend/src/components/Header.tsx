@@ -2,7 +2,7 @@
 import { usePreferences } from '../hooks/usePreferences';
 import { useAuth } from '../hooks/useAuth';
 
-export type Tab = 'monitor' | 'insights' | 'mmcontroller' | 'trading' | 'statistics';
+export type Tab = 'insights' | 'mmcontroller' | 'trading' | 'statistics';
 
 interface Props {
   activeTab: Tab;
@@ -32,7 +32,6 @@ function LiveStatusBadge({ wssConnected, pollError }: { wssConnected: boolean; p
 }
 
 const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
-  { id: 'monitor', label: 'dex Monitor', color: 'text-accent', disabled: false },
   { id: 'insights', label: 'dex Insights', color: 'text-blue', disabled: false },
   { id: 'mmcontroller', label: 'dex Mm Controller', color: 'text-green', disabled: false },
   { id: 'trading', label: 'Trading Accounts', color: 'text-purple', disabled: false },

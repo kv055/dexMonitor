@@ -299,11 +299,11 @@ export function settingsOverlay(page: Page) {
 }
 
 /**
- * The live offer filter controls now live in the dex Insights sidebar (shared
- * Live/Past control panel). Tests must call openControlPanel() — which
- * switches to the Insights tab in Live Offers mode — before using
- * controlPanel(), and closeControlPanel() to return to the Monitor tab
- * before asserting on the monitor dashboard.
+ * The dashboard (offers table, OHLC + depth charts) and the live-offer filter
+ * controls both live on the dex Insights tab, which is the default landing tab.
+ * openControlPanel() ensures the Insights tab is in Live Offers mode with the
+ * filter sidebar visible; closeControlPanel() is a no-op kept for readability at
+ * call sites (there is no separate tab to return to).
  */
 export async function openControlPanel(page: Page) {
   await jsClick(page.getByRole('button', { name: 'dex Insights' }));
@@ -311,9 +311,9 @@ export async function openControlPanel(page: Page) {
   await jsClick(page.getByRole('button', { name: 'Live Offers', exact: true }));
 }
 
-export async function closeControlPanel(page: Page) {
-  await jsClick(page.getByRole('button', { name: 'dex Monitor' }));
-  await controlPanel(page).waitFor({ state: 'hidden' });
+export async function closeControlPanel(_page: Page) {
+  // The dashboard and filters share the Insights tab, so there is nothing to
+  // switch back to — assertions run against the same view.
 }
 
 /** Locator for the Control Panel (filters sidebar of the dex Insights tab) */
@@ -321,19 +321,23 @@ export function controlPanel(page: Page) {
   return page.getByRole('complementary', { name: 'Insights filters' });
 }
 
-/** Locator for the OHLC chart panel */
+/** Locator for the OHLC chart panel (the surface holding its collapse button) */
 export function ohlcPanel(page: Page) {
-  return page.locator('.bg-surface').filter({ hasText: 'DEX Premium Offer Overlay' });
+  return page.locator('.bg-surface').filter({
+    has: page.getByRole('button', { name: 'Hide premium chart' }),
+  }).last();
 }
 
-/** Locator for the Depth chart panel */
+/** Locator for the Depth chart panel (the surface holding its collapse button) */
 export function depthPanel(page: Page) {
-  return page.locator('.bg-surface').filter({ hasText: 'Orderbook Depth' });
+  return page.locator('.bg-surface').filter({
+    has: page.getByRole('button', { name: 'Hide orderbook depth chart' }),
+  }).last();
 }
 
-/** Locator for the Offers table panel */
+/** Locator for the Offers table panel (the surface wrapping the offers table) */
 export function offersPanel(page: Page) {
   return page.locator('.bg-surface').filter({
-    has: page.getByRole('heading', { name: 'Offers', exact: true }),
-  }).first();
+    has: page.locator('table.border-collapse'),
+  }).last();
 }

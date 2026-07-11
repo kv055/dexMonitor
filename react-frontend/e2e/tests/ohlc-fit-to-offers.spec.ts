@@ -69,13 +69,4 @@ test.describe('Insights chart offer visibility and fit-to-offers', () => {
       .poll(async () => Math.abs(await visibleRangeSpanHours(page) - liveSpan), { timeout: 10_000 })
       .toBeLessThan(2);
   });
-
-  test('monitor chart still shows offers by default after visiting Insights', async ({ page }) => {
-    await gotoAndWaitForData(page);
-    await openControlPanel(page); // insights: everything hidden there
-    await jsClick(page.getByRole('button', { name: 'dex Monitor' }));
-
-    // Monitor's own visibility scope is untouched by the insights defaults.
-    await expect.poll(() => plottedOfferCount(page), { timeout: 10_000 }).toBeGreaterThan(0);
-  });
 });
