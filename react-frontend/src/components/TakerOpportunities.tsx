@@ -1658,7 +1658,21 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
 
         <div className="min-h-0 flex-1 flex flex-col gap-3">
           {chart != null && (
-            <div className={`flex flex-col gap-3 lg:flex-row ${!chartCollapsed || !depthCollapsed || selectedLiveOffer != null ? 'lg:min-h-0 lg:flex-3' : 'shrink-0'}`}>
+            // When the OHLC chart is collapsed and no live offer is selected,
+            // the whole row reduces to a single horizontal expand bar — the
+            // depth chart can only be toggled while the OHLC chart is expanded.
+            chartCollapsed && selectedLiveOffer == null ? (
+              <button
+                type="button"
+                aria-label="Show premium chart"
+                aria-expanded={false}
+                onClick={() => setChartCollapsed(false)}
+                className="shrink-0 rounded-lg border border-border bg-bg/20 px-3 py-2 text-left text-[0.68rem] font-semibold uppercase tracking-wide text-muted transition-colors hover:bg-surface hover:text-text"
+              >
+                DEX Premium Offer Overlay ▾
+              </button>
+            ) : (
+            <div className="flex flex-col gap-3 lg:flex-row lg:min-h-0 lg:flex-3">
               {chartCollapsed ? (
                 <button
                   type="button"
@@ -1722,9 +1736,10 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                 </div>
               )}
             </div>
+            )
           )}
 
-          <div className={`min-h-0 rounded-lg border border-border overflow-hidden flex flex-col ${chart != null && (!chartCollapsed || !depthCollapsed || selectedLiveOffer != null) ? 'min-h-56 lg:min-h-0 lg:flex-2' : 'flex-1'}`}>
+          <div className={`min-h-0 rounded-lg border border-border overflow-hidden flex flex-col ${chart != null && (!chartCollapsed || selectedLiveOffer != null) ? 'min-h-56 lg:min-h-0 lg:flex-2' : 'flex-1'}`}>
           {viewMode === 'live' ? (
             <div className="relative min-h-64 flex-1 bg-surface">
               <OffersPreviewTable chartScope="insights" />
