@@ -1013,6 +1013,8 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
     offers: contextOffers,
     filteredOffers,
     selectedOfferKey,
+    filters: liveFilters,
+    refPrice,
     setFilters,
     resetFilters: resetLiveFilters,
     isChartOfferVisible: isChartOfferVisibleInScope,
@@ -1538,6 +1540,17 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
             >
               ◂
             </button>
+          </div>
+          <div
+            className="flex items-center justify-between gap-2 rounded-md border border-border bg-surface/60 px-2.5 py-1.5"
+            title="Current CEX reference price"
+          >
+            <span className="text-[0.65rem] uppercase tracking-wide text-muted">
+              BTC/EUR — {liveFilters.cex.charAt(0).toUpperCase() + liveFilters.cex.slice(1)}
+            </span>
+            <span className={`text-[0.8rem] font-semibold tabular-nums mono-nums ${refPrice != null ? 'text-text' : 'text-muted'}`}>
+              {refPrice != null ? `€${refPrice.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : '—'}
+            </span>
           </div>
           <PillGroup
             label="Direction"

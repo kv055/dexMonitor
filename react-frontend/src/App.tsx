@@ -131,7 +131,7 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, fastPastProfitableOrders, detailedPastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics, loadCore, lastUpdatedAt, ohlcData, extendOhlc, allowOhlcExtend }: {
+function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, fastPastProfitableOrders, detailedPastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics, loadCore, refreshForCex, error, lastUpdatedAt, ohlcData, extendOhlc, allowOhlcExtend }: {
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
   pastOrderStatsNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsNetCapped'];
@@ -143,6 +143,8 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
   analyticsCappedLoading: boolean;
   loadAnalytics: ReturnType<typeof useDashboard>['loadAnalytics'];
   loadCore: ReturnType<typeof useDashboard>['loadCore'];
+  refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
+  error: string | null;
   lastUpdatedAt: string;
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   extendOhlc: (hours: number, cex?: string, intervalMin?: number) => void;
@@ -155,8 +157,24 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
     loadAnalytics(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
   }, [filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadAnalytics]);
 
+  // Same core-data refresh cycle as the Monitor tab: reload live offers and
+  // the offers/OHLC dataset when the CEX or cost preferences change, and keep
+  // them fresh with a 5-minute poll while the tab stays open.
+  useEffect(() => {
+    refreshForCex(filters.cex, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
+    loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
+    const interval = setInterval(() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit), 5 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, [filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadCore, refreshForCex]);
+
   return (
     <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
+      {error && (
+        <div className="bg-error border border-red rounded-lg px-3 py-2 text-red text-sm shrink-0">
+          {error}
+        </div>
+      )}
+
       <div className="lg:flex-1 bg-surface border border-border rounded-lg p-3 flex flex-col min-h-40 lg:min-h-0">
         <TakerOpportunities
           stats={pastOrderStats}
@@ -295,6 +313,8 @@ function AppShell() {
             analyticsCappedLoading={analyticsCappedLoading}
             loadAnalytics={loadAnalytics}
             loadCore={loadCore}
+            refreshForCex={refreshForCex}
+            error={error}
             lastUpdatedAt={lastUpdatedAt}
             ohlcData={ohlcData}
             extendOhlc={extendOhlc}

@@ -11,6 +11,9 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     const label = (text: string) =>
       cp.locator('span.uppercase').filter({ hasText: new RegExp(`^${text}$`) });
 
+    // BTC reference price readout sits at the top of the panel
+    await expect(cp.getByText(/^BTC\/EUR — Kraken$/)).toBeVisible();
+    await expect(cp.getByText(/^€[\d.]+$/)).toBeVisible();
     // Shared between Live and Past mode
     await expect(label('Direction')).toBeVisible();
     await expect(label('Exchanges')).toBeVisible();
