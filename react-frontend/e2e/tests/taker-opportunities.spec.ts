@@ -3,7 +3,7 @@ import { test, expect, gotoAndWaitForData } from '../fixtures/base-fixture';
 test.describe('Taker opportunities', () => {
   test('collapses the Insights filters into a side rail and restores them', async ({ page }) => {
     await gotoAndWaitForData(page);
-    await page.getByRole('button', { name: 'dex Insights' }).click();
+    await page.getByRole('button', { name: 'dex Monitor' }).click();
 
     const filters = page.getByRole('complementary', { name: 'Insights filters' });
     await expect(filters).toBeVisible();
@@ -23,7 +23,7 @@ test.describe('Taker opportunities', () => {
 
   test('collapses the orderbook depth chart into a right side rail and restores it', async ({ page }) => {
     await gotoAndWaitForData(page);
-    await page.getByRole('button', { name: 'dex Insights' }).click();
+    await page.getByRole('button', { name: 'dex Monitor' }).click();
 
     // Expanded panel renders the DepthChart with its own heading.
     const depthHeading = page.locator('h3').filter({ hasText: 'Orderbook Depth' });
@@ -43,7 +43,7 @@ test.describe('Taker opportunities', () => {
 
   test('selecting a live offer swaps the depth chart for the Trade Tracing panel', async ({ page }) => {
     await gotoAndWaitForData(page);
-    await page.getByRole('button', { name: 'dex Insights' }).click();
+    await page.getByRole('button', { name: 'dex Monitor' }).click();
 
     const depthHeading = page.locator('h3').filter({ hasText: 'Orderbook Depth' });
     const tracingHeading = page.locator('h3').filter({ hasText: 'Trade Tracing' });

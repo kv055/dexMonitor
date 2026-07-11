@@ -300,13 +300,13 @@ export function settingsOverlay(page: Page) {
 
 /**
  * The dashboard (offers table, OHLC + depth charts) and the live-offer filter
- * controls both live on the dex Insights tab, which is the default landing tab.
+ * controls both live on the dex Monitor tab, which is the default landing tab.
  * openControlPanel() ensures the Insights tab is in Live Offers mode with the
  * filter sidebar visible; closeControlPanel() is a no-op kept for readability at
  * call sites (there is no separate tab to return to).
  */
 export async function openControlPanel(page: Page) {
-  await jsClick(page.getByRole('button', { name: 'dex Insights' }));
+  await jsClick(page.getByRole('button', { name: 'dex Monitor' }));
   await controlPanel(page).waitFor({ state: 'visible' });
   await jsClick(page.getByRole('button', { name: 'Live Offers', exact: true }));
 }
@@ -325,7 +325,7 @@ export async function revealChartOffers(page: Page) {
   await jsClick(page.getByTitle('Show/hide all offers on the OHLC chart'));
 }
 
-/** Locator for the Control Panel (filters sidebar of the dex Insights tab) */
+/** Locator for the Control Panel (filters sidebar of the dex Monitor tab) */
 export function controlPanel(page: Page) {
   return page.getByRole('complementary', { name: 'Insights filters' });
 }
