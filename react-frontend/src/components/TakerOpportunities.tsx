@@ -4,7 +4,7 @@ import type { Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCom
 import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
-import { buildStableOfferKey } from '../utils/offerIdentity';
+import { buildOfferKeys, buildStableOfferKey } from '../utils/offerIdentity';
 import { durationMinutes, formatDateTimeLabel, parseUtcTimestamp } from '../utils/formatters';
 import {
   getBtcMax,
@@ -31,6 +31,7 @@ import { LoadingSpinner } from './LoadingSpinner';
 import { LiveOfferFilters } from './ControlPanel';
 import { OffersPreviewTable } from './OffersPreviewTable';
 import { DepthChart } from './DepthChart';
+import { TradeTracingPanel } from './TradeTracingPanel';
 
 interface Props {
   stats: PastOrderStats | null;
@@ -1010,6 +1011,8 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   const { excludedMethods } = usePreferences();
   const {
     offers: contextOffers,
+    filteredOffers,
+    selectedOfferKey,
     setFilters,
     resetFilters: resetLiveFilters,
     isChartOfferVisible: isChartOfferVisibleInScope,
@@ -1063,6 +1066,17 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   const profitFiatModeRef = useRef(mode);
   const tradesListRef = useRef<HTMLDivElement>(null);
   const detailedOrdersByID = useMemo(() => new Map(detailedOrders.map(order => [order.id, order])), [detailedOrders]);
+
+  // Selecting a live offer swaps the depth panel for the Trade Tracing
+  // workflow, mirroring the Monitor tab (same key scheme as OffersPreviewTable).
+  const selectedLiveOffer = useMemo(() => {
+    if (selectedOfferKey == null || viewMode !== 'live') return null;
+    const keys = buildOfferKeys(filteredOffers);
+    const idx = keys.indexOf(selectedOfferKey);
+    if (idx < 0) return null;
+    const offer = filteredOffers[idx];
+    return offer && isOfferLive(offer) ? offer : null;
+  }, [selectedOfferKey, filteredOffers, viewMode]);
 
   // The sidebar's Direction/Exchanges controls are shared between Live and Past
   // mode: push the persisted selection into the global FiltersContext once so
@@ -1631,7 +1645,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
 
         <div className="min-h-0 flex-1 flex flex-col gap-3">
           {chart != null && (
-            <div className={`flex flex-col gap-3 lg:flex-row ${!chartCollapsed || !depthCollapsed ? 'lg:min-h-0 lg:flex-3' : 'shrink-0'}`}>
+            <div className={`flex flex-col gap-3 lg:flex-row ${!chartCollapsed || !depthCollapsed || selectedLiveOffer != null ? 'lg:min-h-0 lg:flex-3' : 'shrink-0'}`}>
               {chartCollapsed ? (
                 <button
                   type="button"
@@ -1660,7 +1674,14 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                 </div>
               )}
 
-              {depthCollapsed ? (
+              {selectedLiveOffer ? (
+                // A selected live offer turns the depth slot into the Trade
+                // Tracing workflow (as on the Monitor tab), even while the
+                // depth chart is collapsed; deselecting restores it.
+                <div className="relative min-h-56 lg:min-h-0 lg:w-80 xl:w-96 shrink-0 rounded-lg border border-border bg-surface p-3 flex flex-col">
+                  <TradeTracingPanel offer={selectedLiveOffer} />
+                </div>
+              ) : depthCollapsed ? (
                 <button
                   type="button"
                   aria-label="Show orderbook depth chart"
@@ -1690,7 +1711,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
             </div>
           )}
 
-          <div className={`min-h-0 rounded-lg border border-border overflow-hidden flex flex-col ${chart != null && (!chartCollapsed || !depthCollapsed) ? 'min-h-56 lg:min-h-0 lg:flex-2' : 'flex-1'}`}>
+          <div className={`min-h-0 rounded-lg border border-border overflow-hidden flex flex-col ${chart != null && (!chartCollapsed || !depthCollapsed || selectedLiveOffer != null) ? 'min-h-56 lg:min-h-0 lg:flex-2' : 'flex-1'}`}>
           {viewMode === 'live' ? (
             <div className="relative min-h-64 flex-1 bg-surface">
               <OffersPreviewTable chartScope="insights" />

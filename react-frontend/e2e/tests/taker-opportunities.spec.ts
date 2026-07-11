@@ -40,4 +40,24 @@ test.describe('Taker opportunities', () => {
     await expect(depthHeading).toBeVisible();
     await expect(page.getByRole('button', { name: 'Hide orderbook depth chart' })).toHaveAttribute('aria-expanded', 'true');
   });
+
+  test('selecting a live offer swaps the depth chart for the Trade Tracing panel', async ({ page }) => {
+    await gotoAndWaitForData(page);
+    await page.getByRole('button', { name: 'dex Insights' }).click();
+
+    const depthHeading = page.locator('h3').filter({ hasText: 'Orderbook Depth' });
+    const tracingHeading = page.locator('h3').filter({ hasText: 'Trade Tracing' });
+    await expect(depthHeading).toBeVisible();
+
+    // Select a live offer row in the Live Offers table.
+    const firstRow = page.locator('table tbody tr').first();
+    await firstRow.click();
+    await expect(tracingHeading).toBeVisible();
+    await expect(depthHeading).toHaveCount(0);
+
+    // Deselecting restores the depth chart.
+    await firstRow.click({ force: true });
+    await expect(tracingHeading).toHaveCount(0);
+    await expect(depthHeading).toBeVisible();
+  });
 });
