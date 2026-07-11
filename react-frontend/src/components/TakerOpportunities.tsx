@@ -1007,7 +1007,23 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   const ordersPending = deferredOrders !== displayedOrders;
   const { timezone } = useTimezone();
   const { excludedMethods } = usePreferences();
-  const { offers: contextOffers, setFilters, resetFilters: resetLiveFilters, hiddenChartOfferKeys, toggleChartOfferKey, setChartOfferKeysVisible } = useFilters();
+  const {
+    offers: contextOffers,
+    setFilters,
+    resetFilters: resetLiveFilters,
+    isChartOfferVisible: isChartOfferVisibleInScope,
+    toggleChartOfferKey: toggleChartOfferKeyInScope,
+    setChartOfferKeysVisible: setChartOfferKeysVisibleInScope,
+    hideAllChartOffers,
+  } = useFilters();
+  // All chart-visibility interactions here belong to the Insights scope,
+  // where offers are hidden by default and render only when ticked.
+  const isChartOfferVisible = useCallback(
+    (key: string) => isChartOfferVisibleInScope('insights', key),
+    [isChartOfferVisibleInScope],
+  );
+  const toggleChartOfferKey = (key: string) => toggleChartOfferKeyInScope('insights', key);
+  const setChartOfferKeysVisible = (keys: string[], visible: boolean) => setChartOfferKeysVisibleInScope('insights', keys, visible);
   const [initialFilters] = useState(readPersistedInsightsFilters);
   const initialCapAvailable = maxFiatLimit != null && maxFiatLimit > 0;
   const initialCappedModePending = initialFilters.mode === 'net_capped' && cappedLoading && detailedOrders.length === 0;
@@ -1303,7 +1319,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   // The filtered orders double as chart overlays. Only detailed orders carry
   // the pricing/analysis payload the chart needs; compact rows join once the
   // detailed pass lands. Per-offer visibility is applied by the chart itself
-  // via hiddenChartOfferKeys.
+  // via the insights chart-visibility scope.
   const plottedChartOffers = useMemo(() => {
     const offers: Offer[] = [];
     for (const order of filteredOrders) {
@@ -1315,8 +1331,8 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
 
   const sortedStableKeys = useMemo(() => sortedOrders.map(orderStableChartKey), [sortedOrders]);
   const chartVisibleCount = useMemo(
-    () => sortedStableKeys.filter(k => !hiddenChartOfferKeys.has(k)).length,
-    [sortedStableKeys, hiddenChartOfferKeys],
+    () => sortedStableKeys.filter(isChartOfferVisible).length,
+    [sortedStableKeys, isChartOfferVisible],
   );
   const allChartVisible = sortedOrders.length > 0 && chartVisibleCount === sortedOrders.length;
   const someChartVisible = chartVisibleCount > 0 && chartVisibleCount < sortedOrders.length;
@@ -1467,7 +1483,10 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
             <button
               key={option}
               type="button"
-              onClick={() => setViewMode(option)}
+              onClick={() => {
+                if (option !== viewMode) hideAllChartOffers();
+                setViewMode(option);
+              }}
               aria-pressed={viewMode === option}
               className={viewMode === option
                 ? 'rounded-md border border-accent bg-accent px-2 py-0.5 text-[0.68rem] font-medium text-black transition-colors'
@@ -1640,7 +1659,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
           <div className={`min-h-0 rounded-lg border border-border overflow-hidden flex flex-col ${chart != null && !chartCollapsed ? 'min-h-56 lg:min-h-0 lg:flex-2' : 'flex-1'}`}>
           {viewMode === 'live' ? (
             <div className="relative min-h-64 flex-1 bg-surface">
-              <OffersPreviewTable />
+              <OffersPreviewTable chartScope="insights" />
             </div>
           ) : (
           <div className="min-h-0 flex-1 flex flex-col overflow-hidden">
@@ -1732,7 +1751,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                             {chart != null && (
                               <input
                                 type="checkbox"
-                                checked={!hiddenChartOfferKeys.has(stableKey)}
+                                checked={isChartOfferVisible(stableKey)}
                                 onChange={() => toggleChartOfferKey(stableKey)}
                                 title="Show on OHLC chart"
                               />

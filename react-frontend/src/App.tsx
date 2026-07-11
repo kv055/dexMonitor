@@ -180,6 +180,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
               extraOffers={extraOffers}
               includeContextOffers={includeLiveOffers}
               fitToOffers
+              chartScope="insights"
             />
           )}
         />

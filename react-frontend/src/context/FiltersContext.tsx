@@ -1,6 +1,11 @@
 import { useReducer, useState, useMemo, type ReactNode } from 'react';
 import type { Filters, Offer, PaymentMethodGroup } from '../types';
-import { FiltersContext } from '../hooks/useFilters';
+import { FiltersContext, type ChartScope } from '../hooks/useFilters';
+
+interface ChartScopeVisibility {
+  defaultVisible: boolean;
+  exceptions: Set<string>;
+}
 import { INITIAL_FILTERS, filtersReducer } from './filtersState';
 import { getPremiumMetricValue, getRefPrice, hasZeroTrustScore, isOfferLive } from '../utils/offerAccess';
 
@@ -57,24 +62,43 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
   const [filters, dispatch] = useReducer(filtersReducer, INITIAL_FILTERS);
   const [selectedOfferKey, setSelectedOfferKey] = useState<string | null>(null);
   const [hoveredOhlcTime, setHoveredOhlcTime] = useState<number | null>(null);
-  const [hiddenChartOfferKeys, setHiddenChartOfferKeys] = useState<Set<string>>(() => new Set());
+  // Chart-overlay visibility per scope: a default plus per-offer exceptions.
+  // Monitor is visible-by-default (exceptions = unticked offers); Insights is
+  // hidden-by-default (exceptions = explicitly ticked offers), so offers
+  // arriving later stay hidden there too.
+  const [chartVisibility, setChartVisibility] = useState<Record<ChartScope, ChartScopeVisibility>>(() => ({
+    monitor: { defaultVisible: true, exceptions: new Set() },
+    insights: { defaultVisible: false, exceptions: new Set() },
+  }));
 
-  const toggleChartOfferKey = (key: string) => {
-    setHiddenChartOfferKeys(prev => {
-      const next = new Set(prev);
+  const isChartOfferVisible = (scope: ChartScope, key: string) => {
+    const { defaultVisible, exceptions } = chartVisibility[scope];
+    return defaultVisible ? !exceptions.has(key) : exceptions.has(key);
+  };
+
+  const toggleChartOfferKey = (scope: ChartScope, key: string) => {
+    setChartVisibility(prev => {
+      const next = new Set(prev[scope].exceptions);
       if (next.has(key)) next.delete(key);
       else next.add(key);
-      return next;
+      return { ...prev, [scope]: { ...prev[scope], exceptions: next } };
     });
   };
 
-  const setChartOfferKeysVisible = (keys: string[], visible: boolean) => {
-    setHiddenChartOfferKeys(prev => {
-      const next = new Set(prev);
-      if (visible) keys.forEach(k => next.delete(k));
-      else keys.forEach(k => next.add(k));
-      return next;
+  const setChartOfferKeysVisible = (scope: ChartScope, keys: string[], visible: boolean) => {
+    setChartVisibility(prev => {
+      const next = new Set(prev[scope].exceptions);
+      const makeException = visible !== prev[scope].defaultVisible;
+      keys.forEach(k => {
+        if (makeException) next.add(k);
+        else next.delete(k);
+      });
+      return { ...prev, [scope]: { ...prev[scope], exceptions: next } };
     });
+  };
+
+  const hideAllChartOffers = () => {
+    setChartVisibility(prev => ({ ...prev, insights: { defaultVisible: false, exceptions: new Set() } }));
   };
 
   const setFilters = (partial: Partial<Filters>) => dispatch({ type: 'SET', payload: partial });
@@ -148,7 +172,7 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
   }, [activeOffers, filters, paymentFilterFn]);
 
   return (
-    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, paymentMethodCounts, groups, selectedOfferKey, setSelectedOfferKey, hoveredOhlcTime, setHoveredOhlcTime, loading, refPrice, zeroTrustHiddenCount, hiddenChartOfferKeys, toggleChartOfferKey, setChartOfferKeysVisible }}>
+    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, paymentMethodCounts, groups, selectedOfferKey, setSelectedOfferKey, hoveredOhlcTime, setHoveredOhlcTime, loading, refPrice, zeroTrustHiddenCount, isChartOfferVisible, toggleChartOfferKey, setChartOfferKeysVisible, hideAllChartOffers }}>
       {children}
     </FiltersContext.Provider>
   );

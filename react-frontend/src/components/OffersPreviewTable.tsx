@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExchangeTag } from './ExchangeTag';
 import { SellerRatingBadge } from './SellerRatingBadge';
 import { formatNum, formatBtc, premiumClass } from '../utils/formatters';
 import { useTimezone } from '../hooks/useTimezone';
-import { useFilters } from '../hooks/useFilters';
+import { useFilters, type ChartScope } from '../hooks/useFilters';
 import { LoadingSpinner } from './LoadingSpinner';
 import { CostBreakdownPanel, OfferTimeMeta, SizeToggle } from './OfferBreakdownPanel';
 import type { SizeMode } from './OfferBreakdownPanel';
@@ -57,8 +57,27 @@ function useGroupLabel() {
   };
 }
 
-export function OffersPreviewTable() {
-  const { filteredOffers: offers, selectedOfferKey, setSelectedOfferKey, loading, hiddenChartOfferKeys, toggleChartOfferKey, setChartOfferKeysVisible } = useFilters();
+interface OffersPreviewTableProps {
+  /** Which chart's overlay-visibility scope the checkboxes control. */
+  chartScope?: ChartScope;
+}
+
+export function OffersPreviewTable({ chartScope = 'monitor' }: OffersPreviewTableProps = {}) {
+  const {
+    filteredOffers: offers,
+    selectedOfferKey,
+    setSelectedOfferKey,
+    loading,
+    isChartOfferVisible: isChartOfferVisibleInScope,
+    toggleChartOfferKey: toggleChartOfferKeyInScope,
+    setChartOfferKeysVisible: setChartOfferKeysVisibleInScope,
+  } = useFilters();
+  const isChartOfferVisible = useCallback(
+    (key: string) => isChartOfferVisibleInScope(chartScope, key),
+    [isChartOfferVisibleInScope, chartScope],
+  );
+  const toggleChartOfferKey = (key: string) => toggleChartOfferKeyInScope(chartScope, key);
+  const setChartOfferKeysVisible = (keys: string[], visible: boolean) => setChartOfferKeysVisibleInScope(chartScope, keys, visible);
   const groupLabel = useGroupLabel();
   const { timezone } = useTimezone();
   const selectedRowRef = useRef<HTMLTableRowElement>(null);
@@ -70,8 +89,8 @@ export function OffersPreviewTable() {
   const offerKeys = useMemo(() => buildOfferKeys(offers), [offers]);
   const stableOfferKeys = useMemo(() => offers.map(buildStableOfferKey), [offers]);
   const visibleCount = useMemo(
-    () => stableOfferKeys.filter(k => !hiddenChartOfferKeys.has(k)).length,
-    [stableOfferKeys, hiddenChartOfferKeys],
+    () => stableOfferKeys.filter(isChartOfferVisible).length,
+    [stableOfferKeys, isChartOfferVisible],
   );
   const allChartVisible = offers.length > 0 && visibleCount === offers.length;
   const someChartVisible = visibleCount > 0 && visibleCount < offers.length;
@@ -164,7 +183,7 @@ export function OffersPreviewTable() {
                     <td className={TD} onClick={e => e.stopPropagation()}>
                       <input
                         type="checkbox"
-                        checked={!hiddenChartOfferKeys.has(stableKey)}
+                        checked={isChartOfferVisible(stableKey)}
                         onChange={() => toggleChartOfferKey(stableKey)}
                         title="Show on OHLC chart"
                       />
@@ -322,7 +341,7 @@ export function OffersPreviewTable() {
                   <td className={TD} onClick={e => e.stopPropagation()}>
                     <input
                       type="checkbox"
-                      checked={!hiddenChartOfferKeys.has(stableKey)}
+                      checked={isChartOfferVisible(stableKey)}
                       onChange={() => toggleChartOfferKey(stableKey)}
                       title="Show on OHLC chart"
                     />

@@ -11,7 +11,7 @@ import {
   type UTCTimestamp,
 } from 'lightweight-charts';
 import type { LifecyclePoint, Offer, OHLCCandle, OHLCData } from '../types';
-import { useFilters } from '../hooks/useFilters';
+import { useFilters, type ChartScope } from '../hooks/useFilters';
 import { usePreferences } from '../hooks/usePreferences';
 import { getFirstSeen, getLastSeen, getOfferPrice, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
 import { useTimezone } from '../hooks/useTimezone';
@@ -39,11 +39,14 @@ interface Props {
   includeContextOffers?: boolean;
   /**
    * Auto-fit the x-axis to the plotted offers whenever the offer source
-   * (includeContextOffers) flips: the window spans the oldest offer's start
-   * to the latest closure (or "now" for live offers), and the candle size is
-   * re-picked to keep roughly TARGET_VISIBLE_CANDLES on screen.
+   * (includeContextOffers) flips or the set of ticked offers changes: the
+   * window spans the oldest offer's start to the latest closure (or "now"
+   * for live offers), and the candle size is re-picked to keep roughly
+   * TARGET_VISIBLE_CANDLES on screen.
    */
   fitToOffers?: boolean;
+  /** Which overlay-visibility scope governs the plotted offers. */
+  chartScope?: ChartScope;
 }
 
 type PendingVisibleRange = {
@@ -163,7 +166,7 @@ function requiredHoursForCandleSize(candleMin: number): number {
  * per update — the previous design — reset the user's pan/zoom continuously
  * and burned CPU on full canvas teardowns.
  */
-function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true, extraOffers, includeContextOffers = true, fitToOffers = false }: Props) {
+function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true, extraOffers, includeContextOffers = true, fitToOffers = false, chartScope = 'monitor' }: Props) {
   const divRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<IChartApi | null>(null);
   const candleSeriesRef = useRef<ISeriesApi<'Candlestick'> | null>(null);
@@ -182,7 +185,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
   // library, so the first real candle batch must re-apply it.
   const hadCandlesRef = useRef(false);
 
-  const { filteredOffers, filters: { hours, premiumMode }, selectedOfferKey, setSelectedOfferKey, setHoveredOhlcTime, loading, hiddenChartOfferKeys } = useFilters();
+  const { filteredOffers, filters: { hours, premiumMode }, selectedOfferKey, setSelectedOfferKey, setHoveredOhlcTime, loading, isChartOfferVisible } = useFilters();
   const { theme } = usePreferences();
 
   // Chart guard: only offers with a positive premium are plotted, and only
@@ -191,12 +194,12 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
   // table, but they must never reach the overlay.
   const premiumOffers = useMemo(() => {
     const isPlottable = (o: Offer) =>
-      (getPremiumMetricValue(o, premiumMode) ?? 0) > 0 && !hiddenChartOfferKeys.has(buildStableOfferKey(o));
+      (getPremiumMetricValue(o, premiumMode) ?? 0) > 0 && isChartOfferVisible(chartScope, buildStableOfferKey(o));
     const base = includeContextOffers ? filteredOffers.filter(isPlottable) : [];
     if (!extraOffers || extraOffers.length === 0) return base;
     const seenIds = new Set(base.map((o) => o.id));
     return [...base, ...extraOffers.filter((o) => !seenIds.has(o.id) && isPlottable(o))];
-  }, [includeContextOffers, filteredOffers, premiumMode, hiddenChartOfferKeys, extraOffers]);
+  }, [includeContextOffers, filteredOffers, premiumMode, isChartOfferVisible, chartScope, extraOffers]);
   const { timezone } = useTimezone();
   const [lifecycleCache, setLifecycleCache] = useState<Record<number, LifecycleCacheEntry>>({});
   const lifecycleLoadingRef = useRef<Set<number>>(new Set());
@@ -881,19 +884,23 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
   // can't run yet (chart still empty) is left pending and retried on the next
   // data change instead of being consumed.
   const lastFitSourceRef = useRef<boolean | null>(null);
-  const lastFitHadOffersRef = useRef(false);
+  const lastFitPlottedKeysRef = useRef('');
   const lastFitHadCandlesRef = useRef(false);
   const lastFitEpochRef = useRef(0);
   useEffect(() => {
     if (!fitToOffers) return;
+    // Stable-key signature of what's actually plotted: changes when offers are
+    // ticked/unticked on the chart or the offer source flips — NOT on live
+    // price ticks, which only replace offer object identities.
+    const plottedKeys = premiumOffers.map(buildStableOfferKey).sort().join('|');
     const sourceChanged = lastFitSourceRef.current !== includeContextOffers;
-    const offersArrived = !lastFitHadOffersRef.current && premiumOffers.length > 0;
+    const plottedChanged = lastFitPlottedKeysRef.current !== plottedKeys;
     const candlesArrived = !lastFitHadCandlesRef.current && shiftedDisplay.candles.length > 0;
     const chartRecreated = lastFitEpochRef.current !== chartEpoch;
-    if (!sourceChanged && !offersArrived && !candlesArrived && !chartRecreated) return;
+    if (!sourceChanged && !plottedChanged && !candlesArrived && !chartRecreated) return;
     if (!fitRangeToOffersRef.current()) return;
     lastFitSourceRef.current = includeContextOffers;
-    lastFitHadOffersRef.current = premiumOffers.length > 0;
+    lastFitPlottedKeysRef.current = plottedKeys;
     lastFitHadCandlesRef.current = shiftedDisplay.candles.length > 0;
     lastFitEpochRef.current = chartEpoch;
   }, [fitToOffers, includeContextOffers, premiumOffers, shiftedDisplay, chartEpoch]);
