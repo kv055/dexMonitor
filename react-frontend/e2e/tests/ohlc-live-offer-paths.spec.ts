@@ -1,4 +1,4 @@
-import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, offersPanel, controlPanel, openControlPanel, closeControlPanel, jsClick, jsFill } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, offersPanel, controlPanel, openControlPanel, closeControlPanel, revealChartOffers, jsClick, jsFill } from '../fixtures/base-fixture';
 import { MOCK_LIVE_OFFER_LIFECYCLES, MOCK_OHLC_DATA_4H_WINDOW } from '../fixtures/mock-data';
 import type { Page } from '@playwright/test';
 
@@ -35,11 +35,14 @@ test.describe('OHLC live offer price paths', () => {
       /\/api\/live_offers\/\d+\/lifecycle$/.test(new URL(req.url()).pathname),
     );
     await gotoAndWaitForData(page);
+    // Insights only plots (and fetches lifecycle for) offers once they're ticked.
+    await revealChartOffers(page);
     await lifecycleRequest;
   });
 
   test('plots the full price history of live offers, not just the latest price', async ({ page }) => {
     await gotoAndWaitForData(page);
+    await revealChartOffers(page);
     await waitForChartReady(ohlcPanel(page), page);
 
     // The first render happens before the lifecycle fetch resolves, so poll
@@ -68,6 +71,7 @@ test.describe('OHLC live offer price paths', () => {
 
   test('visual regression: live offer paths trace history on the chart', async ({ page }) => {
     await gotoAndWaitForData(page);
+    await revealChartOffers(page);
 
     const panel = ohlcPanel(page);
     await waitForChartReady(panel, page);
@@ -83,6 +87,7 @@ test.describe('OHLC live offer price paths', () => {
 
   test('offer paths snap to the selected candle size', async ({ page }) => {
     await gotoAndWaitForData(page);
+    await revealChartOffers(page);
     const panel = ohlcPanel(page);
     await waitForChartReady(panel, page);
     await expect
@@ -125,6 +130,7 @@ test.describe('OHLC live offer price paths', () => {
     await page.locator('.absolute button').filter({ hasText: 'Incl. non premium offers' }).click();
     await jsFill(cp.locator('input[placeholder="Min"]'), '-10');
     await closeControlPanel(page);
+    await revealChartOffers(page);
 
     // The table must now show ALL live offers, including non-premium ones
     // (mock offers 8, 9 and 13 have a negative net premium).
@@ -144,6 +150,7 @@ test.describe('OHLC live offer price paths', () => {
     );
 
     await gotoAndWaitForData(page);
+    await revealChartOffers(page);
     const panel = ohlcPanel(page);
     await waitForChartReady(panel, page);
 

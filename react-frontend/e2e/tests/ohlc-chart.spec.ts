@@ -1,4 +1,4 @@
-import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, controlPanel, openSettings, closeSettings, jsClick } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, controlPanel, openControlPanel, openSettings, closeSettings, jsClick } from '../fixtures/base-fixture';
 import {
   MOCK_OHLC_DATA_1D_WINDOW,
   MOCK_OHLC_DATA_1H,
@@ -29,7 +29,6 @@ test.describe('OHLCChart', () => {
     await gotoAndWaitForData(page);
 
     const panel = ohlcPanel(page);
-    await expect(panel.locator('text=DEX Premium Offer Overlay')).toBeVisible();
     await waitForChartReady(panel, page);
 
     // lightweight-charts creates multiple canvas elements
@@ -42,11 +41,13 @@ test.describe('OHLCChart', () => {
     expect(box!.height).toBeGreaterThan(50);
   });
 
-  test('shows BTC/EUR label', async ({ page }) => {
+  test('shows the BTC/EUR reference price in the Insights sidebar', async ({ page }) => {
     await gotoAndWaitForData(page);
+    await openControlPanel(page);
 
-    const panel = ohlcPanel(page);
-    await expect(panel.getByText('BTC/EUR — Kraken', { exact: true })).toBeVisible();
+    // The CEX reference price moved from the (removed) Monitor chart header to
+    // the Insights filter sidebar.
+    await expect(controlPanel(page).getByText(/BTC\/EUR — Kraken/)).toBeVisible();
   });
 
   test('requests and renders past offer lifecycle overlays', async ({ page }) => {

@@ -316,6 +316,15 @@ export async function closeControlPanel(_page: Page) {
   // switch back to — assertions run against the same view.
 }
 
+/**
+ * The Insights OHLC chart draws no offer overlays until they are ticked. Click
+ * the header "all" checkbox so every currently-visible offer is plotted (paths,
+ * lifecycle fetches, fit-to-offers). Call after the offers/filters are settled.
+ */
+export async function revealChartOffers(page: Page) {
+  await jsClick(page.getByTitle('Show/hide all offers on the OHLC chart'));
+}
+
 /** Locator for the Control Panel (filters sidebar of the dex Insights tab) */
 export function controlPanel(page: Page) {
   return page.getByRole('complementary', { name: 'Insights filters' });
