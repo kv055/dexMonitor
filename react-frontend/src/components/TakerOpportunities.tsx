@@ -1656,7 +1656,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
         </aside>
         )}
 
-        <div className="min-h-0 flex-1 flex flex-col gap-3">
+        <div className="min-h-0 min-w-0 flex-1 flex flex-col gap-3">
           {chart != null && (
             // When the OHLC chart is collapsed and no live offer is selected,
             // the whole row reduces to a single horizontal expand bar — the
@@ -1672,7 +1672,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                 DEX Premium Offer Overlay ▾
               </button>
             ) : (
-            <div className="flex flex-col gap-3 lg:flex-row lg:min-h-0 lg:flex-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:min-h-0 lg:min-w-0 lg:flex-3">
               {chartCollapsed ? (
                 <button
                   type="button"
@@ -1684,7 +1684,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                   DEX Premium Offer Overlay ▾
                 </button>
               ) : (
-                <div className="min-h-72 lg:min-h-0 lg:min-w-0 flex-1 rounded-lg border border-border bg-surface p-3 flex flex-col">
+                <div className="min-h-72 lg:min-h-0 lg:min-w-0 overflow-hidden flex-1 rounded-lg border border-border bg-surface p-3 flex flex-col">
                   <div className="flex-1 min-h-0 relative">
                     <button
                       type="button"
