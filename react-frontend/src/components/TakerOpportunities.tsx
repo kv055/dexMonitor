@@ -28,6 +28,8 @@ import {
 import { CostBreakdownPanel, OfferTimeMeta, SizeToggle } from './OfferBreakdownPanel';
 import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
+import { LiveOfferFilters } from './ControlPanel';
+import { OffersPreviewTable } from './OffersPreviewTable';
 
 interface Props {
   stats: PastOrderStats | null;
@@ -40,6 +42,9 @@ interface Props {
   ordersLoading: boolean;
   cappedLoading: boolean;
   maxFiatLimit: number | null;
+  /** Refreshes the live offers/core dataset (Live mode refresh button). */
+  onRefreshLive: () => void;
+  lastUpdatedAt: string;
   /** Renders the OHLC chart panel; receives the filtered orders as chart overlays. */
   chart?: (extraOffers: Offer[]) => ReactNode;
 }
@@ -190,7 +195,10 @@ type SizeUnit = 'btc' | 'fiat';
 
 const INSIGHTS_FILTERS_STORAGE_KEY = 'dex-insights-filters';
 
+type InsightsViewMode = 'live' | 'past';
+
 interface PersistedInsightsFilters {
+  viewMode: InsightsViewMode;
   selectedTimeframe: string;
   directionFilter: DirectionFilter;
   disabledExchanges: string[];
@@ -207,6 +215,7 @@ interface PersistedInsightsFilters {
 }
 
 const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
+  viewMode: 'live',
   selectedTimeframe: '24h',
   directionFilter: 'both',
   disabledExchanges: [],
@@ -222,6 +231,7 @@ const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
   profitFiatMax: null,
 };
 
+const VALID_VIEW_MODES = new Set<InsightsViewMode>(['live', 'past']);
 const VALID_TIMEFRAMES = new Set(['1h', '6h', '24h', '48h', '7d']);
 const VALID_DIRECTIONS = new Set<DirectionFilter>(['both', 'buy', 'sell']);
 const VALID_MODES = new Set<TakerOpportunityMode>(['net_full', 'net_capped']);
@@ -288,6 +298,9 @@ function readPersistedInsightsFilters(): PersistedInsightsFilters {
     const parsed = JSON.parse(raw) as Partial<PersistedInsightsFilters> & { sortBy?: string };
     const sort = readPersistedSort(parsed);
     return {
+      viewMode: VALID_VIEW_MODES.has(parsed.viewMode as InsightsViewMode)
+        ? parsed.viewMode as InsightsViewMode
+        : DEFAULT_INSIGHTS_FILTERS.viewMode,
       selectedTimeframe: VALID_TIMEFRAMES.has(parsed.selectedTimeframe ?? '')
         ? parsed.selectedTimeframe!
         : DEFAULT_INSIGHTS_FILTERS.selectedTimeframe,
@@ -984,17 +997,18 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
   );
 }
 
-export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailedOrders, ordersLoading, cappedLoading, maxFiatLimit, chart }: Props) {
+export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailedOrders, ordersLoading, cappedLoading, maxFiatLimit, onRefreshLive, lastUpdatedAt, chart }: Props) {
   const displayedOrders = detailedOrders.length > 0 ? detailedOrders : fastOrders;
   const deferredOrders = useDeferredValue(displayedOrders);
   const ordersPending = deferredOrders !== displayedOrders;
   const { timezone } = useTimezone();
   const { excludedMethods } = usePreferences();
-  const { hiddenChartOfferKeys, toggleChartOfferKey, setChartOfferKeysVisible } = useFilters();
+  const { offers: contextOffers, setFilters, resetFilters: resetLiveFilters, hiddenChartOfferKeys, toggleChartOfferKey, setChartOfferKeysVisible } = useFilters();
   const [initialFilters] = useState(readPersistedInsightsFilters);
   const initialCapAvailable = maxFiatLimit != null && maxFiatLimit > 0;
   const initialCappedModePending = initialFilters.mode === 'net_capped' && cappedLoading && detailedOrders.length === 0;
   const [referenceNowMs] = useState(() => Date.now());
+  const [viewMode, setViewMode] = useState<InsightsViewMode>(initialFilters.viewMode);
   const [selectedTimeframe, setSelectedTimeframe] = useState(initialFilters.selectedTimeframe);
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>(initialFilters.directionFilter);
   const [disabledExchanges, setDisabledExchanges] = useState<string[]>(initialFilters.disabledExchanges);
@@ -1027,6 +1041,19 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   const profitFiatModeRef = useRef(mode);
   const tradesListRef = useRef<HTMLDivElement>(null);
   const detailedOrdersByID = useMemo(() => new Map(detailedOrders.map(order => [order.id, order])), [detailedOrders]);
+
+  // The sidebar's Direction/Exchanges controls are shared between Live and Past
+  // mode: push the persisted selection into the global FiltersContext once so
+  // the live offers list and OHLC overlays match the sidebar from the start.
+  const sharedFiltersSyncedRef = useRef(false);
+  useEffect(() => {
+    if (sharedFiltersSyncedRef.current) return;
+    sharedFiltersSyncedRef.current = true;
+    setFilters({
+      direction: directionFilter === 'both' ? '' : directionFilter,
+      excludedExchanges: disabledExchanges,
+    });
+  }, [setFilters, directionFilter, disabledExchanges]);
 
   const hasExcluded = (stats?.excluded_payment_methods?.length ?? 0) > 0;
   const cappedOffersPending = cappedLoading && detailedOrders.length === 0;
@@ -1083,6 +1110,20 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
     const exchanges = Object.keys(counts).sort((a, b) => a.localeCompare(b, 'de'));
     return { counts, exchanges };
   }, [activeOrders, cutoffMs, directionFilter]);
+
+  // Live mode counts exchanges over the live offer feed instead of closed orders.
+  const liveExchangeFilterBase = useMemo(() => {
+    const counts: Record<string, number> = {};
+    for (const offer of contextOffers) {
+      if (!isOfferLive(offer)) continue;
+      if (directionFilter !== 'both' && offer.direction !== directionFilter) continue;
+      counts[offer.exchange] = (counts[offer.exchange] ?? 0) + 1;
+    }
+    const exchanges = Object.keys(counts).sort((a, b) => a.localeCompare(b, 'de'));
+    return { counts, exchanges };
+  }, [contextOffers, directionFilter]);
+
+  const activeExchangeFilter = viewMode === 'live' ? liveExchangeFilterBase : exchangeFilterBase;
 
   const ordersBeforeDurationFilter = useMemo(() => {
     return activeOrders.filter(order => {
@@ -1190,6 +1231,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
       && profitFiatRangeCents[0] === profitFiatBounds.minCents
       && profitFiatRangeCents[1] === profitFiatBounds.maxCents;
     const payload: PersistedInsightsFilters = {
+      viewMode,
       selectedTimeframe,
       directionFilter,
       disabledExchanges,
@@ -1214,6 +1256,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
     };
     localStorage.setItem(INSIGHTS_FILTERS_STORAGE_KEY, JSON.stringify(payload));
   }, [
+    viewMode,
     selectedTimeframe,
     directionFilter,
     disabledExchanges,
@@ -1302,13 +1345,29 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
     rowVirtualizer.measure();
   }, [expandedId, sortedOrders.length, rowVirtualizer]);
 
+  // Direction and Exchanges are shared filters: they drive both the past-orders
+  // list (local state) and the live offers view (global FiltersContext).
+  const changeDirectionFilter = useCallback((v: DirectionFilter) => {
+    setDirectionFilter(v);
+    setFilters({ direction: v === 'both' ? '' : v });
+  }, [setFilters]);
+
+  const applyDisabledExchanges = useCallback((next: string[]) => {
+    setDisabledExchanges(next);
+    setFilters({ excludedExchanges: next });
+  }, [setFilters]);
+
   const toggleExchangeFilter = useCallback((exchange: string) => {
-    setDisabledExchanges(prev =>
-      prev.includes(exchange) ? prev.filter(name => name !== exchange) : [...prev, exchange],
-    );
-  }, []);
+    const next = disabledExchanges.includes(exchange)
+      ? disabledExchanges.filter(name => name !== exchange)
+      : [...disabledExchanges, exchange];
+    applyDisabledExchanges(next);
+  }, [disabledExchanges, applyDisabledExchanges]);
 
   const resetFilters = useCallback(() => {
+    // Also resets the shared live filters (direction, excluded exchanges,
+    // payment, premium metric and range) in the global FiltersContext.
+    resetLiveFilters();
     setSelectedTimeframe(DEFAULT_INSIGHTS_FILTERS.selectedTimeframe);
     setDirectionFilter(DEFAULT_INSIGHTS_FILTERS.directionFilter);
     setDisabledExchanges([]);
@@ -1333,6 +1392,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
       setProfitFiatRangeCents(null);
     }
   }, [
+    resetLiveFilters,
     durationBounds.hasData,
     durationBounds.min,
     durationBounds.max,
@@ -1345,7 +1405,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
     && fastOrders.length === 0
     && detailedOrders.length === 0;
 
-  if (initialAnalyticsPending) {
+  if (viewMode === 'past' && initialAnalyticsPending) {
     return (
       <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
         <LoadingSpinner size={112} label="Loading taker opportunities" />
@@ -1353,7 +1413,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
     );
   }
 
-  if (!stats) {
+  if (viewMode === 'past' && !stats) {
     return (
       <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
         <div className="flex flex-1 items-center justify-center px-3 text-[0.8rem] text-muted">
@@ -1389,11 +1449,31 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
 
   return (
     <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
-      {(ordersPending || cappedDataPending) && displayedOrders.length > 0 && (
+      {viewMode === 'past' && (ordersPending || cappedDataPending) && displayedOrders.length > 0 && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 border-b border-border bg-surface/80 px-3 py-1 text-[0.68rem] text-muted">
           {cappedDataPending ? 'Calculating capped-volume profits…' : 'Updating profitable trades…'}
         </div>
       )}
+      <div className="mb-3 flex items-center justify-between gap-3 shrink-0">
+        <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">
+          {viewMode === 'live' ? 'Live Offers' : 'Past Offers'}
+        </h3>
+        <div className="flex items-center gap-1" role="group" aria-label="Offer view mode">
+          {(['live', 'past'] as const).map(option => (
+            <button
+              key={option}
+              type="button"
+              onClick={() => setViewMode(option)}
+              aria-pressed={viewMode === option}
+              className={viewMode === option
+                ? 'rounded-md border border-accent bg-accent px-2 py-0.5 text-[0.68rem] font-medium text-black transition-colors'
+                : 'rounded-md border border-border bg-bg/40 px-2 py-0.5 text-[0.68rem] font-medium text-muted transition-colors hover:text-text'}
+            >
+              {option === 'live' ? 'Live Offers' : 'Past Offers'}
+            </button>
+          ))}
+        </div>
+      </div>
       <div className="flex flex-1 min-h-0 flex-col gap-3 lg:flex-row">
         {filtersCollapsed ? (
           <button
@@ -1420,33 +1500,38 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
               ◂
             </button>
           </div>
-          <SelectGroup
-            label="Timeframe"
-            description="Show stats for orders closed within this window"
-            options={(activeStats ?? stats).timeframes.map(r => ({ value: r.timeframe, label: labelForTimeframe(r.timeframe) }))}
-            selected={selected?.timeframe ?? selectedTimeframe}
-            onChange={setSelectedTimeframe}
-          />
           <PillGroup
             label="Direction"
-            description="Filter the profitable trades list by offer side"
+            description="Filter the offers list by offer side (applies to live and past offers)"
             options={[
               { value: 'both', label: 'Both' },
               { value: 'buy', label: 'Buy' },
               { value: 'sell', label: 'Sell' },
             ]}
             selected={directionFilter}
-            onChange={v => setDirectionFilter(v as DirectionFilter)}
+            onChange={v => changeDirectionFilter(v as DirectionFilter)}
           />
           <ExchangeFilterGroup
             label="Exchanges"
-            description="Click to include or exclude DEX exchanges from the profitable trades list"
-            exchanges={exchangeFilterBase.exchanges}
-            counts={exchangeFilterBase.counts}
+            description="Click to include or exclude DEX exchanges from the offers list (applies to live and past offers)"
+            exchanges={activeExchangeFilter.exchanges}
+            counts={activeExchangeFilter.counts}
             disabled={disabledExchangeSet}
             onToggle={toggleExchangeFilter}
-            onEnableAll={() => setDisabledExchanges([])}
-            onDisableAll={() => setDisabledExchanges([...exchangeFilterBase.exchanges])}
+            onEnableAll={() => applyDisabledExchanges([])}
+            onDisableAll={() => applyDisabledExchanges([...activeExchangeFilter.exchanges])}
+          />
+          {viewMode === 'live' && (
+            <LiveOfferFilters onRefresh={onRefreshLive} lastUpdatedAt={lastUpdatedAt} />
+          )}
+          {viewMode === 'past' && (
+          <>
+          <SelectGroup
+            label="Timeframe"
+            description="Show stats for orders closed within this window"
+            options={((activeStats ?? stats)?.timeframes ?? []).map(r => ({ value: r.timeframe, label: labelForTimeframe(r.timeframe) }))}
+            selected={selected?.timeframe ?? selectedTimeframe}
+            onChange={setSelectedTimeframe}
           />
           <DualRangeFilter
             label="Duration"
@@ -1489,6 +1574,8 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
             selected={mode}
             onChange={v => setMode(v as TakerOpportunityMode)}
           />
+          </>
+          )}
 
           <button
             type="button"
@@ -1498,6 +1585,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
             ↺ Reset filters
           </button>
 
+          {viewMode === 'past' && (
           <div className="shrink-0 overflow-hidden rounded-lg border border-border bg-bg/20">
             <div className="flex items-center justify-between gap-2 border-b border-border bg-surface/70 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-wide text-muted">
               <span>Backtesting summary</span>
@@ -1512,6 +1600,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
               ))}
             </div>
           </div>
+          )}
         </aside>
         )}
 
@@ -1539,12 +1628,17 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                 >
                   ▴
                 </button>
-                {chart(plottedChartOffers)}
+                {chart(viewMode === 'past' ? plottedChartOffers : [])}
               </div>
             </div>
           ))}
 
           <div className={`min-h-0 rounded-lg border border-border overflow-hidden flex flex-col ${chart != null && !chartCollapsed ? 'min-h-56 lg:min-h-0 lg:flex-2' : 'flex-1'}`}>
+          {viewMode === 'live' ? (
+            <div className="relative min-h-64 flex-1 bg-surface">
+              <OffersPreviewTable />
+            </div>
+          ) : (
           <div className="min-h-0 flex-1 flex flex-col overflow-hidden">
             {sortedOrders.length > 0 && (
               <ProfitableTradesHeader
@@ -1672,6 +1766,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
               )}
             </div>
           </div>
+          )}
           </div>
         </div>
       </div>

@@ -1,73 +1,61 @@
-import { test, expect, gotoAndWaitForData, controlPanel, openSettings, jsClick, jsFill } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, controlPanel, openControlPanel, jsClick, jsFill } from '../fixtures/base-fixture';
 
-test.describe('ControlPanel', () => {
+test.describe('ControlPanel (Insights filter sidebar)', () => {
   test.beforeEach(async ({ page }) => {
     await gotoAndWaitForData(page);
-    await openSettings(page);
+    await openControlPanel(page);
   });
 
-  test('renders all filter section labels', async ({ page }) => {
+  test('renders shared and live-only filter section labels', async ({ page }) => {
     const cp = controlPanel(page);
     const label = (text: string) =>
       cp.locator('span.uppercase').filter({ hasText: new RegExp(`^${text}$`) });
 
-    await expect(label('Currency')).toBeVisible();
-    await expect(label('Ref Price')).toBeVisible();
-    await expect(label('Timeframe')).toBeVisible();
-    await expect(label('Side')).toBeVisible();
-    await expect(label('Exchange')).toBeVisible();
+    // Shared between Live and Past mode
+    await expect(label('Direction')).toBeVisible();
+    await expect(label('Exchanges')).toBeVisible();
+    // Live-only
     await expect(label('Payment')).toBeVisible();
-    await expect(label('Status')).toBeVisible();
     await expect(label('Premium')).toBeVisible();
     await expect(label('Range %')).toBeVisible();
   });
 
-  test('currency and ref price selects are disabled', async ({ page }) => {
+  test('view mode toggle swaps live-only for past-only controls', async ({ page }) => {
     const cp = controlPanel(page);
-    await expect(cp.locator('select').first()).toBeDisabled();
-    await expect(cp.locator('select').nth(1)).toBeDisabled();
+    const label = (text: string) =>
+      cp.locator('span.uppercase').filter({ hasText: new RegExp(`^${text}$`) });
+
+    await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
+    await expect(label('Timeframe')).toBeVisible();
+    await expect(label('Premium mode')).toBeVisible();
+    await expect(label('Payment')).toHaveCount(0);
+    await expect(label('Range %')).toHaveCount(0);
+    // Shared controls stay put
+    await expect(label('Direction')).toBeVisible();
+    await expect(label('Exchanges')).toBeVisible();
+
+    await jsClick(page.getByRole('button', { name: 'Live Offers', exact: true }));
+    await expect(label('Payment')).toBeVisible();
+    await expect(label('Timeframe')).toHaveCount(0);
   });
 
-  test('timeframe dropdown shows options and selection works', async ({ page }) => {
+  test('direction pills select a side', async ({ page }) => {
     const cp = controlPanel(page);
-
-    const timeframeBtn = cp.locator('button').filter({ hasText: 'Last 24h' });
-    await expect(timeframeBtn).toBeVisible();
-    await timeframeBtn.click();
-
-    await expect(page.locator('button').filter({ hasText: 'Last 1h' })).toBeVisible();
-    await expect(page.locator('button').filter({ hasText: 'Last 6h' })).toBeVisible();
-    await expect(page.locator('button').filter({ hasText: 'Last 48h' })).toBeVisible();
-    await expect(page.locator('button').filter({ hasText: 'Last 7d' })).toBeVisible();
-
-    await page.locator('button').filter({ hasText: 'Last 6h' }).click();
-    await expect(cp.locator('button').filter({ hasText: 'Last 6h' })).toBeVisible();
+    const buyPill = cp.getByRole('button', { name: 'Buy', exact: true });
+    await jsClick(buyPill);
+    await expect(buyPill).toHaveClass(/text-accent/);
   });
 
-  test('direction dropdown shows All/Asks/Bids and selection works', async ({ page }) => {
+  test('exchange pills toggle exchanges on and off', async ({ page }) => {
     const cp = controlPanel(page);
+    const bisqPill = cp.getByRole('button', { name: /Bisq v1/ });
+    await expect(bisqPill).toBeVisible();
 
-    // Direction button has accessible name like "All [count] ▾"
-    const sideBtn = cp.getByRole('button', { name: /^All \d/ });
-    await jsClick(sideBtn);
+    await jsClick(bisqPill);
+    await expect(bisqPill).toHaveClass(/line-through/);
 
-    await expect(page.locator('button').filter({ hasText: 'Asks (Sell)' })).toBeVisible();
-    await expect(page.locator('button').filter({ hasText: 'Bids (Buy)' })).toBeVisible();
-
-    await page.locator('button').filter({ hasText: 'Asks (Sell)' }).click();
-    await expect(cp.locator('button').filter({ hasText: 'Asks (Sell)' })).toBeVisible();
-  });
-
-  test('exchange dropdown shows exchanges and selection works', async ({ page }) => {
-    const cp = controlPanel(page);
-    await jsClick(cp.locator('button').filter({ hasText: 'All Exchanges' }));
-
-    await expect(page.locator('button').filter({ hasText: /BISQ/i })).toBeVisible();
-    await expect(page.locator('button').filter({ hasText: /HODLHODL/i })).toBeVisible();
-    await expect(page.locator('button').filter({ hasText: /ROBOSATS/i })).toBeVisible();
-
-    await page.locator('button').filter({ hasText: /BISQ V1/i }).first().click();
-    await expect(cp.locator('span').filter({ hasText: /^BISQ V1$/i })).toBeVisible();
+    await jsClick(cp.getByRole('button', { name: 'All', exact: true }));
+    await expect(bisqPill).not.toHaveClass(/line-through/);
   });
 
   test('payment dropdown shows options and selection works', async ({ page }) => {
@@ -81,19 +69,6 @@ test.describe('ControlPanel', () => {
 
     await sepaOption.click();
     await expect(cp.locator('button').filter({ hasText: 'SEPA Instant' })).toBeVisible();
-  });
-
-  test('status dropdown shows All Orders/Open/Closed', async ({ page }) => {
-    const cp = controlPanel(page);
-
-    // Status button has accessible name like "Open [count] ▾"
-    const statusBtn = cp.getByRole('button', { name: /^Open \d/ });
-    await jsClick(statusBtn);
-
-    await expect(page.locator('button').filter({ hasText: 'All Orders' })).toBeVisible();
-    await expect(page.locator('button').filter({ hasText: 'Closed' })).toBeVisible();
-
-    await page.locator('button').filter({ hasText: 'All Orders' }).click();
   });
 
   test('premium range inputs accept values', async ({ page }) => {
@@ -127,17 +102,13 @@ test.describe('ControlPanel', () => {
   test('reset button restores default filters', async ({ page }) => {
     const cp = controlPanel(page);
 
-    // Change exchange filter
-    await jsClick(cp.locator('button').filter({ hasText: 'All Exchanges' }));
-    await page.locator('button').filter({ hasText: /BISQ/i }).first().click();
-
-    // Fill premium min
+    // Disable an exchange and fill premium min
+    await jsClick(cp.getByRole('button', { name: /Bisq v1/ }));
     await jsFill(cp.locator('input[placeholder="Min"]'), '2.0');
 
-    // Click Reset (row 1 — no canvas overlap)
-    await cp.locator('button').filter({ hasText: '↺ Reset' }).click();
+    await cp.locator('button').filter({ hasText: '↺ Reset filters' }).click();
 
-    await expect(cp.locator('button').filter({ hasText: 'All Exchanges' })).toBeVisible();
+    await expect(cp.getByRole('button', { name: /Bisq v1/ })).not.toHaveClass(/line-through/);
     // Reset clears the premium range (RESET_FILTERS, unlike the pre-filled INITIAL_FILTERS)
     await expect(cp.locator('input[placeholder="Min"]')).toHaveValue('');
     await expect(cp.locator('input[placeholder="Max"]')).toHaveValue('');

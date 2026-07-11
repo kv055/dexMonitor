@@ -775,6 +775,7 @@ export type PremiumFilterMode = 'raw' | 'net_full' | 'net_capped';
 export interface Filters {
   direction: string;
   exchange: string;
+  excludedExchanges: string[];
   payment: string;
   status: string;
   premiumOnly: boolean;

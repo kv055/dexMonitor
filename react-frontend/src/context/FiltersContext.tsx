@@ -23,6 +23,10 @@ function applyMonitorFilters(
   let f = offers;
   if (filters.direction) f = f.filter(o => o.direction === filters.direction);
   if (filters.exchange) f = f.filter(o => o.exchange === filters.exchange);
+  if (filters.excludedExchanges.length > 0) {
+    const excluded = new Set(filters.excludedExchanges);
+    f = f.filter(o => !excluded.has(o.exchange));
+  }
   if (!options?.skipPayment && paymentFilterFn) f = f.filter(paymentFilterFn);
   if (filters.status === 'open') f = f.filter(o => isOfferLive(o));
   if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
@@ -130,6 +134,10 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
   const depthOffers = useMemo(() => {
     let f = activeOffers;
     if (filters.exchange) f = f.filter(o => o.exchange === filters.exchange);
+    if (filters.excludedExchanges.length > 0) {
+      const excluded = new Set(filters.excludedExchanges);
+      f = f.filter(o => !excluded.has(o.exchange));
+    }
     if (paymentFilterFn) f = f.filter(paymentFilterFn);
     if (filters.status === 'open') f = f.filter(o => isOfferLive(o));
     if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));

@@ -7,7 +7,7 @@ test.describe('Taker opportunities', () => {
 
     const filters = page.getByRole('complementary', { name: 'Insights filters' });
     await expect(filters).toBeVisible();
-    await expect(filters.getByText('Timeframe', { exact: true })).toBeVisible();
+    await expect(filters.getByText('Direction', { exact: true })).toBeVisible();
 
     await page.getByRole('button', { name: 'Hide Insights filters' }).click();
     await expect(filters).toHaveCount(0);

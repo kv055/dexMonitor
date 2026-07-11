@@ -131,7 +131,7 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, fastPastProfitableOrders, detailedPastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics, ohlcData, extendOhlc, allowOhlcExtend }: {
+function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, fastPastProfitableOrders, detailedPastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics, loadCore, lastUpdatedAt, ohlcData, extendOhlc, allowOhlcExtend }: {
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
   pastOrderStatsNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsNetCapped'];
@@ -142,6 +142,8 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
   analyticsOrdersLoading: boolean;
   analyticsCappedLoading: boolean;
   loadAnalytics: ReturnType<typeof useDashboard>['loadAnalytics'];
+  loadCore: ReturnType<typeof useDashboard>['loadCore'];
+  lastUpdatedAt: string;
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
   extendOhlc: (hours: number, cex?: string, intervalMin?: number) => void;
   allowOhlcExtend: boolean;
@@ -167,6 +169,8 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           ordersLoading={analyticsOrdersLoading}
           cappedLoading={analyticsCappedLoading}
           maxFiatLimit={maxFiatLimit}
+          onRefreshLive={() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit)}
+          lastUpdatedAt={lastUpdatedAt}
           chart={extraOffers => (
             <OHLCChart
               data={ohlcData}
@@ -258,8 +262,6 @@ function AppShell() {
           open={settingsOpen}
           onClose={() => setSettingsOpen(false)}
           groups={groups}
-          loadCore={loadCore}
-          lastUpdatedAt={lastUpdatedAt}
         />
 
         {activeTab === 'monitor' && (
@@ -289,6 +291,8 @@ function AppShell() {
             analyticsOrdersLoading={analyticsOrdersLoading}
             analyticsCappedLoading={analyticsCappedLoading}
             loadAnalytics={loadAnalytics}
+            loadCore={loadCore}
+            lastUpdatedAt={lastUpdatedAt}
             ohlcData={ohlcData}
             extendOhlc={extendOhlc}
             allowOhlcExtend={initialLoadComplete}

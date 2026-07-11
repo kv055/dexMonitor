@@ -1,4 +1,4 @@
-import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, offersPanel, controlPanel, openSettings, closeSettings, jsClick, jsFill } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, offersPanel, controlPanel, openControlPanel, closeControlPanel, jsClick, jsFill } from '../fixtures/base-fixture';
 import { MOCK_LIVE_OFFER_LIFECYCLES, MOCK_OHLC_DATA_4H_WINDOW } from '../fixtures/mock-data';
 import type { Page } from '@playwright/test';
 
@@ -119,12 +119,12 @@ test.describe('OHLC live offer price paths', () => {
 
     // Let non-premium offers through the filters: include them and widen the
     // premium range so negative premiums pass.
-    await openSettings(page);
+    await openControlPanel(page);
     const cp = controlPanel(page);
     await jsClick(cp.locator('button').filter({ hasText: 'Net Premium Full' }));
     await page.locator('.absolute button').filter({ hasText: 'Incl. non premium offers' }).click();
     await jsFill(cp.locator('input[placeholder="Min"]'), '-10');
-    await closeSettings(page);
+    await closeControlPanel(page);
 
     // The table must now show ALL live offers, including non-premium ones
     // (mock offers 8, 9 and 13 have a negative net premium).

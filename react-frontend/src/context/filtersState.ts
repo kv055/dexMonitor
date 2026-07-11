@@ -3,6 +3,7 @@ import type { Filters } from '../types';
 const BASE_FILTERS: Filters = {
   direction: '',
   exchange: '',
+  excludedExchanges: [],
   payment: '',
   status: 'open',
   premiumOnly: true,

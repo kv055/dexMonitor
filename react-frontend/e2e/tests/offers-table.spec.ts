@@ -1,4 +1,4 @@
-import { test, expect, gotoAndWaitForData, offersPanel, controlPanel, openSettings, closeSettings, jsFill, jsClick } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, offersPanel, controlPanel, openControlPanel, closeControlPanel, jsFill, jsClick } from '../fixtures/base-fixture';
 
 test.describe('OffersPreviewTable', () => {
   test.beforeEach(async ({ page }) => {
@@ -120,9 +120,9 @@ test.describe('OffersPreviewTable', () => {
 
   test('shows "No offers" when filters match nothing', async ({ page }) => {
     // Set premium min very high to exclude all offers
-    await openSettings(page);
+    await openControlPanel(page);
     await jsFill(controlPanel(page).locator('input[placeholder="Min"]'), '99');
-    await closeSettings(page);
+    await closeControlPanel(page);
     await page.waitForTimeout(300);
 
     const panel = offersPanel(page);

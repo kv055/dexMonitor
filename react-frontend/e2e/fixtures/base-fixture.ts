@@ -281,26 +281,44 @@ export async function jsFill(locator: Locator, value: string) {
   }, value);
 }
 
-/**
- * The Control Panel now lives in the settings overlay ("Monitor Filters"
- * section) opened via the header's gear button. Tests must call
- * openSettings() before using controlPanel(), and closeSettings() before
- * asserting on the dashboard behind the overlay backdrop.
- */
+/** Opens the settings overlay via the header's gear button. */
 export async function openSettings(page: Page) {
   await jsClick(page.locator('button[title="Settings"]'));
-  await controlPanel(page).waitFor({ state: 'visible' });
+  await settingsOverlay(page).waitFor({ state: 'visible' });
 }
 
 export async function closeSettings(page: Page) {
-  const overlay = page.locator('aside').filter({ hasText: 'Monitor Filters' });
+  const overlay = settingsOverlay(page);
   await overlay.getByRole('button', { name: 'Close', exact: true }).click();
   await overlay.waitFor({ state: 'hidden' });
 }
 
-/** Locator for the Control Panel (Monitor Filters section of the settings overlay) */
+/** Locator for the settings overlay panel */
+export function settingsOverlay(page: Page) {
+  return page.locator('aside').filter({ hasText: 'Interface Preferences' });
+}
+
+/**
+ * The live offer filter controls now live in the dex Insights sidebar (shared
+ * Live/Past control panel). Tests must call openControlPanel() — which
+ * switches to the Insights tab in Live Offers mode — before using
+ * controlPanel(), and closeControlPanel() to return to the Monitor tab
+ * before asserting on the monitor dashboard.
+ */
+export async function openControlPanel(page: Page) {
+  await jsClick(page.getByRole('button', { name: 'dex Insights' }));
+  await controlPanel(page).waitFor({ state: 'visible' });
+  await jsClick(page.getByRole('button', { name: 'Live Offers', exact: true }));
+}
+
+export async function closeControlPanel(page: Page) {
+  await jsClick(page.getByRole('button', { name: 'dex Monitor' }));
+  await controlPanel(page).waitFor({ state: 'hidden' });
+}
+
+/** Locator for the Control Panel (filters sidebar of the dex Insights tab) */
 export function controlPanel(page: Page) {
-  return page.locator('section').filter({ has: page.getByRole('heading', { name: 'Monitor Filters' }) });
+  return page.getByRole('complementary', { name: 'Insights filters' });
 }
 
 /** Locator for the OHLC chart panel */

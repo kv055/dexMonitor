@@ -2,7 +2,6 @@ import { useState, useRef, useEffect, useMemo } from 'react';
 import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
 import type { PremiumFilterMode } from '../types';
-import { ExchangeTag } from './ExchangeTag';
 import { formatTimeOnly } from '../utils/formatters';
 import { getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
 
@@ -16,11 +15,6 @@ const PREMIUM_FILTER_OPTIONS: { value: PremiumFilterMode; label: string }[] = [
   { value: 'net_full', label: 'Net Premium Full' },
   { value: 'net_capped', label: 'Net Premium Capped' },
 ];
-
-interface Props {
-  onRefresh: () => void;
-  lastUpdatedAt: string;
-}
 
 interface PaymentDropdownProps {
   value: string;
@@ -57,6 +51,10 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
     let f = offers;
     if (filters.direction) f = f.filter(o => o.direction === filters.direction);
     if (filters.exchange)  f = f.filter(o => o.exchange === filters.exchange);
+    if (filters.excludedExchanges.length > 0) {
+      const excluded = new Set(filters.excludedExchanges);
+      f = f.filter(o => !excluded.has(o.exchange));
+    }
     if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
     if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
     const pMin = parseFloat(filters.premiumMin);
@@ -277,209 +275,31 @@ function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls }: Premium
   );
 }
 
-interface DirectionDropdownProps {
-  value: string;
-  onChange: (v: string) => void;
-  inputCls: string;
-}
-
-function DirectionDropdown({ value, onChange, inputCls }: DirectionDropdownProps) {
-  const { offers, filters } = useFilters();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  const counts = useMemo(() => {
-    let f = offers;
-    if (filters.exchange) f = f.filter(o => o.exchange === filters.exchange);
-    if (filters.payment)  f = f.filter(o => o.payment_methods?.includes(filters.payment));
-    if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
-    if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
-    const pMin = parseFloat(filters.premiumMin);
-    const pMax = parseFloat(filters.premiumMax);
-    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
-    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
-
-    return {
-      all:  f.length,
-      sell: f.filter(o => o.direction === 'sell').length,
-      buy:  f.filter(o => o.direction === 'buy').length,
-    };
-  }, [offers, filters]);
-
-  const OPTIONS = [
-    { value: '',     label: 'All',        count: counts.all },
-    { value: 'sell', label: 'Asks (Sell)', count: counts.sell },
-    { value: 'buy',  label: 'Bids (Buy)',  count: counts.buy },
-  ];
-  const selected = OPTIONS.find(o => o.value === value) ?? OPTIONS[0];
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className={`${inputCls} flex items-center gap-1.5 w-full`}
-      >
-        <span className="text-[0.8rem]">{selected.label}</span>
-        <span className="text-muted text-[0.75rem]">{selected.count}</span>
-        <span className="ml-auto text-muted text-[0.65rem]">▾</span>
-      </button>
-
-      {open && (
-        <div className="absolute top-full left-0 mt-1 z-50 bg-surface border border-border rounded-md overflow-hidden min-w-full shadow-lg">
-          {OPTIONS.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => { onChange(opt.value); setOpen(false); }}
-              className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors flex items-center justify-between gap-3 ${value === opt.value ? 'text-accent' : 'text-text'}`}
-            >
-              <span className="text-[0.8rem]">{opt.label}</span>
-              <span className="text-muted text-[0.75rem]">{opt.count}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-interface ExchangeDropdownProps {
-  value: string;
-  onChange: (v: string) => void;
-  inputCls: string;
-}
-
-function ExchangeDropdown({ value, onChange, inputCls }: ExchangeDropdownProps) {
-  const { offers, filters } = useFilters();
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, []);
-
-  const countMap = useMemo(() => {
-    let f = offers;
-    if (filters.direction) f = f.filter(o => o.direction === filters.direction);
-    if (filters.payment)   f = f.filter(o => o.payment_methods?.includes(filters.payment));
-    if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
-    if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
-    const pMin = parseFloat(filters.premiumMin);
-    const pMax = parseFloat(filters.premiumMax);
-    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
-    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
-    if (filters.premiumOnly) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
-
-    const map: Record<string, number> = {};
-    f.forEach(o => { map[o.exchange] = (map[o.exchange] || 0) + 1; });
-    return map;
-  }, [offers, filters]);
-
-  const totalOffers = Object.values(countMap).reduce((s, n) => s + n, 0);
-  const selectedCount = value ? (countMap[value] ?? 0) : null;
-  const exchanges = useMemo(
-    () => Object.keys(countMap).sort((a, b) => a.localeCompare(b)),
-    [countMap]
-  );
-
-  return (
-    <div ref={ref} className="relative">
-      <button
-        onClick={() => setOpen(o => !o)}
-        className={`${inputCls} flex items-center gap-1.5 w-full`}
-      >
-        {value ? (
-          <>
-            <ExchangeTag exchange={value} />
-            <span className="text-muted text-[0.75rem]">{selectedCount}</span>
-          </>
-        ) : (
-          <span className="text-[0.8rem]">All Exchanges</span>
-        )}
-        <span className="ml-auto text-muted text-[0.65rem]">▾</span>
-      </button>
-
-      {open && (
-        <div className="absolute top-full left-0 mt-1 z-50 bg-surface border border-border rounded-md overflow-hidden min-w-full shadow-lg">
-          <button
-            onClick={() => { onChange(''); setOpen(false); }}
-            className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors flex items-center justify-between ${!value ? 'text-accent' : 'text-text'}`}
-          >
-            <span className="text-[0.8rem]">All Exchanges</span>
-            <span className="text-muted text-[0.75rem]">{totalOffers}</span>
-          </button>
-          {exchanges.map(exchange => (
-            <button
-              key={exchange}
-              onClick={() => { onChange(exchange); setOpen(false); }}
-              className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors flex items-center justify-between gap-3 ${value === exchange ? 'bg-bg' : ''}`}
-            >
-              <ExchangeTag exchange={exchange} />
-              <span className="text-muted text-[0.75rem]">{countMap[exchange] ?? 0}</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
 const labelCls = "text-[0.6rem] text-muted uppercase tracking-wide whitespace-nowrap";
 
-export function ControlPanel({ onRefresh, lastUpdatedAt }: Props) {
-  const { filters, setFilters, resetFilters } = useFilters();
+interface LiveOfferFiltersProps {
+  onRefresh: () => void;
+  lastUpdatedAt: string;
+}
+
+/**
+ * Live-offer-specific filter controls (payment method, premium metric, premium
+ * range) wired to the shared FiltersContext, plus the refresh action. Shared
+ * Direction/Exchange controls are rendered by the Insights sidebar itself.
+ */
+export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersProps) {
+  const { filters, setFilters } = useFilters();
   const { timezone } = useTimezone();
   const panelRef = useRef<HTMLDivElement>(null);
 
   const inputCls = "bg-bg text-text border border-border rounded-md px-2 py-0.5 text-[0.8rem] cursor-pointer outline-none focus:border-accent transition-colors w-full";
-  const disabledInputCls = `${inputCls} opacity-45 cursor-not-allowed`;
   const lastUpdated = lastUpdatedAt ? `Updated ${formatTimeOnly(lastUpdatedAt, timezone)}` : '';
 
   return (
     <div ref={panelRef} className="relative flex flex-col gap-2.5 min-w-0">
 
-      {/* Config: label | control */}
-      <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1">
-        <span className={labelCls}>Currency</span>
-        <select className={disabledInputCls} disabled defaultValue="EUR">
-          <option value="EUR">EUR — Euro</option>
-          <option value="USD">USD — US Dollar</option>
-          <option value="GBP">GBP — British Pound</option>
-          <option value="CHF">CHF — Swiss Franc</option>
-          <option value="CZK">CZK — Czech Koruna</option>
-        </select>
-
-        <span className={labelCls}>Ref Price</span>
-        <select className={disabledInputCls} value={filters.cex} disabled onChange={e => setFilters({ cex: e.target.value })}>
-          <option value="kraken">BTC/EUR — Kraken</option>
-          <option value="binance">BTC/EUR — Binance</option>
-          <option value="bitstamp">BTC/EUR — Bitstamp</option>
-          <option value="coinbase">BTC/EUR — Coinbase</option>
-        </select>
-      </div>
-
-      <div className="border-t border-border" />
-
       {/* Filters: label | control */}
       <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1">
-        <span className={labelCls}>Side</span>
-        <DirectionDropdown value={filters.direction} onChange={v => setFilters({ direction: v })} inputCls={inputCls} />
-
-        <span className={labelCls}>Exchange</span>
-        <ExchangeDropdown value={filters.exchange} onChange={v => setFilters({ exchange: v })} inputCls={inputCls} />
-
         <span className={labelCls}>Payment</span>
         <PaymentDropdown value={filters.payment} onChange={v => setFilters({ payment: v })} inputCls={inputCls} containerRef={panelRef} />
 
@@ -513,25 +333,15 @@ export function ControlPanel({ onRefresh, lastUpdatedAt }: Props) {
         </div>
       </div>
 
-      <div className="border-t border-border" />
-
       {/* Actions */}
       <div className="flex items-center justify-between gap-2">
         <span className="text-[0.72rem] text-muted truncate">{lastUpdated}</span>
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            onClick={resetFilters}
-            className="bg-red text-black border-none rounded-md px-2.5 py-0.5 text-[0.78rem] font-semibold cursor-pointer hover:opacity-85 transition-opacity"
-          >
-            ↺ Reset
-          </button>
-          <button
-            onClick={onRefresh}
-            className="bg-accent text-black border-none rounded-md px-2.5 py-0.5 text-[0.78rem] font-semibold cursor-pointer hover:opacity-85 transition-opacity"
-          >
-            ↻ Refresh
-          </button>
-        </div>
+        <button
+          onClick={onRefresh}
+          className="shrink-0 bg-accent text-black border-none rounded-md px-2.5 py-0.5 text-[0.78rem] font-semibold cursor-pointer hover:opacity-85 transition-opacity"
+        >
+          ↻ Refresh
+        </button>
       </div>
 
     </div>
