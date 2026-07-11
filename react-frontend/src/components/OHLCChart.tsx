@@ -369,9 +369,14 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
   // picks the smallest candle size that keeps the span within the visible
   // candle budget. Data outside the loaded window is requested first and the
   // range applied by the candle-sync effect once it lands (intendedRangeRef).
-  const fitRangeToOffers = useCallback(() => {
+  // Returns false when the fit must be retried later — setting a visible
+  // range on a chart with NO series data poisons lightweight-charts' time
+  // scale (every later internal update throws "Value is null"), so the fit
+  // only runs once candles or offer lines exist.
+  const fitRangeToOffers = useCallback((): boolean => {
     const chart = chartRef.current;
-    if (!chart) return;
+    if (!chart) return false;
+    if (!hadCandlesRef.current && offerSeriesRef.current.length === 0) return false;
     const nowUtcSec = getNowUtcSec();
 
     let minStart = Infinity;
@@ -384,7 +389,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
     }
     if (!Number.isFinite(minStart) || !Number.isFinite(maxEnd) || maxEnd <= minStart) {
       applyDefaultRange(chart);
-      return;
+      return true;
     }
 
     // Pad the span so the outermost offer endpoints don't sit on the chart edge.
@@ -417,6 +422,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
         applyDefaultRange(chart);
       }
     }
+    return true;
   }, [premiumOffers, timezone, sourceIntervalMin, availableHours, candleMin, effectiveVisibleHours, allowExtend, onNeedMoreData, applyDefaultRange]);
 
   const fitRangeToOffersRef = useRef(fitRangeToOffers);
@@ -616,29 +622,6 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
       try { chart.timeScale().setVisibleRange(prevRange); } catch { /* keep whatever the chart chose */ }
     }
   }, [shiftedDisplay, chartEpoch, effectiveVisibleHours, timezone, sourceIntervalMin, loadedDataHours, applyDefaultRange]);
-
-  // ── Fit-to-offers trigger ──────────────────────────────────────────────────
-  // Runs AFTER the candle-sync effect so a fit is never overridden by its
-  // default-window application. Fits on every offer-source flip (Live ⇄ Past),
-  // on the first offers/candles of the current source (Past orders and OHLC
-  // data often stream in after the switch), and after a chart re-creation.
-  const lastFitSourceRef = useRef<boolean | null>(null);
-  const lastFitHadOffersRef = useRef(false);
-  const lastFitHadCandlesRef = useRef(false);
-  const lastFitEpochRef = useRef(0);
-  useEffect(() => {
-    if (!fitToOffers || !chartRef.current) return;
-    const sourceChanged = lastFitSourceRef.current !== includeContextOffers;
-    const offersArrived = !lastFitHadOffersRef.current && premiumOffers.length > 0;
-    const candlesArrived = !lastFitHadCandlesRef.current && shiftedDisplay.candles.length > 0;
-    const chartRecreated = lastFitEpochRef.current !== chartEpoch;
-    if (!sourceChanged && !offersArrived && !candlesArrived && !chartRecreated) return;
-    lastFitSourceRef.current = includeContextOffers;
-    lastFitHadOffersRef.current = premiumOffers.length > 0;
-    lastFitHadCandlesRef.current = shiftedDisplay.candles.length > 0;
-    lastFitEpochRef.current = chartEpoch;
-    fitRangeToOffersRef.current();
-  }, [fitToOffers, includeContextOffers, premiumOffers, shiftedDisplay, chartEpoch]);
 
   // ── Offer line sync (throttled) ────────────────────────────────────────────
   const renderOffersRef = useRef<() => void>(() => {});
@@ -888,6 +871,32 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
   useEffect(() => {
     scheduleOfferRender();
   }, [premiumOffers, offerKeys, lifecycleCache, selectedOfferKey, candleMin, timezone, chartEpoch, scheduleOfferRender]);
+
+  // ── Fit-to-offers trigger ──────────────────────────────────────────────────
+  // Runs AFTER the candle-sync and offer-render effects so a fit is never
+  // overridden by the default-window application and the chart already holds
+  // series data. Fits on every offer-source flip (Live ⇄ Past), on the first
+  // offers/candles of the current source (Past orders and OHLC data often
+  // stream in after the switch), and after a chart re-creation. A fit that
+  // can't run yet (chart still empty) is left pending and retried on the next
+  // data change instead of being consumed.
+  const lastFitSourceRef = useRef<boolean | null>(null);
+  const lastFitHadOffersRef = useRef(false);
+  const lastFitHadCandlesRef = useRef(false);
+  const lastFitEpochRef = useRef(0);
+  useEffect(() => {
+    if (!fitToOffers) return;
+    const sourceChanged = lastFitSourceRef.current !== includeContextOffers;
+    const offersArrived = !lastFitHadOffersRef.current && premiumOffers.length > 0;
+    const candlesArrived = !lastFitHadCandlesRef.current && shiftedDisplay.candles.length > 0;
+    const chartRecreated = lastFitEpochRef.current !== chartEpoch;
+    if (!sourceChanged && !offersArrived && !candlesArrived && !chartRecreated) return;
+    if (!fitRangeToOffersRef.current()) return;
+    lastFitSourceRef.current = includeContextOffers;
+    lastFitHadOffersRef.current = premiumOffers.length > 0;
+    lastFitHadCandlesRef.current = shiftedDisplay.candles.length > 0;
+    lastFitEpochRef.current = chartEpoch;
+  }, [fitToOffers, includeContextOffers, premiumOffers, shiftedDisplay, chartEpoch]);
 
   return (
     <div className="relative h-full bg-bg flex flex-col">
