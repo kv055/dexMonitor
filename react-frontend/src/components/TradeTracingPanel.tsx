@@ -315,6 +315,7 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
         required_capital_eur: bd?.capital?.total_eur ?? 0,
         payment_method: resolvedPaymentMethod || undefined,
         payment_methods: offer.payment_methods ?? undefined,
+        dex: offer.exchange,
       });
       setChecks({ phase: 'done', report });
       if (report.lnd_withdraw_address) {

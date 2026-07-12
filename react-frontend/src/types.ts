@@ -958,6 +958,9 @@ export interface CexPreTradeCheckRequest {
   // The offer's full accepted-method list; when payment_method is empty the
   // backend picks the highest-priority linked+active catalog entry.
   payment_methods?: string[];
+  // The DEX venue slug (e.g. "bisq2", "robosats") — scopes the message-template
+  // check to chat-style venues that need one.
+  dex?: string;
 }
 
 export interface CexHedgeOpenResult {
