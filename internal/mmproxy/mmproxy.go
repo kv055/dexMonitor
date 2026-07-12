@@ -15,6 +15,9 @@ type Proxy struct {
 	BaseURL string
 	// Client is the client value for the proxy.
 	Client *http.Client
+	// InternalSecret is sent as X-Internal-Secret on every forwarded request;
+	// mm-controller rejects API/WS calls without it.
+	InternalSecret string
 }
 
 // New creates value. The client's transport is trace-instrumented so forwarded
@@ -22,6 +25,12 @@ type Proxy struct {
 // market-maker controller.
 func New(baseURL string) *Proxy {
 	return &Proxy{BaseURL: baseURL, Client: tracing.Client(10 * time.Second)}
+}
+
+// WithInternalSecret sets the shared secret forwarded to mm-controller.
+func (p *Proxy) WithInternalSecret(secret string) *Proxy {
+	p.InternalSecret = secret
+	return p
 }
 
 // ForwardJSON proxies a JSON request to the market-maker controller.
@@ -64,6 +73,9 @@ func (p *Proxy) ForwardJSON(w http.ResponseWriter, r *http.Request, path string)
 	req.Header.Set("Accept", "application/json")
 	if contentType := r.Header.Get("Content-Type"); contentType != "" {
 		req.Header.Set("Content-Type", contentType)
+	}
+	if p.InternalSecret != "" {
+		req.Header.Set("X-Internal-Secret", p.InternalSecret)
 	}
 
 	client := p.Client

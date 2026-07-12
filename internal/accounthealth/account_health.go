@@ -39,6 +39,9 @@ type Service struct {
 	BaseURL string
 	// Client is the client value for the service.
 	Client *http.Client
+	// InternalSecret is sent as X-Internal-Secret; mm-controller rejects the
+	// health-check call without it.
+	InternalSecret string
 }
 
 // NewService creates a service.
@@ -47,6 +50,12 @@ func NewService(baseURL string) *Service {
 		BaseURL: baseURL,
 		Client:  &http.Client{Timeout: 30 * time.Second},
 	}
+}
+
+// WithInternalSecret sets the shared secret sent to mm-controller.
+func (s *Service) WithInternalSecret(secret string) *Service {
+	s.InternalSecret = secret
+	return s
 }
 
 // Check checks value.
@@ -66,6 +75,9 @@ func (s *Service) Check(ctx context.Context, provider string) (*MMControllerResp
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, targetURL.String(), nil)
 	if err != nil {
 		return nil, http.StatusInternalServerError, fmt.Errorf("failed to create mm controller health request")
+	}
+	if s.InternalSecret != "" {
+		req.Header.Set("X-Internal-Secret", s.InternalSecret)
 	}
 	client := s.Client
 	if client == nil {

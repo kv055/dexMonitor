@@ -11,6 +11,82 @@ import (
 	"commons/paymentmethods"
 )
 
+// MaskedSecret replaces stored secret material (passwords, TOTP secrets, seed
+// phrases, API secrets, passkey private keys) in every API response. When an
+// update payload carries this exact value the stored secret is kept unchanged,
+// so a masked read can be round-tripped through an edit form without wiping
+// the real credential. Secrets therefore never leave the server after being
+// written; recovery requires direct database access.
+const MaskedSecret = "***"
+
+// MaskAccount replaces all secret material on an account in place.
+func MaskAccount(a *Account) {
+	if a == nil {
+		return
+	}
+	if a.Password != nil && *a.Password != "" {
+		masked := MaskedSecret
+		a.Password = &masked
+	}
+	for i := range a.TOTPSecrets {
+		MaskTOTPSecret(&a.TOTPSecrets[i])
+	}
+	for i := range a.PasskeyCredentials {
+		MaskPasskey(&a.PasskeyCredentials[i])
+	}
+	for i := range a.Seeds {
+		MaskSeed(&a.Seeds[i])
+	}
+	for i := range a.APIKeys {
+		MaskAPIKey(&a.APIKeys[i])
+	}
+}
+
+// MaskAccounts replaces all secret material on a list of accounts in place.
+func MaskAccounts(accs []Account) {
+	for i := range accs {
+		MaskAccount(&accs[i])
+	}
+}
+
+// MaskTOTPSecret masks the shared secret of one TOTP entry in place.
+func MaskTOTPSecret(t *TOTPSecret) {
+	if t != nil && t.Secret != "" {
+		t.Secret = MaskedSecret
+	}
+}
+
+// MaskPasskey masks the private key of one passkey credential in place.
+func MaskPasskey(p *Passkey) {
+	if p != nil && p.PrivateKeyPKCS8 != "" {
+		p.PrivateKeyPKCS8 = MaskedSecret
+	}
+}
+
+// MaskSeed masks the phrase of one recovery seed in place.
+func MaskSeed(s *Seed) {
+	if s != nil && s.SeedPhrase != "" {
+		s.SeedPhrase = MaskedSecret
+	}
+}
+
+// MaskAPIKey masks the secret and passphrase of one API key in place. The key
+// id stays visible: it identifies the credential in the UI and is unusable
+// without the secret.
+func MaskAPIKey(k *APIKey) {
+	if k == nil {
+		return
+	}
+	if k.APISecret != nil && *k.APISecret != "" {
+		masked := MaskedSecret
+		k.APISecret = &masked
+	}
+	if k.Passphrase != nil && *k.Passphrase != "" {
+		masked := MaskedSecret
+		k.Passphrase = &masked
+	}
+}
+
 // ValidationError marks an error as rejected user input (mapped to HTTP 400
 // by the API handlers), as opposed to an internal/database failure (500).
 type ValidationError struct {
@@ -447,7 +523,7 @@ func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload
 		SET provider = $2,
 		    category = NULLIF($3, ''),
 		    email = NULLIF($4, ''),
-		    password = NULLIF($5, ''),
+		    password = CASE WHEN $5 = '`+MaskedSecret+`' THEN password ELSE NULLIF($5, '') END,
 		    phone = NULLIF($6, ''),
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
@@ -476,7 +552,8 @@ func (r Repository) CreateTOTPSecret(ctx context.Context, accountID int64, paylo
 func (r Repository) UpdateTOTPSecret(ctx context.Context, id int64, payload TOTPSecretPayload) error {
 	_, err := r.DB.ExecContext(ctx, `
 		UPDATE totp_secrets
-		SET secret = $2, is_active = $3
+		SET secret = CASE WHEN $2 = '`+MaskedSecret+`' THEN secret ELSE $2 END,
+		    is_active = $3
 		WHERE id = $1
 	`, id, strings.TrimSpace(payload.Secret), payload.IsActive)
 	return err
@@ -524,7 +601,7 @@ func (r Repository) UpdatePasskey(ctx context.Context, id int64, payload Passkey
 		UPDATE passkey_credentials
 		SET credential_id = $2,
 		    rp_id = $3,
-		    private_key_pkcs8 = $4,
+		    private_key_pkcs8 = CASE WHEN $4 = '`+MaskedSecret+`' THEN private_key_pkcs8 ELSE $4 END,
 		    user_handle = $5,
 		    sign_count = $6,
 		    is_active = $7,
@@ -573,7 +650,7 @@ func (r Repository) CreateSeed(ctx context.Context, accountID int64, payload See
 func (r Repository) UpdateSeed(ctx context.Context, id int64, payload SeedPayload) error {
 	_, err := r.DB.ExecContext(ctx, `
 		UPDATE seeds
-		SET seed_phrase = $2,
+		SET seed_phrase = CASE WHEN $2 = '`+MaskedSecret+`' THEN seed_phrase ELSE $2 END,
 		    wallet_created_at = NULLIF($3, '')::timestamptz
 		WHERE id = $1
 	`, id, payload.SeedPhrase, stringOrEmpty(payload.WalletCreatedAt))
@@ -633,8 +710,8 @@ func (r Repository) UpdateAPIKey(ctx context.Context, id int64, payload APIKeyPa
 		UPDATE api_keys
 		SET name = $2,
 		    api_key = $3,
-		    api_secret = NULLIF($4, ''),
-		    passphrase = NULLIF($5, ''),
+		    api_secret = CASE WHEN $4 = '`+MaskedSecret+`' THEN api_secret ELSE NULLIF($4, '') END,
+		    passphrase = CASE WHEN $5 = '`+MaskedSecret+`' THEN passphrase ELSE NULLIF($5, '') END,
 		    is_active = $6,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1

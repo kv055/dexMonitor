@@ -38,7 +38,7 @@ func handleTradingAccountHealthCheck(w http.ResponseWriter, r *http.Request) {
 	if strings.EqualFold(account.Provider, "Bisq") {
 		healthAPIURL = unifiedAPIURL
 	}
-	result, status, err := accounthealth.NewService(healthAPIURL).Check(r.Context(), account.Provider)
+	result, status, err := accounthealth.NewService(healthAPIURL).WithInternalSecret(mmInternalSecret).Check(r.Context(), account.Provider)
 	if err != nil {
 		http.Error(w, err.Error(), status)
 		return

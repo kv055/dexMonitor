@@ -47,7 +47,11 @@ func (p *Proxy) ForwardWebSocket(w http.ResponseWriter, r *http.Request, path st
 	// before we hijack the inbound connection.
 	dialCtx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 	defer cancel()
-	upstream, resp, err := websocket.DefaultDialer.DialContext(dialCtx, target, nil)
+	var dialHeader http.Header
+	if p.InternalSecret != "" {
+		dialHeader = http.Header{"X-Internal-Secret": {p.InternalSecret}}
+	}
+	upstream, resp, err := websocket.DefaultDialer.DialContext(dialCtx, target, dialHeader)
 	if err != nil {
 		if resp != nil {
 			resp.Body.Close()

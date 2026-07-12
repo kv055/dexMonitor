@@ -46,6 +46,7 @@ var (
 	snapshotIntervalMin int
 	frontendDir         string
 	mmControllerAPIURL  string
+	mmInternalSecret    string
 	unifiedAPIURL       string
 	sessionCookieSecure bool
 	db                  *sql.DB
@@ -163,6 +164,9 @@ func init() {
 	if mmControllerAPIURL == "" {
 		mmControllerAPIURL = "http://localhost:5001"
 	}
+	// Shared secret required by mm-controller on every proxied API/WS call.
+	// Must match INTERNAL_API_SECRET on the mm-controller service.
+	mmInternalSecret = strings.TrimSpace(os.Getenv("INTERNAL_API_SECRET"))
 	unifiedAPIURL = os.Getenv("UNIFIED_API_URL")
 	if unifiedAPIURL == "" {
 		unifiedAPIURL = "http://localhost:5010"
@@ -197,7 +201,7 @@ func main() {
 	lifecycleRepo = lifecycle.NewRepository(db)
 	ohlcService = ohlc.NewService()
 	snapshotLogRepo = snapshotlog.NewRepository(db)
-	mmProxy = mmproxy.New(mmControllerAPIURL)
+	mmProxy = mmproxy.New(mmControllerAPIURL).WithInternalSecret(mmInternalSecret)
 	tradingAccountRepo = tradingaccounts.NewRepository(db)
 	authSvc := auth.New(db, auth.Config{CookieSecure: sessionCookieSecure})
 
@@ -2633,12 +2637,21 @@ func tradingAccounts() tradingaccounts.Repository {
 	return tradingAccountRepo
 }
 
+// The loadTrading* helpers mask all stored secret material (passwords, TOTP
+// secrets, seed phrases, API secrets, passkey private keys) before it leaves
+// the repository: every HTTP response path goes through them, and no caller
+// needs the cleartext (trading flows read credentials server-side from the
+// DB). Updates that echo the mask back keep the stored value unchanged.
 func loadTradingAccounts(ctx context.Context) ([]tradingAccount, error) {
-	return tradingAccounts().List(ctx)
+	accs, err := tradingAccounts().List(ctx)
+	tradingaccounts.MaskAccounts(accs)
+	return accs, err
 }
 
 func loadTradingAccountByID(ctx context.Context, id int64) (*tradingAccount, error) {
-	return tradingAccounts().Get(ctx, id)
+	account, err := tradingAccounts().Get(ctx, id)
+	tradingaccounts.MaskAccount(account)
+	return account, err
 }
 
 func createTradingAccount(ctx context.Context, payload tradingAccountPayload) (int64, error) {
@@ -2650,19 +2663,27 @@ func updateTradingAccount(ctx context.Context, id int64, payload tradingAccountP
 }
 
 func loadTradingTOTPSecretByID(ctx context.Context, id int64) (*tradingTOTPSecret, error) {
-	return tradingAccounts().GetTOTPSecret(ctx, id)
+	row, err := tradingAccounts().GetTOTPSecret(ctx, id)
+	tradingaccounts.MaskTOTPSecret(row)
+	return row, err
 }
 
 func loadTradingPasskeyByID(ctx context.Context, id int64) (*tradingPasskey, error) {
-	return tradingAccounts().GetPasskey(ctx, id)
+	row, err := tradingAccounts().GetPasskey(ctx, id)
+	tradingaccounts.MaskPasskey(row)
+	return row, err
 }
 
 func loadTradingSeedByID(ctx context.Context, id int64) (*tradingSeed, error) {
-	return tradingAccounts().GetSeed(ctx, id)
+	row, err := tradingAccounts().GetSeed(ctx, id)
+	tradingaccounts.MaskSeed(row)
+	return row, err
 }
 
 func loadTradingAPIKeyByID(ctx context.Context, id int64) (*tradingAPIKey, error) {
-	return tradingAccounts().GetAPIKey(ctx, id)
+	row, err := tradingAccounts().GetAPIKey(ctx, id)
+	tradingaccounts.MaskAPIKey(row)
+	return row, err
 }
 
 func handleTradingAccountBankAccounts(w http.ResponseWriter, r *http.Request) {
@@ -3217,14 +3238,14 @@ func offerBool(o map[string]any, key string) bool {
 
 func forwardMMControllerJSON(w http.ResponseWriter, r *http.Request, path string) {
 	if mmProxy == nil {
-		mmProxy = mmproxy.New(mmControllerAPIURL)
+		mmProxy = mmproxy.New(mmControllerAPIURL).WithInternalSecret(mmInternalSecret)
 	}
 	mmProxy.ForwardJSON(w, r, path)
 }
 
 func forwardMMControllerWebSocket(w http.ResponseWriter, r *http.Request, path string) {
 	if mmProxy == nil {
-		mmProxy = mmproxy.New(mmControllerAPIURL)
+		mmProxy = mmproxy.New(mmControllerAPIURL).WithInternalSecret(mmInternalSecret)
 	}
 	mmProxy.ForwardWebSocket(w, r, path)
 }
