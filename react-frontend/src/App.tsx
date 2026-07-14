@@ -182,7 +182,7 @@ function AppShell() {
   return (
     <TimezoneProvider timezone={preferredTimezone}>
       <FiltersProvider offers={allOffers} loading={loading} groups={groups} excludedMethods={excludedMethods} hideZeroTrustScore={hideZeroTrustScore}>
-      <div className="min-h-dvh lg:h-dvh flex flex-col overflow-y-auto lg:overflow-hidden bg-bg text-text p-2 sm:p-3 gap-2 sm:gap-3">
+      <div className="min-h-dvh lg:h-dvh flex flex-col overflow-y-auto lg:overflow-hidden bg-bg text-text gap-1 sm:gap-2">
         <Header
           activeTab={activeTab}
           onTabChange={setActiveTab}

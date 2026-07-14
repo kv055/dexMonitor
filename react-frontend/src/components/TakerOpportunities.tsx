@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCompact, TakerOpportunityMode } from '../types';
 import { usePreferences } from '../hooks/usePreferences';
@@ -1067,7 +1067,59 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   const lastProfitFiatBoundsRef = useRef<{ minCents: number; maxCents: number } | null>(null);
   const profitFiatModeRef = useRef(mode);
   const tradesListRef = useRef<HTMLDivElement>(null);
+  const offersLayoutRef = useRef<HTMLDivElement>(null);
+  const offersListPanelRef = useRef<HTMLDivElement>(null);
+  const offersListDefaultHeightRef = useRef<number | null>(null);
+  const offersResizeRef = useRef<{ pointerId: number; startY: number; startHeight: number; minHeight: number } | null>(null);
+  const [offersListHeight, setOffersListHeight] = useState<number | null>(null);
   const detailedOrdersByID = useMemo(() => new Map(detailedOrders.map(order => [order.id, order])), [detailedOrders]);
+
+  useLayoutEffect(() => {
+    if (offersListDefaultHeightRef.current != null) return;
+    const list = offersListPanelRef.current;
+    if (list != null) offersListDefaultHeightRef.current = list.getBoundingClientRect().height;
+  });
+
+  const handleOffersResizeStart = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    const list = offersListPanelRef.current;
+    if (list == null) return;
+    const currentHeight = list.getBoundingClientRect().height;
+    const minHeight = offersListDefaultHeightRef.current ?? currentHeight;
+    offersResizeRef.current = {
+      pointerId: event.pointerId,
+      startY: event.clientY,
+      startHeight: currentHeight,
+      minHeight,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  }, []);
+
+  const handleOffersResizeMove = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    const resize = offersResizeRef.current;
+    const layout = offersLayoutRef.current;
+    if (resize == null || layout == null || event.pointerId !== resize.pointerId) return;
+    const availableHeight = layout.getBoundingClientRect().height;
+    const maxHeight = Math.max(resize.minHeight, availableHeight - 8);
+    const nextHeight = Math.max(resize.minHeight, Math.min(maxHeight, resize.startHeight + resize.startY - event.clientY));
+    const remainingChartHeight = availableHeight - nextHeight - 8;
+    if (remainingChartHeight <= 256) {
+      offersResizeRef.current = null;
+      setOffersListHeight(null);
+      setChartCollapsed(true);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+      return;
+    }
+    setOffersListHeight(nextHeight);
+    event.preventDefault();
+  }, []);
+
+  const handleOffersResizeEnd = useCallback((event: PointerEvent<HTMLDivElement>) => {
+    if (offersResizeRef.current?.pointerId !== event.pointerId) return;
+    offersResizeRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }, []);
 
   // Selecting a live offer swaps the depth panel for the Trade Tracing
   // workflow, mirroring the Monitor tab (same key scheme as OffersPreviewTable).
@@ -1527,7 +1579,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
             Filters ▸
           </button>
         ) : (
-        <aside aria-label="Insights filters" className="flex shrink-0 flex-col gap-3 rounded-lg border border-border bg-bg/20 p-3 lg:w-72 xl:w-80 lg:overflow-y-auto">
+        <aside aria-label="Insights filters" className="flex shrink-0 flex-col gap-3 rounded-lg border border-border bg-bg/20 p-3 lg:w-48 xl:w-56 lg:overflow-y-auto">
           <div className="flex items-center justify-between gap-2">
             <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">Filters</span>
             <button
@@ -1656,7 +1708,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
         </aside>
         )}
 
-        <div className="min-h-0 min-w-0 flex-1 flex flex-col gap-3">
+        <div ref={offersLayoutRef} className="min-h-0 min-w-0 flex-1 flex flex-col gap-1">
           {chart != null && (
             // When the OHLC chart is collapsed and no live offer is selected,
             // the whole row reduces to a single horizontal expand bar — the
@@ -1746,7 +1798,26 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
             )
           )}
 
-          <div className={`min-h-0 rounded-lg border border-border overflow-hidden flex flex-col ${chart != null && (!chartCollapsed || selectedLiveOffer != null) ? 'min-h-56 lg:min-h-0 lg:flex-2' : 'flex-1'}`}>
+          {chart != null && !chartCollapsed && selectedLiveOffer == null ? (
+            <div
+              role="separator"
+              aria-label="Resize offers list"
+              aria-orientation="horizontal"
+              onPointerDown={handleOffersResizeStart}
+              onPointerMove={handleOffersResizeMove}
+              onPointerUp={handleOffersResizeEnd}
+              onPointerCancel={handleOffersResizeEnd}
+              className="group hidden h-1 shrink-0 cursor-ns-resize items-center justify-center lg:flex"
+            >
+              <span className="h-1 w-16 rounded-full bg-border transition-colors group-hover:bg-accent" />
+            </div>
+          ) : null}
+
+          <div
+            ref={offersListPanelRef}
+            style={chart != null && !chartCollapsed && offersListHeight != null ? { flex: '0 0 auto', height: `${offersListHeight}px` } : undefined}
+            className={`min-h-0 rounded-lg border border-border overflow-hidden flex flex-col ${chart != null && (!chartCollapsed || selectedLiveOffer != null) ? `min-h-56 lg:min-h-0 ${offersListHeight == null ? 'lg:flex-2' : ''}` : 'flex-1'}`}
+          >
           {viewMode === 'live' ? (
             <div className="relative min-h-64 flex-1 bg-surface">
               <OffersPreviewTable chartScope="insights" />
