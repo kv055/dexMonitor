@@ -29,6 +29,44 @@ func findStatisticsPastPremiumFrame(t *testing.T, frames []pastorders.PastPremiu
 	return pastorders.PastPremiumTimeframeStats{}
 }
 
+func TestBuildOfferLifecyclePremiumPointsUsesAgeForLiveAndLifetimeForPast(t *testing.T) {
+	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
+	offers := []map[string]any{
+		{
+			"exchange": "robosats", "direction": "sell", "avg_premium_pct": 2.5,
+			"btc_max": 0.15, "first_seen": now.Add(-90 * time.Minute),
+			"last_seen": now.Add(-10 * time.Minute), "is_live": true,
+		},
+		{
+			"exchange": "bisq", "direction": "buy", "avg_premium_pct": -1.25,
+			"btc_max": 0.4, "first_seen": now.Add(-5 * time.Hour),
+			"last_seen": now.Add(-2 * time.Hour), "is_live": false,
+		},
+		{
+			"exchange": "hodlhodl", "direction": "sell", "avg_premium_pct": 4.0,
+			"btc_max": 0.2, "payment_methods": []string{"Cash"},
+			"first_seen": now.Add(-3 * time.Hour), "last_seen": now.Add(-time.Hour), "is_live": false,
+		},
+	}
+
+	live, past := buildOfferLifecyclePremiumPoints(offers, now, 24, []string{"Cash"})
+	if len(live) != 1 || len(past) != 1 {
+		t.Fatalf("point counts live=%d past=%d, want 1 and 1", len(live), len(past))
+	}
+	if live[0].LifecycleHours != 1.5 {
+		t.Fatalf("live lifecycle = %v hours, want current age 1.5", live[0].LifecycleHours)
+	}
+	if past[0].LifecycleHours != 3 {
+		t.Fatalf("past lifecycle = %v hours, want completed lifetime 3", past[0].LifecycleHours)
+	}
+	if live[0].VolumeBTC != 0.15 || live[0].PremiumRatePct != 2.5 || !live[0].IsLive {
+		t.Fatalf("unexpected live point: %#v", live[0])
+	}
+	if past[0].VolumeBTC != 0.4 || past[0].PremiumRatePct != -1.25 || past[0].IsLive {
+		t.Fatalf("unexpected past point: %#v", past[0])
+	}
+}
+
 // TestStatisticsRESTReturnsLivePastShared verifies the new /api/statistics
 // endpoint returns the three dimensions in one call and that the live premium
 // summary is populated (the field the old GeneralStats card was missing).
@@ -87,6 +125,9 @@ func TestStatisticsRESTReturnsLivePastShared(t *testing.T) {
 	if len(resp.Live.OffersByExchange) == 0 {
 		t.Fatal("live.offers_by_exchange should not be empty")
 	}
+	if len(resp.Live.OfferLifecyclePoints) == 0 {
+		t.Fatal("live.offer_lifecycle_points should contain the seeded live offer")
+	}
 
 	// Past dimension carries the per-timeframe premium frames and lifetimes.
 	if len(resp.Past.PastPremiums) == 0 {
@@ -96,6 +137,9 @@ func TestStatisticsRESTReturnsLivePastShared(t *testing.T) {
 		resp.Past.PremiumLifetimes.NetFull.AvgOfferLifetimeMs == nil &&
 		resp.Past.PremiumLifetimes.NetCapped.AvgOfferLifetimeMs == nil {
 		t.Fatal("past.premium_lifetimes should have at least one mode populated")
+	}
+	if len(resp.Past.OfferLifecyclePoints) == 0 {
+		t.Fatal("past.offer_lifecycle_points should contain closed offers")
 	}
 
 	// Live + past totals should sum to the shared total.

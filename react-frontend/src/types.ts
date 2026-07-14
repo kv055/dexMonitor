@@ -707,6 +707,17 @@ export interface GeneralStatsPremiumSummaryData {
   avg_bid_premium_pct: number | null;
 }
 
+// One offer in the lifecycle/premium bubble chart. Live lifecycles run from
+// first_seen to now; past lifecycles run from first_seen to last_seen.
+export interface OfferLifecyclePremiumPoint {
+  lifecycle_hours: number;
+  premium_rate_pct: number;
+  volume_btc: number;
+  exchange: string;
+  direction: string;
+  is_live: boolean;
+}
+
 // Statistics for the live dimension: currently-live offers only.
 export interface LiveStatisticsData {
   total_offers: number;
@@ -715,6 +726,7 @@ export interface LiveStatisticsData {
   offers_by_exchange: NamedCount[];
   payment_method_counts: NamedCount[];
   premium_summary: GeneralStatsPremiumSummaryData;
+  offer_lifecycle_points: OfferLifecyclePremiumPoint[];
 }
 
 // Statistics for the past dimension: closed offers only.
@@ -724,6 +736,7 @@ export interface PastStatisticsData {
   payment_method_counts: NamedCount[];
   past_premiums: PastPremiumTimeframeStats[];
   premium_lifetimes: PremiumLifetimeModes;
+  offer_lifecycle_points: OfferLifecyclePremiumPoint[];
 }
 
 // Statistics that span both live and past offers in the configured window.

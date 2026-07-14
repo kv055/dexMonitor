@@ -3,6 +3,7 @@ import { useStatistics, type StatisticsLoadParams } from '../hooks/useStatistics
 import { useFilters } from '../hooks/useFilters';
 import { usePreferences } from '../hooks/usePreferences';
 import { LoadingSpinner } from './LoadingSpinner';
+import { OfferLifecyclePremiumChart } from './OfferLifecyclePremiumChart';
 import {
   ExchangesCard,
   LifetimeCard,
@@ -100,6 +101,11 @@ export function StatisticsView() {
     { value: 'past', label: 'Past Offers' },
     { value: 'shared', label: 'All Offers' },
   ];
+  const lifecyclePoints = mode === 'live'
+    ? (live.offer_lifecycle_points ?? [])
+    : mode === 'past'
+      ? (past.offer_lifecycle_points ?? [])
+      : [...(live.offer_lifecycle_points ?? []), ...(past.offer_lifecycle_points ?? [])];
 
   let title = 'Live Offers';
   let subtitle = `${live.active_offers} active · ${live.exchanges_live} exchanges`;
@@ -186,6 +192,7 @@ export function StatisticsView() {
             ))}
           </div>
         </div>
+        <OfferLifecyclePremiumChart key={mode} points={lifecyclePoints} />
         <div className="grid grid-cols-1 gap-1.5 md:grid-cols-2 xl:grid-cols-3 lg:flex-1 lg:min-h-0 auto-rows-fr">
           {cards}
         </div>

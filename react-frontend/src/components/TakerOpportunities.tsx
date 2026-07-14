@@ -1705,9 +1705,16 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                 // A selected live offer turns the depth slot into the Trade
                 // Tracing workflow (as on the Monitor tab), even while the
                 // depth chart is collapsed; deselecting restores it.
-                <div className="relative min-h-56 lg:min-h-0 lg:w-80 xl:w-96 shrink-0 rounded-lg border border-border bg-surface p-3 flex flex-col">
+                <section
+                  aria-label="Trade tracing"
+                  className={`relative min-h-56 lg:min-h-0 rounded-lg border border-border bg-surface p-3 flex flex-col ${
+                    chartCollapsed
+                      ? 'lg:min-w-0 lg:flex-1'
+                      : 'shrink-0 lg:w-80 xl:w-96'
+                  }`}
+                >
                   <TradeTracingPanel offer={selectedLiveOffer} />
-                </div>
+                </section>
               ) : depthCollapsed ? (
                 <button
                   type="button"

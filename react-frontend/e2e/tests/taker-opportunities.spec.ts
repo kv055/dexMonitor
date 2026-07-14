@@ -60,4 +60,17 @@ test.describe('Taker opportunities', () => {
     await expect(tracingHeading).toHaveCount(0);
     await expect(depthHeading).toBeVisible();
   });
+
+  test('trade tracing fills the space freed by a collapsed OHLC chart', async ({ page }) => {
+    await gotoAndWaitForData(page);
+    await page.getByRole('button', { name: 'dex Monitor' }).click();
+
+    await page.getByRole('button', { name: 'Hide premium chart' }).click();
+    await expect(page.getByRole('button', { name: 'Show premium chart' })).toBeVisible();
+
+    await page.locator('table tbody tr').first().click();
+    const tracingPanel = page.getByRole('region', { name: 'Trade tracing' });
+    await expect(tracingPanel).toBeVisible();
+    await expect.poll(async () => (await tracingPanel.boundingBox())?.width ?? 0).toBeGreaterThan(600);
+  });
 });

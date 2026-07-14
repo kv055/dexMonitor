@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"math"
 	"net/http"
 	"sync"
 	"time"
@@ -52,12 +53,13 @@ type statisticsResultCacheEntry struct {
 // computed by generalStatsContext.premiumSummary() but never surfaced, which is
 // why the old GeneralStats "Open Premiums" card always rendered "—".
 type liveStatistics struct {
-	TotalOffers         int                                   `json:"total_offers"`
-	ActiveOffers        int                                   `json:"active_offers"`
-	ExchangesLive       int                                   `json:"exchanges_live"`
-	OffersByExchange    []pastorders.Count                    `json:"offers_by_exchange"`
-	PaymentMethodCounts []pastorders.Count                    `json:"payment_method_counts"`
-	PremiumSummary      pastorders.GeneralStatsPremiumSummary `json:"premium_summary"`
+	TotalOffers          int                                   `json:"total_offers"`
+	ActiveOffers         int                                   `json:"active_offers"`
+	ExchangesLive        int                                   `json:"exchanges_live"`
+	OffersByExchange     []pastorders.Count                    `json:"offers_by_exchange"`
+	PaymentMethodCounts  []pastorders.Count                    `json:"payment_method_counts"`
+	PremiumSummary       pastorders.GeneralStatsPremiumSummary `json:"premium_summary"`
+	OfferLifecyclePoints []offerLifecyclePremiumPoint          `json:"offer_lifecycle_points"`
 }
 
 // pastStatistics holds the statistics that only apply to closed/past offers:
@@ -65,11 +67,25 @@ type liveStatistics struct {
 // the premium-weighted offer lifetime averages, plus a past-only exchange and
 // payment-method breakdown.
 type pastStatistics struct {
-	TotalOffers         int                                    `json:"total_offers"`
-	OffersByExchange    []pastorders.Count                     `json:"offers_by_exchange"`
-	PaymentMethodCounts []pastorders.Count                     `json:"payment_method_counts"`
-	PastPremiums        []pastorders.PastPremiumTimeframeStats `json:"past_premiums"`
-	PremiumLifetimes    pastorders.PremiumLifetimeModes        `json:"premium_lifetimes"`
+	TotalOffers          int                                    `json:"total_offers"`
+	OffersByExchange     []pastorders.Count                     `json:"offers_by_exchange"`
+	PaymentMethodCounts  []pastorders.Count                     `json:"payment_method_counts"`
+	PastPremiums         []pastorders.PastPremiumTimeframeStats `json:"past_premiums"`
+	PremiumLifetimes     pastorders.PremiumLifetimeModes        `json:"premium_lifetimes"`
+	OfferLifecyclePoints []offerLifecyclePremiumPoint           `json:"offer_lifecycle_points"`
+}
+
+// offerLifecyclePremiumPoint is one bubble in the lifecycle/premium chart.
+// LifecycleHours is an offer's current age for live offers and its completed
+// first-seen-to-last-seen lifetime for past offers. VolumeBTC is the offered
+// maximum volume (falling back to the best persisted size when unavailable).
+type offerLifecyclePremiumPoint struct {
+	LifecycleHours float64 `json:"lifecycle_hours"`
+	PremiumRatePct float64 `json:"premium_rate_pct"`
+	VolumeBTC      float64 `json:"volume_btc"`
+	Exchange       string  `json:"exchange"`
+	Direction      string  `json:"direction"`
+	IsLive         bool    `json:"is_live"`
 }
 
 // sharedStatistics holds aggregates that span both live and past offers in the
@@ -158,6 +174,86 @@ func splitGeneralOffersByLiveness(ctx statisticsContext) (live, past []pastorder
 	return live, past
 }
 
+func buildOfferLifecyclePremiumPoints(
+	offers []map[string]any,
+	now time.Time,
+	hours int,
+	excludedPaymentMethods []string,
+) (live, past []offerLifecyclePremiumPoint) {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	if hours <= 0 {
+		hours = 24
+	}
+	cutoff := now.Add(-time.Duration(hours) * time.Hour)
+	live = make([]offerLifecyclePremiumPoint, 0)
+	past = make([]offerLifecyclePremiumPoint, 0)
+
+	for _, offer := range offers {
+		if offerHasExcludedPaymentMethod(offer, excludedPaymentMethods) {
+			continue
+		}
+		firstSeen := parseDBTime(offerString(offer, "first_seen"))
+		lastSeen := parseDBTime(offerString(offer, "last_seen"))
+		if firstSeen.IsZero() || lastSeen.IsZero() || lastSeen.Before(cutoff) {
+			continue
+		}
+
+		isLive := offerBool(offer, "is_live")
+		lifecycleEnd := lastSeen
+		if isLive {
+			lifecycleEnd = now
+		}
+		if lifecycleEnd.Before(firstSeen) {
+			continue
+		}
+
+		premium := offerFloatPtrPreserveZero(offer, "avg_premium_pct")
+		if premium == nil {
+			refPrice := offerRefPrice(offer)
+			if refPrice <= 0 {
+				continue
+			}
+			computed := computeDirectionalPremiumPct(
+				offerString(offer, "direction"),
+				offerFloat(offer, "price"),
+				refPrice,
+			)
+			premium = &computed
+		}
+		if math.IsNaN(*premium) || math.IsInf(*premium, 0) {
+			continue
+		}
+
+		volume := offerFloat(offer, "btc_max")
+		if volume <= 0 {
+			volume = offerFloat(offer, "avg_btc_amount")
+		}
+		if volume <= 0 {
+			volume = offerFloat(offer, "btc_min")
+		}
+		if volume <= 0 || math.IsNaN(volume) || math.IsInf(volume, 0) {
+			continue
+		}
+
+		point := offerLifecyclePremiumPoint{
+			LifecycleHours: lifecycleEnd.Sub(firstSeen).Hours(),
+			PremiumRatePct: *premium,
+			VolumeBTC:      volume,
+			Exchange:       offerString(offer, "exchange"),
+			Direction:      offerString(offer, "direction"),
+			IsLive:         isLive,
+		}
+		if isLive {
+			live = append(live, point)
+		} else {
+			past = append(past, point)
+		}
+	}
+	return live, past
+}
+
 func loadStatisticsContextForParams(p dashboardAnalyticsParams) (statisticsContext, error) {
 	historyHours := p.Hours
 	if historyHours < 168 {
@@ -229,6 +325,12 @@ func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, st
 	}
 
 	liveOffers, pastOffers := splitGeneralOffersByLiveness(ctx)
+	liveLifecyclePoints, pastLifecyclePoints := buildOfferLifecyclePremiumPoints(
+		ctx.offers,
+		ctx.now,
+		ctx.hours,
+		ctx.excludedPaymentMethods,
+	)
 
 	// Live dimension: overview (active/live counts + exchange distribution) and
 	// the previously-unused premium summary, both scoped to currently-live offers.
@@ -265,19 +367,21 @@ func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, st
 
 	resp := statisticsResponse{
 		Live: liveStatistics{
-			TotalOffers:         liveOverview.TotalOffers,
-			ActiveOffers:        liveOverview.ActiveOffers,
-			ExchangesLive:       liveOverview.ExchangesLive,
-			OffersByExchange:    liveOverview.OffersByExchange,
-			PaymentMethodCounts: liveOverview.PaymentMethodCounts,
-			PremiumSummary:      livePremiums,
+			TotalOffers:          liveOverview.TotalOffers,
+			ActiveOffers:         liveOverview.ActiveOffers,
+			ExchangesLive:        liveOverview.ExchangesLive,
+			OffersByExchange:     liveOverview.OffersByExchange,
+			PaymentMethodCounts:  liveOverview.PaymentMethodCounts,
+			PremiumSummary:       livePremiums,
+			OfferLifecyclePoints: liveLifecyclePoints,
 		},
 		Past: pastStatistics{
-			TotalOffers:         pastOverview.TotalOffers,
-			OffersByExchange:    pastOverview.OffersByExchange,
-			PaymentMethodCounts: pastOverview.PaymentMethodCounts,
-			PastPremiums:        pastPremiums,
-			PremiumLifetimes:    premiumLifetimes,
+			TotalOffers:          pastOverview.TotalOffers,
+			OffersByExchange:     pastOverview.OffersByExchange,
+			PaymentMethodCounts:  pastOverview.PaymentMethodCounts,
+			PastPremiums:         pastPremiums,
+			PremiumLifetimes:     premiumLifetimes,
+			OfferLifecyclePoints: pastLifecyclePoints,
 		},
 		Shared: sharedStatistics{
 			Hours:               ctx.hours,

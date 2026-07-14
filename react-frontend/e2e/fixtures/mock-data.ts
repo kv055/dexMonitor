@@ -677,6 +677,10 @@ export const MOCK_STATISTICS = {
       best_bid_premium_pct: -0.8,
       avg_bid_premium_pct: -1.6,
     },
+    offer_lifecycle_points: [
+      { lifecycle_hours: 0.5, premium_rate_pct: 1.2, volume_btc: 0.01, exchange: 'robosats', direction: 'sell', is_live: true },
+      { lifecycle_hours: 8, premium_rate_pct: -0.8, volume_btc: 0.08, exchange: 'hodlhodl', direction: 'buy', is_live: true },
+    ],
   },
   past: {
     total_offers: 34,
@@ -714,6 +718,10 @@ export const MOCK_STATISTICS = {
         avg_offer_lifetime_ms_by_exchange: [{ name: 'robosats', ms: 3_400_000 }],
       },
     },
+    offer_lifecycle_points: [
+      { lifecycle_hours: 2, premium_rate_pct: 2.1, volume_btc: 0.02, exchange: 'robosats', direction: 'sell', is_live: false },
+      { lifecycle_hours: 36, premium_rate_pct: 3.4, volume_btc: 0.2, exchange: 'hodlhodl', direction: 'sell', is_live: false },
+    ],
   },
   shared: {
     hours: 168,
