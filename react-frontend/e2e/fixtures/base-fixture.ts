@@ -312,6 +312,7 @@ export async function openControlPanel(page: Page) {
 }
 
 export async function closeControlPanel(_page: Page) {
+  void _page;
   // The dashboard and filters share the Insights tab, so there is nothing to
   // switch back to — assertions run against the same view.
 }
