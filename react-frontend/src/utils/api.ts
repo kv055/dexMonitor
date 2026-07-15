@@ -15,7 +15,9 @@ import type {
   LNDWalletInitResult,
   LNDWalletState,
   LNDWalletStatus,
+  ServiceVersions,
   TradingAccount,
+  TradingAccountCredentialReveal,
   TradingAccountHealthCheckResult,
   TradingAPIKey,
   TradingPasskey,
@@ -32,6 +34,13 @@ import type {
 
 const API_BASE = '';
 
+const AUTH_UNAVAILABLE_MESSAGE =
+  'The login service is temporarily unavailable. Your credentials were not checked. Please try again in a moment.';
+
+function isAuthEndpoint(path: string) {
+  return path.startsWith('/api/auth/');
+}
+
 export interface ApiResponseWithHeaders<T> {
   data: T;
   headers: Headers;
@@ -42,13 +51,29 @@ async function fetchResponse(path: string, init?: RequestInit): Promise<Response
   if (init?.body && !headers.has('Content-Type')) {
     headers.set('Content-Type', 'application/json');
   }
-  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  let res: Response;
+  try {
+    res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+  } catch (err) {
+    // A rejected fetch has no HTTP response at all. On the login page this is
+    // still an availability issue, never a credential failure.
+    if (isAuthEndpoint(path)) {
+      throw new Error(AUTH_UNAVAILABLE_MESSAGE);
+    }
+    throw err;
+  }
   if (!res.ok) {
     // A session expired (or was never there) mid-use: tell the app to drop to the
     // login screen. The auth endpoints themselves 401 by design (e.g. /api/auth/me
     // when anonymous), so they are excluded to avoid a redirect loop.
-    if (res.status === 401 && !path.startsWith('/api/auth/')) {
+    if (res.status === 401 && !isAuthEndpoint(path)) {
       window.dispatchEvent(new Event('auth:unauthorized'));
+    }
+    // nginx returns these when it cannot contact dexMonitor. The request never
+    // reached the login handler, so make that explicit instead of exposing a
+    // bare proxy status that can be mistaken for bad credentials.
+    if (isAuthEndpoint(path) && [502, 503, 504].includes(res.status)) {
+      throw new Error(AUTH_UNAVAILABLE_MESSAGE);
     }
     const raw = await res.text();
     let message = raw.trim();
@@ -136,17 +161,37 @@ export function fetchTradingAccounts() {
   return request<TradingAccount[]>('/api/trading/accounts');
 }
 
-export function createAccount(payload: { provider: string; category?: string; email: string; password: string; phone: string }) {
+export function revealTradingAccountCredentials(id: number) {
+  return request<TradingAccountCredentialReveal>(`/api/trading/accounts/${id}/credentials`);
+}
+
+export function revealTradingAccountSecrets(id: number) {
+  return request<TradingAccount>(`/api/trading/accounts/${id}/secrets`);
+}
+
+export async function downloadBisqAccountFile(id: number) {
+  const response = await fetchResponse(`/api/trading/accounts/${id}/bisq-account-file`);
+  return response.blob();
+}
+
+export function createAccount(payload: { provider: string; category?: string; email: string; password: string; phone: string; payment_tag: string }) {
   return request<TradingAccount>('/api/trading/accounts', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-export function updateAccount(id: number, payload: { provider: string; category?: string; email: string; password: string; phone: string }) {
+export function updateAccount(id: number, payload: { provider: string; category?: string; email: string; password: string; phone: string; payment_tag: string }) {
   return request<TradingAccount>(`/api/trading/accounts/${id}`, {
     method: 'PUT',
     body: JSON.stringify(payload),
+  });
+}
+
+export function reorderPaymentAccounts(accountIds: number[]) {
+  return request<{ ok: boolean }>('/api/trading/accounts/priorities', {
+    method: 'PUT',
+    body: JSON.stringify({ account_ids: accountIds }),
   });
 }
 
@@ -258,6 +303,10 @@ export function fetchLNDWalletState() {
   return request<LNDWalletState>('/api/mm-controller/lnd/wallet/state');
 }
 
+export function fetchServiceVersions() {
+  return request<ServiceVersions>('/api/mm-controller/service-versions');
+}
+
 export function initLNDWallet() {
   return request<LNDWalletInitResult>('/api/mm-controller/lnd/wallet/init', {
     method: 'POST',
@@ -325,6 +374,13 @@ export function updatePaymentMethod(id: number, payload: PaymentMethodUpdatePayl
     method: 'PUT',
     body: JSON.stringify(payload),
   });
+}
+
+export function degradePaymentMethodToAlias(id: number, providerId: number) {
+  return request<{ payment_methods: PaymentMethodRow[] }>(
+    `/api/trading/payment_methods/${id}/degrade-to-alias/${providerId}`,
+    { method: 'POST' },
+  );
 }
 
 export function deletePaymentMethod(id: number) {

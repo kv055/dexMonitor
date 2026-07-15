@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState, type ReactNode, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useState, type DragEvent, type ReactNode, type SetStateAction } from 'react';
 import { TelegramBotSection } from './TelegramBotSection';
 import {
   createAccount,
@@ -15,6 +15,7 @@ import {
   deletePasskey,
   deleteSeed,
   deleteTOTPSecret,
+  downloadBisqAccountFile,
   fetchCexBalances,
   fetchCexDepositAddresses,
   fetchCexHedgePositions,
@@ -22,8 +23,10 @@ import {
   fetchCexWithdrawalAddresses,
   fetchLNDWalletState,
   fetchLNDWalletStatus,
-  fetchPaymentMethods,
+  fetchServiceVersions,
   fetchTradingAccounts,
+  revealTradingAccountCredentials,
+  revealTradingAccountSecrets,
   fetchBisqPaymentAccounts,
   createBisqPaymentAccount,
   deleteBisqPaymentAccount,
@@ -33,7 +36,7 @@ import {
   updateAccount,
   updateAPIKey,
   updateBankAccount,
-  updatePaymentMethod,
+  reorderPaymentAccounts,
   updatePasskey,
   updateSeed,
   updateTOTPSecret,
@@ -48,12 +51,12 @@ import type {
   CexWithdrawalAddress,
   LNDWalletState,
   LNDWalletStatus,
+  ServiceVersions,
   TradingAccount,
+  TradingAccountCredentialReveal,
   TradingAccountKeyPermissionResult,
   TradingBankAccount,
   BisqPaymentAccount,
-  PaymentMethodRow,
-  PaymentMethodUpdatePayload,
 } from '../types';
 
 type ProviderOption = { value: string; label: string };
@@ -136,11 +139,14 @@ function providerLabel(value: string) {
   return match?.label ?? value;
 }
 
-function groupedCreatableProviders() {
-  return CREATABLE_PROVIDER_CATEGORIES.map(category => ({
-    category,
-    providers: PROVIDER_DEFINITIONS.filter(provider => provider.creatable && provider.category === category),
-  })).filter(group => group.providers.length > 0);
+function groupedCreatableProviders(categoryFilter?: string) {
+  return CREATABLE_PROVIDER_CATEGORIES
+    .filter(category => !categoryFilter || category === categoryFilter)
+    .map(category => ({
+      category,
+      providers: PROVIDER_DEFINITIONS.filter(provider => provider.creatable && provider.category === category),
+    }))
+    .filter(group => group.providers.length > 0);
 }
 
 function createPlaceholderAccount(provider: string, category: string, id: number): TradingAccount {
@@ -148,9 +154,11 @@ function createPlaceholderAccount(provider: string, category: string, id: number
     id,
     provider,
     category,
+    payment_priority: 0,
     email: null,
     password: null,
     phone: null,
+    payment_tag: null,
     is_healthy: false,
     last_health_check: null,
     created_at: '',
@@ -297,6 +305,10 @@ function isBisqProvider(value: string) {
 // gRPC daemon; Bisq2 exposes a different REST API and is out of scope for this feature.
 function isBisq1Provider(value: string) {
   return value.trim().toLowerCase() === 'bisq';
+}
+
+function isBisq2Provider(value: string) {
+  return value.trim().toLowerCase() === 'bisq2';
 }
 
 function normalizeIban(iban: string | null | undefined) {
@@ -500,23 +512,6 @@ function formatCexBalanceSummary(balances: CexBalancesResponse | null | undefine
   return parts.length > 0 ? parts.join(' · ') : null;
 }
 
-function paymentMethodUpdatePayload(row: PaymentMethodRow, priority: number): PaymentMethodUpdatePayload {
-  return {
-    merge_regex: row.merge_regex,
-    alias_list: row.alias_list,
-    category: row.category,
-    bank_account_id: row.bank_account_id,
-    account_id: row.account_id,
-    wallet_address_id: row.wallet_address_id,
-    is_active: row.is_active,
-    priority,
-  };
-}
-
-function sortPaymentMethods(rows: PaymentMethodRow[]) {
-  return [...rows].sort((left, right) => right.priority - left.priority || left.name.localeCompare(right.name));
-}
-
 function cexSliceField(section: CexDataSectionKey): keyof CexAccountSlice {
   switch (section) {
     case 'cexDepositAddresses':
@@ -611,10 +606,12 @@ function channelHealthClass(health: string) {
   }
 }
 
-function providerOptionsForValue(value: string): ProviderOption[] {
+function providerOptionsForValue(value: string, category?: string): ProviderOption[] {
   const options: ProviderOption[] = [
     { value: '', label: 'Please select provider' },
-    ...PROVIDER_DEFINITIONS.map(provider => ({ value: provider.value, label: provider.label })),
+    ...PROVIDER_DEFINITIONS
+      .filter(provider => !category || provider.category === category)
+      .map(provider => ({ value: provider.value, label: provider.label })),
   ];
   const trimmed = value.trim().toLowerCase();
   if (!trimmed || options.some(option => option.value.toLowerCase() === trimmed)) {
@@ -623,14 +620,14 @@ function providerOptionsForValue(value: string): ProviderOption[] {
   return [...options, { value: value.trim(), label: value }];
 }
 
-function renderProviderSelectOptions(grouped: boolean, flatOptions: ProviderOption[]) {
+function renderProviderSelectOptions(grouped: boolean, flatOptions: ProviderOption[], category?: string) {
   if (grouped) {
     return (
       <>
         <option value="" disabled hidden>
           Please select provider
         </option>
-        {groupedCreatableProviders().map(group => (
+        {groupedCreatableProviders(category).map(group => (
           <optgroup key={group.category} label={group.category}>
             {group.providers.map(provider => (
               <option key={provider.value} value={provider.value}>
@@ -685,7 +682,10 @@ interface AccountFormState {
   email: string;
   password: string;
   phone: string;
+  payment_tag: string;
 }
+
+type CredentialField = keyof TradingAccountCredentialReveal;
 
 interface BankAccountFormState {
   label: string;
@@ -703,7 +703,6 @@ type AccountSectionKey =
   | 'passkeys'
   | 'seeds'
   | 'apiKeys'
-  | 'paymentMethodPriority'
   | 'bisqPaymentMethods'
   | 'lndBackup'
   | 'lightningManagement'
@@ -798,7 +797,7 @@ interface APIKeyFormState {
 }
 
 function emptyAccountForm(): AccountFormState {
-  return { provider: '', category: '', email: '', password: '', phone: '' };
+  return { provider: '', category: '', email: '', password: '', phone: '', payment_tag: '' };
 }
 
 function emptyBankAccountForm(): BankAccountFormState {
@@ -918,6 +917,7 @@ function AccountEditor({
   showWalletPasswordOnly = false,
   groupedProviders = false,
   freeFormProvider = false,
+  providerCategory,
   extraContent,
 }: {
   value: AccountFormState;
@@ -931,9 +931,13 @@ function AccountEditor({
   showWalletPasswordOnly?: boolean;
   groupedProviders?: boolean;
   freeFormProvider?: boolean;
+  providerCategory?: string;
   extraContent?: ReactNode;
 }) {
-  const options = useMemo(() => providerOptionsForValue(value.provider), [value.provider]);
+  const options = useMemo(
+    () => providerOptionsForValue(value.provider, providerCategory),
+    [value.provider, providerCategory],
+  );
   const fieldCls = compact
     ? 'w-full rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none focus:border-accent'
     : inputCls;
@@ -947,7 +951,7 @@ function AccountEditor({
   if (compact) {
     return (
       <div className="grid gap-2">
-        <div className={`grid items-end gap-2 ${showContactFields ? 'md:grid-cols-[minmax(9rem,1.1fr)_minmax(9rem,1fr)_minmax(8rem,1fr)_minmax(7rem,0.8fr)_auto]' : showWalletPasswordOnly ? 'md:grid-cols-[minmax(9rem,1.1fr)_minmax(9rem,1fr)_auto]' : 'md:grid-cols-[minmax(9rem,1.1fr)_auto]'}`}>
+        <div className={`grid items-end gap-2 ${showContactFields ? 'md:grid-cols-[minmax(9rem,1.1fr)_minmax(9rem,1fr)_minmax(8rem,1fr)_minmax(7rem,0.8fr)_minmax(7rem,0.8fr)_auto]' : showWalletPasswordOnly ? 'md:grid-cols-[minmax(9rem,1.1fr)_minmax(9rem,1fr)_auto]' : 'md:grid-cols-[minmax(9rem,1.1fr)_auto]'}`}>
           <label className={labelCls}>
             <span>Provider</span>
             {freeFormProvider ? (
@@ -963,7 +967,7 @@ function AccountEditor({
                 value={value.provider}
                 onChange={e => onChange({ ...value, provider: e.target.value })}
               >
-                {renderProviderSelectOptions(groupedProviders, options)}
+                {renderProviderSelectOptions(groupedProviders, options, providerCategory)}
               </select>
             )}
           </label>
@@ -995,7 +999,16 @@ function AccountEditor({
                   className={fieldCls}
                   value={value.phone}
                   onChange={e => onChange({ ...value, phone: e.target.value })}
-                  placeholder="Optional"
+                placeholder="Optional"
+              />
+              </label>
+              <label className={labelCls}>
+                <span>Payment Tag</span>
+                <input
+                  className={fieldCls}
+                  value={value.payment_tag}
+                  onChange={e => onChange({ ...value, payment_tag: e.target.value })}
+                  placeholder="e.g. revtag or Wise tag"
                 />
               </label>
             </>
@@ -1045,7 +1058,7 @@ function AccountEditor({
             value={value.provider}
             onChange={e => onChange({ ...value, provider: e.target.value })}
           >
-            {renderProviderSelectOptions(groupedProviders, options)}
+            {renderProviderSelectOptions(groupedProviders, options, providerCategory)}
           </select>
         )}
       </label>
@@ -1071,15 +1084,24 @@ function AccountEditor({
               placeholder="Optional"
             />
           </label>
-          <label className={labelCls}>
-            <span>Phone</span>
+      <label className={labelCls}>
+        <span>Phone</span>
             <input
               className={fieldCls}
               value={value.phone}
               onChange={e => onChange({ ...value, phone: e.target.value })}
-              placeholder="Optional"
-            />
-          </label>
+          placeholder="Optional"
+        />
+      </label>
+      <label className={labelCls}>
+        <span>Payment Tag</span>
+        <input
+          className={fieldCls}
+          value={value.payment_tag}
+          onChange={e => onChange({ ...value, payment_tag: e.target.value })}
+          placeholder="e.g. revtag or Wise tag"
+        />
+      </label>
         </>
       ) : null}
       {!showContactFields && showWalletPasswordOnly ? (
@@ -1173,6 +1195,7 @@ function SecretItem({
   children,
   actions,
   forceOpen = false,
+  flat = false,
 }: {
   title: string;
   meta?: string;
@@ -1181,11 +1204,12 @@ function SecretItem({
   children: ReactNode;
   actions?: ReactNode;
   forceOpen?: boolean;
+  flat?: boolean;
 }) {
   const [open, setOpen] = useState(false);
   const isOpen = forceOpen || open;
   return (
-    <div className="rounded border border-border bg-bg">
+    <div className={flat ? "border-b border-border last:border-b-0" : "rounded border border-border bg-bg"}>
       <div className="flex items-center gap-1.5 px-2 py-1">
         <button
           type="button"
@@ -1203,6 +1227,44 @@ function SecretItem({
       ) : null}
       {footer ? <div className="border-t border-border px-2 py-1.5">{footer}</div> : null}
       {isOpen ? <div className="border-t border-border px-2 py-1.5 grid gap-1.5">{children}</div> : null}
+    </div>
+  );
+}
+
+function SecretRevealValue({
+  label,
+  value,
+  visible,
+  onToggle,
+  disabled,
+  revealLabel,
+}: {
+  label?: string;
+  value: string | null | undefined;
+  visible: boolean;
+  onToggle: () => void;
+  disabled: boolean;
+  revealLabel: string;
+}) {
+  const actionLabel = visible ? `Hide ${revealLabel}` : `Show ${revealLabel}`;
+  return (
+    <div className="min-w-0">
+      {label ? <div className="mb-0.5 text-muted">{label}</div> : null}
+      <div className="relative min-w-0">
+        <button
+          type="button"
+          className="absolute left-0 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-md border border-border bg-bg text-sm text-muted transition hover:bg-surface hover:text-text disabled:cursor-wait disabled:opacity-50"
+          aria-label={actionLabel}
+          title={actionLabel}
+          onClick={onToggle}
+          disabled={disabled}
+        >
+          👁
+        </button>
+        <code className="block min-h-7 break-all py-1 pl-9 font-mono text-text">
+          {visible ? value || '—' : '••••••••'}
+        </code>
+      </div>
     </div>
   );
 }
@@ -1281,6 +1343,13 @@ function buildAccountSummaryViewModel(account: TradingAccount): AccountSummaryVi
   };
 }
 
+function serviceVersionForAccount(account: TradingAccount, versions: ServiceVersions | null) {
+  if (isBisq1Provider(account.provider)) return versions?.bisq1 || null;
+  if (isBisq2Provider(account.provider)) return versions?.bisq2 || null;
+  if (isLndWalletProvider(account.provider)) return versions?.lnd || null;
+  return null;
+}
+
 function accountCredentialSummary(account: TradingAccount) {
   const parts: string[] = [];
   if (showDexIdentitySections(account.provider)) {
@@ -1310,6 +1379,7 @@ function AccountsToolbar({
   activeTab,
   paymentAccountCount,
   tradingAccountCount,
+  onSelectTab,
   showActions,
   showNewAccountForm,
   onToggleNewAccount,
@@ -1318,6 +1388,7 @@ function AccountsToolbar({
   activeTab: AccountsSubview;
   paymentAccountCount: number;
   tradingAccountCount: number;
+  onSelectTab: (tab: AccountsSubview) => void;
   showActions: boolean;
   showNewAccountForm: boolean;
   onToggleNewAccount: () => void;
@@ -1331,13 +1402,19 @@ function AccountsToolbar({
         : 'Telegram gateway';
 
   return (
-    <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
-      <div className="min-w-0">
+    <div className="flex flex-wrap items-center gap-2">
+      <div className="min-w-0 mr-auto">
         <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">Trading Accounts</h3>
         <p className="mt-1 text-xs text-muted">{activeLabel}</p>
       </div>
+      <AccountsSubtabBar
+        activeTab={activeTab}
+        paymentAccountCount={paymentAccountCount}
+        tradingAccountCount={tradingAccountCount}
+        onSelect={onSelectTab}
+      />
       {showActions ? (
-        <div className="flex flex-wrap gap-1.5 md:justify-end">
+        <div className="flex flex-wrap gap-1.5">
           <button type="button" className={compactPrimaryButtonCls} onClick={onToggleNewAccount}>
             {showNewAccountForm ? 'Cancel' : 'Add Account'}
           </button>
@@ -1368,20 +1445,20 @@ function AccountsSubtabBar({
   ];
 
   return (
-    <div className="grid grid-cols-3 gap-1 rounded-lg border border-border bg-bg p-1">
+    <div className="flex shrink-0 gap-0.5 rounded-lg border border-border bg-bg p-0.5">
       {tabs.map(tab => {
         const active = activeTab === tab.id;
         return (
           <button
             key={tab.id}
             type="button"
-            className={`min-w-0 rounded-md px-2 py-2 text-xs font-medium transition ${
+            className={`min-w-0 rounded-md px-2 py-1 text-[0.7rem] font-medium transition ${
               active ? 'bg-accent/10 text-accent shadow-sm' : 'text-muted hover:bg-surface hover:text-text'
             }`}
             onClick={() => onSelect(tab.id)}
           >
-            <span className="block truncate">{tab.label}</span>
-            {tab.count != null ? <span className="mt-0.5 block text-[0.65rem] opacity-70">{tab.count}</span> : null}
+            <span className="truncate">{tab.label}</span>
+            {tab.count != null ? <span className="ml-1 text-[0.65rem] opacity-70">{tab.count}</span> : null}
           </button>
         );
       })}
@@ -1394,30 +1471,51 @@ function AccountSummaryCard({
   viewModel,
   selected,
   onSelect,
+  paymentPriority,
+  serviceVersion,
+  onDragStart,
+  onDrop,
 }: {
   account: TradingAccount;
   viewModel: AccountSummaryViewModel;
   selected: boolean;
   onSelect: () => void;
+  paymentPriority?: number;
+  serviceVersion?: string | null;
+  onDragStart?: (event: DragEvent<HTMLButtonElement>) => void;
+  onDrop?: (event: DragEvent<HTMLButtonElement>) => void;
 }) {
   return (
     <button
       type="button"
       data-testid={`account-summary-card-${account.id}`}
+      draggable={paymentPriority != null}
+      title={paymentPriority != null ? 'Drag to reorder payment account' : undefined}
       className={`w-full rounded-lg border p-3 text-left transition ${
         selected
           ? 'border-accent bg-accent/5 shadow-sm'
           : 'border-border bg-bg hover:border-accent/40 hover:bg-surface'
       }`}
       onClick={onSelect}
+      onDragStart={onDragStart}
+      onDragOver={paymentPriority != null ? event => event.preventDefault() : undefined}
+      onDrop={onDrop}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <div className="truncate text-sm font-semibold text-text">{viewModel.providerName}</div>
           <div className="mt-1 text-[0.68rem] text-muted">{viewModel.category}</div>
+          {selected && serviceVersion ? <div className="mt-1 truncate font-mono text-[0.65rem] text-muted">{serviceVersion}</div> : null}
         </div>
         <div className="shrink-0">
-          <HealthBadge account={account} compact />
+          <div className="flex items-center gap-1.5">
+            {paymentPriority != null ? (
+              <span className="rounded-full border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[0.65rem] font-semibold text-accent" aria-label={`Priority ${paymentPriority}`}>
+                {paymentPriority}
+              </span>
+            ) : null}
+            <HealthBadge account={account} compact />
+          </div>
         </div>
       </div>
       <div className="mt-2 flex flex-wrap gap-1">
@@ -1439,11 +1537,15 @@ function AccountsList({
   groups,
   selectedAccountId,
   onSelectAccount,
+  onReorderPaymentAccounts,
+  serviceVersions,
   showCategoryDividers = true,
 }: {
   groups: AccountGroup[];
   selectedAccountId: number | null;
   onSelectAccount: (accountId: number) => void;
+  onReorderPaymentAccounts?: (fromAccountId: number, toAccountId: number) => void;
+  serviceVersions?: ServiceVersions | null;
   showCategoryDividers?: boolean;
 }) {
   return (
@@ -1464,6 +1566,19 @@ function AccountsList({
                 viewModel={buildAccountSummaryViewModel(account)}
                 selected={selectedAccountId === account.id}
                 onSelect={() => onSelectAccount(account.id)}
+                serviceVersion={serviceVersionForAccount(account, serviceVersions ?? null)}
+                paymentPriority={showCategoryDividers ? undefined : account.payment_priority || undefined}
+                onDragStart={showCategoryDividers ? undefined : event => {
+                  event.dataTransfer.effectAllowed = 'move';
+                  event.dataTransfer.setData('text/plain', String(account.id));
+                }}
+                onDrop={showCategoryDividers ? undefined : event => {
+                  event.preventDefault();
+                  const fromAccountId = Number(event.dataTransfer.getData('text/plain'));
+                  if (Number.isInteger(fromAccountId) && fromAccountId !== account.id) {
+                    onReorderPaymentAccounts?.(fromAccountId, account.id);
+                  }
+                }}
               />
             ))}
           </div>
@@ -1540,7 +1655,6 @@ function AccountDetailPane({
 
 export function TradingAccountsPanel() {
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
-  const [paymentMethods, setPaymentMethods] = useState<PaymentMethodRow[]>([]);
   const [activeTab, setActiveTab] = useState<'payment' | 'trading' | 'communication'>(() => {
     if (typeof window !== 'undefined') {
       const stored = window.localStorage.getItem(TAB_STORAGE_KEY);
@@ -1550,11 +1664,17 @@ export function TradingAccountsPanel() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [revealedCredentialsByAccount, setRevealedCredentialsByAccount] = useState<Record<number, TradingAccountCredentialReveal>>({});
+  const [visibleCredentialFieldsByAccount, setVisibleCredentialFieldsByAccount] = useState<Record<number, Partial<Record<CredentialField, boolean>>>>({});
+  const [revealingCredentialsByAccount, setRevealingCredentialsByAccount] = useState<Record<number, boolean>>({});
+  const [revealedAccountSecretsByAccount, setRevealedAccountSecretsByAccount] = useState<Record<number, TradingAccount>>({});
+  const [visibleAccountSecretsByAccount, setVisibleAccountSecretsByAccount] = useState<Record<number, Record<string, boolean>>>({});
   const [lndWalletStatus, setLndWalletStatus] = useState<LNDWalletStatus | null>(null);
   const [lndWalletLoading, setLndWalletLoading] = useState(false);
   const [lndWalletError, setLndWalletError] = useState<string | null>(null);
   const [lndWalletNotice, setLndWalletNotice] = useState<string | null>(null);
   const [lndWalletState, setLndWalletState] = useState<LNDWalletState | null>(null);
+  const [serviceVersions, setServiceVersions] = useState<ServiceVersions | null>(null);
   const [lndWalletStateLoading, setLndWalletStateLoading] = useState(false);
   const [walletPassword, setWalletPassword] = useState('');
   const [walletPasswordConfirm, setWalletPasswordConfirm] = useState('');
@@ -1572,10 +1692,8 @@ export function TradingAccountsPanel() {
   const [bisqPmError, setBisqPmError] = useState<string | null>(null);
   const [bisqPmLoaded, setBisqPmLoaded] = useState(false);
   const [bisqPmBusyKey, setBisqPmBusyKey] = useState<string | null>(null);
-  const [paymentMethodsError, setPaymentMethodsError] = useState<string | null>(null);
-  const [paymentPriorityDrafts, setPaymentPriorityDrafts] = useState<Record<number, string>>({});
-  const [paymentPriorityErrors, setPaymentPriorityErrors] = useState<Record<number, string>>({});
-  const [paymentPrioritySavingId, setPaymentPrioritySavingId] = useState<number | null>(null);
+  const [bisqAccountFileDownloading, setBisqAccountFileDownloading] = useState<number | null>(null);
+  const [bisqAccountFileError, setBisqAccountFileError] = useState<string | null>(null);
   const [uiState, dispatchUi] = useReducer(tradingPanelUiReducer, undefined, () => ({
     expandedId: null,
     showNewAccountForm: false,
@@ -1799,12 +1917,16 @@ export function TradingAccountsPanel() {
   }, [accounts]);
 
   const activeGroups = useMemo(
-    () => groupedAccounts.filter(group =>
-      activeTab === 'payment'
-        ? isPaymentCategory(group.category)
-        : (TRADING_CATEGORIES as readonly string[]).includes(group.category),
-    ),
-    [groupedAccounts, activeTab],
+    () => {
+      if (activeTab === 'payment') {
+        const paymentAccounts = accounts
+          .filter(account => isPaymentCategory(account.category || 'Uncategorized'))
+          .sort((left, right) => left.payment_priority - right.payment_priority || left.provider.localeCompare(right.provider));
+        return paymentAccounts.length > 0 ? [{ category: 'Payment accounts', accounts: paymentAccounts }] : [];
+      }
+      return groupedAccounts.filter(group => (TRADING_CATEGORIES as readonly string[]).includes(group.category));
+    },
+    [accounts, groupedAccounts, activeTab],
   );
 
   const paymentAccountCount = useMemo(
@@ -1818,6 +1940,7 @@ export function TradingAccountsPanel() {
     () => activeGroups.flatMap(group => group.accounts),
     [activeGroups],
   );
+
   const tradingAccountCount = useMemo(
     () => groupedAccounts.reduce(
       (total, group) =>
@@ -1827,40 +1950,11 @@ export function TradingAccountsPanel() {
     [groupedAccounts],
   );
 
-  const paymentMethodsByAccount = useMemo(() => {
-    const bankAccountOwnerById = new Map<number, number>();
-    for (const account of accounts) {
-      for (const bankAccount of account.bank_accounts) {
-        bankAccountOwnerById.set(bankAccount.id, account.id);
-      }
-    }
-    const byAccount = new Map<number, PaymentMethodRow[]>();
-    for (const row of paymentMethods) {
-      const ownerId = row.account_id ?? (row.bank_account_id != null ? bankAccountOwnerById.get(row.bank_account_id) ?? null : null);
-      if (ownerId == null) {
-        continue;
-      }
-      byAccount.set(ownerId, [...(byAccount.get(ownerId) ?? []), row]);
-    }
-    for (const [accountId, rows] of byAccount.entries()) {
-      byAccount.set(accountId, sortPaymentMethods(rows));
-    }
-    return byAccount;
-  }, [accounts, paymentMethods]);
-
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
-    setPaymentMethodsError(null);
     try {
-      const [accountsRes, paymentMethodsRes] = await Promise.allSettled([
-        fetchTradingAccounts(),
-        fetchPaymentMethods(),
-      ]);
-      if (accountsRes.status !== 'fulfilled') {
-        throw accountsRes.reason;
-      }
-      const next = withInfrastructureAccounts(accountsRes.value);
+      const next = withInfrastructureAccounts(await fetchTradingAccounts());
       setAccounts(next);
       setExpandedId(current => current != null && !next.some(account => account.id === current) ? null : current);
       dispatchUi({
@@ -1873,23 +1967,6 @@ export function TradingAccountsPanel() {
           return { ...state, healthMessageByAccount };
         },
       });
-      if (paymentMethodsRes.status === 'fulfilled') {
-        const nextRows = paymentMethodsRes.value.payment_methods;
-        const ids = new Set(nextRows.map(row => row.id));
-        setPaymentMethods(nextRows);
-        setPaymentPriorityDrafts(prev =>
-          Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(Number(id)))),
-        );
-        setPaymentPriorityErrors(prev =>
-          Object.fromEntries(Object.entries(prev).filter(([id]) => ids.has(Number(id)))),
-        );
-      } else {
-        setPaymentMethodsError(
-          paymentMethodsRes.reason instanceof Error
-            ? paymentMethodsRes.reason.message
-            : 'Failed to load payment method priorities',
-        );
-      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load trading accounts');
     } finally {
@@ -1900,6 +1977,26 @@ export function TradingAccountsPanel() {
   useEffect(() => {
     void load();
   }, [load]);
+
+  const reorderPaymentAccountList = useCallback(async (fromAccountId: number, toAccountId: number) => {
+    const paymentAccounts = activeGroups.flatMap(group => group.accounts);
+    const fromIndex = paymentAccounts.findIndex(account => account.id === fromAccountId);
+    const toIndex = paymentAccounts.findIndex(account => account.id === toAccountId);
+    if (fromIndex < 0 || toIndex < 0) return;
+    const reordered = [...paymentAccounts];
+    const [moved] = reordered.splice(fromIndex, 1);
+    reordered.splice(toIndex, 0, moved);
+    setAccounts(current => current.map(account => {
+      const priority = reordered.findIndex(candidate => candidate.id === account.id);
+      return priority >= 0 ? { ...account, payment_priority: priority + 1 } : account;
+    }));
+    try {
+      await reorderPaymentAccounts(reordered.map(account => account.id));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save payment account order');
+      await load();
+    }
+  }, [activeGroups, load]);
 
   // loadBisqPaymentMethods fetches the bisq1 daemon's saved accounts so the section can
   // reconcile our saved bank accounts against what already exists in the bisq profile.
@@ -1989,6 +2086,11 @@ export function TradingAccountsPanel() {
     }
   }, []);
 
+  useEffect(() => {
+    if (activeTab !== 'trading') return;
+    void fetchServiceVersions().then(setServiceVersions).catch(() => setServiceVersions(null));
+  }, [activeTab]);
+
   const handleOpenChannel = useCallback(async () => {
     setOpeningChannel(true);
     setLndWalletError(null);
@@ -2067,106 +2169,6 @@ export function TradingAccountsPanel() {
     }
   };
 
-  const savePaymentPriority = useCallback(async (row: PaymentMethodRow) => {
-    const raw = paymentPriorityDrafts[row.id] ?? String(row.priority);
-    const nextPriority = Number.parseInt(raw, 10) || 0;
-    setPaymentPrioritySavingId(row.id);
-    setPaymentPriorityErrors(prev => {
-      const next = { ...prev };
-      delete next[row.id];
-      return next;
-    });
-    try {
-      const res = await updatePaymentMethod(row.id, paymentMethodUpdatePayload(row, nextPriority));
-      setPaymentMethods(res.payment_methods);
-      setPaymentPriorityDrafts(prev => ({ ...prev, [row.id]: String(nextPriority) }));
-    } catch (err) {
-      setPaymentPriorityErrors(prev => ({
-        ...prev,
-        [row.id]: err instanceof Error ? err.message : 'Failed to save payment priority',
-      }));
-    } finally {
-      setPaymentPrioritySavingId(null);
-    }
-  }, [paymentPriorityDrafts]);
-
-  const renderPaymentPrioritySection = useCallback((account: TradingAccount) => {
-    if (!isPaymentCategory(account.category || 'Uncategorized')) {
-      return null;
-    }
-    const linkedMethods = paymentMethodsByAccount.get(account.id) ?? [];
-    const open = openSectionsByAccount[account.id]?.paymentMethodPriority ?? true;
-    return (
-      <CollapsibleSection
-        title="Offer priority"
-        count={linkedMethods.length || undefined}
-        open={open}
-        onToggle={() => toggleSection(account.id, 'paymentMethodPriority')}
-      >
-        <p className="text-[0.65rem] text-muted leading-relaxed px-1">
-          Controls which linked payment method wins automatically when an offer accepts more than one.
-        </p>
-        {paymentMethodsError ? (
-          <div className="text-[0.65rem] text-red px-1">{paymentMethodsError}</div>
-        ) : null}
-        {!paymentMethodsError && linkedMethods.length === 0 ? (
-          <div className="text-[0.65rem] text-muted px-1">
-            No linked payment methods on this account yet. Link them in the Payment Method Catalog first.
-          </div>
-        ) : null}
-        {!paymentMethodsError && linkedMethods.length > 0 ? (
-          <div className="grid gap-1.5">
-            {linkedMethods.map(row => {
-              const draftValue = paymentPriorityDrafts[row.id] ?? String(row.priority);
-              const dirty = draftValue !== String(row.priority);
-              const saving = paymentPrioritySavingId === row.id;
-              return (
-                <ResourceCard
-                  key={row.id}
-                  title={row.name}
-                  meta={`${row.is_active ? 'Active' : 'Inactive'}${row.link_label ? ` · ${row.link_label}` : ''}`}
-                >
-                  <div className="grid gap-1.5 sm:grid-cols-[minmax(0,1fr)_5rem_auto] sm:items-center">
-                    <div className="text-[0.65rem] text-muted">
-                      Higher value wins when the backend auto-picks among accepted methods.
-                    </div>
-                    <input
-                      type="number"
-                      className={compactInputCls}
-                      value={draftValue}
-                      onChange={e => setPaymentPriorityDrafts(prev => ({ ...prev, [row.id]: e.target.value }))}
-                      aria-label={`${row.name} priority`}
-                    />
-                    <button
-                      type="button"
-                      className={compactButtonCls}
-                      disabled={!dirty || saving}
-                      onClick={() => void savePaymentPriority(row)}
-                    >
-                      {saving ? 'Saving…' : 'Save'}
-                    </button>
-                  </div>
-                  {paymentPriorityErrors[row.id] ? (
-                    <div className="text-[0.65rem] text-red">{paymentPriorityErrors[row.id]}</div>
-                  ) : null}
-                </ResourceCard>
-              );
-            })}
-          </div>
-        ) : null}
-      </CollapsibleSection>
-    );
-  }, [
-    openSectionsByAccount,
-    paymentMethodsByAccount,
-    paymentMethodsError,
-    paymentPriorityDrafts,
-    paymentPriorityErrors,
-    paymentPrioritySavingId,
-    savePaymentPriority,
-    toggleSection,
-  ]);
-
   // runBisqAction wraps a bisq payment-account mutation: it marks the row busy, surfaces any
   // error inside the section (not the global banner), and reloads the reconciled lists.
   const runBisqAction = async (busyKey: string, fn: () => Promise<void>) => {
@@ -2203,6 +2205,7 @@ export function TradingAccountsPanel() {
           email: account.email ?? '',
           password: walletPassword,
           phone: account.phone ?? '',
+          payment_tag: account.payment_tag ?? '',
         });
         const result = await initLNDWallet();
         setWalletPassword('');
@@ -2273,6 +2276,64 @@ export function TradingAccountsPanel() {
     }
   };
 
+  const toggleCredentialReveal = async (account: TradingAccount, field: CredentialField) => {
+    if (visibleCredentialFieldsByAccount[account.id]?.[field]) {
+      setVisibleCredentialFieldsByAccount(prev => ({
+        ...prev,
+        [account.id]: { ...prev[account.id], [field]: false },
+      }));
+      return;
+    }
+
+    if (!revealedCredentialsByAccount[account.id]) {
+      setRevealingCredentialsByAccount(prev => ({ ...prev, [account.id]: true }));
+      setError(null);
+      try {
+        const credentials = await revealTradingAccountCredentials(account.id);
+        setRevealedCredentialsByAccount(prev => ({ ...prev, [account.id]: credentials }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to reveal account credentials');
+        setRevealingCredentialsByAccount(prev => ({ ...prev, [account.id]: false }));
+        return;
+      } finally {
+        setRevealingCredentialsByAccount(prev => ({ ...prev, [account.id]: false }));
+      }
+    }
+
+    setVisibleCredentialFieldsByAccount(prev => ({
+      ...prev,
+      [account.id]: { ...prev[account.id], [field]: true },
+    }));
+  };
+
+  const toggleAccountSecretReveal = async (account: TradingAccount, field: string) => {
+    if (visibleAccountSecretsByAccount[account.id]?.[field]) {
+      setVisibleAccountSecretsByAccount(prev => ({ ...prev, [account.id]: { ...prev[account.id], [field]: false } }));
+      return;
+    }
+    if (!revealedAccountSecretsByAccount[account.id]) {
+      setRevealingCredentialsByAccount(prev => ({ ...prev, [account.id]: true }));
+      setError(null);
+      try {
+        const revealed = await revealTradingAccountSecrets(account.id);
+        setRevealedAccountSecretsByAccount(prev => ({ ...prev, [account.id]: revealed }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to reveal account secrets');
+        return;
+      } finally {
+        setRevealingCredentialsByAccount(prev => ({ ...prev, [account.id]: false }));
+      }
+    }
+    setVisibleAccountSecretsByAccount(prev => ({ ...prev, [account.id]: { ...prev[account.id], [field]: true } }));
+  };
+
+  const toggleLocalSecretVisibility = (accountID: number, field: string) => {
+    setVisibleAccountSecretsByAccount(prev => ({
+      ...prev,
+      [accountID]: { ...prev[accountID], [field]: !prev[accountID]?.[field] },
+    }));
+  };
+
   const startAccountEdit = (account: TradingAccount) => {
     setEditingAccountId(account.id);
     setEditingAccount({
@@ -2281,6 +2342,7 @@ export function TradingAccountsPanel() {
       email: account.email ?? '',
       password: account.password ?? '',
       phone: account.phone ?? '',
+      payment_tag: account.payment_tag ?? '',
     });
   };
 
@@ -2309,6 +2371,9 @@ export function TradingAccountsPanel() {
       >
         {account.totp_secrets.map(secret => {
           const edit = editingTOTPById[secret.id];
+          const secretField = `totp:${secret.id}`;
+          const revealedSecret = revealedAccountSecretsByAccount[account.id]?.totp_secrets.find(item => item.id === secret.id)?.secret;
+          const secretVisible = visibleAccountSecretsByAccount[account.id]?.[secretField] === true;
           return (
             <SecretItem
               key={secret.id}
@@ -2391,7 +2456,10 @@ export function TradingAccountsPanel() {
                 </div>
               ) : (
                 <div className="grid gap-1">
-                  <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-[0.65rem] text-text whitespace-pre-wrap break-all">{secret.secret}</pre>
+                  <div className="flex items-start gap-1">
+                    <pre className="min-w-0 flex-1 overflow-x-auto rounded border border-border bg-surface p-2 text-[0.65rem] text-text whitespace-pre-wrap break-all">{secretVisible ? revealedSecret : '••••••••'}</pre>
+                    <button type="button" className="text-muted hover:text-text" aria-label={secretVisible ? 'Hide TOTP secret' : 'Show TOTP secret'} onClick={() => void toggleAccountSecretReveal(account, secretField)} disabled={revealingCredentialsByAccount[account.id] === true}>👁</button>
+                  </div>
                   <div className="text-[0.65rem] text-muted">Created {formatDate(secret.created_at)}</div>
                 </div>
               )}
@@ -2469,6 +2537,10 @@ export function TradingAccountsPanel() {
       >
         {account.passkey_credentials.map(cred => {
           const edit = editingPasskeyById[cred.id];
+          const passkeyField = `passkey:${cred.id}`;
+          const credentialIDField = `passkey:${cred.id}:credential-id`;
+          const userHandleField = `passkey:${cred.id}:user-handle`;
+          const revealedPrivateKey = revealedAccountSecretsByAccount[account.id]?.passkey_credentials.find(item => item.id === cred.id)?.private_key_pkcs8;
           const form = edit ?? {
             credential_id: cred.credential_id,
             rp_id: cred.rp_id,
@@ -2484,7 +2556,7 @@ export function TradingAccountsPanel() {
               forceOpen={!!edit}
               title={cred.rp_id || `Passkey #${cred.id}`}
               meta={cred.is_active ? 'Active' : 'Inactive'}
-              summary={cred.credential_id.length > 40 ? `${cred.credential_id.slice(0, 40)}…` : cred.credential_id}
+              summary="Passkey credential stored"
               actions={
                 !edit ? (
                   <>
@@ -2526,11 +2598,12 @@ export function TradingAccountsPanel() {
                 </>
               ) : (
                 <div className="grid gap-1 text-[0.65rem] text-muted sm:grid-cols-2">
-                  <div className="sm:col-span-2 truncate"><span className="text-text">Credential:</span> {cred.credential_id}</div>
-                  <div><span className="text-text">User handle:</span> {cred.user_handle || '—'}</div>
+                  <div className="flex min-w-0 items-center gap-1 sm:col-span-2"><span className="min-w-0 truncate"><span className="text-text">Credential:</span> {visibleAccountSecretsByAccount[account.id]?.[credentialIDField] ? cred.credential_id : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleAccountSecretsByAccount[account.id]?.[credentialIDField] ? 'Hide passkey credential ID' : 'Show passkey credential ID'} onClick={() => toggleLocalSecretVisibility(account.id, credentialIDField)}>👁</button></div>
+                  <div className="flex min-w-0 items-center gap-1"><span className="min-w-0 truncate"><span className="text-text">User handle:</span> {cred.user_handle ? (visibleAccountSecretsByAccount[account.id]?.[userHandleField] ? cred.user_handle : '••••••••') : '—'}</span>{cred.user_handle ? <button type="button" className="text-muted hover:text-text" aria-label={visibleAccountSecretsByAccount[account.id]?.[userHandleField] ? 'Hide passkey user handle' : 'Show passkey user handle'} onClick={() => toggleLocalSecretVisibility(account.id, userHandleField)}>👁</button> : null}</div>
                   <div><span className="text-text">Sign count:</span> {cred.sign_count}</div>
                   <div><span className="text-text">Last used:</span> {formatDate(cred.last_used_at)}</div>
                   <div><span className="text-text">Created:</span> {formatDate(cred.created_at)}</div>
+                  <div className="flex items-center gap-1 sm:col-span-2"><span><span className="text-text">Private key:</span> {visibleAccountSecretsByAccount[account.id]?.[passkeyField] ? revealedPrivateKey : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleAccountSecretsByAccount[account.id]?.[passkeyField] ? 'Hide passkey private key' : 'Show passkey private key'} onClick={() => void toggleAccountSecretReveal(account, passkeyField)} disabled={revealingCredentialsByAccount[account.id] === true}>👁</button></div>
                 </div>
               )}
             </SecretItem>
@@ -2596,9 +2669,13 @@ export function TradingAccountsPanel() {
         <div className="grid gap-1.5">
           <BackupField title="Wallet password">
             {account.password ? (
-              <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-[0.65rem] text-text whitespace-pre-wrap break-all">
-                {account.password}
-              </pre>
+              <SecretRevealValue
+                value={revealedCredentialsByAccount[account.id]?.password}
+                visible={visibleCredentialFieldsByAccount[account.id]?.password === true}
+                onToggle={() => void toggleCredentialReveal(account, 'password')}
+                disabled={revealingCredentialsByAccount[account.id] === true}
+                revealLabel="wallet password"
+              />
             ) : (
               <div className="text-[0.65rem] text-muted">Set the wallet password in Account → Edit before starting mm-controller.</div>
             )}
@@ -2606,9 +2683,13 @@ export function TradingAccountsPanel() {
 
           <BackupField title="Aezeed seed" meta={seed ? formatDate(seed.created_at) : undefined}>
             {seed ? (
-              <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-[0.65rem] text-text whitespace-pre-wrap break-all">
-                {seed.seed_phrase}
-              </pre>
+              <SecretRevealValue
+                value={revealedAccountSecretsByAccount[account.id]?.seeds.find(item => item.id === seed.id)?.seed_phrase}
+                visible={visibleAccountSecretsByAccount[account.id]?.[`seed:${seed.id}`] === true}
+                onToggle={() => void toggleAccountSecretReveal(account, `seed:${seed.id}`)}
+                disabled={revealingCredentialsByAccount[account.id] === true}
+                revealLabel="aezeed seed"
+              />
             ) : (
               <div className="text-[0.65rem] text-muted">
                 No aezeed stored yet — set the wallet password and start mm-controller to generate one.
@@ -2717,9 +2798,7 @@ export function TradingAccountsPanel() {
         ) : null}
         {showLockedNotice ? (
           <div className="text-[0.65rem] text-red px-1 leading-relaxed">
-            A wallet already exists but mm-controller couldn&apos;t unlock it — the saved
-            password may not match the wallet. Update it under Account → Edit, then restart
-            mm-controller.
+            LND wallet is unavailable: {state?.last_init_error || 'mm-controller has not completed LND initialization yet.'}
           </div>
         ) : null}
         {showUnreachable ? (
@@ -2921,25 +3000,27 @@ export function TradingAccountsPanel() {
             {lndWalletStatus.addresses.length === 0 ? (
               <div className="text-[0.65rem] text-muted px-1">No addresses returned from LND.</div>
             ) : (
-              lndWalletStatus.addresses.map(entry => (
-                <div key={`${entry.kind}-${entry.address}`} className="rounded border border-border bg-bg px-2 py-1.5 grid gap-1 text-xs text-muted">
+              lndWalletStatus.addresses.map(entry => {
+                const addressField = `lnd-address:${entry.kind}:${entry.address}`;
+                const addressVisible = visibleAccountSecretsByAccount[account.id]?.[addressField] === true;
+                return <div key={`${entry.kind}-${entry.address}`} className="rounded border border-border bg-bg px-2 py-1.5 grid gap-1 text-xs text-muted">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="text-text font-medium">
                       {entry.kind === 'lightning' ? 'Lightning node' : 'On-chain'}
                     </span>
                     {entry.label ? (
-                      <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem]">{entry.label}</span>
+                      <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem]">{addressVisible ? entry.label : '••••••••'}</span>
                     ) : null}
                     {entry.is_internal ? (
                       <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem]">Internal</span>
                     ) : null}
                   </div>
-                  <pre className="overflow-x-auto whitespace-pre-wrap break-all text-[0.65rem] text-text">{entry.address}</pre>
+                  <div className="flex items-start gap-1"><pre className="min-w-0 flex-1 overflow-x-auto whitespace-pre-wrap break-all text-[0.65rem] text-text">{addressVisible ? entry.address : '••••••••'}</pre><button type="button" className="text-muted hover:text-text" aria-label={addressVisible ? 'Hide wallet address' : 'Show wallet address'} onClick={() => toggleLocalSecretVisibility(account.id, addressField)}>👁</button></div>
                   {entry.kind === 'onchain' ? (
                     <div><span className="text-text">Balance:</span> {formatSats(entry.balance_sat)}</div>
                   ) : null}
-                </div>
-              ))
+                </div>;
+              })
             )}
           </div>
         ) : null}
@@ -2958,15 +3039,53 @@ export function TradingAccountsPanel() {
           </p>
         </div>
         {backup ? (
-          <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
-            <div><span className="text-text">File:</span> {backup.file_name}</div>
-            <div><span className="text-text">Size:</span> {formatFileSize(backup.file_size_bytes)}</div>
-            <div><span className="text-text">Modified:</span> {formatDate(backup.modified_at ?? backup.created_at)}</div>
-            <div><span className="text-text">SHA256:</span> {truncateHash(backup.file_sha256)}</div>
-          </div>
+          <>
+            <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
+              <div><span className="text-text">File:</span> {backup.file_name}</div>
+              <div><span className="text-text">Size:</span> {formatFileSize(backup.file_size_bytes)}</div>
+              <div><span className="text-text">Modified:</span> {formatDate(backup.modified_at ?? backup.created_at)}</div>
+              <div><span className="text-text">SHA256:</span> {truncateHash(backup.file_sha256)}</div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                className={compactButtonCls}
+                disabled={bisqAccountFileDownloading === account.id}
+                onClick={() => void (async () => {
+                  setBisqAccountFileDownloading(account.id);
+                  setBisqAccountFileError(null);
+                  try {
+                    const blob = await downloadBisqAccountFile(account.id);
+                    const url = URL.createObjectURL(blob);
+                    const link = document.createElement('a');
+                    link.href = url;
+                    link.download = backup.file_name || 'UserPayload';
+                    link.click();
+                    URL.revokeObjectURL(url);
+                  } catch (err) {
+                    setBisqAccountFileError(err instanceof Error ? err.message : 'Failed to download account file');
+                  } finally {
+                    setBisqAccountFileDownloading(null);
+                  }
+                })()}
+              >
+                {bisqAccountFileDownloading === account.id ? 'Preparing…' : 'Download account file'}
+              </button>
+              {bisqAccountFileError ? <span className="text-[0.65rem] text-red">{bisqAccountFileError}</span> : null}
+            </div>
+          </>
         ) : (
           <div className="text-[0.65rem] text-muted px-1">No account file backed up yet.</div>
         )}
+        <a
+          className={`${compactButtonCls} w-fit`}
+          href={`/api/trading/accounts/${account.id}/bisq-data-directory`}
+        >
+          Download complete Bisq data directory
+        </a>
+        <p className="text-[0.65rem] text-muted leading-relaxed">
+          Contains the full <span className="font-mono">Bisq/</span> directory for local Bisq 1 recovery. Close the local GUI before replacing its data directory.
+        </p>
       </div>
     );
   };
@@ -3000,6 +3119,9 @@ export function TradingAccountsPanel() {
         ) : null}
         {account.seeds.map(seed => {
           const edit = !isLndWallet ? editingSeedById[seed.id] : undefined;
+          const seedField = `seed:${seed.id}`;
+          const revealedSeed = revealedAccountSecretsByAccount[account.id]?.seeds.find(item => item.id === seed.id)?.seed_phrase;
+          const seedVisible = visibleAccountSecretsByAccount[account.id]?.[seedField] === true;
           const form = edit ?? { seed_phrase: seed.seed_phrase, wallet_created_at: seed.wallet_created_at ?? '' };
           return (
             <SecretItem
@@ -3033,7 +3155,7 @@ export function TradingAccountsPanel() {
                 </>
               ) : (
                 <div className="grid gap-1">
-                  <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-[0.65rem] text-text whitespace-pre-wrap break-all">{seed.seed_phrase}</pre>
+                  <div className="flex items-start gap-1"><pre className="min-w-0 flex-1 overflow-x-auto rounded border border-border bg-surface p-2 text-[0.65rem] text-text whitespace-pre-wrap break-all">{seedVisible ? revealedSeed : '••••••••'}</pre><button type="button" className="text-muted hover:text-text" aria-label={seedVisible ? 'Hide seed phrase' : 'Show seed phrase'} onClick={() => void toggleAccountSecretReveal(account, seedField)} disabled={revealingCredentialsByAccount[account.id] === true}>👁</button></div>
                   <div className="text-[0.65rem] text-muted">Wallet created: {formatDate(seed.wallet_created_at)}</div>
                 </div>
               )}
@@ -3092,28 +3214,38 @@ export function TradingAccountsPanel() {
     );
 
     const rows = bankAccounts.map(ba => {
-      const eligible = sepaEligibility(ba) === 'eligible';
-      const expectedName = eligible ? sepaBisqAccountName(ba) : '';
-      if (eligible && expectedName) expectedNames.add(expectedName);
-      const savedAccount = eligible ? sepaAccounts.find(a => a.account_name === expectedName) : undefined;
+      const parentAccount = accounts.find(candidate => candidate.id === ba.account_id);
+      const ownerField = `bank:${ba.id}:owner`;
+      const ibanField = `bank:${ba.id}:iban`;
+      const bicField = `bank:${ba.id}:bic`;
+      const revealedBank = parentAccount
+        ? revealedAccountSecretsByAccount[parentAccount.id]?.bank_accounts.find(item => item.id === ba.id)
+        : undefined;
+      const visibleBankFields = parentAccount ? visibleAccountSecretsByAccount[parentAccount.id] ?? {} : {};
+      const eligibleBank = revealedBank && sepaEligibility(revealedBank) === 'eligible' ? revealedBank : null;
+      const expectedName = eligibleBank ? sepaBisqAccountName(eligibleBank) : '';
+      if (eligibleBank && expectedName) expectedNames.add(expectedName);
+      const savedAccount = eligibleBank ? sepaAccounts.find(a => a.account_name === expectedName) : undefined;
       const busyKey = `ba-${ba.id}`;
       const busy = bisqPmBusyKey === busyKey;
 
       let badge: ReactNode;
-      if (!eligible) badge = statusBadge('border-border bg-surface text-muted', 'Not supported (SEPA only)');
+      if (!eligibleBank) badge = statusBadge('border-border bg-surface text-muted', 'Reveal bank details to check SEPA');
       else if (savedAccount) badge = statusBadge('border-green/40 bg-green/10 text-green', 'Saved ✓');
       else badge = statusBadge('border-yellow/40 bg-yellow/10 text-yellow', 'Pending');
 
       return (
-        <ResourceCard key={`ba-${ba.id}`} title={ba.label?.trim() || ba.owner_name} meta={normalizeIban(ba.details.iban) || ba.scheme}>
+        <ResourceCard key={`ba-${ba.id}`} title={ba.label?.trim() || ba.owner_name} meta={ba.scheme}>
           <div className="flex flex-wrap items-center justify-between gap-1.5">
             <div className="flex flex-wrap items-center gap-1.5 text-[0.65rem] text-muted">
               {badge}
-              <span>{ba.owner_name}</span>
+              {parentAccount ? <span className="flex items-center gap-1"><span>{visibleBankFields[ownerField] ? revealedBank?.owner_name : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleBankFields[ownerField] ? 'Hide account owner' : 'Show account owner'} onClick={() => void toggleAccountSecretReveal(parentAccount, ownerField)} disabled={revealingCredentialsByAccount[parentAccount.id] === true}>👁</button></span> : null}
               {ba.country ? <span>· {ba.country}</span> : null}
+              {parentAccount ? <span className="flex items-center gap-1"><span>· IBAN: {visibleBankFields[ibanField] ? normalizeIban(revealedBank?.details.iban) : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleBankFields[ibanField] ? 'Hide IBAN' : 'Show IBAN'} onClick={() => void toggleAccountSecretReveal(parentAccount, ibanField)} disabled={revealingCredentialsByAccount[parentAccount.id] === true}>👁</button></span> : null}
+              {parentAccount && ba.details.bic ? <span className="flex items-center gap-1"><span>BIC: {visibleBankFields[bicField] ? revealedBank?.details.bic : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleBankFields[bicField] ? 'Hide BIC' : 'Show BIC'} onClick={() => void toggleAccountSecretReveal(parentAccount, bicField)} disabled={revealingCredentialsByAccount[parentAccount.id] === true}>👁</button></span> : null}
             </div>
             <div className="flex gap-1">
-              {eligible && !savedAccount ? (
+              {eligibleBank && !savedAccount ? (
                 <button
                   type="button"
                   className={compactButtonCls}
@@ -3122,9 +3254,9 @@ export function TradingAccountsPanel() {
                     await createBisqPaymentAccount({
                       payment_method_type: 'SEPA',
                       account_name: expectedName,
-                      holder_name: ba.owner_name,
-                      iban: normalizeIban(ba.details.iban),
-                      bic: ba.details.bic ?? '',
+                      holder_name: eligibleBank.owner_name,
+                      iban: normalizeIban(eligibleBank.details.iban),
+                      bic: eligibleBank.details.bic ?? '',
                       country_code: (ba.country ?? '').toUpperCase(),
                     });
                   })}
@@ -3228,9 +3360,12 @@ export function TradingAccountsPanel() {
       >
         {account.bank_accounts.map((ba: TradingBankAccount) => {
           const edit = editingBankAccountById[ba.id];
+          const ownerField = `bank:${ba.id}:owner`;
+          const bankSecrets = revealedAccountSecretsByAccount[account.id]?.bank_accounts.find(item => item.id === ba.id);
+          const visibleBankFields = visibleAccountSecretsByAccount[account.id] ?? {};
           const form: BankAccountFormState = edit ?? {
             label: ba.label ?? '',
-            owner_name: ba.owner_name,
+            owner_name: visibleBankFields[ownerField] ? bankSecrets?.owner_name ?? ba.owner_name : ba.owner_name,
             currency: ba.currency,
             country: ba.country ?? '',
             scheme: ba.scheme,
@@ -3268,9 +3403,12 @@ export function TradingAccountsPanel() {
                 </div>
               ) : (
                 <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
-                  <div><span className="text-text">Owner:</span> {ba.owner_name}</div>
-                  <div><span className="text-text">IBAN:</span> {ba.details.iban ?? '—'}</div>
-                  <div><span className="text-text">BIC:</span> {ba.details.bic ?? '—'}</div>
+                  <div className="flex items-center gap-1"><span><span className="text-text">Owner:</span> {visibleBankFields[ownerField] ? bankSecrets?.owner_name : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleBankFields[ownerField] ? 'Hide account owner' : 'Show account owner'} onClick={() => void toggleAccountSecretReveal(account, ownerField)} disabled={revealingCredentialsByAccount[account.id] === true}>👁</button></div>
+                  {Object.keys(ba.details).map(detailKey => {
+                    const detailField = `bank:${ba.id}:${detailKey}`;
+                    const visible = visibleBankFields[detailField] === true;
+                    return <div key={detailKey} className="flex items-center gap-1"><span><span className="text-text">{detailKey.replace(/_/g, ' ')}:</span> {visible ? bankSecrets?.details[detailKey] : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visible ? `Hide ${detailKey}` : `Show ${detailKey}`} onClick={() => void toggleAccountSecretReveal(account, detailField)} disabled={revealingCredentialsByAccount[account.id] === true}>👁</button></div>;
+                  })}
                   <div><span className="text-text">Currency:</span> {ba.currency}{ba.country ? ` · ${ba.country}` : ''}</div>
                   <div><span className="text-text">Active:</span> {ba.is_active ? 'Yes' : 'No'}</div>
                   <div className="flex gap-1 mt-1 sm:col-span-2">
@@ -3347,6 +3485,11 @@ export function TradingAccountsPanel() {
         ) : null}
         {account.api_keys.map(key => {
           const edit = editingAPIKeyById[key.id];
+          const secretKey = `api-key:${key.id}:key`;
+          const secretSecret = `api-key:${key.id}:secret`;
+          const secretPassphrase = `api-key:${key.id}:passphrase`;
+          const revealedKey = revealedAccountSecretsByAccount[account.id]?.api_keys.find(item => item.id === key.id);
+          const visibleSecrets = visibleAccountSecretsByAccount[account.id] ?? {};
           const form = edit ?? {
             name: key.name,
             api_key: key.api_key,
@@ -3361,16 +3504,16 @@ export function TradingAccountsPanel() {
               forceOpen={!!edit}
               title={itemTitle}
               meta={key.is_active ? 'Active' : 'Inactive'}
-              summary={key.api_key.length > 40 ? `${key.api_key.slice(0, 40)}…` : key.api_key}
               footer={key.permissions && Object.keys(key.permissions).length > 0 ? (
-                <div className="grid gap-1">
-                  <div className="text-[0.65rem] text-text">
+                <div className="flex flex-wrap items-center gap-1.5">
+                  <span className="text-[0.65rem] text-text whitespace-nowrap">
                     Validation
                     {key.permissions_checked_at ? ` · checked ${formatDate(key.permissions_checked_at)}` : ''}
-                  </div>
+                  </span>
                   <APIKeyPermissionChips permissions={key.permissions} />
                 </div>
               ) : null}
+              flat
               actions={
                 !edit ? (
                   <>
@@ -3419,19 +3562,47 @@ export function TradingAccountsPanel() {
                 </>
               ) : (
                 <div className="grid gap-1 text-[0.65rem] text-muted">
-                  <pre className="overflow-x-auto rounded border border-border bg-surface p-2 text-text whitespace-pre-wrap break-all">{key.api_key}</pre>
-                  <div className="grid gap-1 sm:grid-cols-3">
-                    {profile.showSecret && key.api_secret ? <div><span className="text-text">{profile.secretLabel}:</span> ••••••••</div> : null}
-                    {profile.showPassphrase && key.passphrase ? <div><span className="text-text">Passphrase:</span> ••••••••</div> : null}
-                    <div>Updated {formatDate(key.updated_at)}</div>
+                  <div className="grid gap-1.5 sm:grid-cols-2">
+                    <div className="sm:col-span-2">
+                      <SecretRevealValue
+                        label={profile.keyLabel}
+                        value={revealedKey?.api_key}
+                        visible={visibleSecrets[secretKey] === true}
+                        onToggle={() => void toggleAccountSecretReveal(account, secretKey)}
+                        disabled={revealingCredentialsByAccount[account.id] === true}
+                        revealLabel="API key"
+                      />
+                    </div>
+                    {profile.showSecret && key.api_secret ? (
+                      <SecretRevealValue
+                        label={profile.secretLabel ?? 'API secret'}
+                        value={revealedKey?.api_secret}
+                        visible={visibleSecrets[secretSecret] === true}
+                        onToggle={() => void toggleAccountSecretReveal(account, secretSecret)}
+                        disabled={revealingCredentialsByAccount[account.id] === true}
+                        revealLabel="API secret"
+                      />
+                    ) : null}
+                    {profile.showPassphrase && key.passphrase ? (
+                      <SecretRevealValue
+                        label="Passphrase"
+                        value={revealedKey?.passphrase}
+                        visible={visibleSecrets[secretPassphrase] === true}
+                        onToggle={() => void toggleAccountSecretReveal(account, secretPassphrase)}
+                        disabled={revealingCredentialsByAccount[account.id] === true}
+                        revealLabel="passphrase"
+                      />
+                    ) : null}
                   </div>
+                  <div>Created {formatDate(key.created_at)} · Updated {formatDate(key.updated_at)}</div>
                 </div>
               )}
             </SecretItem>
           );
         })}
         {showNew ? (
-          <ResourceCard title={profile.newTitle}>
+          <div className="grid gap-2 border-t border-border pt-2">
+            <div className="text-xs font-semibold text-text">{profile.newTitle}</div>
             <div className="grid gap-1.5 md:grid-cols-2">
               {profile.showName ? (
                 <input className={compactInputCls} value={draft.name} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, name: e.target.value } }))} placeholder="Name" />
@@ -3466,7 +3637,7 @@ export function TradingAccountsPanel() {
                 setShowNewForm(account.id, 'apiKeys', false);
               })}>{profile.createLabel.replace('Create ', '')}</button>
             </div>
-          </ResourceCard>
+          </div>
         ) : null}
         {!showNew && account.api_keys.length === 0 ? (
           <div className="text-[0.65rem] text-muted px-1">{profile.emptyMessage}</div>
@@ -3583,20 +3754,22 @@ export function TradingAccountsPanel() {
         {renderCexSectionMessage(slice?.loading ?? false, slice?.error ?? null, 'No whitelisted withdrawal addresses returned.', addresses.length > 0)}
         {addresses.length > 0 ? (
           <div className="grid">
-            {addresses.map((entry, idx) => (
-              <div
+            {addresses.map((entry, idx) => {
+              const addressField = `cex-withdrawal:${entry.address}:${idx}`;
+              const addressVisible = visibleAccountSecretsByAccount[account.id]?.[addressField] === true;
+              return <div
                 key={`${entry.address}-${idx}`}
                 className="flex flex-wrap items-baseline gap-x-1.5 px-1 py-0.5 text-[0.65rem] leading-tight border-b border-border/40 last:border-0"
               >
                 {entry.label?.trim() ? (
-                  <span className="max-w-[40%] truncate text-text" title={entry.label}>{entry.label}</span>
+                  <span className="max-w-[40%] truncate text-text" title={addressVisible ? entry.label : undefined}>{addressVisible ? entry.label : '••••••••'}</span>
                 ) : null}
-                <span className="font-mono break-all text-muted">{entry.address}</span>
+                <span className="inline-flex items-center gap-1 font-mono break-all text-muted"><span>{addressVisible ? entry.address : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={addressVisible ? 'Hide withdrawal address' : 'Show withdrawal address'} onClick={() => toggleLocalSecretVisibility(account.id, addressField)}>👁</button></span>
                 {entry.network ? <span className="text-muted/60">{entry.network}</span> : null}
-                {entry.tag ? <span className="text-muted/60">tag:{entry.tag}</span> : null}
+                {entry.tag ? <span className="text-muted/60">tag:{addressVisible ? entry.tag : '••••••••'}</span> : null}
                 {entry.whitelisted === false ? <span className="text-yellow">unverified</span> : null}
-              </div>
-            ))}
+              </div>;
+            })}
           </div>
         ) : null}
       </CollapsibleSection>
@@ -3627,8 +3800,12 @@ export function TradingAccountsPanel() {
     const cexDepositSlice = cexDataByAccount[account.id]?.depositAddresses;
     const cexBalancesSlice = cexDataByAccount[account.id]?.balances;
     const cexMainnetDeposit = pickMainnetDepositAddress(cexDepositSlice?.data ?? []);
+    const cexDepositField = cexMainnetDeposit ? `cex-deposit:${cexMainnetDeposit.address}` : '';
     const cexBalanceSummary = formatCexBalanceSummary(cexBalancesSlice?.data);
     const summaryView = buildAccountSummaryViewModel(account);
+    const revealedCredentials = revealedCredentialsByAccount[account.id];
+    const visibleCredentialFields = visibleCredentialFieldsByAccount[account.id] ?? {};
+    const credentialsRevealing = revealingCredentialsByAccount[account.id] === true;
 
     return (
       <AccountDetailPane
@@ -3703,18 +3880,28 @@ export function TradingAccountsPanel() {
                 <div className="sm:col-span-2 xl:col-span-2">
                   <span className="text-text">Credentials:</span> {accountCredentialSummary(account)}
                 </div>
-                {showDexIdentitySections(account.provider) ? (
+                {isBisq1Provider(account.provider) ? <div><span className="text-text">Bisq 1:</span> {serviceVersions?.bisq1 || 'Unavailable'}</div> : null}
+                {isBisq2Provider(account.provider) ? <div><span className="text-text">Bisq 2:</span> {serviceVersions?.bisq2 || 'Unavailable'}</div> : null}
+                {isLndWalletProvider(account.provider) ? <div><span className="text-text">LND:</span> {serviceVersions?.lnd || 'Unavailable'}</div> : null}
+                {!isLndWalletProvider(account.provider) && (account.email || account.password || account.phone || account.payment_tag) ? (
                   <>
-                    <div><span className="text-text">Email:</span> {account.email || '—'}</div>
-                    <div><span className="text-text">Password:</span> {account.password ? '••••••••' : '—'}</div>
-                    <div><span className="text-text">Phone:</span> {account.phone || '—'}</div>
+                    <div className="flex items-center gap-1">
+                      <span><span className="text-text">Email:</span> {visibleCredentialFields.email ? revealedCredentials?.email : (account.email ? '••••••••' : '—')}</span>
+                      {account.email ? <button type="button" className="text-muted hover:text-text" aria-label={visibleCredentialFields.email ? 'Hide email' : 'Show email'} onClick={() => void toggleCredentialReveal(account, 'email')} disabled={credentialsRevealing}>👁</button> : null}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span><span className="text-text">Password:</span> {visibleCredentialFields.password ? revealedCredentials?.password : (account.password ? '••••••••' : '—')}</span>
+                      {account.password ? <button type="button" className="text-muted hover:text-text" aria-label={visibleCredentialFields.password ? 'Hide password' : 'Show password'} onClick={() => void toggleCredentialReveal(account, 'password')} disabled={credentialsRevealing}>👁</button> : null}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span><span className="text-text">Phone:</span> {visibleCredentialFields.phone ? revealedCredentials?.phone : (account.phone ? '••••••••' : '—')}</span>
+                      {account.phone ? <button type="button" className="text-muted hover:text-text" aria-label={visibleCredentialFields.phone ? 'Hide phone' : 'Show phone'} onClick={() => void toggleCredentialReveal(account, 'phone')} disabled={credentialsRevealing}>👁</button> : null}
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <span><span className="text-text">Payment Tag:</span> {visibleCredentialFields.payment_tag ? revealedCredentials?.payment_tag : (account.payment_tag ? '••••••••' : '—')}</span>
+                      {account.payment_tag ? <button type="button" className="text-muted hover:text-text" aria-label={visibleCredentialFields.payment_tag ? 'Hide payment tag' : 'Show payment tag'} onClick={() => void toggleCredentialReveal(account, 'payment_tag')} disabled={credentialsRevealing}>👁</button> : null}
+                    </div>
                   </>
-                ) : null}
-                {isLndWalletProvider(account.provider) ? (
-                  <div>
-                    <span className="text-text">Wallet password:</span>{' '}
-                    {account.password ? '••••••••' : <span className="text-red">Not set</span>}
-                  </div>
                 ) : null}
                 {isCexAccount(account) ? (
                   <>
@@ -3725,7 +3912,7 @@ export function TradingAccountsPanel() {
                       ) : cexDepositSlice?.error && !cexMainnetDeposit ? (
                         <span className="text-red">{cexDepositSlice.error}</span>
                       ) : cexMainnetDeposit ? (
-                        <span className="font-mono break-all text-text">{cexMainnetDeposit.address}</span>
+                        <span className="inline-flex items-center gap-1"><span className="font-mono break-all text-text">{visibleAccountSecretsByAccount[account.id]?.[cexDepositField] ? cexMainnetDeposit.address : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleAccountSecretsByAccount[account.id]?.[cexDepositField] ? 'Hide deposit address' : 'Show deposit address'} onClick={() => toggleLocalSecretVisibility(account.id, cexDepositField)}>👁</button></span>
                       ) : (
                         '—'
                       )}
@@ -3749,7 +3936,6 @@ export function TradingAccountsPanel() {
           )
         }
       >
-        {renderPaymentPrioritySection(account)}
         {isBisqProvider(account.provider) ? renderAccountFileSection(account) : null}
         {isBisq1Provider(account.provider) ? renderSavedPaymentMethodsSection(account) : null}
         {showDexIdentitySections(account.provider) ? renderTOTPSection(account) : null}
@@ -3777,17 +3963,11 @@ export function TradingAccountsPanel() {
           activeTab={activeTab}
           paymentAccountCount={paymentAccountCount}
           tradingAccountCount={tradingAccountCount}
+          onSelectTab={handleSubtabSelect}
           showActions={activeTab !== 'communication'}
           showNewAccountForm={showNewAccountForm}
           onToggleNewAccount={handleToggleNewAccountForm}
           onRefresh={() => void load()}
-        />
-
-        <AccountsSubtabBar
-          activeTab={activeTab}
-          paymentAccountCount={paymentAccountCount}
-          tradingAccountCount={tradingAccountCount}
-          onSelect={handleSubtabSelect}
         />
 
         {activeTab === 'communication' ? (
@@ -3796,81 +3976,87 @@ export function TradingAccountsPanel() {
           </div>
         ) : showNewAccountForm ? (
           <div className="grid gap-2 rounded-lg border border-border bg-bg p-3">
-            <label className="grid min-w-0 gap-1 text-xs text-muted sm:w-48">
-              <span>Category</span>
-              <select
-                className={compactInputCls}
-                value={newAccount.category}
-                onChange={e => setNewAccount({ ...emptyAccountForm(), category: e.target.value })}
-              >
-                <option value="">Auto-detect</option>
-                {activeTab === 'payment' ? (
-                  <>
-                    <option value="Fiat Transmitter">Fiat Transmitter</option>
-                    <option value="Bank">Bank</option>
-                    <option value="Wallet addresses">Wallet addresses</option>
-                  </>
-                ) : (
-                  <>
-                    <option value="DEX">DEX</option>
-                    <option value="CEX">CEX</option>
-                  </>
-                )}
-              </select>
-            </label>
-            <AccountEditor
-              value={newAccount}
-              onChange={next => {
-                if (next.provider !== newAccount.provider) {
-                  setNewAccountAPIKey(emptyAPIKeyForm());
-                }
-                setNewAccount({ ...next, category: newAccount.category });
-              }}
-              submitLabel="Add New Account"
-              compact
-              groupedProviders
-              freeFormProvider={newAccount.category === 'Bank' || newAccount.category === 'Wallet addresses'}
-              showContactFields={newAccount.category === 'Bank' || showContactFieldsForProvider(newAccount.provider)}
-              submitDisabled={
-                !newAccount.provider
-                || (usesAPIKeysAtCreate(newAccount.provider) && (
-                  !newAccountAPIKey.api_key.trim()
-                  || (apiKeyFormProfile(newAccount.provider).showSecret && !newAccountAPIKey.api_secret.trim())
-                ))
-              }
-              extraContent={
-                usesAPIKeysAtCreate(newAccount.provider) ? (
-                  <APIKeyDraftFields
-                    provider={newAccount.provider}
-                    value={newAccountAPIKey}
-                    onChange={setNewAccountAPIKey}
-                  />
-                ) : null
-              }
-              onSubmit={() =>
-                withReload(async () => {
-                  const usesAPIKeys = usesAPIKeysAtCreate(newAccount.provider);
-                  const created = await createAccount({
-                    provider: newAccount.provider,
-                    category: newAccount.category || undefined,
-                    email: newAccount.email,
-                    password: newAccount.password,
-                    phone: newAccount.phone,
-                  });
-                  if (usesAPIKeys && newAccountAPIKey.api_key.trim()) {
-                    const profile = apiKeyFormProfile(newAccount.provider);
-                    await createAPIKey(created.id, {
-                      name: newAccountAPIKey.name,
-                      api_key: newAccountAPIKey.api_key,
-                      ...apiKeyPayloadExtras(profile, newAccountAPIKey),
-                      is_active: newAccountAPIKey.is_active,
-                    });
+            <div className={`grid items-start gap-2 ${newAccount.category ? 'sm:grid-cols-[12rem_minmax(0,1fr)]' : ''}`}>
+              <label className="grid min-w-0 gap-1 text-xs text-muted">
+                <span>Category</span>
+                <select
+                  className={compactInputCls}
+                  value={newAccount.category}
+                  onChange={e => setNewAccount({ ...emptyAccountForm(), category: e.target.value })}
+                >
+                  <option value="" disabled hidden>Choose a category</option>
+                  {activeTab === 'payment' ? (
+                    <>
+                      <option value="Fiat Transmitter">Fiat Transmitter</option>
+                      <option value="Bank">Bank</option>
+                      <option value="Wallet addresses">Wallet addresses</option>
+                    </>
+                  ) : (
+                    <>
+                      <option value="DEX">DEX</option>
+                      <option value="CEX">CEX</option>
+                    </>
+                  )}
+                </select>
+              </label>
+              {newAccount.category ? (
+                <AccountEditor
+                  value={newAccount}
+                  onChange={next => {
+                    if (next.provider !== newAccount.provider) {
+                      setNewAccountAPIKey(emptyAPIKeyForm());
+                    }
+                    setNewAccount({ ...next, category: newAccount.category });
+                  }}
+                  submitLabel="Add New Account"
+                  compact
+                  groupedProviders
+                  providerCategory={newAccount.category}
+                  freeFormProvider={newAccount.category === 'Bank' || newAccount.category === 'Wallet addresses'}
+                  showContactFields={newAccount.category === 'Bank' || showContactFieldsForProvider(newAccount.provider)}
+                  submitDisabled={
+                    !newAccount.provider
+                    || (usesAPIKeysAtCreate(newAccount.provider) && (
+                      !newAccountAPIKey.api_key.trim()
+                      || (apiKeyFormProfile(newAccount.provider).showSecret && !newAccountAPIKey.api_secret.trim())
+                    ))
                   }
-                  resetNewAccountForm();
-                  setShowNewAccountForm(false);
-                })
-              }
-            />
+                  extraContent={
+                    usesAPIKeysAtCreate(newAccount.provider) ? (
+                      <APIKeyDraftFields
+                        provider={newAccount.provider}
+                        value={newAccountAPIKey}
+                        onChange={setNewAccountAPIKey}
+                      />
+                    ) : null
+                  }
+                  onSubmit={() =>
+                    withReload(async () => {
+                      const usesAPIKeys = usesAPIKeysAtCreate(newAccount.provider);
+                      const created = await createAccount({
+                        provider: newAccount.provider,
+                        category: newAccount.category || undefined,
+                        email: newAccount.email,
+                        password: newAccount.password,
+                        phone: newAccount.phone,
+                        payment_tag: newAccount.payment_tag,
+                      });
+                      if (usesAPIKeys && newAccountAPIKey.api_key.trim()) {
+                        const profile = apiKeyFormProfile(newAccount.provider);
+                        await createAPIKey(created.id, {
+                          name: newAccountAPIKey.name,
+                          api_key: newAccountAPIKey.api_key,
+                          ...apiKeyPayloadExtras(profile, newAccountAPIKey),
+                          is_active: newAccountAPIKey.is_active,
+                        });
+                      }
+                      resetNewAccountForm();
+                      setShowNewAccountForm(false);
+                    })
+                  }
+                />
+              ) : null}
+            </div>
           </div>
         ) : null}
 
@@ -3898,6 +4084,8 @@ export function TradingAccountsPanel() {
                     groups={activeGroups}
                     selectedAccountId={expandedId}
                     onSelectAccount={accountId => setExpandedId(accountId)}
+                    onReorderPaymentAccounts={activeTab === 'payment' ? reorderPaymentAccountList : undefined}
+                    serviceVersions={serviceVersions}
                     showCategoryDividers={activeTab !== 'payment'}
                   />
                   {selectedAccount ? (

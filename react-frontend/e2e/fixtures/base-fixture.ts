@@ -110,6 +110,9 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/trading/accounts', route =>
       route.fulfill({ json: MOCK_TRADING_ACCOUNTS }),
     );
+    await page.route('**/api/trading/accounts/priorities', route =>
+      route.fulfill({ json: { ok: true } }),
+    );
     await page.route('**/api/trading/payment_methods', route =>
       route.fulfill({ json: paymentMethodsState }),
     );

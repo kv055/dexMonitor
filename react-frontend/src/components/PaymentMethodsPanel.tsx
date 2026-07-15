@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
-  PaymentMethodChatTemplate,
   PaymentMethodRow,
   PaymentMethodUpdatePayload,
   TradingAccount,
@@ -8,14 +7,12 @@ import type {
   TradingWalletAddress,
 } from '../types';
 import {
+  degradePaymentMethodToAlias,
   deletePaymentMethod,
-  deletePaymentMethodChatTemplate,
-  fetchPaymentMethodChatTemplates,
   fetchPaymentMethods,
   fetchTradingAccounts,
   fetchTradingWalletAddresses,
   updatePaymentMethod,
-  updatePaymentMethodChatTemplate,
 } from '../utils/api';
 
 // The six catalog categories — must match the payment_methods.category CHECK
@@ -33,10 +30,6 @@ const LINKABLE: Record<string, 'bank' | 'account' | 'wallet' | null> = {
   Others: null,
 };
 
-// Chat-style DEX venues that exchange payment details via the trade chat.
-// Must stay in sync with payment_method_chat_templates.exchange_allowed_check.
-const CHAT_EXCHANGES = ['RoboSats', 'Bisq2'] as const;
-
 const compactInputCls =
   'w-full rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none focus:border-accent';
 const compactButtonCls =
@@ -50,7 +43,6 @@ interface Draft {
   alias_list: string;
   link_id: number | null;
   is_active: boolean;
-  priority: string;
 }
 
 function draftFromRow(row: PaymentMethodRow): Draft {
@@ -60,11 +52,10 @@ function draftFromRow(row: PaymentMethodRow): Draft {
     alias_list: (row.alias_list ?? []).join('\n'),
     link_id: row.bank_account_id ?? row.account_id ?? row.wallet_address_id,
     is_active: row.is_active,
-    priority: String(row.priority),
   };
 }
 
-function payloadFromDraft(draft: Draft): PaymentMethodUpdatePayload {
+function payloadFromDraft(draft: Draft, priority: number): PaymentMethodUpdatePayload {
   const link = LINKABLE[draft.category] ?? null;
   return {
     merge_regex: draft.merge_regex.trim() === '' ? null : draft.merge_regex.trim(),
@@ -77,7 +68,7 @@ function payloadFromDraft(draft: Draft): PaymentMethodUpdatePayload {
     account_id: link === 'account' ? draft.link_id : null,
     wallet_address_id: link === 'wallet' ? draft.link_id : null,
     is_active: draft.is_active,
-    priority: Number.parseInt(draft.priority, 10) || 0,
+    priority,
   };
 }
 
@@ -100,10 +91,10 @@ export function PaymentMethodsPanel() {
   const [draft, setDraft] = useState<Draft | null>(null);
   const [rowError, setRowError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const [chatTemplateDrafts, setChatTemplateDrafts] = useState<Record<string, string>>({});
-  const [chatTemplateActive, setChatTemplateActive] = useState<Record<string, boolean>>({});
-  const [chatTemplateLoading, setChatTemplateLoading] = useState(false);
-  const [chatTemplateError, setChatTemplateError] = useState<string | null>(null);
+  const [categoryPickerId, setCategoryPickerId] = useState<number | null>(null);
+  const [categoryPickerError, setCategoryPickerError] = useState<string | null>(null);
+  const [aliasPickerId, setAliasPickerId] = useState<number | null>(null);
+  const [aliasPickerError, setAliasPickerError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -126,27 +117,6 @@ export function PaymentMethodsPanel() {
       setError(err instanceof Error ? err.message : 'Failed to load payment methods');
     } finally {
       setLoading(false);
-    }
-  }, []);
-
-  const loadChatTemplates = useCallback(async (id: number) => {
-    setChatTemplateLoading(true);
-    setChatTemplateError(null);
-    try {
-      const res = await fetchPaymentMethodChatTemplates(id);
-      const drafts: Record<string, string> = {};
-      const active: Record<string, boolean> = {};
-      for (const ex of CHAT_EXCHANGES) {
-        const t = res.chat_templates.find((t: PaymentMethodChatTemplate) => t.exchange === ex);
-        drafts[ex] = t?.template ?? '';
-        active[ex] = t?.is_active ?? true;
-      }
-      setChatTemplateDrafts(drafts);
-      setChatTemplateActive(active);
-    } catch (err) {
-      setChatTemplateError(err instanceof Error ? err.message : 'Failed to load chat templates');
-    } finally {
-      setChatTemplateLoading(false);
     }
   }, []);
 
@@ -178,20 +148,33 @@ export function PaymentMethodsPanel() {
     return CATEGORIES.map(cat => ({ category: cat, rows: byCategory.get(cat) ?? [] }));
   }, [rows]);
 
+  const aliasProvidersByCategory = useMemo(
+    () => CATEGORIES
+      .filter(category => category !== 'Others')
+      .map(category => ({
+        category,
+        providers: rows
+          .filter(provider => provider.category === category)
+          .sort((a, b) => a.name.localeCompare(b.name)),
+      }))
+      .filter(group => group.providers.length > 0),
+    [rows],
+  );
+
   function startEdit(row: PaymentMethodRow) {
     setEditingId(row.id);
     setDraft(draftFromRow(row));
     setRowError(null);
-    setChatTemplateError(null);
-    void loadChatTemplates(row.id);
   }
 
   async function saveDraft(id: number) {
     if (!draft) return;
+    const row = rows.find(candidate => candidate.id === id);
+    if (!row) return;
     setSaving(true);
     setRowError(null);
     try {
-      const res = await updatePaymentMethod(id, payloadFromDraft(draft));
+      const res = await updatePaymentMethod(id, payloadFromDraft(draft, row.priority));
       setRows(res.payment_methods);
       setEditingId(null);
       setDraft(null);
@@ -217,40 +200,44 @@ export function PaymentMethodsPanel() {
     }
   }
 
-  async function saveChatTemplate(id: number, exchange: string) {
-    setChatTemplateLoading(true);
-    setChatTemplateError(null);
+  async function assignCategory(row: PaymentMethodRow, category: string) {
+    if (category === row.category) {
+      setCategoryPickerId(null);
+      return;
+    }
+
+    setSaving(true);
+    setCategoryPickerError(null);
     try {
-      const template = chatTemplateDrafts[exchange]?.trim() ?? '';
-      if (template === '') {
-        // Empty template means the user wants to fall back to the default.
-        await deletePaymentMethodChatTemplate(id, exchange);
-      } else {
-        await updatePaymentMethodChatTemplate(id, exchange, {
-          template,
-          is_active: chatTemplateActive[exchange] ?? true,
-        });
+      const draft = draftFromRow(row);
+      const res = await updatePaymentMethod(row.id, payloadFromDraft({ ...draft, category, link_id: null }, row.priority));
+      setRows(res.payment_methods);
+      setCategoryPickerId(null);
+      if (editingId === row.id) {
+        setEditingId(null);
+        setDraft(null);
       }
-      await loadChatTemplates(id);
     } catch (err) {
-      setChatTemplateError(err instanceof Error ? err.message : 'Failed to save chat template');
+      setCategoryPickerError(err instanceof Error ? err.message : 'Category update failed');
     } finally {
-      setChatTemplateLoading(false);
+      setSaving(false);
     }
   }
 
-  async function resetChatTemplate(id: number, exchange: string) {
-    setChatTemplateLoading(true);
-    setChatTemplateError(null);
+  async function degradeToAlias(row: PaymentMethodRow, providerId: number) {
+    const provider = rows.find(candidate => candidate.id === providerId);
+    if (!provider) return;
+
+    setSaving(true);
+    setAliasPickerError(null);
     try {
-      await deletePaymentMethodChatTemplate(id, exchange);
-      setChatTemplateDrafts(prev => ({ ...prev, [exchange]: '' }));
-      setChatTemplateActive(prev => ({ ...prev, [exchange]: true }));
-      await loadChatTemplates(id);
+      const res = await degradePaymentMethodToAlias(row.id, provider.id);
+      setRows(res.payment_methods);
+      setAliasPickerId(null);
     } catch (err) {
-      setChatTemplateError(err instanceof Error ? err.message : 'Failed to reset chat template');
+      setAliasPickerError(err instanceof Error ? err.message : 'Alias update failed');
     } finally {
-      setChatTemplateLoading(false);
+      setSaving(false);
     }
   }
 
@@ -286,61 +273,6 @@ export function PaymentMethodsPanel() {
         </select>
         {options.length === 0 && <span className="text-amber-400">{emptyHint}</span>}
       </label>
-    );
-  }
-
-  function renderChatTemplates(id: number) {
-    return (
-      <div className="flex flex-col gap-2 rounded-md border border-border bg-bg p-2">
-        <p className="text-[0.68rem] font-medium text-muted">Chat request templates</p>
-        <p className="text-[0.62rem] text-muted">
-          Customize the message sent to the counterparty on chat-venue DEXes. Use{' '}
-          <code className="text-accent">{'{{amount}}'}</code> and{' '}
-          <code className="text-accent">{'{{currency}}'}</code> as placeholders. Leave empty to use the default template.
-        </p>
-        {chatTemplateError && <p className="text-[0.68rem] text-red">{chatTemplateError}</p>}
-        {CHAT_EXCHANGES.map(exchange => (
-          <div key={exchange} className="flex flex-col gap-1">
-            <div className="flex items-center justify-between">
-              <span className="text-[0.68rem] text-muted">{exchange}</span>
-              <label className="flex items-center gap-1 text-[0.62rem] text-muted">
-                <input
-                  type="checkbox"
-                  checked={chatTemplateActive[exchange] ?? true}
-                  onChange={e => setChatTemplateActive(prev => ({ ...prev, [exchange]: e.target.checked }))}
-                  disabled={chatTemplateLoading}
-                />
-                Active
-              </label>
-            </div>
-            <textarea
-              className={`${compactInputCls} font-mono min-h-[5rem]`}
-              value={chatTemplateDrafts[exchange] ?? ''}
-              onChange={e => setChatTemplateDrafts(prev => ({ ...prev, [exchange]: e.target.value }))}
-              placeholder={`Default template for ${exchange}`}
-              disabled={chatTemplateLoading}
-            />
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                className={compactPrimaryButtonCls}
-                onClick={() => void saveChatTemplate(id, exchange)}
-                disabled={chatTemplateLoading}
-              >
-                {chatTemplateLoading ? 'Saving…' : 'Save'}
-              </button>
-              <button
-                type="button"
-                className={compactButtonCls}
-                onClick={() => void resetChatTemplate(id, exchange)}
-                disabled={chatTemplateLoading}
-              >
-                Reset
-              </button>
-            </div>
-          </div>
-        ))}
-      </div>
     );
   }
 
@@ -407,14 +339,88 @@ export function PaymentMethodsPanel() {
                             </span>
                           )}
                         </div>
-                        <button
-                          type="button"
-                          className={compactButtonCls}
-                          onClick={() => (editingId === row.id ? setEditingId(null) : startEdit(row))}
-                        >
-                          {editingId === row.id ? 'Close' : 'Edit'}
-                        </button>
+                        <div className="flex items-center gap-1.5">
+                          {category === 'Others' && (
+                            <button
+                              type="button"
+                              className={compactButtonCls}
+                              onClick={() => {
+                                setCategoryPickerError(null);
+                                setCategoryPickerId(prev => (prev === row.id ? null : row.id));
+                              }}
+                            >
+                              Set category
+                            </button>
+                          )}
+                          {!row.is_linked && (
+                            <button
+                              type="button"
+                              className={compactButtonCls}
+                              onClick={() => {
+                                setAliasPickerError(null);
+                                setAliasPickerId(prev => (prev === row.id ? null : row.id));
+                              }}
+                            >
+                              Degrade to alias
+                            </button>
+                          )}
+                          <button
+                            type="button"
+                            className={compactButtonCls}
+                            onClick={() => (editingId === row.id ? setEditingId(null) : startEdit(row))}
+                          >
+                            {editingId === row.id ? 'Close' : 'Edit'}
+                          </button>
+                        </div>
                       </div>
+
+                      {categoryPickerId === row.id && category === 'Others' && (
+                        <div className="mt-2 flex items-end gap-1.5">
+                          <label className="flex flex-1 flex-col gap-1 text-[0.68rem] text-muted">
+                            Assign category
+                            <select
+                              className={compactInputCls}
+                              value={row.category}
+                              onChange={e => void assignCategory(row, e.target.value)}
+                              disabled={saving}
+                            >
+                              {CATEGORIES.map(c => (
+                                <option key={c} value={c}>{c}</option>
+                              ))}
+                            </select>
+                          </label>
+                          {categoryPickerError && <p className="text-[0.68rem] text-red">{categoryPickerError}</p>}
+                        </div>
+                      )}
+
+                      {aliasPickerId === row.id && !row.is_linked && (
+                        <div className="mt-2 flex items-end gap-1.5">
+                          <label className="flex flex-1 flex-col gap-1 text-[0.68rem] text-muted">
+                            Add to provider
+                            <select
+                              className={compactInputCls}
+                              defaultValue=""
+                              onChange={e => {
+                                if (e.target.value !== '') void degradeToAlias(row, Number(e.target.value));
+                              }}
+                              disabled={saving}
+                            >
+                              <option value="">— select provider —</option>
+                              {aliasProvidersByCategory.map(group => {
+                                const providers = group.providers.filter(provider => provider.id !== row.id);
+                                return providers.length > 0 ? (
+                                  <optgroup key={group.category} label={group.category}>
+                                    {providers.map(provider => (
+                                      <option key={provider.id} value={provider.id}>{provider.name}</option>
+                                    ))}
+                                  </optgroup>
+                                ) : null;
+                              })}
+                            </select>
+                          </label>
+                          {aliasPickerError && <p className="text-[0.68rem] text-red">{aliasPickerError}</p>}
+                        </div>
+                      )}
 
                       {editingId === row.id && draft && (
                         <div className="mt-2 flex flex-col gap-2 rounded-md border border-border bg-surface p-2">
@@ -449,7 +455,6 @@ export function PaymentMethodsPanel() {
                             />
                           </label>
                           {renderLinkSelect(draft)}
-                          {renderChatTemplates(row.id)}
                           <label className="flex items-center gap-2 text-[0.68rem] text-muted">
                             <input
                               type="checkbox"

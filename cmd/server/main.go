@@ -1,6 +1,8 @@
 package main
 
 import (
+	"archive/tar"
+	"compress/gzip"
 	"context"
 	"database/sql"
 	"encoding/binary"
@@ -8,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
+	"io"
 	"log/slog"
 	"math"
 	"net/http"
@@ -203,6 +206,10 @@ func main() {
 	snapshotLogRepo = snapshotlog.NewRepository(db)
 	mmProxy = mmproxy.New(mmControllerAPIURL).WithInternalSecret(mmInternalSecret)
 	tradingAccountRepo = tradingaccounts.NewRepository(db)
+	if err := tradingAccountRepo.EncryptLegacySecrets(context.Background()); err != nil {
+		slog.Error("failed to encrypt legacy account secrets", "err", err)
+		os.Exit(1)
+	}
 	authSvc := auth.New(db, auth.Config{CookieSecure: sessionCookieSecure})
 
 	orchestrator := tradecost.NewTradeCostEstimator()
@@ -254,6 +261,7 @@ func main() {
 	mux.HandleFunc("GET /api/trading/payment_methods", handleTradingPaymentMethods)
 	mux.HandleFunc("PUT /api/trading/payment_methods/{id}", handleTradingPaymentMethodByID)
 	mux.HandleFunc("DELETE /api/trading/payment_methods/{id}", handleTradingPaymentMethodByID)
+	mux.HandleFunc("POST /api/trading/payment_methods/{id}/degrade-to-alias/{provider_id}", handleTradingPaymentMethodDegradeToAlias)
 	mux.HandleFunc("GET /api/trading/payment_methods/{id}/chat_templates", handleTradingPaymentMethodChatTemplates)
 	mux.HandleFunc("PUT /api/trading/payment_methods/{id}/chat_templates/{exchange}", handleTradingPaymentMethodChatTemplateByExchange)
 	mux.HandleFunc("DELETE /api/trading/payment_methods/{id}/chat_templates/{exchange}", handleTradingPaymentMethodChatTemplateByExchange)
@@ -262,6 +270,7 @@ func main() {
 	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
 	mux.HandleFunc("GET /api/mm-controller/lnd/wallet", handleMmControllerLNDWallet)
 	mux.HandleFunc("GET /api/mm-controller/lnd/wallet/state", handleMmControllerLNDWalletState)
+	mux.HandleFunc("GET /api/mm-controller/service-versions", handleMmControllerServiceVersions)
 	mux.HandleFunc("POST /api/mm-controller/lnd/wallet/init", handleMmControllerLNDWalletInit)
 	mux.HandleFunc("POST /api/mm-controller/lnd/addresses", handleMmControllerLNDCreateAddress)
 	mux.HandleFunc("POST /api/mm-controller/lnd/channels/open", handleMmControllerLNDOpenChannel)
@@ -279,7 +288,12 @@ func main() {
 	mux.HandleFunc("GET /ws/cex/hedge-stream", handleMmControllerHedgeStreamWS)
 	mux.HandleFunc("GET /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("POST /api/trading/accounts", handleTradingAccounts)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/credentials", handleTradingAccountCredentials)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/secrets", handleTradingAccountSecrets)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/bisq-account-file", handleTradingAccountBisqAccountFile)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/bisq-data-directory", handleTradingAccountBisqDataDirectory)
 	mux.HandleFunc("PUT /api/trading/accounts/{id}", handleTradingAccountByID)
+	mux.HandleFunc("PUT /api/trading/accounts/priorities", handleTradingAccountPriorities)
 	mux.HandleFunc("DELETE /api/trading/accounts/{id}", handleTradingAccountByID)
 	mux.HandleFunc("POST /api/trading/accounts/{id}/health_check", handleTradingAccountHealthCheck)
 	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/deposit-addresses", handleTradingAccountCexDepositAddresses)
@@ -2127,6 +2141,36 @@ func handleTradingPaymentMethodByID(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// handleTradingPaymentMethodDegradeToAlias atomically moves one payment-method
+// name into another provider's alias list and removes the source catalog row.
+func handleTradingPaymentMethodDegradeToAlias(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	providerID, err := pathID(r, "provider_id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := pmRepo.DegradeToAlias(r.Context(), int64(id), int64(providerID)); err != nil {
+		writeRepoError(w, err)
+		return
+	}
+	if pmService != nil {
+		if err := pmService.RefreshNow(); err != nil {
+			slog.Warn("payment method groups refresh after alias degradation failed", "err", err)
+		}
+	}
+	rows, err := pmRepo.List(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"payment_methods": rows})
+}
+
 // handleTradingPaymentMethodChatTemplates serves the chat templates for one
 // payment method. The panel uses this to populate the per-exchange editors.
 func handleTradingPaymentMethodChatTemplates(w http.ResponseWriter, r *http.Request) {
@@ -2241,6 +2285,10 @@ func handleMmControllerLNDWallet(w http.ResponseWriter, r *http.Request) {
 
 func handleMmControllerLNDWalletState(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/lnd/wallet/state")
+}
+
+func handleMmControllerServiceVersions(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/service-versions")
 }
 
 func handleMmControllerLNDWalletInit(w http.ResponseWriter, r *http.Request) {
@@ -2396,6 +2444,170 @@ func handleTradingAccountByID(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func handleTradingAccountPriorities(w http.ResponseWriter, r *http.Request) {
+	var payload struct {
+		AccountIDs []int64 `json:"account_ids"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := tradingAccounts().ReorderPaymentAccounts(r.Context(), payload.AccountIDs); err != nil {
+		writeRepoError(w, err)
+		return
+	}
+	writeJSON(w, map[string]bool{"ok": true})
+}
+
+func handleTradingAccountCredentials(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	reveal, err := tradingAccounts().RevealCredentials(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, reveal)
+}
+
+func handleTradingAccountSecrets(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	account, err := tradingAccounts().RevealAccountSecrets(r.Context(), id)
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, account)
+}
+
+func handleTradingAccountBisqAccountFile(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	fileName, contents, err := tradingAccounts().LatestBisqAccountFile(r.Context(), id)
+	if errors.Is(err, sql.ErrNoRows) {
+		http.Error(w, "No Bisq account file backup is available for this account.", http.StatusNotFound)
+		return
+	}
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	// A fixed filename prevents a stored name from injecting response headers.
+	if fileName == "" || strings.ContainsAny(fileName, "\\r\\n") {
+		fileName = "UserPayload"
+	}
+	w.Header().Set("Content-Disposition", fmt.Sprintf("attachment; filename=%q", fileName))
+	w.Header().Set("Content-Type", "application/octet-stream")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Length", strconv.Itoa(len(contents)))
+	_, _ = w.Write(contents)
+}
+
+// handleTradingAccountBisqDataDirectory streams a portable Bisq 1 data-folder
+// archive. dexmonitor only receives the named volume as a read-only mount.
+func handleTradingAccountBisqDataDirectory(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	account, err := loadTradingAccountByID(r.Context(), id)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			http.Error(w, "account not found", http.StatusNotFound)
+			return
+		}
+		writeError(w, err)
+		return
+	}
+	if !strings.EqualFold(strings.TrimSpace(account.Provider), "Bisq") {
+		http.Error(w, "data-directory download is only available for the Bisq account", http.StatusBadRequest)
+		return
+	}
+
+	dataDir := strings.TrimSpace(os.Getenv("BISQ_APP_DATA_DIR"))
+	if dataDir == "" {
+		dataDir = "/bisq-data"
+	}
+	if _, err := os.Stat(dataDir); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			http.Error(w, "Bisq data directory is not mounted", http.StatusServiceUnavailable)
+			return
+		}
+		writeError(w, err)
+		return
+	}
+
+	w.Header().Set("Content-Disposition", `attachment; filename="Bisq-data.tar.gz"`)
+	w.Header().Set("Content-Type", "application/gzip")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if err := writeBisqDataArchive(w, dataDir); err != nil {
+		slog.Error("stream Bisq data-directory archive", "err", err)
+	}
+}
+
+func writeBisqDataArchive(dst io.Writer, dataDir string) error {
+	gzipWriter := gzip.NewWriter(dst)
+	defer gzipWriter.Close()
+	tarWriter := tar.NewWriter(gzipWriter)
+	defer tarWriter.Close()
+
+	return filepath.WalkDir(dataDir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.Type()&os.ModeSymlink != 0 {
+			return nil
+		}
+		relativePath, err := filepath.Rel(dataDir, path)
+		if err != nil {
+			return err
+		}
+		archivePath := "Bisq"
+		if relativePath != "." {
+			archivePath += "/" + filepath.ToSlash(relativePath)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return err
+		}
+		header, err := tar.FileInfoHeader(info, "")
+		if err != nil {
+			return err
+		}
+		header.Name = archivePath
+		if info.IsDir() {
+			header.Name += "/"
+		}
+		if err := tarWriter.WriteHeader(header); err != nil {
+			return err
+		}
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(tarWriter, file)
+		closeErr := file.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		return closeErr
+	})
 }
 
 func handleTradingAccountTOTPSecrets(w http.ResponseWriter, r *http.Request) {

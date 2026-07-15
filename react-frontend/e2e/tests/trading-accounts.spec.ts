@@ -47,15 +47,9 @@ test.describe('TradingAccounts', () => {
     await expect(panel).toHaveScreenshot('trading-accounts-mobile.png');
   });
 
-  test('edits payment-method priority from the payment account list item', async ({ page }) => {
+  test('shows the payment account priority in its list item', async ({ page }) => {
     await gotoAndWaitForData(page);
     const panel = await openTradingAccounts(page);
-    const detailPane = panel.locator('[data-testid="account-detail-pane"]:visible');
-
-    const priorityInput = detailPane.getByLabel('Revolut Instant priority');
-    await priorityInput.fill('12');
-    await detailPane.getByRole('button', { name: 'Save', exact: true }).nth(1).click();
-
-    await expect(priorityInput).toHaveValue('12');
+    await expect(panel.getByTestId('account-summary-card-11').getByLabel('Priority 1')).toBeVisible();
   });
 });

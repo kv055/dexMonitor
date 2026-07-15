@@ -77,7 +77,7 @@ func (r *Repo) List(ctx context.Context) ([]AdminRow, error) {
 		       pm.is_active, pm.is_linked, pm.priority, pm.match_order,
 		       CASE
 		           WHEN pm.bank_account_id IS NOT NULL THEN
-		               COALESCE(NULLIF(ba.label, ''), ba.owner_name || ' …' || right(ba.details->>'iban', 4))
+		               COALESCE(NULLIF(ba.label, ''), 'Bank account #' || ba.id)
 		           WHEN pm.account_id IS NOT NULL THEN a.provider
 		           WHEN pm.wallet_address_id IS NOT NULL THEN wa.label
 		       END AS link_label,
@@ -158,7 +158,13 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 		return ValidationError{fmt.Errorf("only Crypto methods can link to a wallet address")}
 	}
 
-	res, err := r.DB.ExecContext(ctx, `
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin update payment method %d: %w", id, err)
+	}
+	defer tx.Rollback()
+
+	res, err := tx.ExecContext(ctx, `
 		UPDATE payment_methods SET
 			merge_regex = $1,
 			category = $2,
@@ -177,6 +183,25 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ValidationError{fmt.Errorf("payment method %d does not exist", id)}
+	}
+
+	// An alias is the canonical replacement for a provider name. Remove any
+	// catalog rows whose names are now represented by this provider's aliases,
+	// including linked rows such as the seeded PayPal F&F method.
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM payment_methods candidate
+		WHERE candidate.id <> $1
+		  AND EXISTS (
+			SELECT 1
+			FROM unnest($2::text[]) AS alias_name
+			WHERE lower(trim(replace(candidate.name, '_', ' '))) =
+			      lower(trim(replace(alias_name, '_', ' ')))
+		  )`, id, commonpm.TextArray(aliasList)); err != nil {
+		return fmt.Errorf("remove payment methods promoted to aliases of %d: %w", id, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit update payment method %d: %w", id, err)
 	}
 	return nil
 }
@@ -218,6 +243,65 @@ func (r *Repo) Delete(ctx context.Context, id int64) error {
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		return ValidationError{fmt.Errorf("payment method %d does not exist or is not an inactive Others row (deactivate it instead of deleting)", id)}
+	}
+	return nil
+}
+
+// DegradeToAlias moves a payment-method name into another provider's alias
+// list and removes the source row in one transaction.
+func (r *Repo) DegradeToAlias(ctx context.Context, aliasID, providerID int64) error {
+	if aliasID == providerID {
+		return ValidationError{fmt.Errorf("a payment method cannot be degraded to itself")}
+	}
+
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin degrade payment method transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var aliasName string
+	if err := tx.QueryRowContext(ctx, `
+		SELECT name
+		FROM payment_methods
+		WHERE id = $1
+		FOR UPDATE`, aliasID).Scan(&aliasName); err != nil {
+		if err == sql.ErrNoRows {
+			return ValidationError{fmt.Errorf("payment method %d does not exist", aliasID)}
+		}
+		return fmt.Errorf("load payment method %d for alias degradation: %w", aliasID, err)
+	}
+	var aliases commonpm.TextArray
+	if err := tx.QueryRowContext(ctx, `
+		SELECT alias_list
+		FROM payment_methods
+		WHERE id = $1
+		FOR UPDATE`, providerID).Scan(&aliases); err != nil {
+		if err == sql.ErrNoRows {
+			return ValidationError{fmt.Errorf("provider payment method %d does not exist", providerID)}
+		}
+		return fmt.Errorf("load provider payment method %d for alias degradation: %w", providerID, err)
+	}
+
+	aliases = commonpm.TextArray(cleanAliasList(append([]string(aliases), aliasName)))
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE payment_methods SET alias_list = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2`, aliases, providerID); err != nil {
+		return fmt.Errorf("add payment method %d as alias to provider %d: %w", aliasID, providerID, err)
+	}
+
+	res, err := tx.ExecContext(ctx, `
+		DELETE FROM payment_methods
+		WHERE id = $1`, aliasID)
+	if err != nil {
+		return fmt.Errorf("delete degraded payment method %d: %w", aliasID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ValidationError{fmt.Errorf("payment method %d could not be deleted after alias degradation", aliasID)}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit alias degradation for payment method %d: %w", aliasID, err)
 	}
 	return nil
 }

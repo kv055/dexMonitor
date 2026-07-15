@@ -4,11 +4,13 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"time"
 
 	"commons/accounts"
 	"commons/paymentmethods"
+	"dexmonitor/internal/credentialcrypto"
 )
 
 // MaskedSecret replaces stored secret material (passwords, TOTP secrets, seed
@@ -27,6 +29,21 @@ func MaskAccount(a *Account) {
 	if a.Password != nil && *a.Password != "" {
 		masked := MaskedSecret
 		a.Password = &masked
+	}
+	if a.Email != nil && *a.Email != "" {
+		masked := MaskedSecret
+		a.Email = &masked
+	}
+	if a.Phone != nil && *a.Phone != "" {
+		masked := MaskedSecret
+		a.Phone = &masked
+	}
+	if a.PaymentTag != nil && *a.PaymentTag != "" {
+		masked := MaskedSecret
+		a.PaymentTag = &masked
+	}
+	for i := range a.BankAccounts {
+		MaskBankAccount(&a.BankAccounts[i])
 	}
 	for i := range a.TOTPSecrets {
 		MaskTOTPSecret(&a.TOTPSecrets[i])
@@ -77,6 +94,9 @@ func MaskAPIKey(k *APIKey) {
 	if k == nil {
 		return
 	}
+	if k.APIKey != "" {
+		k.APIKey = MaskedSecret
+	}
 	if k.APISecret != nil && *k.APISecret != "" {
 		masked := MaskedSecret
 		k.APISecret = &masked
@@ -85,6 +105,51 @@ func MaskAPIKey(k *APIKey) {
 		masked := MaskedSecret
 		k.Passphrase = &masked
 	}
+}
+
+// MaskBankAccount hides payment-account identifiers and holder details while
+// keeping non-sensitive account metadata usable in the UI.
+func MaskBankAccount(b *BankAccount) {
+	if b == nil {
+		return
+	}
+	if b.OwnerName != "" {
+		b.OwnerName = MaskedSecret
+	}
+	for key := range b.Details {
+		b.Details[key] = MaskedSecret
+	}
+}
+
+func encryptSecret(value string) (string, error) {
+	return credentialcrypto.Encrypt(strings.TrimSpace(value))
+}
+
+func encryptOptionalSecret(value *string) (*string, error) {
+	if value == nil {
+		return nil, nil
+	}
+	encrypted, err := encryptSecret(*value)
+	if err != nil {
+		return nil, err
+	}
+	return &encrypted, nil
+}
+
+func decryptSecret(value string) (string, error) {
+	return credentialcrypto.Decrypt(value)
+}
+
+func decryptOptionalSecret(value *string) error {
+	if value == nil {
+		return nil
+	}
+	decrypted, err := decryptSecret(*value)
+	if err != nil {
+		return err
+	}
+	*value = decrypted
+	return nil
 }
 
 // ValidationError marks an error as rejected user input (mapped to HTTP 400
@@ -128,12 +193,16 @@ type Account struct {
 	Provider string `json:"provider"`
 	// Category is the category value for the account.
 	Category string `json:"category"`
+	// PaymentPriority ranks payment accounts; one is the highest priority.
+	PaymentPriority int `json:"payment_priority"`
 	// Email is the email value for the account.
 	Email *string `json:"email"`
 	// Password is the password value for the account.
 	Password *string `json:"password"`
 	// Phone is the phone value for the account.
 	Phone *string `json:"phone"`
+	// PaymentTag is the payment identifier shown to counterparties, such as a Revolut revtag or Wise tag.
+	PaymentTag *string `json:"payment_tag"`
 	// IsHealthy reports whether the account condition is true.
 	IsHealthy bool `json:"is_healthy"`
 	// LastHealthCheck is the last health check value for the account.
@@ -274,6 +343,21 @@ type AccountFileBackup struct {
 	CreatedAt string `json:"created_at"`
 }
 
+// LatestBisqAccountFile returns the most recently stored Bisq account file,
+// including its binary contents for an explicit download request.
+func (r Repository) LatestBisqAccountFile(ctx context.Context, accountID int64) (string, []byte, error) {
+	var fileName string
+	var contents []byte
+	err := r.DB.QueryRowContext(ctx, `
+		SELECT file_name, contents
+		FROM bisq_account_file_backups
+		WHERE account_id = $1
+		ORDER BY created_at DESC, id DESC
+		LIMIT 1
+	`, accountID).Scan(&fileName, &contents)
+	return fileName, contents, err
+}
+
 // LNDChannelBackup is metadata for the latest LND static channel backup.
 type LNDChannelBackup struct {
 	// ID identifies the backup row.
@@ -329,6 +413,17 @@ type AccountPayload struct {
 	Password string `json:"password"`
 	// Phone is the phone value for the account payload.
 	Phone string `json:"phone"`
+	// PaymentTag is the payment identifier shown to counterparties, such as a Revolut revtag or Wise tag.
+	PaymentTag string `json:"payment_tag"`
+}
+
+// CredentialReveal contains decrypted account credentials for an explicit
+// authenticated reveal request.
+type CredentialReveal struct {
+	Email      string `json:"email"`
+	Password   string `json:"password"`
+	Phone      string `json:"phone"`
+	PaymentTag string `json:"payment_tag"`
 }
 
 // TOTPSecretPayload represents a totpsecret payload.
@@ -390,21 +485,88 @@ func NewRepository(db *sql.DB) Repository {
 	return Repository{DB: db}
 }
 
+// EncryptLegacySecrets upgrades plaintext credential rows in place. It is
+// intentionally idempotent and keeps compatibility with databases created
+// before application-level encryption was introduced.
+func (r Repository) EncryptLegacySecrets(ctx context.Context) error {
+	for _, target := range []struct{ table, column string }{
+		{"accounts", "email"}, {"accounts", "password"}, {"accounts", "phone"}, {"accounts", "payment_tag"},
+		{"bank_accounts", "owner_name"},
+		{"totp_secrets", "secret"}, {"passkey_credentials", "private_key_pkcs8"}, {"seeds", "seed_phrase"},
+		{"api_keys", "api_key"}, {"api_keys", "api_secret"}, {"api_keys", "passphrase"},
+	} {
+		rows, err := r.DB.QueryContext(ctx, "SELECT id, "+target.column+" FROM "+target.table+" WHERE "+target.column+" IS NOT NULL AND "+target.column+" <> '' AND "+target.column+" NOT LIKE 'enc:v1:%'")
+		if err != nil {
+			return fmt.Errorf("scan legacy %s.%s: %w", target.table, target.column, err)
+		}
+		for rows.Next() {
+			var id int64
+			var value string
+			if err := rows.Scan(&id, &value); err != nil {
+				rows.Close()
+				return err
+			}
+			encrypted, err := encryptSecret(value)
+			if err != nil {
+				rows.Close()
+				return err
+			}
+			if _, err := r.DB.ExecContext(ctx, "UPDATE "+target.table+" SET "+target.column+" = $1 WHERE id = $2", encrypted, id); err != nil {
+				rows.Close()
+				return err
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+	}
+	rows, err := r.DB.QueryContext(ctx, `SELECT id, details FROM bank_accounts WHERE details_encrypted IS NULL AND details <> '{}'::jsonb`)
+	if err != nil {
+		return fmt.Errorf("scan legacy bank details: %w", err)
+	}
+	for rows.Next() {
+		var id int64
+		var details []byte
+		if err := rows.Scan(&id, &details); err != nil {
+			rows.Close()
+			return err
+		}
+		encrypted, err := encryptSecret(string(details))
+		if err != nil {
+			rows.Close()
+			return err
+		}
+		if _, err := r.DB.ExecContext(ctx, `UPDATE bank_accounts SET details = '{}'::jsonb, details_encrypted = $1 WHERE id = $2`, encrypted, id); err != nil {
+			rows.Close()
+			return err
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return err
+	}
+	return rows.Close()
+}
+
 // List returns recent records, capped by the requested limit.
 func (r Repository) List(ctx context.Context) ([]Account, error) {
 	rows, err := r.DB.QueryContext(ctx, `
 		SELECT id,
 		       provider,
 		       COALESCE(category, 'Uncategorized') AS category,
+		       COALESCE(payment_priority, 0) AS payment_priority,
 		       email,
 		       password,
 		       phone,
+		       payment_tag,
 		       is_healthy,
 		       last_health_check,
 		       created_at,
 		       updated_at
 		FROM accounts
-		ORDER BY category, provider, id
+		ORDER BY category, payment_priority NULLS LAST, provider, id
 	`)
 	if err != nil {
 		return nil, err
@@ -416,15 +578,21 @@ func (r Repository) List(ctx context.Context) ([]Account, error) {
 	accountIndex := make(map[int64]int)
 	for rows.Next() {
 		var account Account
-		var email, password, phone sql.NullString
+		var email, password, phone, paymentTag sql.NullString
 		var lastHealthCheck sql.NullTime
 		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&account.ID, &account.Provider, &account.Category, &email, &password, &phone, &account.IsHealthy, &lastHealthCheck, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&account.ID, &account.Provider, &account.Category, &account.PaymentPriority, &email, &password, &phone, &paymentTag, &account.IsHealthy, &lastHealthCheck, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		account.Email = nullStringPtr(email)
 		account.Password = nullStringPtr(password)
 		account.Phone = nullStringPtr(phone)
+		account.PaymentTag = nullStringPtr(paymentTag)
+		for name, value := range map[string]*string{"email": account.Email, "password": account.Password, "phone": account.Phone, "payment tag": account.PaymentTag} {
+			if err := decryptOptionalSecret(value); err != nil {
+				return nil, fmt.Errorf("decrypt account %s: %w", name, err)
+			}
+		}
 		account.LastHealthCheck = nullTimePtr(lastHealthCheck)
 		account.CreatedAt = formatTime(createdAt)
 		account.UpdatedAt = formatTime(updatedAt)
@@ -483,6 +651,41 @@ func (r Repository) Get(ctx context.Context, id int64) (*Account, error) {
 	return nil, sql.ErrNoRows
 }
 
+// RevealCredentials decrypts the account credential fields for an explicit
+// authenticated reveal request. Legacy plaintext rows are returned unchanged.
+func (r Repository) RevealCredentials(ctx context.Context, id int64) (CredentialReveal, error) {
+	var reveal CredentialReveal
+	if err := r.DB.QueryRowContext(ctx, `
+		SELECT COALESCE(email, ''), COALESCE(password, ''), COALESCE(phone, '')
+		FROM accounts WHERE id = $1`, id).Scan(&reveal.Email, &reveal.Password, &reveal.Phone); err != nil {
+		return CredentialReveal{}, err
+	}
+	var err error
+	if reveal.Email, err = credentialcrypto.Decrypt(reveal.Email); err != nil {
+		return CredentialReveal{}, fmt.Errorf("decrypt account email: %w", err)
+	}
+	if reveal.Password, err = credentialcrypto.Decrypt(reveal.Password); err != nil {
+		return CredentialReveal{}, fmt.Errorf("decrypt account password: %w", err)
+	}
+	if reveal.Phone, err = credentialcrypto.Decrypt(reveal.Phone); err != nil {
+		return CredentialReveal{}, fmt.Errorf("decrypt account phone: %w", err)
+	}
+	var paymentTag string
+	if err := r.DB.QueryRowContext(ctx, `SELECT COALESCE(payment_tag, '') FROM accounts WHERE id = $1`, id).Scan(&paymentTag); err != nil {
+		return CredentialReveal{}, err
+	}
+	if reveal.PaymentTag, err = credentialcrypto.Decrypt(paymentTag); err != nil {
+		return CredentialReveal{}, fmt.Errorf("decrypt account payment tag: %w", err)
+	}
+	return reveal, nil
+}
+
+// RevealAccountSecrets returns the fully decrypted account record for an
+// explicit authenticated reveal request. Ordinary list/get API paths mask it.
+func (r Repository) RevealAccountSecrets(ctx context.Context, id int64) (*Account, error) {
+	return r.Get(ctx, id)
+}
+
 // Create creates value.
 func (r Repository) Create(ctx context.Context, payload AccountPayload) (int64, error) {
 	provider := NormalizeProvider(payload.Provider)
@@ -491,18 +694,61 @@ func (r Repository) Create(ctx context.Context, payload AccountPayload) (int64, 
 		category = accounts.CategoryForProvider(provider)
 	}
 	email := strings.TrimSpace(payload.Email)
-	if email != "" {
+	if email != "" && email != MaskedSecret {
 		if err := validateEmail(ctx, email); err != nil {
 			return 0, err
 		}
 	}
+	password, err := encryptSecret(payload.Password)
+	if err != nil {
+		return 0, fmt.Errorf("encrypt account password: %w", err)
+	}
+	phone, err := encryptSecret(payload.Phone)
+	if err != nil {
+		return 0, fmt.Errorf("encrypt account phone: %w", err)
+	}
+	paymentTag, err := encryptSecret(payload.PaymentTag)
+	if err != nil {
+		return 0, fmt.Errorf("encrypt account payment tag: %w", err)
+	}
+	if email != "" {
+		email, err = encryptSecret(email)
+		if err != nil {
+			return 0, fmt.Errorf("encrypt account email: %w", err)
+		}
+	}
 	var id int64
-	err := r.DB.QueryRowContext(ctx, `
-		INSERT INTO accounts (provider, category, email, password, phone)
-		VALUES ($1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''))
+	err = r.DB.QueryRowContext(ctx, `
+		INSERT INTO accounts (provider, category, email, password, phone, payment_tag, payment_priority)
+		VALUES (
+			$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''),
+			CASE WHEN $2 IN ('Fiat Transmitter', 'Bank', 'Wallet addresses')
+				THEN (SELECT COALESCE(MAX(payment_priority), 0) + 1 FROM accounts WHERE category IN ('Fiat Transmitter', 'Bank', 'Wallet addresses'))
+				ELSE NULL END
+		)
 		RETURNING id
-	`, provider, category, email, strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone)).Scan(&id)
+	`, provider, category, email, password, phone, paymentTag).Scan(&id)
 	return id, err
+}
+
+// ReorderPaymentAccounts persists the supplied payment-account order. The
+// first id receives priority one, which is the highest priority.
+func (r Repository) ReorderPaymentAccounts(ctx context.Context, ids []int64) error {
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	for i, id := range ids {
+		if _, err := tx.ExecContext(ctx, `
+			UPDATE accounts
+			SET payment_priority = $2, updated_at = CURRENT_TIMESTAMP
+			WHERE id = $1 AND category IN ('Fiat Transmitter', 'Bank', 'Wallet addresses')
+		`, id, i+1); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Update replaces an account and its nested credentials.
@@ -513,21 +759,50 @@ func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload
 		category = accounts.CategoryForProvider(provider)
 	}
 	email := strings.TrimSpace(payload.Email)
-	if email != "" {
+	if email != "" && email != MaskedSecret {
 		if err := validateEmail(ctx, email); err != nil {
 			return err
 		}
 	}
-	_, err := r.DB.ExecContext(ctx, `
+	password := strings.TrimSpace(payload.Password)
+	phone := strings.TrimSpace(payload.Phone)
+	paymentTag := strings.TrimSpace(payload.PaymentTag)
+	var err error
+	if password != MaskedSecret {
+		password, err = encryptSecret(password)
+		if err != nil {
+			return fmt.Errorf("encrypt account password: %w", err)
+		}
+	}
+	if phone != MaskedSecret {
+		phone, err = encryptSecret(phone)
+		if err != nil {
+			return fmt.Errorf("encrypt account phone: %w", err)
+		}
+	}
+	if paymentTag != MaskedSecret {
+		paymentTag, err = encryptSecret(paymentTag)
+		if err != nil {
+			return fmt.Errorf("encrypt account payment tag: %w", err)
+		}
+	}
+	if email != MaskedSecret && email != "" {
+		email, err = encryptSecret(email)
+		if err != nil {
+			return fmt.Errorf("encrypt account email: %w", err)
+		}
+	}
+	_, err = r.DB.ExecContext(ctx, `
 		UPDATE accounts
 		SET provider = $2,
 		    category = NULLIF($3, ''),
-		    email = NULLIF($4, ''),
+		    email = CASE WHEN $4 = '`+MaskedSecret+`' THEN email ELSE NULLIF($4, '') END,
 		    password = CASE WHEN $5 = '`+MaskedSecret+`' THEN password ELSE NULLIF($5, '') END,
-		    phone = NULLIF($6, ''),
+		    phone = CASE WHEN $6 = '`+MaskedSecret+`' THEN phone ELSE NULLIF($6, '') END,
+		    payment_tag = CASE WHEN $7 = '`+MaskedSecret+`' THEN payment_tag ELSE NULLIF($7, '') END,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
-	`, id, provider, category, email, strings.TrimSpace(payload.Password), strings.TrimSpace(payload.Phone))
+	`, id, provider, category, email, password, phone, paymentTag)
 	return err
 }
 
@@ -539,23 +814,35 @@ func (r Repository) Delete(ctx context.Context, id int64) error {
 
 // CreateTOTPSecret creates a totpsecret.
 func (r Repository) CreateTOTPSecret(ctx context.Context, accountID int64, payload TOTPSecretPayload) (int64, error) {
+	secret, err := encryptSecret(payload.Secret)
+	if err != nil {
+		return 0, fmt.Errorf("encrypt totp secret: %w", err)
+	}
 	var id int64
-	err := r.DB.QueryRowContext(ctx, `
+	err = r.DB.QueryRowContext(ctx, `
 		INSERT INTO totp_secrets (account_id, secret, is_active)
 		VALUES ($1, $2, $3)
 		RETURNING id
-	`, accountID, strings.TrimSpace(payload.Secret), payload.IsActive).Scan(&id)
+	`, accountID, secret, payload.IsActive).Scan(&id)
 	return id, err
 }
 
 // UpdateTOTPSecret stores a TOTP secret for an account.
 func (r Repository) UpdateTOTPSecret(ctx context.Context, id int64, payload TOTPSecretPayload) error {
-	_, err := r.DB.ExecContext(ctx, `
+	secret := strings.TrimSpace(payload.Secret)
+	var err error
+	if secret != MaskedSecret {
+		secret, err = encryptSecret(secret)
+		if err != nil {
+			return fmt.Errorf("encrypt totp secret: %w", err)
+		}
+	}
+	_, err = r.DB.ExecContext(ctx, `
 		UPDATE totp_secrets
 		SET secret = CASE WHEN $2 = '`+MaskedSecret+`' THEN secret ELSE $2 END,
 		    is_active = $3
 		WHERE id = $1
-	`, id, strings.TrimSpace(payload.Secret), payload.IsActive)
+	`, id, secret, payload.IsActive)
 	return err
 }
 
@@ -578,6 +865,9 @@ func (r Repository) GetTOTPSecret(ctx context.Context, id int64) (*TOTPSecret, e
 	if err != nil {
 		return nil, err
 	}
+	if item.Secret, err = decryptSecret(item.Secret); err != nil {
+		return nil, err
+	}
 	item.CreatedAt = formatTime(createdAt)
 	item.RotatedAt = nullTimePtr(rotatedAt)
 	return &item, nil
@@ -585,19 +875,31 @@ func (r Repository) GetTOTPSecret(ctx context.Context, id int64) (*TOTPSecret, e
 
 // CreatePasskey creates a passkey.
 func (r Repository) CreatePasskey(ctx context.Context, accountID int64, payload PasskeyPayload) (int64, error) {
+	privateKey, err := encryptSecret(payload.PrivateKeyPKCS8)
+	if err != nil {
+		return 0, fmt.Errorf("encrypt passkey private key: %w", err)
+	}
 	var id int64
-	err := r.DB.QueryRowContext(ctx, `
+	err = r.DB.QueryRowContext(ctx, `
 		INSERT INTO passkey_credentials (
 			account_id, credential_id, rp_id, private_key_pkcs8, user_handle, sign_count, is_active, last_used_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, NULLIF($8, '')::timestamptz)
 		RETURNING id
-	`, accountID, payload.CredentialID, payload.RPID, payload.PrivateKeyPKCS8, payload.UserHandle, payload.SignCount, payload.IsActive, stringOrEmpty(payload.LastUsedAt)).Scan(&id)
+	`, accountID, payload.CredentialID, payload.RPID, privateKey, payload.UserHandle, payload.SignCount, payload.IsActive, stringOrEmpty(payload.LastUsedAt)).Scan(&id)
 	return id, err
 }
 
 // UpdatePasskey stores a passkey credential for an account.
 func (r Repository) UpdatePasskey(ctx context.Context, id int64, payload PasskeyPayload) error {
-	_, err := r.DB.ExecContext(ctx, `
+	privateKey := strings.TrimSpace(payload.PrivateKeyPKCS8)
+	var err error
+	if privateKey != MaskedSecret {
+		privateKey, err = encryptSecret(privateKey)
+		if err != nil {
+			return fmt.Errorf("encrypt passkey private key: %w", err)
+		}
+	}
+	_, err = r.DB.ExecContext(ctx, `
 		UPDATE passkey_credentials
 		SET credential_id = $2,
 		    rp_id = $3,
@@ -607,7 +909,7 @@ func (r Repository) UpdatePasskey(ctx context.Context, id int64, payload Passkey
 		    is_active = $7,
 		    last_used_at = NULLIF($8, '')::timestamptz
 		WHERE id = $1
-	`, id, payload.CredentialID, payload.RPID, payload.PrivateKeyPKCS8, payload.UserHandle, payload.SignCount, payload.IsActive, stringOrEmpty(payload.LastUsedAt))
+	`, id, payload.CredentialID, payload.RPID, privateKey, payload.UserHandle, payload.SignCount, payload.IsActive, stringOrEmpty(payload.LastUsedAt))
 	return err
 }
 
@@ -630,6 +932,9 @@ func (r Repository) GetPasskey(ctx context.Context, id int64) (*Passkey, error) 
 	if err != nil {
 		return nil, err
 	}
+	if item.PrivateKeyPKCS8, err = decryptSecret(item.PrivateKeyPKCS8); err != nil {
+		return nil, err
+	}
 	item.CreatedAt = formatTime(createdAt)
 	item.LastUsedAt = nullTimePtr(lastUsedAt)
 	return &item, nil
@@ -637,23 +942,35 @@ func (r Repository) GetPasskey(ctx context.Context, id int64) (*Passkey, error) 
 
 // CreateSeed creates a seed.
 func (r Repository) CreateSeed(ctx context.Context, accountID int64, payload SeedPayload) (int64, error) {
+	seedPhrase, err := encryptSecret(payload.SeedPhrase)
+	if err != nil {
+		return 0, fmt.Errorf("encrypt seed phrase: %w", err)
+	}
 	var id int64
-	err := r.DB.QueryRowContext(ctx, `
+	err = r.DB.QueryRowContext(ctx, `
 		INSERT INTO seeds (account_id, seed_phrase, wallet_created_at)
 		VALUES ($1, $2, NULLIF($3, '')::timestamptz)
 		RETURNING id
-	`, accountID, payload.SeedPhrase, stringOrEmpty(payload.WalletCreatedAt)).Scan(&id)
+	`, accountID, seedPhrase, stringOrEmpty(payload.WalletCreatedAt)).Scan(&id)
 	return id, err
 }
 
 // UpdateSeed stores a recovery seed for an account.
 func (r Repository) UpdateSeed(ctx context.Context, id int64, payload SeedPayload) error {
-	_, err := r.DB.ExecContext(ctx, `
+	seedPhrase := strings.TrimSpace(payload.SeedPhrase)
+	var err error
+	if seedPhrase != MaskedSecret {
+		seedPhrase, err = encryptSecret(seedPhrase)
+		if err != nil {
+			return fmt.Errorf("encrypt seed phrase: %w", err)
+		}
+	}
+	_, err = r.DB.ExecContext(ctx, `
 		UPDATE seeds
 		SET seed_phrase = CASE WHEN $2 = '`+MaskedSecret+`' THEN seed_phrase ELSE $2 END,
 		    wallet_created_at = NULLIF($3, '')::timestamptz
 		WHERE id = $1
-	`, id, payload.SeedPhrase, stringOrEmpty(payload.WalletCreatedAt))
+	`, id, seedPhrase, stringOrEmpty(payload.WalletCreatedAt))
 	return err
 }
 
@@ -676,6 +993,9 @@ func (r Repository) GetSeed(ctx context.Context, id int64) (*Seed, error) {
 	if err != nil {
 		return nil, err
 	}
+	if item.SeedPhrase, err = decryptSecret(item.SeedPhrase); err != nil {
+		return nil, err
+	}
 	item.WalletCreatedAt = nullTimePtr(walletCreatedAt)
 	item.CreatedAt = formatTime(createdAt)
 	return &item, nil
@@ -689,12 +1009,24 @@ func (r Repository) CreateAPIKey(ctx context.Context, accountID int64, payload A
 		payload.APISecret = nil
 		payload.Passphrase = nil
 	}
+	apiKey, err := encryptSecret(payload.APIKey)
+	if err != nil {
+		return 0, fmt.Errorf("encrypt api key: %w", err)
+	}
+	apiSecret, err := encryptOptionalSecret(payload.APISecret)
+	if err != nil {
+		return 0, fmt.Errorf("encrypt api secret: %w", err)
+	}
+	passphrase, err := encryptOptionalSecret(payload.Passphrase)
+	if err != nil {
+		return 0, fmt.Errorf("encrypt api passphrase: %w", err)
+	}
 	var id int64
-	err := r.DB.QueryRowContext(ctx, `
+	err = r.DB.QueryRowContext(ctx, `
 		INSERT INTO api_keys (account_id, name, api_key, api_secret, passphrase, is_active)
 		VALUES ($1, $2, $3, NULLIF($4, ''), NULLIF($5, ''), $6)
 		RETURNING id
-	`, accountID, payload.Name, payload.APIKey, stringOrEmpty(payload.APISecret), stringOrEmpty(payload.Passphrase), payload.IsActive).Scan(&id)
+	`, accountID, payload.Name, apiKey, stringOrEmpty(apiSecret), stringOrEmpty(passphrase), payload.IsActive).Scan(&id)
 	return id, err
 }
 
@@ -706,16 +1038,38 @@ func (r Repository) UpdateAPIKey(ctx context.Context, id int64, payload APIKeyPa
 		payload.APISecret = nil
 		payload.Passphrase = nil
 	}
-	_, err := r.DB.ExecContext(ctx, `
+	apiKey := strings.TrimSpace(payload.APIKey)
+	apiSecret := stringOrEmpty(payload.APISecret)
+	passphrase := stringOrEmpty(payload.Passphrase)
+	var err error
+	if apiKey != MaskedSecret {
+		apiKey, err = encryptSecret(apiKey)
+		if err != nil {
+			return fmt.Errorf("encrypt api key: %w", err)
+		}
+	}
+	if apiSecret != MaskedSecret {
+		apiSecret, err = encryptSecret(apiSecret)
+		if err != nil {
+			return fmt.Errorf("encrypt api secret: %w", err)
+		}
+	}
+	if passphrase != MaskedSecret {
+		passphrase, err = encryptSecret(passphrase)
+		if err != nil {
+			return fmt.Errorf("encrypt api passphrase: %w", err)
+		}
+	}
+	_, err = r.DB.ExecContext(ctx, `
 		UPDATE api_keys
 		SET name = $2,
-		    api_key = $3,
+		    api_key = CASE WHEN $3 = '`+MaskedSecret+`' THEN api_key ELSE $3 END,
 		    api_secret = CASE WHEN $4 = '`+MaskedSecret+`' THEN api_secret ELSE NULLIF($4, '') END,
 		    passphrase = CASE WHEN $5 = '`+MaskedSecret+`' THEN passphrase ELSE NULLIF($5, '') END,
 		    is_active = $6,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
-	`, id, payload.Name, payload.APIKey, stringOrEmpty(payload.APISecret), stringOrEmpty(payload.Passphrase), payload.IsActive)
+	`, id, payload.Name, apiKey, apiSecret, passphrase, payload.IsActive)
 	return err
 }
 
@@ -745,6 +1099,15 @@ func (r Repository) GetAPIKey(ctx context.Context, id int64) (*APIKey, error) {
 	}
 	item.APISecret = nullStringPtr(apiSecret)
 	item.Passphrase = nullStringPtr(passphrase)
+	if item.APIKey, err = decryptSecret(item.APIKey); err != nil {
+		return nil, err
+	}
+	if err := decryptOptionalSecret(item.APISecret); err != nil {
+		return nil, err
+	}
+	if err := decryptOptionalSecret(item.Passphrase); err != nil {
+		return nil, err
+	}
 	item.Permissions = decodePermissionsJSON(permissionsJSON)
 	item.PermissionsCheckedAt = nullTimePtr(permissionsCheckedAt)
 	item.CreatedAt = formatTime(createdAt)
@@ -793,6 +1156,9 @@ func (r Repository) appendTOTPSecrets(ctx context.Context, accounts []Account, a
 		if err := rows.Scan(&item.ID, &item.AccountID, &item.Secret, &item.IsActive, &createdAt, &rotatedAt); err != nil {
 			return err
 		}
+		if item.Secret, err = decryptSecret(item.Secret); err != nil {
+			return err
+		}
 		item.CreatedAt = formatTime(createdAt)
 		item.RotatedAt = nullTimePtr(rotatedAt)
 		if index, ok := accountIndex[item.AccountID]; ok {
@@ -820,6 +1186,9 @@ func (r Repository) appendPasskeys(ctx context.Context, accounts []Account, acco
 		if err := rows.Scan(&item.ID, &item.AccountID, &item.CredentialID, &item.RPID, &item.PrivateKeyPKCS8, &item.UserHandle, &item.SignCount, &item.IsActive, &createdAt, &lastUsedAt); err != nil {
 			return err
 		}
+		if item.PrivateKeyPKCS8, err = decryptSecret(item.PrivateKeyPKCS8); err != nil {
+			return err
+		}
 		item.CreatedAt = formatTime(createdAt)
 		item.LastUsedAt = nullTimePtr(lastUsedAt)
 		if index, ok := accountIndex[item.AccountID]; ok {
@@ -845,6 +1214,9 @@ func (r Repository) appendSeeds(ctx context.Context, accounts []Account, account
 		var walletCreatedAt sql.NullTime
 		var createdAt time.Time
 		if err := rows.Scan(&item.ID, &item.AccountID, &item.SeedPhrase, &walletCreatedAt, &createdAt); err != nil {
+			return err
+		}
+		if item.SeedPhrase, err = decryptSecret(item.SeedPhrase); err != nil {
 			return err
 		}
 		item.WalletCreatedAt = nullTimePtr(walletCreatedAt)
@@ -933,6 +1305,25 @@ func (r Repository) appendAPIKeys(ctx context.Context, accounts []Account, accou
 		); err != nil {
 			return err
 		}
+		decryptedAPIKey, err := decryptSecret(item.APIKey)
+		if err != nil {
+			return err
+		}
+		decryptedAPISecret, err := decryptSecret(apiSecret.String)
+		if err != nil && apiSecret.Valid {
+			return err
+		}
+		decryptedPassphrase, err := decryptSecret(passphrase.String)
+		if err != nil && passphrase.Valid {
+			return err
+		}
+		item.APIKey = decryptedAPIKey
+		if apiSecret.Valid {
+			apiSecret.String = decryptedAPISecret
+		}
+		if passphrase.Valid {
+			passphrase.String = decryptedPassphrase
+		}
 		item.APISecret = nullStringPtr(apiSecret)
 		item.Passphrase = nullStringPtr(passphrase)
 		item.Permissions = decodePermissionsJSON(permissionsJSON)
@@ -955,41 +1346,97 @@ func (r Repository) CreateBankAccount(ctx context.Context, accountID int64, payl
 	if err != nil {
 		return 0, err
 	}
+	encryptedDetails, err := encryptSecret(string(detailsJSON))
+	if err != nil {
+		return 0, fmt.Errorf("encrypt bank account details: %w", err)
+	}
+	ownerName, err := encryptSecret(strings.TrimSpace(payload.OwnerName))
+	if err != nil {
+		return 0, fmt.Errorf("encrypt bank account owner name: %w", err)
+	}
 	var id int64
 	err = r.DB.QueryRowContext(ctx, `
-		INSERT INTO bank_accounts (account_id, label, owner_name, currency, country, scheme, details, is_active)
-		VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), $6, $7, $8)
+		INSERT INTO bank_accounts (account_id, label, owner_name, currency, country, scheme, details, details_encrypted, is_active)
+		VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), $6, '{}'::jsonb, $7, $8)
 		RETURNING id
-	`, accountID, strings.TrimSpace(payload.Label), strings.TrimSpace(payload.OwnerName),
+	`, accountID, strings.TrimSpace(payload.Label), ownerName,
 		strings.ToUpper(strings.TrimSpace(payload.Currency)), strings.ToUpper(strings.TrimSpace(payload.Country)),
-		strings.TrimSpace(payload.Scheme), detailsJSON, payload.IsActive).Scan(&id)
+		strings.TrimSpace(payload.Scheme), encryptedDetails, payload.IsActive).Scan(&id)
 	return id, err
 }
 
 // UpdateBankAccount replaces a bank account.
 func (r Repository) UpdateBankAccount(ctx context.Context, id int64, payload BankAccountPayload) error {
-	if err := validateIBAN(payload.Details); err != nil {
-		return err
-	}
-	detailsJSON, err := json.Marshal(payload.Details)
+	details, err := r.resolveBankDetails(ctx, id, payload.Details)
 	if err != nil {
 		return err
+	}
+	if err := validateIBAN(details); err != nil {
+		return err
+	}
+	detailsJSON, err := json.Marshal(details)
+	if err != nil {
+		return err
+	}
+	encryptedDetails, err := encryptSecret(string(detailsJSON))
+	if err != nil {
+		return fmt.Errorf("encrypt bank account details: %w", err)
+	}
+	ownerName := strings.TrimSpace(payload.OwnerName)
+	if ownerName != MaskedSecret {
+		ownerName, err = encryptSecret(ownerName)
+		if err != nil {
+			return fmt.Errorf("encrypt bank account owner name: %w", err)
+		}
 	}
 	_, err = r.DB.ExecContext(ctx, `
 		UPDATE bank_accounts
 		SET label      = NULLIF($2, ''),
-		    owner_name = $3,
+		    owner_name = CASE WHEN $3 = '`+MaskedSecret+`' THEN owner_name ELSE $3 END,
 		    currency   = $4,
 		    country    = NULLIF($5, ''),
 		    scheme     = $6,
-		    details    = $7,
+		    details    = '{}'::jsonb,
+		    details_encrypted = $7,
 		    is_active  = $8,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
-	`, id, strings.TrimSpace(payload.Label), strings.TrimSpace(payload.OwnerName),
+	`, id, strings.TrimSpace(payload.Label), ownerName,
 		strings.ToUpper(strings.TrimSpace(payload.Currency)), strings.ToUpper(strings.TrimSpace(payload.Country)),
-		strings.TrimSpace(payload.Scheme), detailsJSON, payload.IsActive)
+		strings.TrimSpace(payload.Scheme), encryptedDetails, payload.IsActive)
 	return err
+}
+
+// resolveBankDetails merges masked fields from an edit round-trip with the
+// stored plaintext before writing the new encrypted blob.
+func (r Repository) resolveBankDetails(ctx context.Context, id int64, incoming map[string]string) (map[string]string, error) {
+	needsStoredValue := false
+	for _, value := range incoming {
+		if value == MaskedSecret {
+			needsStoredValue = true
+			break
+		}
+	}
+	if !needsStoredValue {
+		return incoming, nil
+	}
+	var legacy, encrypted []byte
+	if err := r.DB.QueryRowContext(ctx, `SELECT details, details_encrypted FROM bank_accounts WHERE id = $1`, id).Scan(&legacy, &encrypted); err != nil {
+		return nil, err
+	}
+	stored, err := decryptBankDetails(encrypted, legacy)
+	if err != nil {
+		return nil, err
+	}
+	merged := make(map[string]string, len(incoming))
+	for key, value := range incoming {
+		if value == MaskedSecret {
+			merged[key] = stored[key]
+			continue
+		}
+		merged[key] = value
+	}
+	return merged, nil
 }
 
 // DeleteBankAccount removes a bank account.
@@ -1002,20 +1449,27 @@ func (r Repository) DeleteBankAccount(ctx context.Context, id int64) error {
 func (r Repository) GetBankAccount(ctx context.Context, id int64) (*BankAccount, error) {
 	var item BankAccount
 	var label, country sql.NullString
-	var detailsJSON []byte
+	var detailsJSON, encryptedDetails []byte
 	var createdAt, updatedAt time.Time
 	err := r.DB.QueryRowContext(ctx, `
-		SELECT id, account_id, label, owner_name, currency, country, scheme, details, is_active, created_at, updated_at
+		SELECT id, account_id, label, owner_name, currency, country, scheme, details, details_encrypted, is_active, created_at, updated_at
 		FROM bank_accounts
 		WHERE id = $1
 	`, id).Scan(&item.ID, &item.AccountID, &label, &item.OwnerName, &item.Currency, &country,
-		&item.Scheme, &detailsJSON, &item.IsActive, &createdAt, &updatedAt)
+		&item.Scheme, &detailsJSON, &encryptedDetails, &item.IsActive, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
 	item.Label = nullStringPtr(label)
 	item.Country = nullStringPtr(country)
-	item.Details = decodeBankDetailsJSON(detailsJSON)
+	item.OwnerName, err = decryptSecret(item.OwnerName)
+	if err != nil {
+		return nil, fmt.Errorf("decrypt bank account owner name: %w", err)
+	}
+	item.Details, err = decryptBankDetails(encryptedDetails, detailsJSON)
+	if err != nil {
+		return nil, err
+	}
 	item.CreatedAt = formatTime(createdAt)
 	item.UpdatedAt = formatTime(updatedAt)
 	return &item, nil
@@ -1023,7 +1477,7 @@ func (r Repository) GetBankAccount(ctx context.Context, id int64) (*BankAccount,
 
 func (r Repository) appendBankAccounts(ctx context.Context, accs []Account, accountIndex map[int64]int, accountIDs []int64) error {
 	rows, err := r.DB.QueryContext(ctx, `
-		SELECT id, account_id, label, owner_name, currency, country, scheme, details, is_active, created_at, updated_at
+		SELECT id, account_id, label, owner_name, currency, country, scheme, details, details_encrypted, is_active, created_at, updated_at
 		FROM bank_accounts
 		WHERE account_id = ANY($1)
 		ORDER BY created_at ASC, id ASC
@@ -1035,15 +1489,22 @@ func (r Repository) appendBankAccounts(ctx context.Context, accs []Account, acco
 	for rows.Next() {
 		var item BankAccount
 		var label, country sql.NullString
-		var detailsJSON []byte
+		var detailsJSON, encryptedDetails []byte
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(&item.ID, &item.AccountID, &label, &item.OwnerName, &item.Currency, &country,
-			&item.Scheme, &detailsJSON, &item.IsActive, &createdAt, &updatedAt); err != nil {
+			&item.Scheme, &detailsJSON, &encryptedDetails, &item.IsActive, &createdAt, &updatedAt); err != nil {
 			return err
 		}
 		item.Label = nullStringPtr(label)
 		item.Country = nullStringPtr(country)
-		item.Details = decodeBankDetailsJSON(detailsJSON)
+		item.OwnerName, err = decryptSecret(item.OwnerName)
+		if err != nil {
+			return fmt.Errorf("decrypt bank account owner name: %w", err)
+		}
+		item.Details, err = decryptBankDetails(encryptedDetails, detailsJSON)
+		if err != nil {
+			return err
+		}
 		item.CreatedAt = formatTime(createdAt)
 		item.UpdatedAt = formatTime(updatedAt)
 		if index, ok := accountIndex[item.AccountID]; ok {
@@ -1062,6 +1523,17 @@ func decodeBankDetailsJSON(raw []byte) map[string]string {
 		return map[string]string{}
 	}
 	return m
+}
+
+func decryptBankDetails(encrypted, legacy []byte) (map[string]string, error) {
+	if len(encrypted) > 0 {
+		plain, err := decryptSecret(string(encrypted))
+		if err != nil {
+			return nil, fmt.Errorf("decrypt bank account details: %w", err)
+		}
+		return decodeBankDetailsJSON([]byte(plain)), nil
+	}
+	return decodeBankDetailsJSON(legacy), nil
 }
 
 // decodePermissionsJSON reads the stored permissions JSONB into the tri-state

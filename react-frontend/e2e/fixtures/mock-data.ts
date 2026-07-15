@@ -240,6 +240,7 @@ export const MOCK_TRADING_ACCOUNTS = [
     id: 11,
     provider: 'Revolut',
     category: 'Fiat Transmitter',
+    payment_priority: 1,
     email: 'ops@desk.test',
     password: 'secret',
     phone: '+49123456789',

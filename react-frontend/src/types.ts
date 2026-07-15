@@ -385,9 +385,11 @@ export interface TradingAccount {
   id: number;
   provider: string;
   category: string;
+  payment_priority: number;
   email: string | null;
   password: string | null;
   phone: string | null;
+  payment_tag: string | null;
   is_healthy: boolean;
   last_health_check: string | null;
   created_at: string;
@@ -399,6 +401,13 @@ export interface TradingAccount {
   account_file_backup: TradingAccountFileBackup | null;
   lnd_channel_backup: TradingLNDChannelBackup | null;
   bank_accounts: TradingBankAccount[];
+}
+
+export interface TradingAccountCredentialReveal {
+  email: string;
+  password: string;
+  phone: string;
+  payment_tag: string;
 }
 
 export interface TradingBankAccount {
@@ -495,6 +504,13 @@ export interface LNDWalletState {
   password_set: boolean;
   client_ready: boolean;
   can_create: boolean;
+  last_init_error?: string;
+}
+
+export interface ServiceVersions {
+  bisq1: string;
+  bisq2: string;
+  lnd: string;
 }
 
 export interface LNDWalletInitResult {
