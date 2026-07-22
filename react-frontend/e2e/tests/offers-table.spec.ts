@@ -66,6 +66,8 @@ test.describe('OffersPreviewTable', () => {
     await expect(panel.locator('text=DEX platform fee').first()).toBeVisible();
     await expect(panel.locator('text=Total cost').first()).toBeVisible();
     await expect(panel.locator('text=Net premium').first()).toBeVisible();
+    await expect(panel.locator('tr').filter({ hasText: 'DEX premium' })).not.toContainText('—');
+    await expect(panel.locator('tr').filter({ hasText: 'Net premium' })).not.toContainText('—');
     // Capital/abort sections are hidden for LIVE offers (showCapitalAndAbort)
     await expect(panel.locator('text=Abort cost').first()).not.toBeVisible();
     await expect(panel.locator('text=Total abort cost').first()).not.toBeVisible();

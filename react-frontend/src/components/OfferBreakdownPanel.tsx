@@ -300,7 +300,7 @@ function NetworkFeeDetail({ bd }: { bd: CostBreakdown }) {
   if (bd.network_fee_detail) {
     return (
       <tr>
-        <td colSpan={4} className="pt-0 pb-2">
+        <td colSpan={3} className="pt-0 pb-2">
           <OnchainFeeDetail d={bd.network_fee_detail} conf={bd.network_fee_confidence} bd={bd} />
         </td>
       </tr>
@@ -313,7 +313,7 @@ function HedgeDetailRow({ bd }: { bd: CostBreakdown }) {
   if (bd.hedge.fee_sum_btc <= 0) return null;
   return (
     <tr>
-      <td colSpan={4} className="pt-0 pb-2">
+      <td colSpan={3} className="pt-0 pb-2">
         <HedgeFeeDetail bd={bd} />
       </td>
     </tr>
@@ -395,7 +395,7 @@ export function AbortCostSection({ abortCost, refPrice }: {
   );
 }
 
-export function CapitalRequiredSection({ capital }: { capital: CapitalRequirement | null | undefined }) {
+export function CapitalRequiredSection({ capital, flat = false }: { capital: CapitalRequirement | null | undefined; flat?: boolean }) {
 	const { filters } = useFilters();
   if (!capital || capital.total_eur <= 0) return null;
 
@@ -405,7 +405,7 @@ export function CapitalRequiredSection({ capital }: { capital: CapitalRequiremen
     : '';
 
   return (
-    <div className="rounded-lg border border-blue/30 bg-blue/5 px-3 py-2.5 flex flex-col gap-1.5 text-[0.72rem]">
+    <div className={`${flat ? 'border-t border-border pt-2.5' : 'rounded-lg border border-blue/30 bg-blue/5 px-3 py-2.5'} flex flex-col gap-1.5 text-[0.72rem]`}>
       <div className="flex items-center justify-between gap-2">
         <span className="text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Capital required</span>
 		<span className="mono-nums font-bold text-[0.95rem] text-text">{formatFiat(capital.total_eur, filters.fiat)}</span>
@@ -435,7 +435,7 @@ export function CapitalRequiredSection({ capital }: { capital: CapitalRequiremen
   );
 }
 
-export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct, refPrice, offerPrice, showCapitalAndAbort = true }: {
+export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct, refPrice, offerPrice, showCapitalAndAbort = true, wideLayout = false, amountUnit: controlledAmountUnit, onAmountUnitChange }: {
   bd: CostBreakdown;
   abortCost: AbortCostBreakdown | null;
   priceDiffPct: number | null;
@@ -446,12 +446,18 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
   // (where the trader is actually about to act on them); past offers have no
   // Trade Tracing panel, so they keep showing both here.
   showCapitalAndAbort?: boolean;
+  /** Use a summary rail beside the cost table when the parent panel has enough width. */
+  wideLayout?: boolean;
+  amountUnit?: 'btc' | 'fiat';
+  onAmountUnitChange?: (unit: 'btc' | 'fiat') => void;
 }) {
 	const { filters } = useFilters();
-  type BreakdownRow = { label: string; btc: number; pct: number; expandable?: 'network' | 'hedge'; cumulative: number };
+	type BreakdownRow = { label: string; btc: number; pct: number; expandable?: 'network' | 'hedge' };
   const [networkFeeOpen, setNetworkFeeOpen] = useState(false);
   const [hedgeFeeOpen, setHedgeFeeOpen] = useState(false);
-  const [amountUnit, setAmountUnit] = useState<'btc' | 'fiat'>('fiat');
+  const [internalAmountUnit, setInternalAmountUnit] = useState<'btc' | 'fiat'>('fiat');
+  const amountUnit = controlledAmountUnit ?? internalAmountUnit;
+  const setAmountUnit = onAmountUnitChange ?? setInternalAmountUnit;
   const hasNetworkFeeDetail = !!bd.network_fee_detail;
 
   const isAsk = bd.trade_direction === 'ask';
@@ -459,7 +465,7 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
   const networkFeeLabel = `Network routing cost${numTxs > 1 ? ` ×${numTxs} txs` : ''}`;
 
   const withdrawalRows: BreakdownRow[] = !isAsk
-    ? [{ label: 'CEX withdrawal', btc: bd.withdrawal_fee_btc, pct: bd.withdrawal_fee_pct, cumulative: 0 }]
+    ? [{ label: 'CEX withdrawal', btc: bd.withdrawal_fee_btc, pct: bd.withdrawal_fee_pct }]
     : [];
   const hedgeRows: BreakdownRow[] = bd.hedge.fee_sum_btc > 0
     ? [{
@@ -467,7 +473,6 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
       btc: bd.hedge.fee_sum_btc,
       pct: bd.hedge.fee_sum_pct,
       expandable: 'hedge',
-      cumulative: 0,
     }]
     : [];
 
@@ -477,17 +482,12 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
   const routingTotalPct = bd.network_fee_pct + conversionPct;
 
   const rows: BreakdownRow[] = [
-    { label: 'CEX taker fee', btc: bd.cex_taker_fee_btc, pct: bd.cex_taker_fee_pct, cumulative: 0 },
+    { label: 'CEX taker fee', btc: bd.cex_taker_fee_btc, pct: bd.cex_taker_fee_pct },
     ...withdrawalRows,
-    { label: networkFeeLabel, btc: routingTotalBTC, pct: routingTotalPct, cumulative: 0, ...(hasNetworkFeeDetail ? { expandable: 'network' as const } : {}) },
+    { label: networkFeeLabel, btc: routingTotalBTC, pct: routingTotalPct, ...(hasNetworkFeeDetail ? { expandable: 'network' as const } : {}) },
     ...hedgeRows,
-    { label: 'DEX platform fee', btc: bd.dex_fee_btc, pct: bd.dex_fee_pct, cumulative: 0 },
+    { label: 'DEX platform fee', btc: bd.dex_fee_btc, pct: bd.dex_fee_pct },
   ];
-  let running = bd.btc_amount;
-  for (const r of rows) {
-    running += r.btc;
-    r.cumulative = running;
-  }
   const routeCex = bd.route_cex || '—';
   const routeDex = bd.route_dex || '—';
   const routeMethodLabels: Record<string, string> = {
@@ -499,6 +499,7 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
   const routeMethod = routeMethodLabels[rawMethod] || rawMethod || '—';
   const profitPct = bd.estimated_profit_pct ?? netPremiumPct;
   const profitBtc = bd.estimated_profit_btc ?? (profitPct != null ? bd.btc_amount * (profitPct / 100) : null);
+  const grossPremiumBtc = priceDiffPct != null ? bd.btc_amount * (priceDiffPct / 100) : null;
   const profitCls = profitPct != null && profitPct < 0 ? 'text-red' : profitPct != null && profitPct > 0 ? 'text-green' : 'text-muted';
   const netCls = netPremiumPct != null
     ? netPremiumPct <= 0 ? 'text-red' : netPremiumPct <= 2 ? 'text-green' : 'text-accent'
@@ -514,45 +515,56 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
 
   return (
     <div className="flex flex-col gap-3 text-[0.72rem]">
-      <div className="flex items-baseline justify-between gap-2 flex-wrap">
+      <div className="flex items-center justify-between gap-3 border-b border-border/70 pb-2">
         <div className="flex items-center gap-2">
           <span className="text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Trade cost breakdown</span>
           <span className={`text-[0.6rem] font-semibold px-1.5 py-0.5 rounded ${isAsk ? 'bg-orange-900/30 text-orange-400' : 'bg-blue-900/30 text-blue-400'}`}>
             {isAsk ? 'Ask side' : 'Bid side'}
           </span>
         </div>
-        <div className="flex items-baseline gap-1.5">
-          <span className="text-text text-[0.9rem] font-semibold mono-nums">{fmt8(bd.btc_amount)} BTC</span>
-		  <span className="text-muted text-[0.75rem] mono-nums">{fmtFiatAmount(fiatValue(bd.btc_amount), filters.fiat)}</span>
-        </div>
-      </div>
-
-      <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-bg px-2.5 py-2">
-        <span className="text-muted shrink-0">Best route</span>
-        <span className="text-right font-medium text-[0.72rem]">
-          <span className="text-text">{routeCex}</span>
-          <span className="text-muted mx-1.5">→</span>
-          <span className="text-text">{routeDex}</span>
-          <span className="text-muted mx-1.5">via</span>
-          <span className="text-accent">{routeMethod}</span>
+        {wideLayout && (
+          <div className="hidden min-w-0 items-center gap-1.5 text-[0.68rem] lg:flex">
+            <span className="shrink-0 text-muted">Route</span>
+            <span className="truncate font-medium text-text">{routeCex} → {routeDex}</span>
+            <span className="truncate text-accent">· {routeMethod}</span>
+          </div>
+        )}
+        <span className="shrink-0 text-[0.86rem] font-semibold text-text mono-nums">
+          {amountUnit === 'btc' ? `${fmt8(bd.btc_amount)} BTC` : fmtFiatAmount(fiatValue(bd.btc_amount), filters.fiat)}
         </span>
       </div>
 
-      <table className="w-full">
+      <div className={wideLayout ? 'grid items-start gap-3 lg:grid-cols-[minmax(0,1fr)_17rem] xl:grid-cols-[minmax(0,1fr)_19rem]' : 'contents'}>
+        <div className={wideLayout ? 'flex min-w-0 flex-col gap-3' : 'contents'}>
+          {!wideLayout && <div className="flex items-center justify-between gap-3 rounded-md border border-border bg-bg px-2.5 py-2">
+            <span className="text-muted shrink-0">Best route</span>
+            <span className="text-right font-medium text-[0.72rem]">
+              <span className="text-text">{routeCex}</span>
+              <span className="text-muted mx-1.5">→</span>
+              <span className="text-text">{routeDex}</span>
+              <span className="text-muted mx-1.5">via</span>
+              <span className="text-accent">{routeMethod}</span>
+            </span>
+          </div>}
+
+          <div className="min-w-0 overflow-x-auto">
+          <table className="w-full min-w-[34rem]">
         <thead>
           <tr className="border-b border-border">
             <th className="text-left text-muted font-normal pb-1.5 pr-3 text-[0.63rem] uppercase tracking-wide">Component</th>
             <th className="text-right font-normal pb-1.5 pr-3 text-[0.63rem]">
-              <span className="inline-flex items-center gap-0.5">
-                <button type="button" onClick={() => setAmountUnit('btc')}
-                  className={`px-1.5 py-px rounded transition-colors ${amountUnit === 'btc' ? 'text-accent font-semibold' : 'text-muted hover:text-text'}`}>BTC</button>
-                <span className="text-border">|</span>
-                <button type="button" onClick={() => setAmountUnit('fiat')}
-                  className={`px-1.5 py-px rounded transition-colors ${amountUnit === 'fiat' ? 'text-accent font-semibold' : 'text-muted hover:text-text'}`}>Fiat</button>
-              </span>
+              {controlledAmountUnit != null ? (
+                <span className="uppercase tracking-wide text-muted">{amountUnit === 'btc' ? 'BTC' : filters.fiat}</span>
+              ) : (
+                <span className="inline-flex items-center rounded border border-border bg-bg/70 p-0.5">
+                  <button type="button" aria-pressed={amountUnit === 'btc'} onClick={() => setAmountUnit('btc')}
+                    className={`rounded-sm px-1.5 py-0.5 transition-colors ${amountUnit === 'btc' ? 'bg-accent/15 text-accent font-semibold' : 'text-muted hover:text-text'}`}>BTC</button>
+                  <button type="button" aria-pressed={amountUnit === 'fiat'} onClick={() => setAmountUnit('fiat')}
+                    className={`rounded-sm px-1.5 py-0.5 transition-colors ${amountUnit === 'fiat' ? 'bg-accent/15 text-accent font-semibold' : 'text-muted hover:text-text'}`}>Fiat</button>
+                </span>
+              )}
             </th>
-            <th className="text-right text-muted font-normal pb-1.5 pr-3 text-[0.63rem] uppercase tracking-wide">% of trade</th>
-            <th className="text-right text-muted font-normal pb-1.5 text-[0.63rem] uppercase tracking-wide">Example</th>
+            <th className="text-right text-muted font-normal pb-1.5 text-[0.63rem] uppercase tracking-wide">% of trade</th>
           </tr>
         </thead>
         <tbody>
@@ -561,10 +573,7 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
             <td className="pr-3 py-1 text-right text-text mono-nums">
 			  {amountUnit === 'btc' ? fmt8(bd.btc_amount) : fmtFiatAmount(fiatValue(bd.btc_amount), filters.fiat)}
             </td>
-            <td className="pr-3 py-1 text-right text-muted">—</td>
-            <td className="py-1 text-right text-text mono-nums font-medium rounded-r">
-			  {amountUnit === 'btc' ? fmt8(bd.btc_amount) : fmtFiatAmount(fiatValue(bd.btc_amount), filters.fiat)}
-            </td>
+            <td className="py-1 text-right text-muted mono-nums rounded-r">100%</td>
           </tr>
           {rows.map((r, i) => {
             const isNetworkFee = r.expandable === 'network';
@@ -593,10 +602,7 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
                   <td className="pr-3 py-1 text-right text-text mono-nums">
 					{amountUnit === 'btc' ? fmt8(r.btc) : fmtFiatAmount(fiatValue(r.btc), filters.fiat)}
                   </td>
-                  <td className="pr-3 py-1 text-right text-text mono-nums">{fmtPct(r.pct)}</td>
-                  <td className="py-1 text-right text-text mono-nums rounded-r">
-					{amountUnit === 'btc' ? fmt8(r.cumulative) : fmtFiatAmount(fiatValue(r.cumulative), filters.fiat)}
-                  </td>
+                  <td className="py-1 text-right text-text mono-nums rounded-r">{fmtPct(r.pct)}</td>
                 </tr>
                 {isNetworkFee && networkFeeOpen && <NetworkFeeDetail bd={bd} />}
                 {isHedgeFee && hedgeFeeOpen && <HedgeDetailRow bd={bd} />}
@@ -608,47 +614,54 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
             <td className="pr-3 pt-2.5 pb-1 text-right font-semibold text-text mono-nums">
 			  {amountUnit === 'btc' ? fmt8(bd.total_cost_btc) : fmtFiatAmount(fiatValue(bd.total_cost_btc), filters.fiat)}
             </td>
-            <td className="pr-3 pt-2.5 pb-1 text-right font-semibold text-red mono-nums">{fmtPct(bd.total_cost_pct)}</td>
-            <td className="pt-2.5 pb-1 text-right font-semibold text-text mono-nums">
-              {amountUnit === 'btc'
-                ? fmt8(bd.btc_amount + bd.total_cost_btc)
-				: fmtFiatAmount(fiatValue(bd.btc_amount + bd.total_cost_btc), filters.fiat)}
-            </td>
+            <td className="pt-2.5 pb-1 text-right font-semibold text-red mono-nums">{fmtPct(bd.total_cost_pct)}</td>
           </tr>
           <tr>
             <td className="pr-3 py-1 text-muted">DEX premium</td>
-            <td className="pr-3 py-1 text-right text-muted">—</td>
             <td className={`pr-3 py-1 text-right font-medium mono-nums ${premiumClass(priceDiffPct)}`}>
+              {grossPremiumBtc == null
+                ? '—'
+                : amountUnit === 'btc'
+                  ? fmtSignedBtc(grossPremiumBtc)
+                  : fmtFiatAmount(fiatValue(grossPremiumBtc), filters.fiat)}
+            </td>
+            <td className={`py-1 text-right font-medium mono-nums ${premiumClass(priceDiffPct)}`}>
               {priceDiffPct != null ? fmtPct(priceDiffPct) : '—'}
             </td>
-            <td className="py-1 text-right text-muted">—</td>
           </tr>
           <tr className="border-t border-border">
             <td className="pr-3 pt-2.5 font-bold text-text text-[0.75rem]">Net premium</td>
-            <td className="pr-3 pt-2.5 text-right text-muted">—</td>
-            <td className={`pr-3 pt-2.5 text-right font-bold text-[0.82rem] mono-nums ${netCls}`}>
-              {netPremiumPct != null ? fmtPct(netPremiumPct) : '—'}
-            </td>
-            <td className={`pt-2.5 text-right font-bold text-[0.82rem] mono-nums ${profitCls}`}>
+            <td className={`pr-3 pt-2.5 text-right font-bold text-[0.82rem] mono-nums ${profitCls}`}>
               {profitBtc != null
 				? (amountUnit === 'btc' ? fmtSignedBtc(profitBtc) : fmtFiatAmount(fiatValue(profitBtc), filters.fiat))
                 : '—'}
             </td>
+            <td className={`pt-2.5 text-right font-bold text-[0.82rem] mono-nums ${netCls}`}>
+              {netPremiumPct != null ? fmtPct(netPremiumPct) : '—'}
+            </td>
           </tr>
         </tbody>
-      </table>
+          </table>
+          </div>
 
-      <div className={`rounded-lg border ${profitCardBorder} ${profitCardBg} px-3 py-2.5`}>
+        </div>
+
+        <div className={wideLayout ? 'flex min-w-0 flex-col gap-3 lg:sticky lg:top-0' : 'contents'}>
+          <div className={wideLayout
+            ? `border-t-2 ${profitCardBorder} pt-2.5`
+            : `rounded-lg border ${profitCardBorder} ${profitCardBg} px-3 py-2.5`
+          }>
         <div className="flex items-center justify-between gap-3">
           <span className="text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Estimated profit</span>
           <span className={`mono-nums font-bold text-[0.95rem] ${profitCls}`}>
-            {profitBtc != null ? fmtSignedBtc(profitBtc) + ' BTC' : '—'}
+            {profitBtc == null
+              ? '—'
+              : amountUnit === 'btc'
+                ? `${fmtSignedBtc(profitBtc)} BTC`
+                : fmtFiatAmount(fiatValue(profitBtc), filters.fiat)}
           </span>
         </div>
-        <div className="flex items-center justify-end gap-3 mt-0.5">
-          <span className={`mono-nums text-[0.75rem] font-medium ${profitCls}`}>
-			{fmtFiatAmount(fiatValue(profitBtc), filters.fiat)}
-          </span>
+        <div className="mt-0.5 flex items-center justify-end gap-3">
           <span className={`mono-nums text-[0.75rem] font-medium ${profitCls}`}>
             {profitPct != null ? fmtPct(profitPct) : '—'}
           </span>
@@ -669,14 +682,16 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
             </div>
           </div>
         )}
-      </div>
+          </div>
 
-      {showCapitalAndAbort && (
-        <>
-          <CapitalRequiredSection capital={bd.capital} />
-          <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
-        </>
-      )}
+          {showCapitalAndAbort && (
+            <>
+              <CapitalRequiredSection capital={bd.capital} flat={wideLayout} />
+              <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
+            </>
+          )}
+        </div>
+      </div>
     </div>
   );
 }

@@ -5,7 +5,7 @@ import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
 import { buildOfferKeys, buildStableOfferKey } from '../utils/offerIdentity';
-import { durationMinutes, formatDateTimeLabel, parseUtcTimestamp } from '../utils/formatters';
+import { durationMinutes, formatDateTimeLabel, formatDuration, formatTime, parseUtcTimestamp } from '../utils/formatters';
 import {
   getBtcMax,
   getBtcMin,
@@ -27,7 +27,7 @@ import {
   isOfferLive,
   pastProfitableOrderAsOffer,
 } from '../utils/offerAccess';
-import { CostBreakdownPanel, OfferTimeMeta, SizeToggle, type SizeMode } from './OfferBreakdownPanel';
+import { CostBreakdownPanel, SizeToggle, type SizeMode } from './OfferBreakdownPanel';
 import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
 import { LiveOfferFilters, PastOfferFilters } from './ControlPanel';
@@ -748,15 +748,14 @@ function TradeRowMetric({ value, valueClassName = 'text-text', className = '' }:
 }
 
 function unitToggleButtonClass(active: boolean): string {
-  return `rounded px-1 normal-case transition-colors ${active ? 'text-accent font-semibold' : 'text-muted hover:text-text'}`;
+  return `rounded-sm px-1.5 py-0.5 normal-case leading-none transition-colors ${active ? 'bg-accent/15 text-accent font-semibold' : 'text-muted hover:text-text'}`;
 }
 
 function UnitToggle({ fiat, unit, onChange }: { fiat: string; unit: SizeUnit; onChange: (unit: SizeUnit) => void }) {
   return (
-    <span className="inline-flex shrink-0 items-center gap-0.5">
-      <button type="button" onClick={() => onChange('btc')} className={unitToggleButtonClass(unit === 'btc')}>BTC</button>
-      <span className="text-border">|</span>
-      <button type="button" onClick={() => onChange('fiat')} className={unitToggleButtonClass(unit === 'fiat')}>{fiat}</button>
+    <span className="inline-flex shrink-0 items-center rounded border border-border bg-bg/70 p-0.5">
+      <button type="button" aria-pressed={unit === 'btc'} onClick={() => onChange('btc')} className={unitToggleButtonClass(unit === 'btc')}>BTC</button>
+      <button type="button" aria-pressed={unit === 'fiat'} onClick={() => onChange('fiat')} className={unitToggleButtonClass(unit === 'fiat')}>{fiat}</button>
     </span>
   );
 }
@@ -874,30 +873,25 @@ function formatRange(minLabel: string, maxLabel: string): string | null {
   return `up to ${maxLabel}`;
 }
 
-function PastOfferDetailSection({ title, children }: { title: string; children: ReactNode }) {
+function PastOfferMetric({ label, value, detail, hint }: { label: ReactNode; value: string; detail?: string; hint?: string }) {
   return (
-    <div className="rounded-md border border-border bg-bg px-2.5 py-2 text-[0.68rem]">
-      <div className="mb-1.5 text-[0.62rem] font-semibold uppercase tracking-widest text-muted">{title}</div>
-      <div className="flex flex-col gap-1.5">{children}</div>
-    </div>
-  );
-}
-
-function PastOfferDetailRow({ label, value, hint }: { label: string; value: string; hint?: string }) {
-  return (
-    <div className="flex items-center justify-between gap-3">
-      <span className="text-muted shrink-0">{label}</span>
-      <span className="min-w-0 truncate text-right font-medium text-text mono-nums tabular-nums" title={hint ?? value}>
+    <div className="min-w-0">
+      <dt className="mb-1 flex items-center gap-1.5 text-[0.58rem] font-semibold uppercase tracking-widest text-muted">{label}</dt>
+      <dd className="min-w-0 truncate text-[0.72rem] font-medium text-text mono-nums tabular-nums" title={hint ?? value}>
         {value}
-      </span>
+      </dd>
+      {detail && <dd className="mt-0.5 truncate text-[0.62rem] text-muted mono-nums tabular-nums">{detail}</dd>}
     </div>
   );
 }
 
-function PastOfferSupplementalDetails({ order, offer, fiat }: {
+function PastOfferOverview({ order, offer, fiat, timezone, amountUnit, onAmountUnitChange }: {
   order: PastProfitableOrder;
   offer: Offer;
   fiat: string;
+  timezone: string;
+  amountUnit: SizeUnit;
+  onAmountUnitChange: (unit: SizeUnit) => void;
 }) {
   const raw = order.offer;
   const offerPrice = getOfferPrice(offer);
@@ -907,42 +901,44 @@ function PastOfferSupplementalDetails({ order, offer, fiat }: {
   const fiatMin = getFiatMin(offer);
   const fiatMax = getFiatMax(offer);
   const avgObservedBtc = offerNumber(raw, 'avg_btc_amount');
-
   const fiatRange = formatRange(fmtFiat(fiatMin, fiat), fmtFiat(fiatMax, fiat));
-
-  const hasPricing = offerPrice > 0 || refPrice != null;
-  const hasVolume = fiatRange != null || avgObservedBtc != null;
-
-  if (!hasPricing && !hasVolume) return null;
+  const btcRange = formatRange(fmtBTC(getBtcMin(offer)), fmtBTC(getBtcMax(offer)));
+  const firstSeen = getFirstSeen(offer);
+  const lastSeen = getLastSeen(offer);
+  const volumeRange = amountUnit === 'btc' ? btcRange : fiatRange;
+  const averageVolume = avgObservedBtc == null
+    ? null
+    : amountUnit === 'btc'
+      ? fmtBTC(avgObservedBtc)
+      : fmtFiat(refPrice == null ? null : avgObservedBtc * refPrice, fiat);
 
   return (
-    <div className="grid grid-cols-1 gap-2 lg:grid-cols-2">
-      {hasPricing && (
-        <PastOfferDetailSection title="Pricing">
-          {offerPrice > 0 && (
-            <PastOfferDetailRow label="DEX offer price" value={fmtFiat(offerPrice, fiat)} />
-          )}
-          {refPrice != null && (
-            <PastOfferDetailRow label="CEX reference price" value={fmtFiat(refPrice, fiat)} />
-          )}
-        </PastOfferDetailSection>
-      )}
-
-      {hasVolume && (
-        <PastOfferDetailSection title="Volume limits">
-          {fiatRange != null && (
-            <PastOfferDetailRow label={`${fiat} range`} value={fiatRange} />
-          )}
-          {avgObservedBtc != null && (
-            <PastOfferDetailRow
-              label="Avg observed size"
-              value={fmtBTC(avgObservedBtc)}
-              hint="Lifecycle average while the offer was live"
-            />
-          )}
-        </PastOfferDetailSection>
-      )}
-    </div>
+    <section aria-label="Offer overview" className="border-b border-border/70 pb-2.5">
+      <dl className="grid grid-cols-2 gap-x-5 gap-y-2.5 sm:grid-cols-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,1.25fr)_minmax(0,0.9fr)_minmax(0,1.15fr)]">
+        <PastOfferMetric label="Internal ID" value={String(order.id)} />
+        <PastOfferMetric label="Payment" value={order.payment_methods?.join(', ') || '—'} />
+        <PastOfferMetric
+          label="Observed"
+          value={`${formatTime(firstSeen, timezone)} – ${formatTime(lastSeen, timezone)}`}
+          detail={`${formatDuration(firstSeen, lastSeen)}${getPriceType(offer) ? ` · ${getPriceType(offer)} price` : ''}`}
+        />
+        {(offerPrice > 0 || refPrice != null) && (
+          <PastOfferMetric
+            label="Prices"
+            value={offerPrice > 0 ? fmtFiat(offerPrice, fiat) : '—'}
+            detail={refPrice != null ? `${fmtFiat(refPrice, fiat)} reference` : undefined}
+          />
+        )}
+        {volumeRange != null && (
+          <PastOfferMetric
+            label={<><span>Volume</span><UnitToggle fiat={fiat} unit={amountUnit} onChange={onAmountUnitChange} /></>}
+            value={volumeRange}
+            detail={averageVolume != null ? `${averageVolume} average` : undefined}
+            hint="Offered range and lifecycle average while the offer was live"
+          />
+        )}
+      </dl>
+    </section>
   );
 }
 
@@ -952,6 +948,7 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
   onScenarioModeChange: (value: SizeMode) => void;
 }) {
   const { timezone } = useTimezone();
+  const [amountUnit, setAmountUnit] = useState<SizeUnit>('fiat');
   const offer = pastProfitableOrderAsOffer(order);
   const refPrice = getRefPrice(offer);
   // The control-panel mode can request the capped view for an offer that has no
@@ -963,37 +960,16 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
       : scenarioMode;
   const costBreakdown = getDisplayCostBreakdown(offer, effectiveMode);
   const offerPrice = getOfferPrice(offer);
-  const btcVolumeRange = formatRange(fmtBTC(getBtcMin(offer)), fmtBTC(getBtcMax(offer)));
 
   return (
-    <div className="flex flex-col gap-3">
-      <OfferTimeMeta
-        firstSeen={getFirstSeen(offer)}
-        lastSeen={getLastSeen(offer)}
-        isLive={isOfferLive(offer)}
-        timezone={timezone}
-        priceType={getPriceType(offer)}
-      />
-      <div className="text-[0.68rem] text-muted" title="Internal offer ID">
-        <span className="uppercase tracking-wide text-[0.6rem] mr-1">ID</span>
-        <span className="text-text">{order.offer_id ?? order.id}</span>
-      </div>
-      {order.payment_methods?.length ? (
-        <div className="text-[0.68rem] text-muted">
-          <span className="uppercase tracking-wide text-[0.6rem] mr-1">Payment</span>
-          <span className="text-text">{order.payment_methods.join(', ')}</span>
-        </div>
-      ) : null}
-      {btcVolumeRange && (
-        <div className="text-[0.68rem] text-muted">
-          <span className="uppercase tracking-wide text-[0.6rem] mr-1">Volume</span>
-          <span className="text-text">{btcVolumeRange}</span>
-        </div>
-      )}
-      <PastOfferSupplementalDetails
+    <div data-testid="past-offer-detail" className="flex flex-col gap-3">
+      <PastOfferOverview
         order={order}
         offer={offer}
         fiat={order.pricing.fiat_currency || 'EUR'}
+        timezone={timezone}
+        amountUnit={amountUnit}
+        onAmountUnitChange={setAmountUnit}
       />
       {costBreakdown ? (
         <div className="flex flex-col gap-3">
@@ -1014,6 +990,9 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
             netPremiumPct={getNetPremiumPercent(offer, effectiveMode)}
             refPrice={refPrice}
             offerPrice={offerPrice}
+            wideLayout
+            amountUnit={amountUnit}
+            onAmountUnitChange={setAmountUnit}
           />
         </div>
       ) : (
@@ -1409,6 +1388,18 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     () => sortProfitableOrders(filteredOrders, sort, mode, netProfitUnit, sizeUnit),
     [filteredOrders, sort, mode, netProfitUnit, sizeUnit],
   );
+  const expandedOrder = expandedId == null
+    ? null
+    : sortedOrders.find(order => order.id === expandedId) ?? null;
+  const expandedDetailedOrder = expandedOrder == null
+    ? undefined
+    : isDetailedOrder(expandedOrder) ? expandedOrder : detailedOrdersByID.get(expandedOrder.id);
+
+  // A changed filter can remove the open order from the list. Return to the
+  // list rather than leaving a detail view without a matching result.
+  useEffect(() => {
+    if (expandedId != null && expandedOrder == null) setExpandedId(null);
+  }, [expandedId, expandedOrder]);
 
   // The filtered orders double as chart overlays. Only detailed orders carry
   // the pricing/analysis payload the chart needs; compact rows join once the
@@ -1860,6 +1851,38 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
             </div>
           ) : (
           <div className="min-h-0 flex-1 flex flex-col overflow-hidden">
+            {expandedOrder != null ? (
+              <div className="relative min-h-0 flex-1 overflow-y-auto bg-surface">
+                <button
+                  type="button"
+                  aria-label="Close past offer details"
+                  onClick={() => setExpandedId(null)}
+                  className="absolute right-3 top-3 z-20 flex h-7 w-7 items-center justify-center rounded border-none bg-transparent text-xl leading-none text-red transition-colors hover:bg-red/10 hover:text-red/70"
+                  title="Close"
+                >
+                  ×
+                </button>
+                <div className="px-3 py-2.5">
+                  {scenarioDataPending ? (
+                    <div className="flex items-center gap-3 px-1 py-2 text-[0.78rem] text-muted">
+                      <LoadingSpinner size={28} />
+                      <span>Selected-volume breakdown is still being calculated.</span>
+                    </div>
+                  ) : !expandedDetailedOrder ? (
+                    <div className="flex items-center gap-3 px-1 py-2 text-[0.78rem] text-muted">
+                      <LoadingSpinner size={28} />
+                      <span>Detailed row analysis is still loading.</span>
+                    </div>
+                  ) : (
+                    <PastOrderBreakdown
+                      order={expandedDetailedOrder}
+                      scenarioMode={expandedScenarioMode}
+                      onScenarioModeChange={setExpandedScenarioMode}
+                    />
+                  )}
+                </div>
+              </div>
+            ) : (
             <div ref={tradesListRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-auto">
               {sortedOrders.length > 0 && (
                 <ProfitableTradesHeader
@@ -1890,7 +1913,6 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                 {rowVirtualizer.getVirtualItems().map(virtualRow => {
                   const order = sortedOrders[virtualRow.index];
                   const stableKey = sortedStableKeys[virtualRow.index];
-                  const isOpen = expandedId === order.id;
                   const activeScenario = orderScenarioSummary(order, mode);
                   const detailedOrder = isDetailedOrder(order) ? order : detailedOrdersByID.get(order.id);
                   const detailReady = !!detailedOrder;
@@ -1915,14 +1937,14 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                       <div
                         role="button"
                         tabIndex={0}
-                        onClick={() => toggleExpanded(order, isOpen, detailedOrder)}
+                        onClick={() => toggleExpanded(order, false, detailedOrder)}
                         onKeyDown={event => {
                           if (event.key === 'Enter' || event.key === ' ') {
                             event.preventDefault();
-                            toggleExpanded(order, isOpen, detailedOrder);
+                            toggleExpanded(order, false, detailedOrder);
                           }
                         }}
-                        className={`w-full min-w-0 cursor-pointer px-3 py-2 text-left transition-colors ${isOpen ? 'bg-bg/40' : 'hover:bg-white/5'}`}
+                        className="w-full min-w-0 cursor-pointer px-3 py-2 text-left transition-colors hover:bg-white/5"
                       >
                         <div data-testid="past-offers-row" className={`${PROFITABLE_TRADES_GRID_COLS} text-[0.72rem]`}>
                           <div className="min-w-0 overflow-hidden">
@@ -1954,37 +1976,17 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                               />
                             )}
                           </span>
-                          <span className="shrink-0 text-right text-muted">{isOpen ? '▲' : detailReady ? '▼' : '…'}</span>
+                          <span className="shrink-0 text-right text-muted">{detailReady ? '▼' : '…'}</span>
                         </div>
                       </div>
 
-                      {isOpen && (
-                        <div className="border-t border-border bg-bg/20 px-3 py-3">
-                          {scenarioDataPending ? (
-                            <div className="flex items-center gap-3 px-1 py-2 text-[0.78rem] text-muted">
-                              <LoadingSpinner size={28} />
-                              <span>Selected-volume breakdown is still being calculated.</span>
-                            </div>
-                          ) : !detailedOrder ? (
-                            <div className="flex items-center gap-3 px-1 py-2 text-[0.78rem] text-muted">
-                              <LoadingSpinner size={28} />
-                              <span>Detailed row analysis is still loading.</span>
-                            </div>
-                          ) : (
-                            <PastOrderBreakdown
-                              order={detailedOrder}
-                              scenarioMode={expandedScenarioMode}
-                              onScenarioModeChange={setExpandedScenarioMode}
-                            />
-                          )}
-                        </div>
-                      )}
                     </div>
                   );
                 })}
                 </div>
               )}
             </div>
+            )}
           </div>
           )}
           </div>
