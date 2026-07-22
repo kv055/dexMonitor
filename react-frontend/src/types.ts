@@ -212,6 +212,8 @@ export interface LiveOfferScenarioCosts {
 
 export interface LiveOfferScenario {
   cap_fiat?: number | null;
+  cost_policy?: string | null;
+  assumptions?: string[] | null;
   trade_size_btc: number;
   trade_size_fiat: number;
   route: LiveOfferRoute;
@@ -225,6 +227,7 @@ export interface LiveOfferScenario {
 export interface LiveOfferAnalysis {
   full_volume: LiveOfferScenario;
   capped_volume?: LiveOfferScenario | null;
+  capped_volume_executable?: boolean;
   min_volume?: LiveOfferScenario | null;
 }
 
@@ -573,6 +576,7 @@ export interface PastProfitableOrder {
   pricing: LiveOfferPricing;
   summary: PastProfitableOrderSummary;
   analysis: LiveOfferAnalysis;
+  observation_count?: number;
   offer: Record<string, string | number | boolean | null>;
 }
 
@@ -585,6 +589,7 @@ export interface PastProfitableOrderCompact {
   status: LiveOfferStatus;
   pricing: LiveOfferPricing;
   summary: PastProfitableOrderSummary;
+  observation_count?: number;
 }
 
 export type TakerOpportunityMode = 'net_full' | 'net_capped' | 'net_min';

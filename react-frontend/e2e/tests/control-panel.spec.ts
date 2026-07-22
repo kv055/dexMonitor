@@ -31,7 +31,11 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
     await expect(label('Timeframe')).toBeVisible();
     await expect(label('Premium mode')).toBeVisible();
-    await expect(cp.getByRole('button', { name: 'Net Min', exact: true })).toBeVisible();
+    await expect(cp.getByRole('combobox', { name: 'Premium mode' })).toHaveValue('net_full');
+    const payments = cp.getByRole('combobox', { name: 'Payments' });
+    await expect(payments).toHaveValue('settings');
+    await payments.selectOption('all');
+    await expect(payments).toHaveValue('all');
     await expect(label('Payment')).toHaveCount(0);
     await expect(label('Premium range')).toHaveCount(0);
     // Shared controls stay put
@@ -41,6 +45,30 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await jsClick(page.getByRole('button', { name: 'Live Offers', exact: true }));
     await expect(label('Payment')).toBeVisible();
     await expect(label('Timeframe')).toHaveCount(0);
+  });
+
+  test('live offers use the full-panel detail view', async ({ page }) => {
+    let row = page.getByTestId('live-offers-row').first();
+    await expect(row).toBeVisible();
+    await expect(row.locator('input[type="checkbox"]')).not.toBeChecked();
+
+    await jsClick(row);
+    const detail = page.getByTestId('live-offer-detail');
+    await expect(detail).toBeVisible();
+    await expect(page.getByRole('region', { name: 'Trade tracing' })).toBeVisible();
+    await expect(detail.getByText('Observed', { exact: true })).toHaveCount(0);
+    await expect(detail.getByText('History', { exact: true })).toHaveCount(0);
+
+    const close = page.getByRole('button', { name: 'Close live offer details' });
+    await jsClick(close);
+    row = page.getByTestId('live-offers-row').first();
+    await expect(row).toBeVisible();
+    await expect(row.locator('input[type="checkbox"]')).not.toBeChecked();
+
+    await jsClick(row.locator('input[type="checkbox"]'));
+    await jsClick(row);
+    await jsClick(page.getByRole('button', { name: 'Close live offer details' }));
+    await expect(page.getByTestId('live-offers-row').first().locator('input[type="checkbox"]')).toBeChecked();
   });
 
   test('direction pills select a side', async ({ page }) => {

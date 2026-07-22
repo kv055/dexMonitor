@@ -51,11 +51,11 @@ test('past-offer headers align with their left-aligned values', async ({ page })
 
   const rowCells = row.locator(':scope > *');
   const columns = [
-    { title: 'first seen', rowIndex: 3 },
-    { title: 'last seen', rowIndex: 4 },
-    { title: 'duration', rowIndex: 5 },
-    { title: 'size', rowIndex: 6 },
-    { title: 'net profit', rowIndex: 7 },
+    { title: 'first seen', rowIndex: 4 },
+    { title: 'last seen', rowIndex: 5 },
+    { title: 'duration', rowIndex: 6 },
+    { title: 'size', rowIndex: 7 },
+    { title: 'net profit', rowIndex: 8 },
   ];
   for (const { title, rowIndex } of columns) {
     const sortButton = header.locator(`button[title="Sort by ${title}"]:visible`);
@@ -68,6 +68,9 @@ test('past-offer headers align with their left-aligned values', async ({ page })
 	expect(Math.abs(headerBox!.x - rowBox!.x)).toBeLessThan(1);
   }
 
+  await expect(header.locator('button[title="Sort by premium"]:visible')).toBeVisible();
+  await expect(rowCells.nth(2)).toHaveText('3.3%');
+
   for (const title of ['size', 'net profit']) {
     const sortButton = header.locator(`button[title="Sort by ${title}"]:visible`);
     const unitToggle = sortButton.locator('xpath=following-sibling::*[1]');
@@ -79,6 +82,31 @@ test('past-offer headers align with their left-aligned values', async ({ page })
     expect(toggleBox).not.toBeNull();
     expect(toggleBox!.x - (sortBox!.x + sortBox!.width)).toBeLessThanOrEqual(12);
   }
+
+  const firstSeenSorter = header.locator('button[title="Sort by first seen"]:visible');
+  const lastSeenSorter = header.locator('button[title="Sort by last seen"]:visible');
+  await jsClick(firstSeenSorter);
+  await expect(firstSeenSorter).toHaveAttribute('aria-sort', 'descending');
+  await jsClick(firstSeenSorter);
+  await expect(firstSeenSorter).toHaveAttribute('aria-sort', 'ascending');
+  await jsClick(firstSeenSorter);
+  await expect(firstSeenSorter).not.toHaveAttribute('aria-sort');
+  await expect(lastSeenSorter).not.toHaveAttribute('aria-sort');
+
+  const chartCheckbox = row.locator('input[type="checkbox"]');
+  await expect(chartCheckbox).not.toBeChecked();
+  await jsClick(row);
+  const closeDetails = page.getByRole('button', { name: 'Close past offer details' });
+  await expect(closeDetails).toBeVisible();
+  await expect(header).toHaveCount(0);
+  await jsClick(closeDetails);
+  await expect(header).toBeVisible();
+  await expect(row.locator('input[type="checkbox"]')).not.toBeChecked();
+
+  await jsClick(row.locator('input[type="checkbox"]'));
+  await jsClick(row);
+  await jsClick(page.getByRole('button', { name: 'Close past offer details' }));
+  await expect(row.locator('input[type="checkbox"]')).toBeChecked();
 });
 
 test('Net Min uses the precomputed minimum-volume scenario', async ({ page }) => {
@@ -113,11 +141,20 @@ test('Net Min uses the precomputed minimum-volume scenario', async ({ page }) =>
       net_profit_btc: 0.001, net_profit_fiat: 60,
       trade_size_btc: 1, trade_size_fiat: 60000, net_percent: 3,
     },
+    observation_count: 37,
     analysis: {
       full_volume: scenario(1, 60000, 0.001, 60, 3),
-      min_volume: scenario(0.02, 1200, 0.00001, 0.6, 0.05),
+      min_volume: { ...scenario(0.02, 1200, 0.00001, 0.6, 0.05), cost_policy: 'historical_min_volume' },
     },
-    offer: {},
+    offer: {
+      price: 62000,
+      avg_ref_price: 60000,
+      btc_min: 0.02,
+      btc_max: 1,
+      fiat_min: 1200,
+      fiat_max: 60000,
+      avg_btc_amount: 0.4,
+    },
   };
 
   await page.route('**/api/dashboard/analytics', route => route.fulfill({
@@ -133,9 +170,18 @@ test('Net Min uses the precomputed minimum-volume scenario', async ({ page }) =>
 
   await gotoAndWaitForData(page);
   await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
-  await jsClick(page.getByRole('button', { name: 'Net Min', exact: true }));
+  await page.getByRole('combobox', { name: 'Premium mode' }).selectOption('net_min');
 
   const row = page.getByTestId('past-offers-row').first();
   await expect(row).toContainText('0,0200 BTC');
   await expect(row).toContainText('0,60 €');
+
+  await jsClick(row);
+  const detail = page.getByTestId('past-offer-detail');
+  await expect(detail).toContainText('37 snapshots');
+  await expect(detail).toContainText('Minimum-size estimate');
+  await expect(detail).toContainText('1.200,00 € – 60.000,00 €');
+  await jsClick(detail.getByRole('button', { name: 'BTC', exact: true }).first());
+  await expect(detail).toContainText('0,0200 BTC – 1,0000 BTC');
+  await expect(detail.getByRole('button', { name: 'BTC', exact: true })).toHaveAttribute('aria-pressed', 'true');
 });

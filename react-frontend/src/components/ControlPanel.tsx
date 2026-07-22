@@ -379,10 +379,13 @@ export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersP
 // their controls are shown in a separate panel. Keeping the selector here
 // makes the active historical dataset explicit while the Past Offers view is
 // open.
-export function PastOfferFilters() {
+export function PastOfferFilters({ paymentFilter, onPaymentFilterChange }: {
+  paymentFilter: 'settings' | 'all';
+  onPaymentFilterChange: (filter: 'settings' | 'all') => void;
+}) {
   const { filters, setFilters } = useFilters();
 
-  return (
+  return (<>
     <label className="flex flex-col gap-1">
       <span className={labelCls}>Fiat</span>
       <select
@@ -394,5 +397,17 @@ export function PastOfferFilters() {
         {FIAT_OPTIONS.map(currency => <option key={currency} value={currency}>{currency}</option>)}
       </select>
     </label>
-  );
+    <label className="flex flex-col gap-1">
+      <span className={labelCls}>Payments</span>
+      <select
+        value={paymentFilter}
+        onChange={event => onPaymentFilterChange(event.target.value as 'settings' | 'all')}
+        className={controlCls}
+        title="Choose whether past offers use every payment method or only methods enabled in Settings"
+      >
+        <option value="settings">Selected in Settings</option>
+        <option value="all">All payment methods</option>
+      </select>
+    </label>
+  </>);
 }

@@ -76,7 +76,8 @@ CREATE TABLE offers (
     min_volume_analyzed BOOLEAN NOT NULL DEFAULT 0,
     price_type TEXT,
     best_route_cex TEXT,
-    best_route_method TEXT
+    best_route_method TEXT,
+    security_deposit_pct REAL
 );
 
 CREATE TABLE order_lifecycle (
@@ -202,6 +203,36 @@ func storedPastOfferFixture(direction string) map[string]any {
 		"price_type":                "fixed",
 		"best_route_cex":            "kraken",
 		"best_route_method":         "onchain",
+	}
+}
+
+func TestPastOfferAPIIncludesHistoryCountAndActualSecurityDeposit(t *testing.T) {
+	offer := storedPastOfferFixture("buy")
+	offer["security_deposit_pct"] = 0.15
+
+	api := buildPastOfferAPI(offer, pastLifecycleAggregate{
+		Count:             7,
+		AvgOfferPrice:     105,
+		AvgRefPrice:       100,
+		AvgPremiumPercent: 5,
+		AvgTradeCostPct:   1.2,
+		AvgTradeCostBTC:   0.012,
+		AvgNetPercent:     3.8,
+		AvgProfitBTC:      0.038,
+		AvgProfitFiat:     3.8,
+	}, 0, nil, "", 0)
+
+	if api.ObservationCount != 7 {
+		t.Fatalf("observation count = %d, want 7", api.ObservationCount)
+	}
+	if api.Analysis.FullVolume.Capital == nil {
+		t.Fatal("expected capital requirement")
+	}
+	if got := api.Analysis.FullVolume.Capital.SecurityDepositPct; got != 0.15 {
+		t.Fatalf("security deposit pct = %v, want 0.15", got)
+	}
+	if api.Analysis.FullVolume.Capital.DepositEstimated {
+		t.Fatal("persisted security deposit must not be marked estimated")
 	}
 }
 
@@ -468,6 +499,27 @@ func TestPastOfferNetMinUsesCloseTimeMinimumAnalysis(t *testing.T) {
 	}
 }
 
+func TestPastOfferNetCappedExcludesMinimumVolumeAboveCap(t *testing.T) {
+	offer := storedPastOfferFixture("buy")
+	offer["btc_min"] = 0.5
+	offer["btc_max"] = 1.0
+	offer["avg_ref_price"] = 1000.0
+
+	analysis := addPastOfferCostFieldsFull(offer, pastLifecycleAggregate{}, 0, nil, "", 300)
+	if analysis.profitableInMode(takerOpportunityModeNetCapped) {
+		t.Fatal("net capped mode must exclude an offer whose minimum volume exceeds the cap")
+	}
+
+	apiAnalysis := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 300).Analysis
+	if apiAnalysis.CappedVolumeExecutable {
+		t.Fatal("capped API analysis must mark an offer above the cap's executable minimum as unavailable")
+	}
+	cappedScenario := apiAnalysis.CappedVolume
+	if cappedScenario != nil {
+		t.Fatalf("capped scenario = %#v, want nil for an unexecutable capped trade", cappedScenario)
+	}
+}
+
 func TestPastOfferFullVolumeRecomputesHedgeWhenStoredAbsent(t *testing.T) {
 	oldEstimators := tradeCostEstimators
 	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
@@ -537,6 +589,7 @@ func TestPastOfferCappedHedgePositionScalesWithTradeSize(t *testing.T) {
 	}
 
 	offer := storedPastOfferFixture("buy")
+	offer["btc_min"] = 0.01
 	offer["btc_max"] = 1.0
 	agg := pastLifecycleAggregate{
 		AvgHedgeNotionalEUR:         50,
@@ -571,6 +624,7 @@ func TestPastOfferCappedAnalysisKeepsStoredRouteAndFixedTransferCosts(t *testing
 	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{"kraken": est}
 
 	offer := storedPastOfferFixture("buy")
+	offer["btc_min"] = 0.01
 	offer["btc_max"] = 1.0
 	offer["avg_ref_price"] = 100.0
 	offer["network_fee_btc"] = 0.0003
@@ -609,6 +663,7 @@ func TestPastOfferCappedAskOmitsWithdrawalAndIncludesLongHedgeCosts(t *testing.T
 	}
 
 	offer := storedPastOfferFixture("sell")
+	offer["btc_min"] = 0.01
 	offer["btc_max"] = 1.0
 	offer["avg_ref_price"] = 100.0
 	offer["cex_withdraw_fee_btc"] = 0.0007
@@ -1765,11 +1820,11 @@ func withTempOrdersDB(t *testing.T) {
 			first_seen, last_seen, is_live
 		)
 		VALUES
-			('bisq', 'buy', 105, 0.1, 0.1, 'Revolut', 'Revolut', 'premium-30m', 100, 5, 1.00, 0.00100, 0.00025, 0.00015, 0.00010, 0.00010, 4.00, 0.00400, 0.40, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
-			('bisq', 'sell', 95, 0.2, 0.2, 'Wise', 'Wise', 'premium-5h', 100, 5, 0.37, 0.00074, 0.00050, NULL, 0.00004, 0.00020, 4.63, 0.00926, 0.93, 'kraken', 'onchain', 'analyzed', datetime('now', '-7 hours'), datetime('now', '-5 hours'), 0),
-			('bisq', 'buy', 105, 0.3, 0.3, 'SEPA', 'SEPA', 'premium-30h', 100, 5, 1.00, 0.00300, 0.00075, 0.00015, 0.00010, 0.00030, 4.00, 0.01200, 1.20, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 hours'), datetime('now', '-30 hours'), 0),
-			('bisq', 'sell', 95, 0.4, 0.4, 'Revolut', 'Revolut', 'active-ask-30m', 100, 5, 0.26, 0.00104, 0.00100, NULL, 0.00004, 0.00040, 4.74, 0.01896, 1.90, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
-			('bisq', 'buy', 105, 0.5, 0.5, 'SEPA', 'SEPA', 'old-premium', 100, 5, 1.00, 0.00500, 0.00125, 0.00015, 0.00010, 0.00050, 4.00, 0.02000, 2.00, 'kraken', 'onchain', 'analyzed', datetime('now', '-200 hours'), datetime('now', '-200 hours'), 0)
+			('bisq', 'buy', 105, 0.01, 0.1, 'Revolut', 'Revolut', 'premium-30m', 100, 5, 1.00, 0.00100, 0.00025, 0.00015, 0.00010, 0.00010, 4.00, 0.00400, 0.40, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
+			('bisq', 'sell', 95, 0.02, 0.2, 'Wise', 'Wise', 'premium-5h', 100, 5, 0.37, 0.00074, 0.00050, NULL, 0.00004, 0.00020, 4.63, 0.00926, 0.93, 'kraken', 'onchain', 'analyzed', datetime('now', '-7 hours'), datetime('now', '-5 hours'), 0),
+			('bisq', 'buy', 105, 0.03, 0.3, 'SEPA', 'SEPA', 'premium-30h', 100, 5, 1.00, 0.00300, 0.00075, 0.00015, 0.00010, 0.00030, 4.00, 0.01200, 1.20, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 hours'), datetime('now', '-30 hours'), 0),
+			('bisq', 'sell', 95, 0.04, 0.4, 'Revolut', 'Revolut', 'active-ask-30m', 100, 5, 0.26, 0.00104, 0.00100, NULL, 0.00004, 0.00040, 4.74, 0.01896, 1.90, 'kraken', 'onchain', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
+			('bisq', 'buy', 105, 0.05, 0.5, 'SEPA', 'SEPA', 'old-premium', 100, 5, 1.00, 0.00500, 0.00125, 0.00015, 0.00010, 0.00050, 4.00, 0.02000, 2.00, 'kraken', 'onchain', 'analyzed', datetime('now', '-200 hours'), datetime('now', '-200 hours'), 0)
 	`); err != nil {
 		t.Fatalf("insert offers: %v", err)
 	}

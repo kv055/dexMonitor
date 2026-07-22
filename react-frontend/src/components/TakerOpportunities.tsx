@@ -6,13 +6,15 @@ import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
 import { useTemporaryChartVisibility } from '../hooks/useTemporaryChartVisibility';
 import { buildOfferKeys, buildStableOfferKey } from '../utils/offerIdentity';
-import { durationMinutes, formatDateTimeLabel, formatDuration, formatTime, parseUtcTimestamp } from '../utils/formatters';
+import { durationMinutes, formatDateTimeLabel, formatDuration, formatTime, parseUtcTimestamp, premiumClass } from '../utils/formatters';
 import {
   getBtcMax,
   getBtcMin,
   getCappedTradeSizeBtc,
   getDisplayAbortCost,
   getDisplayCostBreakdown,
+  getEstimatedProfitBtc,
+  getEstimatedProfitFiat,
   getFiatMax,
   getFiatMin,
   getFirstSeen,
@@ -32,7 +34,6 @@ import { CostBreakdownPanel, SizeToggle, type SizeMode } from './OfferBreakdownP
 import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
 import { LiveOfferFilters, PastOfferFilters } from './ControlPanel';
-import { OffersPreviewTable } from './OffersPreviewTable';
 import { DepthChart } from './DepthChart';
 import { TradeTracingPanel } from './TradeTracingPanel';
 
@@ -95,6 +96,7 @@ function timeframeHours(timeframe: string): number {
 }
 
 type DirectionFilter = 'both' | 'buy' | 'sell';
+type PastPaymentFilter = 'settings' | 'all';
 
 function pickScenario(order: PastProfitableOrder, mode: TakerOpportunityMode) {
   // In capped mode, always use the server-computed capped scenario when present.
@@ -111,6 +113,7 @@ function pickScenario(order: PastProfitableOrder, mode: TakerOpportunityMode) {
 }
 
 function isProfitableInMode(order: PastProfitableOrder, mode: TakerOpportunityMode): boolean {
+	if (mode === 'net_capped' && order.analysis.capped_volume_executable === false) return false;
   return (pickScenario(order, mode).profit.avg_btc ?? 0) > 0;
 }
 
@@ -135,6 +138,10 @@ function orderDurationMinutes(order: DisplayOrder): number {
     return order.status.duration.hours * 60 + order.status.duration.minutes;
   }
   return durationMinutes(order.status.first_seen, order.status.last_seen);
+}
+
+function orderPremiumPercent(order: DisplayOrder): number | null {
+  return order.pricing.avg_premium_percent ?? order.pricing.raw_premium_percent ?? null;
 }
 
 function orderScenarioSummary(order: DisplayOrder, mode: TakerOpportunityMode) {
@@ -178,6 +185,7 @@ function formatDurationMinutes(totalMinutes: number): string {
 type SortColumn =
   | 'exchange'
   | 'direction'
+  | 'premium'
   | 'payment_method'
   | 'first_seen'
   | 'last_seen'
@@ -187,15 +195,20 @@ type SortColumn =
 
 type SortDir = 'asc' | 'desc';
 
-interface SortState {
+interface ActiveSortState {
   column: SortColumn;
   dir: SortDir;
 }
+
+// `null` means no header sorter is selected and preserves the API's default
+// order for the filtered results.
+type SortState = ActiveSortState | null;
 
 // Direction a column starts with on first click: text columns A–Z, metrics newest/largest first.
 const DEFAULT_SORT_DIR: Record<SortColumn, SortDir> = {
   exchange: 'asc',
   direction: 'asc',
+  premium: 'desc',
   payment_method: 'asc',
   first_seen: 'desc',
   last_seen: 'desc',
@@ -215,10 +228,11 @@ interface PersistedInsightsFilters {
   viewMode: InsightsViewMode;
   selectedTimeframe: string;
   directionFilter: DirectionFilter;
+  paymentFilter: PastPaymentFilter;
   disabledExchanges: string[];
   mode: TakerOpportunityMode;
-  sortColumn: SortColumn;
-  sortDir: SortDir;
+  sortColumn: SortColumn | null;
+  sortDir: SortDir | null;
   netProfitUnit: NetProfitUnit;
   sizeUnit: SizeUnit;
   summaryUnit: SizeUnit;
@@ -232,10 +246,11 @@ const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
   viewMode: 'live',
   selectedTimeframe: '24h',
   directionFilter: 'both',
+  paymentFilter: 'settings',
   disabledExchanges: [],
   mode: 'net_full',
-  sortColumn: 'last_seen',
-  sortDir: 'desc',
+  sortColumn: null,
+  sortDir: null,
   netProfitUnit: 'fiat',
   sizeUnit: 'btc',
   summaryUnit: 'btc',
@@ -248,12 +263,14 @@ const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
 const VALID_VIEW_MODES = new Set<InsightsViewMode>(['live', 'past']);
 const VALID_TIMEFRAMES = new Set(['1h', '6h', '24h', '48h', '7d']);
 const VALID_DIRECTIONS = new Set<DirectionFilter>(['both', 'buy', 'sell']);
+const VALID_PAST_PAYMENT_FILTERS = new Set<PastPaymentFilter>(['settings', 'all']);
 const VALID_MODES = new Set<TakerOpportunityMode>(['net_full', 'net_capped', 'net_min']);
 const VALID_NET_PROFIT_UNITS = new Set<NetProfitUnit>(['btc', 'fiat']);
 const VALID_SIZE_UNITS = new Set<SizeUnit>(['btc', 'fiat']);
 const VALID_SORT_COLUMNS = new Set<SortColumn>([
   'exchange',
   'direction',
+  'premium',
   'payment_method',
   'first_seen',
   'last_seen',
@@ -265,8 +282,8 @@ const VALID_SORT_DIRS = new Set<SortDir>(['asc', 'desc']);
 
 // Migration for the retired sidebar sort dropdown persisted as `sortBy` before
 // the column-header sorters landed. `net_pct_desc` has no table column and
-// falls back to the default sort.
-const LEGACY_SORT_KEY_MAP: Record<string, SortState> = {
+// falls back to the unsorted default view.
+const LEGACY_SORT_KEY_MAP: Record<string, ActiveSortState> = {
   last_seen_desc: { column: 'last_seen', dir: 'desc' },
   last_seen_asc: { column: 'last_seen', dir: 'asc' },
   net_profit_desc: { column: 'net_profit', dir: 'desc' },
@@ -287,7 +304,7 @@ function readPersistedSort(parsed: Partial<PersistedInsightsFilters> & { sortBy?
   if (parsed.sortBy != null && LEGACY_SORT_KEY_MAP[parsed.sortBy]) {
     return LEGACY_SORT_KEY_MAP[parsed.sortBy];
   }
-  return { column: DEFAULT_INSIGHTS_FILTERS.sortColumn, dir: DEFAULT_INSIGHTS_FILTERS.sortDir };
+  return null;
 }
 
 function readStringArray(value: unknown): string[] {
@@ -321,12 +338,15 @@ function readPersistedInsightsFilters(): PersistedInsightsFilters {
       directionFilter: VALID_DIRECTIONS.has(parsed.directionFilter as DirectionFilter)
         ? parsed.directionFilter as DirectionFilter
         : DEFAULT_INSIGHTS_FILTERS.directionFilter,
+      paymentFilter: VALID_PAST_PAYMENT_FILTERS.has(parsed.paymentFilter as PastPaymentFilter)
+        ? parsed.paymentFilter as PastPaymentFilter
+        : DEFAULT_INSIGHTS_FILTERS.paymentFilter,
       disabledExchanges: readStringArray(parsed.disabledExchanges),
       mode: VALID_MODES.has(parsed.mode as TakerOpportunityMode)
         ? parsed.mode as TakerOpportunityMode
         : DEFAULT_INSIGHTS_FILTERS.mode,
-      sortColumn: sort.column,
-      sortDir: sort.dir,
+      sortColumn: sort?.column ?? null,
+      sortDir: sort?.dir ?? null,
       netProfitUnit: VALID_NET_PROFIT_UNITS.has(parsed.netProfitUnit as NetProfitUnit)
         ? parsed.netProfitUnit as NetProfitUnit
         : DEFAULT_INSIGHTS_FILTERS.netProfitUnit,
@@ -405,6 +425,7 @@ function sortProfitableOrders(
   netProfitUnit: NetProfitUnit,
   sizeUnit: SizeUnit,
 ): DisplayOrder[] {
+  if (sort == null) return [...orders];
   // Each comparator sorts ascending; the sign flip below applies the direction.
   const compare = (a: DisplayOrder, b: DisplayOrder): number => {
     switch (sort.column) {
@@ -412,6 +433,8 @@ function sortProfitableOrders(
         return a.exchange.localeCompare(b.exchange, 'de');
       case 'direction':
         return a.direction.localeCompare(b.direction, 'de');
+      case 'premium':
+        return (orderPremiumPercent(a) ?? 0) - (orderPremiumPercent(b) ?? 0);
       case 'payment_method':
         return (a.payment_methods?.join(', ') ?? '').localeCompare(b.payment_methods?.join(', ') ?? '', 'de');
       case 'first_seen': {
@@ -627,7 +650,7 @@ function ExchangeFilterGroup({
 interface SelectGroupProps {
   label: string;
   description: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; disabled?: boolean; title?: string }[];
   selected: string;
   onChange: (v: string) => void;
 }
@@ -643,7 +666,7 @@ function SelectGroup({ label, description, options, selected, onChange }: Select
         className="w-full rounded border border-border bg-bg/60 px-2 py-1.5 text-[0.75rem] font-medium text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
       >
         {options.map(option => (
-          <option key={option.value} value={option.value}>
+          <option key={option.value} value={option.value} disabled={option.disabled} title={option.title}>
             {option.label}
           </option>
         ))}
@@ -732,7 +755,7 @@ function DualRangeFilter({
 }
 
 const PROFITABLE_TRADES_GRID_COLS =
-  'grid min-w-[40rem] grid-cols-[minmax(7rem,0.85fr)_minmax(2.75rem,0.3fr)_minmax(8rem,1fr)_minmax(5.5rem,0.75fr)_minmax(6.75rem,0.95fr)_1.25rem_1.25rem] items-center gap-2 sm:min-w-[48rem] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(2.75rem,0.3fr)_minmax(8rem,1fr)_minmax(5.25rem,0.6fr)_minmax(5.75rem,0.75fr)_minmax(6.5rem,0.85fr)_1.25rem_1.25rem] lg:min-w-0 lg:w-full lg:grid-cols-[minmax(0,0.55fr)_minmax(0,0.28fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.65fr)_minmax(0,0.55fr)_minmax(0,0.95fr)_minmax(0,1.15fr)_1.25rem_1.25rem] sm:gap-3';
+  'grid min-w-[40rem] grid-cols-[minmax(7rem,0.85fr)_minmax(2.75rem,0.3fr)_minmax(4rem,0.45fr)_minmax(8rem,1fr)_minmax(5.5rem,0.75fr)_minmax(6.75rem,0.95fr)_1.25rem_1.25rem] items-center gap-2 sm:min-w-[48rem] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(2.75rem,0.3fr)_minmax(4rem,0.4fr)_minmax(8rem,1fr)_minmax(5.25rem,0.6fr)_minmax(5.75rem,0.75fr)_minmax(6.5rem,0.85fr)_1.25rem_1.25rem] lg:min-w-0 lg:w-full lg:grid-cols-[minmax(0,0.55fr)_minmax(0,0.28fr)_minmax(0,0.42fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.65fr)_minmax(0,0.55fr)_minmax(0,0.95fr)_minmax(0,1.15fr)_1.25rem_1.25rem] sm:gap-3';
 
 interface TradeRowMetricProps {
   value: string;
@@ -761,15 +784,15 @@ function UnitToggle({ fiat, unit, onChange }: { fiat: string; unit: SizeUnit; on
   );
 }
 
-function SortHeaderButton({ label, column, sort, onSort, align = 'left', fitContent = false }: {
+function SortHeaderButton<T extends string>({ label, column, sort, onSort, align = 'left', fitContent = false }: {
   label: string;
-  column: SortColumn;
-  sort: SortState;
-  onSort: (column: SortColumn) => void;
+  column: T;
+  sort: { column: T; dir: SortDir } | null;
+  onSort: (column: T) => void;
   align?: 'left' | 'right';
   fitContent?: boolean;
 }) {
-  const active = sort.column === column;
+  const active = sort?.column === column;
   return (
     <button
       type="button"
@@ -811,6 +834,7 @@ function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUni
     <div data-testid="past-offers-header" className={`${PROFITABLE_TRADES_GRID_COLS} sticky top-0 z-20 shrink-0 border-b border-border bg-surface/95 px-3 py-1.5`}>
       <SortHeaderButton label="Offer" column="exchange" sort={sort} onSort={onSort} align="left" />
       <SortHeaderButton label="Dir" column="direction" sort={sort} onSort={onSort} align="left" />
+      <SortHeaderButton label="Premium" column="premium" sort={sort} onSort={onSort} align="left" />
       <SortHeaderButton label="Payment method" column="payment_method" sort={sort} onSort={onSort} align="left" />
       <span className="hidden lg:flex">
 		<SortHeaderButton label="First seen" column="first_seen" sort={sort} onSort={onSort} />
@@ -923,6 +947,13 @@ function PastOfferOverview({ order, offer, fiat, timezone, amountUnit, onAmountU
           value={`${formatTime(firstSeen, timezone)} – ${formatTime(lastSeen, timezone)}`}
           detail={`${formatDuration(firstSeen, lastSeen)}${getPriceType(offer) ? ` · ${getPriceType(offer)} price` : ''}`}
         />
+        {order.observation_count != null && order.observation_count > 0 && (
+          <PastOfferMetric
+            label="History"
+            value={`${order.observation_count.toLocaleString('de-DE')} snapshots`}
+            detail="Basis for the historical averages"
+          />
+        )}
         {(offerPrice > 0 || refPrice != null) && (
           <PastOfferMetric
             label="Prices"
@@ -961,6 +992,18 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
       : scenarioMode;
   const costBreakdown = getDisplayCostBreakdown(offer, effectiveMode);
   const offerPrice = getOfferPrice(offer);
+  const scenario = effectiveMode === 'capped'
+    ? order.analysis.capped_volume
+    : effectiveMode === 'min'
+      ? order.analysis.min_volume
+      : order.analysis.full_volume;
+  const estimateNote = scenario?.cost_policy === 'historical_route_fixed_transfer_recomputed_size_proportional'
+    ? 'Capped-size estimate: uses the historical route and recalculates size-dependent costs.'
+    : scenario?.cost_policy === 'historical_min_volume'
+      ? 'Minimum-size estimate: uses the offer’s minimum executable volume and historical route.'
+      : scenario?.cost_policy === 'historical_persisted'
+        ? 'Historical average: pricing, costs, and profit use the offer’s observed lifecycle snapshots.'
+        : null;
 
   return (
     <div data-testid="past-offer-detail" className="flex flex-col gap-3">
@@ -984,6 +1027,11 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
               refPrice={refPrice}
             />
           )}
+          {estimateNote && (
+            <p className="rounded-md border border-border bg-bg px-2.5 py-2 text-[0.65rem] text-muted">
+              {estimateNote}
+            </p>
+          )}
           <CostBreakdownPanel
             bd={costBreakdown}
             abortCost={getDisplayAbortCost(offer, effectiveMode)}
@@ -1003,6 +1051,254 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
   );
 }
 
+const LIVE_OFFERS_GRID_COLS =
+  'grid min-w-[40rem] grid-cols-[minmax(7rem,0.85fr)_minmax(2.75rem,0.3fr)_minmax(4rem,0.45fr)_minmax(8rem,1fr)_minmax(5.25rem,0.6fr)_minmax(5.75rem,0.75fr)_minmax(5.75rem,0.75fr)_minmax(6.5rem,0.85fr)_1.25rem_1.25rem] items-center gap-2 sm:min-w-[52rem] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(2.75rem,0.3fr)_minmax(4rem,0.4fr)_minmax(8rem,1fr)_minmax(5.25rem,0.6fr)_minmax(5.75rem,0.75fr)_minmax(5.75rem,0.75fr)_minmax(6.5rem,0.85fr)_1.25rem_1.25rem] lg:min-w-0 lg:w-full lg:grid-cols-[minmax(0,0.5fr)_minmax(0,0.26fr)_minmax(0,0.38fr)_minmax(0,0.75fr)_minmax(0,0.62fr)_minmax(0,0.5fr)_minmax(0,0.72fr)_minmax(0,0.9fr)_1.25rem_1.25rem] sm:gap-3';
+
+type LiveSortColumn = 'exchange' | 'direction' | 'premium' | 'payment_method' | 'first_seen' | 'age' | 'size' | 'net_profit';
+
+const LIVE_SORT_DEFAULTS: Record<LiveSortColumn, SortDir> = {
+  exchange: 'asc', direction: 'asc', premium: 'desc', payment_method: 'asc',
+  first_seen: 'desc', age: 'desc', size: 'desc', net_profit: 'desc',
+};
+
+function LiveOfferOverview({ offer, fiat, amountUnit, onAmountUnitChange }: {
+  offer: Offer;
+  fiat: string;
+  amountUnit: SizeUnit;
+  onAmountUnitChange: (unit: SizeUnit) => void;
+}) {
+  const offerPrice = getOfferPrice(offer);
+  const refPrice = getRefPrice(offer);
+  const fiatRange = formatRange(fmtFiat(getFiatMin(offer), fiat), fmtFiat(getFiatMax(offer), fiat));
+  const btcRange = formatRange(fmtBTC(getBtcMin(offer)), fmtBTC(getBtcMax(offer)));
+
+  return (
+    <section aria-label="Offer overview" className="border-b border-border/70 pb-2.5">
+      <dl className="grid grid-cols-2 gap-x-5 gap-y-2.5 sm:grid-cols-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.25fr)_minmax(0,0.9fr)_minmax(0,1.15fr)]">
+        <PastOfferMetric label="Offer ID" value={offer.offer_id || String(offer.id)} />
+        <PastOfferMetric label="Payment" value={offer.payment_methods?.join(', ') || '—'} />
+        {(offerPrice > 0 || refPrice != null) && (
+          <PastOfferMetric
+            label="Prices"
+            value={offerPrice > 0 ? fmtFiat(offerPrice, fiat) : '—'}
+            detail={refPrice != null ? `${fmtFiat(refPrice, fiat)} reference` : undefined}
+          />
+        )}
+        {(amountUnit === 'btc' ? btcRange : fiatRange) != null && (
+          <PastOfferMetric
+            label={<><span>Volume</span><UnitToggle fiat={fiat} unit={amountUnit} onChange={onAmountUnitChange} /></>}
+            value={amountUnit === 'btc' ? btcRange! : fiatRange!}
+            hint="Offer volume limits"
+          />
+        )}
+      </dl>
+    </section>
+  );
+}
+
+function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange }: {
+  offer: Offer;
+  fiat: string;
+  scenarioMode: SizeMode;
+  onScenarioModeChange: (value: SizeMode) => void;
+}) {
+  const [amountUnit, setAmountUnit] = useState<SizeUnit>('fiat');
+  const effectiveMode: SizeMode = scenarioMode === 'capped' && !hasCappedScenario(offer)
+    ? 'full'
+    : scenarioMode === 'min' && !hasMinScenario(offer)
+      ? 'full'
+      : scenarioMode;
+  const costBreakdown = getDisplayCostBreakdown(offer, effectiveMode);
+
+  return (
+    <div data-testid="live-offer-detail" className="flex flex-col gap-3">
+      <LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} onAmountUnitChange={setAmountUnit} />
+      {costBreakdown ? (
+        <div className="flex flex-col gap-3">
+          {(hasCappedScenario(offer) || hasMinScenario(offer)) && (
+            <SizeToggle
+              mode={effectiveMode}
+              onModeChange={onScenarioModeChange}
+              fullBtc={getDisplayCostBreakdown(offer, 'full')?.btc_amount ?? getBtcMax(offer)}
+              cappedBtc={getCappedTradeSizeBtc(offer)}
+              minBtc={getMinTradeSizeBtc(offer)}
+              refPrice={getRefPrice(offer)}
+            />
+          )}
+          <CostBreakdownPanel
+            bd={costBreakdown}
+            abortCost={getDisplayAbortCost(offer, effectiveMode)}
+            priceDiffPct={getRawPremiumPercent(offer)}
+            netPremiumPct={getNetPremiumPercent(offer, effectiveMode)}
+            refPrice={getRefPrice(offer)}
+            offerPrice={getOfferPrice(offer)}
+            wideLayout
+            amountUnit={amountUnit}
+            onAmountUnitChange={setAmountUnit}
+          />
+        </div>
+      ) : (
+        <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
+      )}
+    </div>
+  );
+}
+
+function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChartOfferVisible, toggleChartOfferKey, setChartOfferKeysVisible, onSelectOffer, onCloseOffer }: {
+  offers: Offer[];
+  fiat: string;
+  timezone: string;
+  loading: boolean;
+  chartEnabled: boolean;
+  isChartOfferVisible: (key: string) => boolean;
+  toggleChartOfferKey: (key: string) => void;
+  setChartOfferKeysVisible: (keys: string[], visible: boolean) => void;
+  onSelectOffer: (offer: Offer) => void;
+  onCloseOffer: () => void;
+}) {
+  const [expandedKey, setExpandedKey] = useState<string | null>(null);
+  const [scenarioMode, setScenarioMode] = useState<SizeMode>('full');
+  const [sizeUnit, setSizeUnit] = useState<SizeUnit>('btc');
+  const [netProfitUnit, setNetProfitUnit] = useState<NetProfitUnit>('fiat');
+  const [sort, setSort] = useState<{ column: LiveSortColumn; dir: SortDir } | null>(null);
+  const [sortReferenceNow] = useState(() => Date.now());
+  const sortedOffers = useMemo(() => {
+    if (sort == null) return offers;
+    const age = (offer: Offer) => sortReferenceNow - (parseUtcTimestamp(getFirstSeen(offer))?.getTime() ?? sortReferenceNow);
+    const value = (offer: Offer): string | number => {
+      switch (sort.column) {
+        case 'exchange': return offer.exchange;
+        case 'direction': return offer.direction;
+        case 'premium': return getRawPremiumPercent(offer) ?? 0;
+        case 'payment_method': return offer.payment_methods?.join(', ') ?? '';
+        case 'first_seen': return parseUtcTimestamp(getFirstSeen(offer))?.getTime() ?? 0;
+        case 'age': return age(offer);
+        case 'size': return getDisplayCostBreakdown(offer, scenarioMode)?.btc_amount ?? getBtcMax(offer) ?? getBtcMin(offer) ?? 0;
+        case 'net_profit': return netProfitUnit === 'btc' ? getEstimatedProfitBtc(offer, scenarioMode) ?? 0 : getEstimatedProfitFiat(offer, scenarioMode) ?? 0;
+      }
+    };
+    const sign = sort.dir === 'desc' ? -1 : 1;
+    return [...offers].sort((a, b) => {
+      const av = value(a);
+      const bv = value(b);
+      return typeof av === 'string' && typeof bv === 'string' ? sign * av.localeCompare(bv, 'de') : sign * (Number(av) - Number(bv));
+    });
+  }, [offers, sort, scenarioMode, netProfitUnit, sortReferenceNow]);
+  const stableKeys = useMemo(() => sortedOffers.map(buildStableOfferKey), [sortedOffers]);
+  const expandedIndex = expandedKey == null ? -1 : stableKeys.indexOf(expandedKey);
+  const expandedOffer = expandedIndex >= 0 ? sortedOffers[expandedIndex] : null;
+  const visibleCount = stableKeys.filter(isChartOfferVisible).length;
+  const allChartVisible = sortedOffers.length > 0 && visibleCount === sortedOffers.length;
+  const someChartVisible = visibleCount > 0 && visibleCount < sortedOffers.length;
+
+  const handleSort = (column: LiveSortColumn) => {
+    setSort(previous => {
+      if (previous?.column !== column) return { column, dir: LIVE_SORT_DEFAULTS[column] };
+      if (previous.dir === LIVE_SORT_DEFAULTS[column]) return { column, dir: previous.dir === 'asc' ? 'desc' : 'asc' };
+      return null;
+    });
+  };
+
+  useEffect(() => {
+    // The selected row can disappear when live filters change; clear the stale
+    // local key so it cannot reopen if that offer later re-enters the list.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    if (expandedKey != null && expandedOffer == null) setExpandedKey(null);
+  }, [expandedKey, expandedOffer]);
+
+  if (expandedOffer != null) {
+    return (
+      <div className="relative min-h-0 flex-1 overflow-y-auto bg-surface">
+        <button
+          type="button"
+          aria-label="Close live offer details"
+          onClick={() => { setExpandedKey(null); onCloseOffer(); }}
+          className="absolute right-3 top-3 z-20 flex h-7 w-7 items-center justify-center rounded border-none bg-transparent text-xl leading-none text-red transition-colors hover:bg-red/10 hover:text-red/70"
+          title="Close"
+        >
+          ×
+        </button>
+        <div className="px-3 py-2.5">
+          <LiveOfferBreakdown offer={expandedOffer} fiat={fiat} scenarioMode={scenarioMode} onScenarioModeChange={setScenarioMode} />
+        </div>
+      </div>
+    );
+  }
+
+  const headerClass = 'truncate text-[0.65rem] font-semibold uppercase tracking-wide text-muted';
+  return (
+    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-auto">
+      <div className={`${LIVE_OFFERS_GRID_COLS} sticky top-0 z-20 border-b border-border bg-surface/95 px-3 py-1.5`}>
+        <SortHeaderButton label="Offer" column="exchange" sort={sort} onSort={handleSort} />
+        <SortHeaderButton label="Dir" column="direction" sort={sort} onSort={handleSort} />
+        <SortHeaderButton label="Premium" column="premium" sort={sort} onSort={handleSort} />
+        <SortHeaderButton label="Payment method" column="payment_method" sort={sort} onSort={handleSort} />
+        <SortHeaderButton label="First seen" column="first_seen" sort={sort} onSort={handleSort} />
+        <SortHeaderButton label="Age" column="age" sort={sort} onSort={handleSort} />
+        <span className={`${headerClass} flex items-center gap-1`}><SortHeaderButton label="Size" column="size" sort={sort} onSort={handleSort} fitContent /><UnitToggle fiat={fiat} unit={sizeUnit} onChange={setSizeUnit} /></span>
+        <span className={`${headerClass} flex items-center gap-1`}><SortHeaderButton label="Net profit" column="net_profit" sort={sort} onSort={handleSort} fitContent /><UnitToggle fiat={fiat} unit={netProfitUnit} onChange={setNetProfitUnit} /></span>
+        <span className="flex items-center justify-center">
+          {chartEnabled && (
+            <input
+              type="checkbox"
+              checked={allChartVisible}
+              ref={element => { if (element) element.indeterminate = someChartVisible; }}
+              onChange={event => setChartOfferKeysVisible(stableKeys, event.target.checked)}
+              title="Show/hide all offers on the OHLC chart"
+            />
+          )}
+        </span>
+        <span aria-hidden />
+      </div>
+      {loading && offers.length === 0 ? (
+        <div className="relative min-h-64"><LoadingSpinner size={112} label="Loading offers" /></div>
+      ) : sortedOffers.length === 0 ? (
+        <div className="px-3 py-4 text-[0.75rem] text-muted">No live offers for the selected filters.</div>
+      ) : sortedOffers.map((offer, index) => {
+        const stableKey = stableKeys[index];
+        const premium = getRawPremiumPercent(offer);
+        const tradeSize = getDisplayCostBreakdown(offer, scenarioMode)?.btc_amount ?? getBtcMax(offer) ?? getBtcMin(offer);
+        const netProfitBtc = getEstimatedProfitBtc(offer, scenarioMode);
+        const netProfitFiat = getEstimatedProfitFiat(offer, scenarioMode);
+        return (
+          <div key={stableKey} className="border-b border-border last:border-0">
+            <div
+              role="button"
+              tabIndex={0}
+              data-testid="live-offers-row"
+              onClick={() => { setScenarioMode('full'); setExpandedKey(stableKey); onSelectOffer(offer); }}
+              onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  setScenarioMode('full');
+                  setExpandedKey(stableKey);
+                  onSelectOffer(offer);
+                }
+              }}
+              className="w-full min-w-0 cursor-pointer px-3 py-2 text-left transition-colors hover:bg-white/5"
+            >
+              <span className={`${LIVE_OFFERS_GRID_COLS} text-[0.72rem]`}>
+                <span className="min-w-0 overflow-hidden"><ExchangeTag exchange={offer.exchange} /></span>
+                <span className={`truncate text-[0.65rem] font-semibold uppercase ${offer.direction === 'buy' ? 'text-green' : 'text-red'}`}>{offer.direction === 'buy' ? 'Bid' : 'Ask'}</span>
+                <TradeRowMetric value={premium == null ? '—' : `${premium.toFixed(1)}%`} valueClassName={premiumClass(premium)} />
+                <span className="min-w-0 truncate font-medium text-text" title={offer.payment_methods?.join(', ') || 'Unknown method'}>{offer.payment_methods?.join(', ') || 'Unknown method'}</span>
+                <TradeRowMetric value={formatDateTimeLabel(getFirstSeen(offer) ?? '', timezone)} />
+                <TradeRowMetric value={formatDuration(getFirstSeen(offer), new Date().toISOString())} />
+                <TradeRowMetric value={sizeUnit === 'btc' ? fmtBTC(tradeSize) : fmtFiat(tradeSize != null && getRefPrice(offer) != null ? tradeSize * getRefPrice(offer)! : null, fiat)} />
+                <TradeRowMetric value={netProfitUnit === 'btc' ? fmtBTC(netProfitBtc) : fmtFiat(netProfitFiat, fiat)} valueClassName="text-green" />
+                <span className="flex shrink-0 items-center justify-center" onClick={event => event.stopPropagation()}>
+                  {chartEnabled && <input type="checkbox" checked={isChartOfferVisible(stableKey)} onChange={() => toggleChartOfferKey(stableKey)} title="Show on OHLC chart" />}
+                </span>
+                <span className="shrink-0 text-right text-muted">▼</span>
+              </span>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrders, detailedOrders, ordersLoading, cappedLoading, maxFiatLimit, onRefreshLive, lastUpdatedAt, chart }: Props) {
   const displayedOrders = detailedOrders.length > 0 ? detailedOrders : fastOrders;
   const deferredOrders = useDeferredValue(displayedOrders);
@@ -1013,6 +1309,8 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     offers: contextOffers,
     filteredOffers,
     selectedOfferKey,
+    setSelectedOfferKey,
+    loading,
     filters: liveFilters,
     refPrice,
     setFilters,
@@ -1037,13 +1335,14 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const [viewMode, setViewMode] = useState<InsightsViewMode>(initialFilters.viewMode);
   const [selectedTimeframe, setSelectedTimeframe] = useState(initialFilters.selectedTimeframe);
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>(initialFilters.directionFilter);
+  const [paymentFilter, setPaymentFilter] = useState<PastPaymentFilter>(initialFilters.paymentFilter);
   const [disabledExchanges, setDisabledExchanges] = useState<string[]>(initialFilters.disabledExchanges);
   const [mode, setMode] = useState<TakerOpportunityMode>(
     initialFilters.mode === 'net_capped' && (!initialCapAvailable || initialCappedModePending)
       ? 'net_full'
       : initialFilters.mode,
   );
-  const [sort, setSort] = useState<SortState>({ column: initialFilters.sortColumn, dir: initialFilters.sortDir });
+  const [sort, setSort] = useState<SortState>(() => readPersistedSort(initialFilters));
   const [netProfitUnit, setNetProfitUnit] = useState<NetProfitUnit>(initialFilters.netProfitUnit);
   const [sizeUnit, setSizeUnit] = useState<SizeUnit>(initialFilters.sizeUnit);
   const [summaryUnit, setSummaryUnit] = useState<SizeUnit>(initialFilters.summaryUnit);
@@ -1145,7 +1444,6 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     });
   }, [setFilters, directionFilter, disabledExchanges]);
 
-  const hasExcluded = (stats?.excluded_payment_methods?.length ?? 0) > 0;
   const cappedOffersPending = cappedLoading && detailedOrders.length === 0;
   const scenarioDataPending = mode !== 'net_full' && cappedOffersPending;
   const activeStats = mode === 'net_capped'
@@ -1158,11 +1456,11 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       return [] as DisplayOrder[];
     }
     let list = deferredOrders.filter(order => displayOrderProfitable(order, mode));
-    if (hasExcluded) {
+    if (paymentFilter === 'settings' && excludedMethods.length > 0) {
       list = list.filter(order => !order.payment_methods?.some(m => excludedMethods.includes(m)));
     }
     return list;
-  }, [scenarioDataPending, deferredOrders, mode, hasExcluded, excludedMethods]);
+  }, [scenarioDataPending, deferredOrders, mode, paymentFilter, excludedMethods]);
 
   // Capped mode is only meaningful when the global Max Position Size is set.
   const capAvailable = maxFiatLimit != null && maxFiatLimit > 0;
@@ -1328,10 +1626,11 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       viewMode,
       selectedTimeframe,
       directionFilter,
+      paymentFilter,
       disabledExchanges,
       mode,
-      sortColumn: sort.column,
-      sortDir: sort.dir,
+      sortColumn: sort?.column ?? null,
+      sortDir: sort?.dir ?? null,
       netProfitUnit,
       sizeUnit,
       summaryUnit,
@@ -1353,6 +1652,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     viewMode,
     selectedTimeframe,
     directionFilter,
+    paymentFilter,
     disabledExchanges,
     mode,
     sort,
@@ -1395,8 +1695,15 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const expandedDetailedOrder = expandedOrder == null
     ? undefined
     : isDetailedOrder(expandedOrder) ? expandedOrder : detailedOrdersByID.get(expandedOrder.id);
+  const selectedLiveChartKey = selectedLiveOffer == null ? null : buildStableOfferKey(selectedLiveOffer);
   const selectedPastChartKey = expandedOrder == null ? null : orderStableChartKey(expandedOrder);
 
+  useTemporaryChartVisibility(
+    viewMode === 'live' ? selectedOfferKey : null,
+    viewMode === 'live' ? selectedLiveChartKey : null,
+    isChartOfferVisible,
+    setChartOfferKeysVisible,
+  );
   useTemporaryChartVisibility(
     viewMode === 'past' ? expandedId : null,
     viewMode === 'past' ? selectedPastChartKey : null,
@@ -1432,9 +1739,15 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const someChartVisible = chartVisibleCount > 0 && chartVisibleCount < sortedOrders.length;
 
   const handleSort = useCallback((column: SortColumn) => {
-    setSort(prev => prev.column === column
-      ? { column, dir: prev.dir === 'asc' ? 'desc' : 'asc' }
-      : { column, dir: DEFAULT_SORT_DIR[column] });
+    setSort(prev => {
+      if (prev?.column !== column) return { column, dir: DEFAULT_SORT_DIR[column] };
+      if (prev.dir === DEFAULT_SORT_DIR[column]) {
+        return { column, dir: prev.dir === 'asc' ? 'desc' : 'asc' };
+      }
+      // A third click clears all column sorters and restores the API's default
+      // order for the current filters.
+      return null;
+    });
   }, []);
 
   const toggleExpanded = useCallback((order: DisplayOrder, isOpen: boolean, detailedOrder: PastProfitableOrder | undefined) => {
@@ -1490,9 +1803,10 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     resetLiveFilters();
     setSelectedTimeframe(DEFAULT_INSIGHTS_FILTERS.selectedTimeframe);
     setDirectionFilter(DEFAULT_INSIGHTS_FILTERS.directionFilter);
+    setPaymentFilter(DEFAULT_INSIGHTS_FILTERS.paymentFilter);
     setDisabledExchanges([]);
     setMode(DEFAULT_INSIGHTS_FILTERS.mode);
-    setSort({ column: DEFAULT_INSIGHTS_FILTERS.sortColumn, dir: DEFAULT_INSIGHTS_FILTERS.sortDir });
+    setSort(null);
     setNetProfitUnit(DEFAULT_INSIGHTS_FILTERS.netProfitUnit);
     setSizeUnit(DEFAULT_INSIGHTS_FILTERS.sizeUnit);
     setSummaryUnit(DEFAULT_INSIGHTS_FILTERS.summaryUnit);
@@ -1660,7 +1974,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
           )}
           {viewMode === 'past' && (
           <>
-          <PastOfferFilters />
+          <PastOfferFilters paymentFilter={paymentFilter} onPaymentFilterChange={setPaymentFilter} />
           <SelectGroup
             label="Timeframe"
             description="Show stats for orders closed within this window"
@@ -1690,7 +2004,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
             disabled={!profitFiatBounds.hasData || profitFiatRangeCents == null}
             disabledMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No profit data in this window'}
           />
-          <PillGroup
+          <SelectGroup
             label="Premium mode"
             description="Net full uses full order size. Net capped applies your max fiat position limit where needed."
             options={[
@@ -1855,9 +2169,21 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
             className={`min-h-0 rounded-lg border border-border overflow-hidden flex flex-col ${chart != null && (!chartCollapsed || selectedLiveOffer != null) ? `min-h-56 lg:min-h-0 ${offersListHeight == null ? 'lg:flex-2' : ''}` : 'flex-1'}`}
           >
           {viewMode === 'live' ? (
-            <div className="relative min-h-64 flex-1 bg-surface">
-              <OffersPreviewTable chartScope="insights" />
-            </div>
+            <LiveOffersList
+              offers={filteredOffers.filter(isOfferLive)}
+              fiat={liveFilters.fiat}
+              timezone={timezone}
+              loading={loading}
+              chartEnabled={chart != null}
+              isChartOfferVisible={isChartOfferVisible}
+              toggleChartOfferKey={toggleChartOfferKey}
+              setChartOfferKeysVisible={setChartOfferKeysVisible}
+              onSelectOffer={offer => {
+                const offerIndex = filteredOffers.indexOf(offer);
+                setSelectedOfferKey(offerIndex >= 0 ? buildOfferKeys(filteredOffers)[offerIndex] : null);
+              }}
+              onCloseOffer={() => setSelectedOfferKey(null)}
+            />
           ) : (
           <div className="min-h-0 flex-1 flex flex-col overflow-hidden">
             {expandedOrder != null ? (
@@ -1962,6 +2288,10 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                           <span className={`truncate text-[0.65rem] font-semibold uppercase ${order.direction === 'buy' ? 'text-green' : 'text-red'}`}>
                             {order.direction === 'buy' ? 'Bid' : 'Ask'}
                           </span>
+                          <TradeRowMetric
+                            value={orderPremiumPercent(order) != null ? `${orderPremiumPercent(order)!.toFixed(1)}%` : '—'}
+                            valueClassName={premiumClass(orderPremiumPercent(order))}
+                          />
                           <span className="min-w-0 truncate font-medium text-text" title={paymentMethod}>
                             {paymentMethod}
                           </span>
