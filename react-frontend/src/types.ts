@@ -587,7 +587,7 @@ export interface PastProfitableOrderCompact {
   summary: PastProfitableOrderSummary;
 }
 
-export type TakerOpportunityMode = 'net_full' | 'net_capped';
+export type TakerOpportunityMode = 'net_full' | 'net_capped' | 'net_min';
 
 export interface NamedCount {
   name: string;

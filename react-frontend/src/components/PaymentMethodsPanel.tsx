@@ -12,6 +12,7 @@ import {
   fetchPaymentMethods,
   fetchTradingAccounts,
   fetchTradingWalletAddresses,
+  promotePaymentMethodAlias,
   updatePaymentMethod,
 } from '../utils/api';
 
@@ -95,6 +96,8 @@ export function PaymentMethodsPanel() {
   const [categoryPickerError, setCategoryPickerError] = useState<string | null>(null);
   const [aliasPickerId, setAliasPickerId] = useState<number | null>(null);
   const [aliasPickerError, setAliasPickerError] = useState<string | null>(null);
+  const [aliasPromotePickerId, setAliasPromotePickerId] = useState<number | null>(null);
+  const [aliasPromoteError, setAliasPromoteError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -241,6 +244,20 @@ export function PaymentMethodsPanel() {
     }
   }
 
+  async function promoteAlias(row: PaymentMethodRow, alias: string) {
+    setSaving(true);
+    setAliasPromoteError(null);
+    try {
+      const res = await promotePaymentMethodAlias(row.id, alias);
+      setRows(res.payment_methods);
+      setAliasPromotePickerId(null);
+    } catch (err) {
+      setAliasPromoteError(err instanceof Error ? err.message : 'Alias promotion failed');
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function renderLinkSelect(d: Draft) {
     const link = LINKABLE[d.category] ?? null;
     if (link === null) {
@@ -340,16 +357,26 @@ export function PaymentMethodsPanel() {
                           )}
                         </div>
                         <div className="flex items-center gap-1.5">
-                          {category === 'Others' && (
+                          <button
+                            type="button"
+                            className={compactButtonCls}
+                            onClick={() => {
+                              setCategoryPickerError(null);
+                              setCategoryPickerId(prev => (prev === row.id ? null : row.id));
+                            }}
+                          >
+                            Change category
+                          </button>
+                          {(row.alias_list?.length ?? 0) > 0 && (
                             <button
                               type="button"
                               className={compactButtonCls}
                               onClick={() => {
-                                setCategoryPickerError(null);
-                                setCategoryPickerId(prev => (prev === row.id ? null : row.id));
+                                setAliasPromoteError(null);
+                                setAliasPromotePickerId(prev => (prev === row.id ? null : row.id));
                               }}
                             >
-                              Set category
+                              Promote alias
                             </button>
                           )}
                           {!row.is_linked && (
@@ -374,7 +401,7 @@ export function PaymentMethodsPanel() {
                         </div>
                       </div>
 
-                      {categoryPickerId === row.id && category === 'Others' && (
+                      {categoryPickerId === row.id && (
                         <div className="mt-2 flex items-end gap-1.5">
                           <label className="flex flex-1 flex-col gap-1 text-[0.68rem] text-muted">
                             Assign category
@@ -390,6 +417,26 @@ export function PaymentMethodsPanel() {
                             </select>
                           </label>
                           {categoryPickerError && <p className="text-[0.68rem] text-red">{categoryPickerError}</p>}
+                        </div>
+                      )}
+
+                      {aliasPromotePickerId === row.id && (row.alias_list?.length ?? 0) > 0 && (
+                        <div className="mt-2 flex items-end gap-1.5">
+                          <label className="flex flex-1 flex-col gap-1 text-[0.68rem] text-muted">
+                            Alias to make standalone
+                            <select
+                              className={compactInputCls}
+                              defaultValue=""
+                              onChange={e => {
+                                if (e.target.value !== '') void promoteAlias(row, e.target.value);
+                              }}
+                              disabled={saving}
+                            >
+                              <option value="">— select alias —</option>
+                              {row.alias_list.map(alias => <option key={alias} value={alias}>{alias}</option>)}
+                            </select>
+                          </label>
+                          {aliasPromoteError && <p className="text-[0.68rem] text-red">{aliasPromoteError}</p>}
                         </div>
                       )}
 

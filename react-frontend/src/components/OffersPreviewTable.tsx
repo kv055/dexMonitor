@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ExchangeTag } from './ExchangeTag';
 import { SellerRatingBadge } from './SellerRatingBadge';
-import { formatNum, formatBtc, premiumClass } from '../utils/formatters';
+import { formatBtc, premiumClass } from '../utils/formatters';
+import { formatFiat } from '../utils/currency';
 import { useTimezone } from '../hooks/useTimezone';
 import { useFilters, type ChartScope } from '../hooks/useFilters';
 import { LoadingSpinner } from './LoadingSpinner';
@@ -68,6 +69,7 @@ export function OffersPreviewTable({ chartScope = 'monitor' }: OffersPreviewTabl
     selectedOfferKey,
     setSelectedOfferKey,
     loading,
+	filters,
     isChartOfferVisible: isChartOfferVisibleInScope,
     toggleChartOfferKey: toggleChartOfferKeyInScope,
     setChartOfferKeysVisible: setChartOfferKeysVisibleInScope,
@@ -171,7 +173,7 @@ export function OffersPreviewTable({ chartScope = 'monitor' }: OffersPreviewTabl
                     <td className={`${TD} text-right ${premiumClass(rawPremium)}`}>
                       {rawPremium != null ? rawPremium.toFixed(1) + '%' : '—'}
                     </td>
-                    <td className={`${TD} text-right`}>€{formatNum(getOfferPrice(o))}</td>
+					<td className={`${TD} text-right`}>{formatFiat(getOfferPrice(o), filters.fiat, { maximumFractionDigits: 0 })}</td>
                     <td className={TD}>
                       <SellerRatingBadge score={o.seller_rating_score} confidence={o.seller_rating_confidence} compact />
                     </td>
@@ -315,14 +317,14 @@ export function OffersPreviewTable({ chartScope = 'monitor' }: OffersPreviewTabl
                   <td className={`${TD} text-right ${premiumClass(rawPremium)}`}>
                     {rawPremium != null ? rawPremium.toFixed(1) + '%' : '—'}
                   </td>
-                  <td className={`${TD} text-right`}>€{formatNum(getOfferPrice(o))}</td>
+				  <td className={`${TD} text-right`}>{formatFiat(getOfferPrice(o), filters.fiat, { maximumFractionDigits: 0 })}</td>
                   <td className={`${TD} text-right`}>{formatBtc(getBtcMin(o))}</td>
                   <td className={`${TD} text-right`}>{formatBtc(getBtcMax(o))}</td>
                   <td className={`${TD} text-right`}>
-                    {getFiatMin(o) != null ? `€${formatNum(getFiatMin(o))}` : '—'}
+					{getFiatMin(o) != null ? formatFiat(getFiatMin(o), filters.fiat, { maximumFractionDigits: 0 }) : '—'}
                   </td>
                   <td className={`${TD} text-right`}>
-                    {getFiatMax(o) != null ? `€${formatNum(getFiatMax(o))}` : '—'}
+					{getFiatMax(o) != null ? formatFiat(getFiatMax(o), filters.fiat, { maximumFractionDigits: 0 }) : '—'}
                   </td>
                   <td className={TD}>
                     {isOfferLive(o)

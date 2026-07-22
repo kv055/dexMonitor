@@ -306,6 +306,81 @@ func (r *Repo) DegradeToAlias(ctx context.Context, aliasID, providerID int64) er
 	return nil
 }
 
+// PromoteAlias turns one exact alias back into its own catalog row. The new
+// method keeps the provider's category and priority but deliberately starts
+// inactive and unlinked: promoting a label must not silently authorize it for
+// trading or attach it to a payment account.
+func (r *Repo) PromoteAlias(ctx context.Context, providerID int64, alias string) error {
+	alias = strings.TrimSpace(alias)
+	normalized := normalizeAlias(alias)
+	if normalized == "" {
+		return ValidationError{fmt.Errorf("alias is required")}
+	}
+
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin promote alias transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	var category string
+	var priority int
+	var aliases commonpm.TextArray
+	if err := tx.QueryRowContext(ctx, `
+		SELECT category, priority, alias_list
+		FROM payment_methods
+		WHERE id = $1
+		FOR UPDATE`, providerID).Scan(&category, &priority, &aliases); err != nil {
+		if err == sql.ErrNoRows {
+			return ValidationError{fmt.Errorf("provider payment method %d does not exist", providerID)}
+		}
+		return fmt.Errorf("load provider payment method %d for alias promotion: %w", providerID, err)
+	}
+
+	remaining := make([]string, 0, len(aliases))
+	found := false
+	for _, candidate := range aliases {
+		if normalizeAlias(candidate) == normalized {
+			if !found {
+				found = true
+				continue
+			}
+		}
+		remaining = append(remaining, candidate)
+	}
+	if !found {
+		return ValidationError{fmt.Errorf("%q is not an alias of payment method %d", alias, providerID)}
+	}
+
+	var exists bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM payment_methods
+			WHERE lower(trim(replace(name, '_', ' '))) = $1
+		)`, normalized).Scan(&exists); err != nil {
+		return fmt.Errorf("check promoted payment method name: %w", err)
+	}
+	if exists {
+		return ValidationError{fmt.Errorf("a payment method named %q already exists", alias)}
+	}
+
+	if _, err := tx.ExecContext(ctx, `
+		UPDATE payment_methods SET alias_list = $1, updated_at = CURRENT_TIMESTAMP
+		WHERE id = $2`, commonpm.TextArray(cleanAliasList(remaining)), providerID); err != nil {
+		return fmt.Errorf("remove alias from payment method %d: %w", providerID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO payment_methods (name, category, is_active, priority, alias_list)
+		VALUES ($1, $2, FALSE, $3, '{}'::text[])`, alias, category, priority); err != nil {
+		return fmt.Errorf("create payment method from alias %q: %w", alias, err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit alias promotion for payment method %d: %w", providerID, err)
+	}
+	return nil
+}
+
 // ListWalletAddresses returns wallet_addresses for the Crypto link dropdown.
 func (r *Repo) ListWalletAddresses(ctx context.Context) ([]WalletAddressRow, error) {
 	rows, err := r.DB.QueryContext(ctx, `SELECT id, label, address FROM wallet_addresses ORDER BY id`)

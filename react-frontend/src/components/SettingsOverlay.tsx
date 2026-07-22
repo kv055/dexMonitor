@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
 import { useTradeCostConfig } from '../hooks/useTradeCostConfig';
+import { fiatSymbol } from '../utils/currency';
 import type { PaymentMethodGroup } from '../types';
 
 interface Props {
@@ -187,7 +188,7 @@ export function SettingsOverlay({
     hideZeroTrustScore,
     setHideZeroTrustScore,
   } = usePreferences();
-  const { zeroTrustHiddenCount, paymentMethodCounts } = useFilters();
+  const { zeroTrustHiddenCount, paymentMethodCounts, filters } = useFilters();
   const { config: tradeCostConfig } = useTradeCostConfig(open);
   const excludedSet = new Set(excludedMethods);
   const excludedCEXSet = new Set(excludedCEXes);
@@ -463,11 +464,11 @@ export function SettingsOverlay({
                 <h3 className="text-xs font-medium">Max Position Size (Fiat)</h3>
               </div>
               <p className="mt-0.5 lg:mt-0 lg:ml-auto lg:text-right text-[0.65rem] text-muted leading-tight">
-                Cap profit calculations to this EUR amount. Larger orders will show both the full-size and the capped result.
+                Cap profit calculations to this {filters.fiat} amount. Larger orders will show both the full-size and the capped result.
               </p>
             </div>
             <div className="flex items-center gap-2">
-              <span className="text-xs text-muted">€</span>
+			  <span className="text-xs text-muted">{fiatSymbol(filters.fiat)}</span>
               <input
                 type="number"
                 min={0}

@@ -43,11 +43,13 @@ function MmControllerView() {
   );
 }
 
-function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, fastPastProfitableOrders, detailedPastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics, loadCore, refreshForCex, error, lastUpdatedAt, ohlcData, extendOhlc, allowOhlcExtend }: {
+function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastOrderStatsNetMin, pastOrderStatsAllNetMin, fastPastProfitableOrders, detailedPastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics, loadCore, refreshForCex, error, lastUpdatedAt, ohlcData, extendOhlc, allowOhlcExtend }: {
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
   pastOrderStatsNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsNetCapped'];
   pastOrderStatsAllNetCapped: ReturnType<typeof useDashboard>['pastOrderStatsAllNetCapped'];
+  pastOrderStatsNetMin: ReturnType<typeof useDashboard>['pastOrderStatsNetMin'];
+  pastOrderStatsAllNetMin: ReturnType<typeof useDashboard>['pastOrderStatsAllNetMin'];
   fastPastProfitableOrders: ReturnType<typeof useDashboard>['fastPastProfitableOrders'];
   detailedPastProfitableOrders: ReturnType<typeof useDashboard>['detailedPastProfitableOrders'];
   analyticsOverviewLoading: boolean;
@@ -55,29 +57,29 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
   analyticsCappedLoading: boolean;
   loadAnalytics: ReturnType<typeof useDashboard>['loadAnalytics'];
   loadCore: ReturnType<typeof useDashboard>['loadCore'];
-  refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null) => void;
+  refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null, fiat?: string) => void;
   error: string | null;
   lastUpdatedAt: string;
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
-  extendOhlc: (hours: number, cex?: string, intervalMin?: number) => void;
+  extendOhlc: (hours: number, cex?: string, intervalMin?: number, fiat?: string) => void;
   allowOhlcExtend: boolean;
 }) {
   const { filters } = useFilters();
   const { excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit } = usePreferences();
 
   useEffect(() => {
-    loadAnalytics(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
-  }, [filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadAnalytics]);
+    loadAnalytics(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat);
+  }, [filters.hours, filters.cex, filters.fiat, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadAnalytics]);
 
   // Same core-data refresh cycle as the Monitor tab: reload live offers and
   // the offers/OHLC dataset when the CEX or cost preferences change, and keep
   // them fresh with a 5-minute poll while the tab stays open.
   useEffect(() => {
-    refreshForCex(filters.cex, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
-    loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit);
-    const interval = setInterval(() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit), 5 * 60 * 1000);
+    refreshForCex(filters.cex, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat);
+    loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat);
+    const interval = setInterval(() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat), 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadCore, refreshForCex]);
+  }, [filters.hours, filters.cex, filters.fiat, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadCore, refreshForCex]);
 
   return (
     <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -93,20 +95,22 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           statsAll={pastOrderStatsAll}
           statsNetCapped={pastOrderStatsNetCapped}
           statsAllNetCapped={pastOrderStatsAllNetCapped}
+          statsNetMin={pastOrderStatsNetMin}
+          statsAllNetMin={pastOrderStatsAllNetMin}
           fastOrders={fastPastProfitableOrders}
           detailedOrders={detailedPastProfitableOrders}
           statsLoading={analyticsOverviewLoading}
           ordersLoading={analyticsOrdersLoading}
           cappedLoading={analyticsCappedLoading}
           maxFiatLimit={maxFiatLimit}
-          onRefreshLive={() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit)}
+          onRefreshLive={() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat)}
           lastUpdatedAt={lastUpdatedAt}
           chart={(extraOffers, includeLiveOffers) => (
             <OHLCChart
               data={ohlcData}
               loadedHours={Number(filters.hours)}
               allowExtend={allowOhlcExtend}
-              onNeedMoreData={(hours, intervalMin) => extendOhlc(hours, filters.cex, intervalMin)}
+			  onNeedMoreData={(hours, intervalMin) => extendOhlc(hours, filters.cex, intervalMin, filters.fiat)}
               extraOffers={extraOffers}
               includeContextOffers={includeLiveOffers}
               fitToOffers
@@ -150,6 +154,8 @@ function AppShell() {
     pastOrderStatsAll,
     pastOrderStatsNetCapped,
     pastOrderStatsAllNetCapped,
+    pastOrderStatsNetMin,
+    pastOrderStatsAllNetMin,
     fastPastProfitableOrders,
     detailedPastProfitableOrders,
     ohlcData,
@@ -207,6 +213,8 @@ function AppShell() {
             pastOrderStatsAll={pastOrderStatsAll}
             pastOrderStatsNetCapped={pastOrderStatsNetCapped}
             pastOrderStatsAllNetCapped={pastOrderStatsAllNetCapped}
+            pastOrderStatsNetMin={pastOrderStatsNetMin}
+            pastOrderStatsAllNetMin={pastOrderStatsAllNetMin}
             fastPastProfitableOrders={fastPastProfitableOrders}
             detailedPastProfitableOrders={detailedPastProfitableOrders}
             analyticsOverviewLoading={analyticsOverviewLoading}

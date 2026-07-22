@@ -16,6 +16,9 @@ const PREMIUM_FILTER_OPTIONS: { value: PremiumFilterMode; label: string }[] = [
   { value: 'net_capped', label: 'Net Premium Capped' },
 ];
 
+const FIAT_OPTIONS = ['EUR', 'USD', 'GBP', 'AUD', 'CHF', 'SEK', 'NOK', 'CAD'];
+const SOURCE_OPTIONS = ['kraken', 'coinbase', 'bitstamp', 'binance'];
+
 interface PaymentDropdownProps {
   value: string;
   onChange: (v: string) => void;
@@ -275,7 +278,8 @@ function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls }: Premium
   );
 }
 
-const labelCls = "text-[0.6rem] text-muted uppercase tracking-wide whitespace-nowrap";
+const labelCls = "text-[0.65rem] font-semibold uppercase tracking-wide text-muted";
+const controlCls = "w-full rounded border border-border bg-bg/60 px-2 py-1.5 text-[0.75rem] font-medium text-text outline-none transition-colors hover:border-accent/50 focus:border-accent";
 
 interface LiveOfferFiltersProps {
   onRefresh: () => void;
@@ -292,39 +296,63 @@ export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersP
   const { timezone } = useTimezone();
   const panelRef = useRef<HTMLDivElement>(null);
 
-  const inputCls = "bg-bg text-text border border-border rounded-md px-2 py-0.5 text-[0.8rem] cursor-pointer outline-none focus:border-accent transition-colors w-full";
   const lastUpdated = lastUpdatedAt ? `Updated ${formatTimeOnly(lastUpdatedAt, timezone)}` : '';
 
   return (
-    <div ref={panelRef} className="relative flex flex-col gap-2.5 min-w-0">
+    <div ref={panelRef} className="relative flex flex-col gap-3 min-w-0">
+      <label className="flex flex-col gap-1">
+        <span className={labelCls}>Fiat</span>
+        <select
+          value={filters.fiat}
+          onChange={event => setFilters({ fiat: event.target.value })}
+          className={controlCls}
+          title="Show live and past offers quoted in this currency"
+        >
+          {FIAT_OPTIONS.map(currency => <option key={currency} value={currency}>{currency}</option>)}
+        </select>
+      </label>
 
-      {/* Filters: label | control */}
-      <div className="grid grid-cols-[auto_1fr] items-center gap-x-3 gap-y-1">
+      <label className="flex flex-col gap-1">
+        <span className={labelCls}>Reference source</span>
+        <select
+          value={filters.cex}
+          onChange={event => setFilters({ cex: event.target.value })}
+          className={controlCls}
+          title="CEX reference-price source used while displaying offers"
+        >
+          {SOURCE_OPTIONS.map(source => <option key={source} value={source}>{source[0].toUpperCase() + source.slice(1)}</option>)}
+        </select>
+      </label>
+
+      <div className="flex flex-col gap-1">
         <span className={labelCls}>Payment</span>
-        <PaymentDropdown value={filters.payment} onChange={v => setFilters({ payment: v })} inputCls={inputCls} containerRef={panelRef} />
+        <PaymentDropdown value={filters.payment} onChange={v => setFilters({ payment: v })} inputCls={controlCls} containerRef={panelRef} />
+      </div>
 
+      <div className="flex flex-col gap-1">
         <span className={labelCls}>Premium</span>
         <PremiumModeDropdown
           value={filters.premiumMode}
           premiumOnly={filters.premiumOnly}
           onChange={(v, premiumOnly) => setFilters({ premiumMode: v, ...(premiumOnly == null ? {} : { premiumOnly }) })}
-          inputCls={inputCls}
+          inputCls={controlCls}
         />
+      </div>
 
-        <span className={labelCls}>Range %</span>
-        <div className="flex items-center gap-1 min-w-0">
+      <div className="flex flex-col gap-1">
+        <span className={labelCls}>Premium range</span>
+        <div className="grid grid-cols-2 gap-2 min-w-0">
           <input
             type="number"
-            className={`${inputCls} min-w-0`}
+            className={`${controlCls} min-w-0`}
             placeholder="Min"
             step="0.1"
             value={filters.premiumMin}
             onChange={e => setFilters({ premiumMin: e.target.value })}
           />
-          <span className="text-muted text-[0.8rem] shrink-0">–</span>
           <input
             type="number"
-            className={`${inputCls} min-w-0`}
+            className={`${controlCls} min-w-0`}
             placeholder="Max"
             step="0.1"
             value={filters.premiumMax}
@@ -333,17 +361,38 @@ export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersP
         </div>
       </div>
 
-      {/* Actions */}
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[0.72rem] text-muted truncate">{lastUpdated}</span>
+      <div className="flex items-center justify-between gap-2 border-t border-border/70 pt-2">
+        <span className="text-[0.68rem] text-muted truncate">{lastUpdated}</span>
         <button
           onClick={onRefresh}
-          className="shrink-0 bg-accent text-black border-none rounded-md px-2.5 py-0.5 text-[0.78rem] font-semibold cursor-pointer hover:opacity-85 transition-opacity"
+          className="shrink-0 rounded border border-accent bg-accent px-2.5 py-1 text-[0.72rem] font-semibold text-black transition-opacity hover:opacity-85"
         >
           ↻ Refresh
         </button>
       </div>
 
     </div>
+  );
+}
+
+// Past offers use the same frontend-only fiat selection as the live feed, but
+// their controls are shown in a separate panel. Keeping the selector here
+// makes the active historical dataset explicit while the Past Offers view is
+// open.
+export function PastOfferFilters() {
+  const { filters, setFilters } = useFilters();
+
+  return (
+    <label className="flex flex-col gap-1">
+      <span className={labelCls}>Fiat</span>
+      <select
+        value={filters.fiat}
+        onChange={event => setFilters({ fiat: event.target.value })}
+        className={controlCls}
+        title="Show past offers quoted in this currency"
+      >
+        {FIAT_OPTIONS.map(currency => <option key={currency} value={currency}>{currency}</option>)}
+      </select>
+    </label>
   );
 }

@@ -31,6 +31,8 @@ type dashboardAnalyticsResponse struct {
 	PastOrderStats              pastorders.StatsResponse               `json:"past_order_stats,omitempty"`
 	PastOrderStatsAllNetCapped  pastorders.StatsResponse               `json:"past_order_stats_all_net_capped,omitempty"`
 	PastOrderStatsNetCapped     pastorders.StatsResponse               `json:"past_order_stats_net_capped,omitempty"`
+	PastOrderStatsAllNetMin     pastorders.StatsResponse               `json:"past_order_stats_all_net_min,omitempty"`
+	PastOrderStatsNetMin        pastorders.StatsResponse               `json:"past_order_stats_net_min,omitempty"`
 	PastProfitableOrders        []pastProfitableOrderAPI               `json:"past_profitable_orders,omitempty"`
 	PastProfitableOrdersCompact []pastProfitableOrderCompactAPI        `json:"past_profitable_orders_compact,omitempty"`
 }
@@ -107,6 +109,7 @@ func (p dashboardAnalyticsParams) cacheKey() string {
 		strconv.FormatBool(p.CoupledHedge),
 		strconv.FormatFloat(p.MaxFiatLimitEUR, 'f', -1, 64),
 		strconv.Itoa(p.Confirmations),
+		p.Fiat,
 	}
 	return strings.Join(parts, "|")
 }
@@ -175,6 +178,17 @@ func loadGeneralStatsContextUncachedForParams(p dashboardAnalyticsParams) (gener
 	if err != nil {
 		return generalStatsContext{}, err
 	}
+	filtered := offers[:0]
+	for _, offer := range offers {
+		offerFiat := offerString(offer, "fiat_currency")
+		if offerFiat == "" {
+			offerFiat = "EUR" // compatibility with rows written before the currency column
+		}
+		if strings.EqualFold(offerFiat, p.Fiat) {
+			filtered = append(filtered, offer)
+		}
+	}
+	offers = filtered
 
 	generalOffers := make([]pastorders.Offer, 0, len(offers))
 	closedOfferIDs := make([]int64, 0, len(offers))

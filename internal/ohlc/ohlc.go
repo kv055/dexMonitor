@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -24,15 +25,25 @@ func NewService() *Service {
 
 // Candles fetches OHLC candles for the requested market.
 func (s *Service) Candles(ctx context.Context, exchange string, hours int, intervalMin int) []map[string]any {
+	return s.CandlesForFiat(ctx, exchange, "EUR", hours, intervalMin)
+}
+
+// CandlesForFiat fetches OHLC candles for the requested BTC/fiat market.
+// Candles remains as the EUR compatibility wrapper for existing callers.
+func (s *Service) CandlesForFiat(ctx context.Context, exchange, fiat string, hours int, intervalMin int) []map[string]any {
+	fiat = strings.ToUpper(strings.TrimSpace(fiat))
+	if fiat == "" {
+		fiat = "EUR"
+	}
 	switch exchange {
 	case "binance":
-		return s.fetchBinance(ctx, hours, intervalMin)
+		return s.fetchBinance(ctx, fiat, hours, intervalMin)
 	case "bitstamp":
-		return s.fetchBitstamp(ctx, hours, intervalMin)
+		return s.fetchBitstamp(ctx, fiat, hours, intervalMin)
 	case "coinbase":
-		return s.fetchCoinbase(ctx, hours, intervalMin)
+		return s.fetchCoinbase(ctx, fiat, hours, intervalMin)
 	default:
-		return s.fetchKraken(ctx, hours, intervalMin)
+		return s.fetchKraken(ctx, fiat, hours, intervalMin)
 	}
 }
 
@@ -43,8 +54,8 @@ func (s *Service) client() *http.Client {
 	return &http.Client{Timeout: 15 * time.Second}
 }
 
-func (s *Service) fetchKraken(ctx context.Context, hours int, intervalMin int) []map[string]any {
-	apiURL := fmt.Sprintf("https://api.kraken.com/0/public/OHLC?pair=XBTEUR&interval=%d", intervalMin)
+func (s *Service) fetchKraken(ctx context.Context, fiat string, hours int, intervalMin int) []map[string]any {
+	apiURL := fmt.Sprintf("https://api.kraken.com/0/public/OHLC?pair=XBT%s&interval=%d", fiat, intervalMin)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	resp, err := s.client().Do(req)
 	if err != nil {
@@ -104,7 +115,7 @@ func (s *Service) fetchKraken(ctx context.Context, hours int, intervalMin int) [
 	return candles
 }
 
-func (s *Service) fetchBinance(ctx context.Context, hours int, intervalMin int) []map[string]any {
+func (s *Service) fetchBinance(ctx context.Context, fiat string, hours int, intervalMin int) []map[string]any {
 	interval := "15m"
 	switch intervalMin {
 	case 1:
@@ -123,7 +134,7 @@ func (s *Service) fetchBinance(ctx context.Context, hours int, intervalMin int) 
 		interval = "1d"
 	}
 	startMs := (time.Now().UTC().Unix() - int64(hours*3600)) * 1000
-	apiURL := fmt.Sprintf("https://api.binance.com/api/v3/klines?symbol=BTCEUR&interval=%s&limit=1000&startTime=%d", interval, startMs)
+	apiURL := fmt.Sprintf("https://api.binance.com/api/v3/klines?symbol=BTC%s&interval=%s&limit=1000&startTime=%d", fiat, interval, startMs)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	resp, err := s.client().Do(req)
 	if err != nil {
@@ -165,10 +176,10 @@ func (s *Service) fetchBinance(ctx context.Context, hours int, intervalMin int) 
 	return candles
 }
 
-func (s *Service) fetchBitstamp(ctx context.Context, hours int, intervalMin int) []map[string]any {
+func (s *Service) fetchBitstamp(ctx context.Context, fiat string, hours int, intervalMin int) []map[string]any {
 	step := intervalMin * 60
 	start := time.Now().UTC().Unix() - int64(hours*3600)
-	apiURL := fmt.Sprintf("https://www.bitstamp.net/api/v2/ohlc/btceur/?step=%d&limit=1000&start=%d", step, start)
+	apiURL := fmt.Sprintf("https://www.bitstamp.net/api/v2/ohlc/btc%s/?step=%d&limit=1000&start=%d", strings.ToLower(fiat), step, start)
 	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, apiURL, nil)
 	resp, err := s.client().Do(req)
 	if err != nil {
@@ -211,12 +222,13 @@ func (s *Service) fetchBitstamp(ctx context.Context, hours int, intervalMin int)
 	return candles
 }
 
-func (s *Service) fetchCoinbase(ctx context.Context, hours int, intervalMin int) []map[string]any {
+func (s *Service) fetchCoinbase(ctx context.Context, fiat string, hours int, intervalMin int) []map[string]any {
 	gran := intervalMin * 60
 	end := time.Now().UTC()
 	start := end.Add(-time.Duration(hours) * time.Hour)
 	apiURL := fmt.Sprintf(
-		"https://api.exchange.coinbase.com/products/BTC-EUR/candles?granularity=%d&start=%s&end=%s",
+		"https://api.exchange.coinbase.com/products/BTC-%s/candles?granularity=%d&start=%s&end=%s",
+		fiat,
 		gran,
 		url.QueryEscape(start.Format(time.RFC3339)),
 		url.QueryEscape(end.Format(time.RFC3339)),

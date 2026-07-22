@@ -3,6 +3,7 @@ import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
 import { LoadingSpinner } from './LoadingSpinner';
 import { formatDateTimeLabel, toUtcSec } from '../utils/formatters';
+import { formatFiat } from '../utils/currency';
 import { getBtcMax, getFirstSeen, getLastSeen, getOfferPrice, getRefPrice, isOfferLive } from '../utils/offerAccess';
 
 function niceStep(range: number, targetSteps: number): number {
@@ -266,7 +267,7 @@ function DepthChartInner() {
       ctx.strokeStyle = grid;
       ctx.beginPath(); ctx.moveTo(ML, y); ctx.lineTo(ML + PW, y); ctx.stroke();
       ctx.fillStyle = muted;
-      ctx.fillText(`€${Math.round(p).toLocaleString('de-DE')}`, ML - 5, y);
+	  ctx.fillText(formatFiat(p, filters.fiat, { maximumFractionDigits: 0 }), ML - 5, y);
     }
 
     // X (volume) gridlines + labels
@@ -350,7 +351,7 @@ function DepthChartInner() {
     ctx.textBaseline = 'bottom';
     ctx.fillText('Cumulative BTC', ML + PW / 2, H - 2);
 
-  }, [chartData, resizeTick]);
+	}, [chartData, filters.fiat, resizeTick]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -363,9 +364,9 @@ function DepthChartInner() {
           <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[0.65rem] tabular-nums text-muted">
             <span>Bids <span className="font-medium text-green">{chartData.visibleBidBtc.toFixed(3)}</span></span>
             <span>Asks <span className="font-medium text-red">{chartData.visibleAskBtc.toFixed(3)}</span> BTC</span>
-            <span>Mid <span className="font-medium text-text">€{Math.round(chartData.midPrice).toLocaleString('de-DE')}</span></span>
+			<span>Mid <span className="font-medium text-text">{formatFiat(chartData.midPrice, filters.fiat, { maximumFractionDigits: 0 })}</span></span>
             {chartData.spread != null && (
-              <span>Spread <span className="font-medium text-text">€{chartData.spread.toLocaleString('de-DE')}</span></span>
+			  <span>Spread <span className="font-medium text-text">{formatFiat(chartData.spread, filters.fiat, { maximumFractionDigits: 0 })}</span></span>
             )}
           </div>
         )}

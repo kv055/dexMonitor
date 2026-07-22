@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import { formatDuration, formatTime, premiumClass } from '../utils/formatters';
 import { stripTrailingZeros } from '../utils/numberFormat';
+import { formatFiat, formatSignedFiat } from '../utils/currency';
+import { useFilters } from '../hooks/useFilters';
 import type { AbortCostBreakdown, BTCNetworkFeeDetail as BTCDetail, CapitalRequirement, CostBreakdown } from '../types';
 
 function fmt8(n: number): string {
@@ -26,17 +28,8 @@ function fmtSignedBtc(n: number): string {
   return abs;
 }
 
-function fmtFiatAmount(n: number | null | undefined): string {
-  if (n == null) return '—';
-  const abs = Number(Math.abs(n)).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
-  if (n > 0) return '+€' + abs;
-  if (n < 0) return '-€' + abs;
-  return '€' + abs;
-}
-
-function fmtEurAmount(n: number | null | undefined): string {
-  if (n == null || !Number.isFinite(n)) return '—';
-  return Number(n).toLocaleString('de-DE', { style: 'currency', currency: 'EUR', maximumFractionDigits: 2 });
+function fmtFiatAmount(n: number | null | undefined, currency: string): string {
+  return formatSignedFiat(n, currency);
 }
 
 function fmtEtaMinutes(totalMinutes: number): string {
@@ -191,6 +184,7 @@ function OnchainFeeDetail({ d, conf, bd }: { d: BTCDetail; conf: number; bd: Cos
 }
 
 function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
+	const { filters } = useFilters();
   if (bd.hedge.fee_sum_btc <= 0) return null;
   const position = bd.hedge.position;
 
@@ -254,15 +248,15 @@ function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted">BTC ref price</span>
-            <span className="text-text mono-nums">{fmtEurAmount(position.btc_price_eur)}</span>
+			<span className="text-text mono-nums">{formatFiat(position.btc_price_eur, filters.fiat)}</span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted">Hedge notional</span>
-            <span className="text-text mono-nums">{fmtEurAmount(position.hedge_notional_eur)}</span>
+			<span className="text-text mono-nums">{formatFiat(position.hedge_notional_eur, filters.fiat)}</span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted">Recommended collateral</span>
-            <span className="text-text mono-nums">{fmtEurAmount(position.recommended_collateral_eur)}</span>
+			<span className="text-text mono-nums">{formatFiat(position.recommended_collateral_eur, filters.fiat)}</span>
           </div>
           {/* The remaining fields were never persisted historically — only show
               them for a freshly-simulated live position, not a reconstructed one. */}
@@ -270,7 +264,7 @@ function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
             <>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted">Initial margin</span>
-                <span className="text-text mono-nums">{fmtEurAmount(position.initial_margin_eur)}</span>
+				<span className="text-text mono-nums">{formatFiat(position.initial_margin_eur, filters.fiat)}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted">Stress move</span>
@@ -278,16 +272,16 @@ function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted">Stress loss</span>
-                <span className="text-text mono-nums">{fmtEurAmount(position.stress_loss_eur)}</span>
+				<span className="text-text mono-nums">{formatFiat(position.stress_loss_eur, filters.fiat)}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted">Maintenance requirement</span>
-                <span className="text-text mono-nums">{fmtEurAmount(position.maintenance_requirement_eur)}</span>
+				<span className="text-text mono-nums">{formatFiat(position.maintenance_requirement_eur, filters.fiat)}</span>
               </div>
               <div className="flex items-center justify-between gap-3">
                 <span className="text-muted">Free collateral after stress</span>
                 <span className={`mono-nums ${position.free_collateral_after_stress_eur < 0 ? 'text-red' : 'text-text'}`}>
-                  {fmtEurAmount(position.free_collateral_after_stress_eur)}
+				  {formatFiat(position.free_collateral_after_stress_eur, filters.fiat)}
                 </span>
               </div>
               <div className="flex items-center justify-between gap-3">
@@ -356,6 +350,7 @@ export function SizeToggle({ mode, onModeChange, fullBtc, cappedBtc, minBtc, ref
   minBtc?: number | null;
   refPrice: number | null;
 }) {
+	const { filters } = useFilters();
   const fullEur = fullBtc != null && refPrice != null ? Math.round(fullBtc * refPrice) : null;
   const cappedEur = cappedBtc != null && refPrice != null ? Math.round(cappedBtc * refPrice) : null;
   const minEur = minBtc != null && refPrice != null ? Math.round(minBtc * refPrice) : null;
@@ -363,16 +358,16 @@ export function SizeToggle({ mode, onModeChange, fullBtc, cappedBtc, minBtc, ref
   return (
     <div className="flex items-center gap-1 self-start">
       <SizeModeButton active={mode === 'full'} onClick={() => onModeChange('full')}>
-        {fullEur != null ? `Max €${fullEur}` : 'Max'}
+		{fullEur != null ? `Max ${formatFiat(fullEur, filters.fiat, { maximumFractionDigits: 0 })}` : 'Max'}
       </SizeModeButton>
       {cappedAvailable && (
         <SizeModeButton active={mode === 'capped'} onClick={() => onModeChange('capped')}>
-          {cappedEur != null ? `€${cappedEur} cap` : 'Capped'}
+		  {cappedEur != null ? `${formatFiat(cappedEur, filters.fiat, { maximumFractionDigits: 0 })} cap` : 'Capped'}
         </SizeModeButton>
       )}
       {minBtc != null && (
         <SizeModeButton active={mode === 'min'} onClick={() => onModeChange('min')}>
-          {minEur != null ? `€${minEur} min` : 'Min amount'}
+		  {minEur != null ? `${formatFiat(minEur, filters.fiat, { maximumFractionDigits: 0 })} min` : 'Min amount'}
         </SizeModeButton>
       )}
     </div>
@@ -383,6 +378,7 @@ export function AbortCostSection({ abortCost, refPrice }: {
   abortCost: AbortCostBreakdown | null;
   refPrice: number | null;
 }) {
+	const { filters } = useFilters();
   if (!abortCost || abortCost.btc_amount <= 0) return null;
 
   const fiatValue = (btc: number | null | undefined) => (btc != null && refPrice != null ? btc * refPrice : null);
@@ -393,13 +389,14 @@ export function AbortCostSection({ abortCost, refPrice }: {
     <div className="flex items-center justify-between gap-3 text-[0.64rem] text-muted">
       <span className="uppercase tracking-wide font-semibold">Abort cost</span>
       <span className="mono-nums text-right whitespace-nowrap">
-        {fmt8(totalBTC)} BTC · {fmtFiatAmount(fiatValue(totalBTC))} · {fmtPct(totalPct)}
+		{fmt8(totalBTC)} BTC · {fmtFiatAmount(fiatValue(totalBTC), filters.fiat)} · {fmtPct(totalPct)}
       </span>
     </div>
   );
 }
 
 export function CapitalRequiredSection({ capital }: { capital: CapitalRequirement | null | undefined }) {
+	const { filters } = useFilters();
   if (!capital || capital.total_eur <= 0) return null;
 
   const hasDeposit = capital.security_deposit_btc > 0;
@@ -411,15 +408,15 @@ export function CapitalRequiredSection({ capital }: { capital: CapitalRequiremen
     <div className="rounded-lg border border-blue/30 bg-blue/5 px-3 py-2.5 flex flex-col gap-1.5 text-[0.72rem]">
       <div className="flex items-center justify-between gap-2">
         <span className="text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Capital required</span>
-        <span className="mono-nums font-bold text-[0.95rem] text-text">{fmtEurAmount(capital.total_eur)}</span>
+		<span className="mono-nums font-bold text-[0.95rem] text-text">{formatFiat(capital.total_eur, filters.fiat)}</span>
       </div>
       <div className="flex items-center justify-between gap-3">
         <span className="text-muted">Spot notional (CEX buy)</span>
-        <span className="text-text mono-nums">{fmtEurAmount(capital.spot_notional_eur)}</span>
+		<span className="text-text mono-nums">{formatFiat(capital.spot_notional_eur, filters.fiat)}</span>
       </div>
       <div className="flex items-center justify-between gap-3">
         <span className="text-muted">Hedge collateral</span>
-        <span className="text-text mono-nums">{fmtEurAmount(capital.hedge_collateral_eur)}</span>
+		<span className="text-text mono-nums">{formatFiat(capital.hedge_collateral_eur, filters.fiat)}</span>
       </div>
       {hasDeposit && (
         <div className="flex items-start justify-between gap-3">
@@ -429,7 +426,7 @@ export function CapitalRequiredSection({ capital }: { capital: CapitalRequiremen
             {capital.deposit_estimated && <Badge label="est." colorCls="text-muted" />}
           </span>
           <span className="text-right">
-            <div className="text-text mono-nums">{fmtEurAmount(capital.security_deposit_eur)}</div>
+			<div className="text-text mono-nums">{formatFiat(capital.security_deposit_eur, filters.fiat)}</div>
             <div className="text-[0.64rem] text-muted mono-nums">{fmt8(capital.security_deposit_btc)} BTC</div>
           </span>
         </div>
@@ -450,6 +447,7 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
   // Trade Tracing panel, so they keep showing both here.
   showCapitalAndAbort?: boolean;
 }) {
+	const { filters } = useFilters();
   type BreakdownRow = { label: string; btc: number; pct: number; expandable?: 'network' | 'hedge'; cumulative: number };
   const [networkFeeOpen, setNetworkFeeOpen] = useState(false);
   const [hedgeFeeOpen, setHedgeFeeOpen] = useState(false);
@@ -525,7 +523,7 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
         </div>
         <div className="flex items-baseline gap-1.5">
           <span className="text-text text-[0.9rem] font-semibold mono-nums">{fmt8(bd.btc_amount)} BTC</span>
-          <span className="text-muted text-[0.75rem] mono-nums">{fmtFiatAmount(fiatValue(bd.btc_amount))}</span>
+		  <span className="text-muted text-[0.75rem] mono-nums">{fmtFiatAmount(fiatValue(bd.btc_amount), filters.fiat)}</span>
         </div>
       </div>
 
@@ -561,11 +559,11 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
           <tr className="bg-grid/40">
             <td className="pr-3 py-1 text-text font-medium rounded-l">Asset bought</td>
             <td className="pr-3 py-1 text-right text-text mono-nums">
-              {amountUnit === 'btc' ? fmt8(bd.btc_amount) : fmtFiatAmount(fiatValue(bd.btc_amount))}
+			  {amountUnit === 'btc' ? fmt8(bd.btc_amount) : fmtFiatAmount(fiatValue(bd.btc_amount), filters.fiat)}
             </td>
             <td className="pr-3 py-1 text-right text-muted">—</td>
             <td className="py-1 text-right text-text mono-nums font-medium rounded-r">
-              {amountUnit === 'btc' ? fmt8(bd.btc_amount) : fmtFiatAmount(fiatValue(bd.btc_amount))}
+			  {amountUnit === 'btc' ? fmt8(bd.btc_amount) : fmtFiatAmount(fiatValue(bd.btc_amount), filters.fiat)}
             </td>
           </tr>
           {rows.map((r, i) => {
@@ -593,11 +591,11 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
                     ) : r.label}
                   </td>
                   <td className="pr-3 py-1 text-right text-text mono-nums">
-                    {amountUnit === 'btc' ? fmt8(r.btc) : fmtFiatAmount(fiatValue(r.btc))}
+					{amountUnit === 'btc' ? fmt8(r.btc) : fmtFiatAmount(fiatValue(r.btc), filters.fiat)}
                   </td>
                   <td className="pr-3 py-1 text-right text-text mono-nums">{fmtPct(r.pct)}</td>
                   <td className="py-1 text-right text-text mono-nums rounded-r">
-                    {amountUnit === 'btc' ? fmt8(r.cumulative) : fmtFiatAmount(fiatValue(r.cumulative))}
+					{amountUnit === 'btc' ? fmt8(r.cumulative) : fmtFiatAmount(fiatValue(r.cumulative), filters.fiat)}
                   </td>
                 </tr>
                 {isNetworkFee && networkFeeOpen && <NetworkFeeDetail bd={bd} />}
@@ -608,13 +606,13 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
           <tr className="border-t border-border">
             <td className="pr-3 pt-2.5 pb-1 font-semibold text-text">Total cost</td>
             <td className="pr-3 pt-2.5 pb-1 text-right font-semibold text-text mono-nums">
-              {amountUnit === 'btc' ? fmt8(bd.total_cost_btc) : fmtFiatAmount(fiatValue(bd.total_cost_btc))}
+			  {amountUnit === 'btc' ? fmt8(bd.total_cost_btc) : fmtFiatAmount(fiatValue(bd.total_cost_btc), filters.fiat)}
             </td>
             <td className="pr-3 pt-2.5 pb-1 text-right font-semibold text-red mono-nums">{fmtPct(bd.total_cost_pct)}</td>
             <td className="pt-2.5 pb-1 text-right font-semibold text-text mono-nums">
               {amountUnit === 'btc'
                 ? fmt8(bd.btc_amount + bd.total_cost_btc)
-                : fmtFiatAmount(fiatValue(bd.btc_amount + bd.total_cost_btc))}
+				: fmtFiatAmount(fiatValue(bd.btc_amount + bd.total_cost_btc), filters.fiat)}
             </td>
           </tr>
           <tr>
@@ -633,7 +631,7 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
             </td>
             <td className={`pt-2.5 text-right font-bold text-[0.82rem] mono-nums ${profitCls}`}>
               {profitBtc != null
-                ? (amountUnit === 'btc' ? fmtSignedBtc(profitBtc) : fmtFiatAmount(fiatValue(profitBtc)))
+				? (amountUnit === 'btc' ? fmtSignedBtc(profitBtc) : fmtFiatAmount(fiatValue(profitBtc), filters.fiat))
                 : '—'}
             </td>
           </tr>
@@ -649,7 +647,7 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
         </div>
         <div className="flex items-center justify-end gap-3 mt-0.5">
           <span className={`mono-nums text-[0.75rem] font-medium ${profitCls}`}>
-            {fmtFiatAmount(fiatValue(profitBtc))}
+			{fmtFiatAmount(fiatValue(profitBtc), filters.fiat)}
           </span>
           <span className={`mono-nums text-[0.75rem] font-medium ${profitCls}`}>
             {profitPct != null ? fmtPct(profitPct) : '—'}
@@ -658,15 +656,15 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
         {offerPrice != null && (
           <div className="mt-2 pt-2 border-t border-border/60 text-[0.64rem] text-muted mono-nums flex flex-col gap-0.5">
             <div>
-              {fmt8(bd.btc_amount)} BTC @ {fmtEurAmount(offerPrice)} = {fmtEurAmount(bd.btc_amount * offerPrice)}
+			  {fmt8(bd.btc_amount)} BTC @ {formatFiat(offerPrice, filters.fiat)} = {formatFiat(bd.btc_amount * offerPrice, filters.fiat)}
             </div>
             <div>
-              <span>{fmtEurAmount(bd.btc_amount * offerPrice)}</span>
+			  <span>{formatFiat(bd.btc_amount * offerPrice, filters.fiat)}</span>
               <span className="mx-1">−</span>
-              <span>{fmtEurAmount(fiatValue(bd.btc_amount + bd.total_cost_btc))}</span>
+			  <span>{formatFiat(fiatValue(bd.btc_amount + bd.total_cost_btc), filters.fiat)}</span>
               <span className="mx-1">=</span>
               <span className={`font-semibold ${profitCls}`}>
-                {fmtFiatAmount(bd.btc_amount * offerPrice - (fiatValue(bd.btc_amount + bd.total_cost_btc) ?? 0))}
+				{fmtFiatAmount(bd.btc_amount * offerPrice - (fiatValue(bd.btc_amount + bd.total_cost_btc) ?? 0), filters.fiat)}
               </span>
             </div>
           </div>

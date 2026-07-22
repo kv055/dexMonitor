@@ -190,6 +190,8 @@ type takerAnalyticsResult struct {
 	statsFilteredFull   pastorders.StatsResponse
 	statsAllCapped      pastorders.StatsResponse
 	statsFilteredCapped pastorders.StatsResponse
+	statsAllMin         pastorders.StatsResponse
+	statsFilteredMin    pastorders.StatsResponse
 	orders              []pastProfitableOrderAPI
 	ordersCompact       []pastProfitableOrderCompactAPI
 }
@@ -227,6 +229,8 @@ func filterDashboardAnalyticsResponse(full dashboardAnalyticsResponse, p dashboa
 	if p.wantsSection(analyticsSectionTakerStats) {
 		filtered.PastOrderStatsAllNetCapped = full.PastOrderStatsAllNetCapped
 		filtered.PastOrderStatsNetCapped = full.PastOrderStatsNetCapped
+		filtered.PastOrderStatsAllNetMin = full.PastOrderStatsAllNetMin
+		filtered.PastOrderStatsNetMin = full.PastOrderStatsNetMin
 	}
 	if p.wantsSection(analyticsSectionTakerOrdersFull) {
 		filtered.PastProfitableOrdersCompact = full.PastProfitableOrdersCompact
@@ -351,6 +355,8 @@ func (bc *analyticsBuildContext) buildTakerStatsOnly() takerAnalyticsResult {
 	fullFiltered := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
 	cappedAll := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
 	cappedFiltered := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
+	minAll := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
+	minFiltered := make([]pastorders.PremiumOrder, 0, len(bc.closedOffers))
 
 	for _, o := range bc.closedOffers {
 		derived := bc.derivedOffer(o)
@@ -371,6 +377,13 @@ func (bc *analyticsBuildContext) buildTakerStatsOnly() takerAnalyticsResult {
 				cappedFiltered = append(cappedFiltered, po)
 			}
 		}
+		if analysis.profitableInMode(takerOpportunityModeNetMin) {
+			po := premiumOrderFromAnalysis(derived, analysis, takerOpportunityModeNetMin)
+			minAll = append(minAll, po)
+			if !excluded {
+				minFiltered = append(minFiltered, po)
+			}
+		}
 	}
 
 	excludedMethods := []string(nil)
@@ -383,6 +396,8 @@ func (bc *analyticsBuildContext) buildTakerStatsOnly() takerAnalyticsResult {
 		statsFilteredFull:   pastorders.BuildStats(fullFiltered, now, bc.params.Fiat, excludedMethods),
 		statsAllCapped:      pastorders.BuildStats(cappedAll, now, bc.params.Fiat, nil),
 		statsFilteredCapped: pastorders.BuildStats(cappedFiltered, now, bc.params.Fiat, excludedMethods),
+		statsAllMin:         pastorders.BuildStats(minAll, now, bc.params.Fiat, nil),
+		statsFilteredMin:    pastorders.BuildStats(minFiltered, now, bc.params.Fiat, excludedMethods),
 	}
 }
 
@@ -394,7 +409,7 @@ func (bc *analyticsBuildContext) buildTakerOrdersOnly() []pastProfitableOrderAPI
 	for _, o := range bc.closedOffers {
 		derived := bc.derivedOffer(o)
 		analysis := analyses[derived.id]
-		if !analysis.profitableInMode(takerOpportunityModeNetFull) && !analysis.profitableInMode(takerOpportunityModeNetCapped) {
+		if !analysis.profitableInMode(takerOpportunityModeNetFull) && !analysis.profitableInMode(takerOpportunityModeNetCapped) && !analysis.profitableInMode(takerOpportunityModeNetMin) {
 			continue
 		}
 		orders = append(orders, buildPastProfitableOrderAPI(
@@ -455,6 +470,8 @@ func (bc *analyticsBuildContext) applyTakerStatsSections(resp *dashboardAnalytic
 	resp.PastOrderStats = taker.statsFilteredFull
 	resp.PastOrderStatsAllNetCapped = taker.statsAllCapped
 	resp.PastOrderStatsNetCapped = taker.statsFilteredCapped
+	resp.PastOrderStatsAllNetMin = taker.statsAllMin
+	resp.PastOrderStatsNetMin = taker.statsFilteredMin
 }
 
 func (bc *analyticsBuildContext) applyTakerStatsFullSection(resp *dashboardAnalyticsResponse) {
@@ -562,6 +579,8 @@ func (p analyticsBuildPlan) overlayBuiltSections(dst *analyticsResultCacheEntry,
 	if p.stats {
 		dst.response.PastOrderStatsAllNetCapped = src.PastOrderStatsAllNetCapped
 		dst.response.PastOrderStatsNetCapped = src.PastOrderStatsNetCapped
+		dst.response.PastOrderStatsAllNetMin = src.PastOrderStatsAllNetMin
+		dst.response.PastOrderStatsNetMin = src.PastOrderStatsNetMin
 		dst.builtStats = true
 	}
 	if p.ordersFull {

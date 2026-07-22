@@ -67,6 +67,13 @@ CREATE TABLE offers (
     avg_estimated_profit_btc REAL,
     avg_estimated_profit_fiat REAL,
     avg_btc_amount REAL,
+    avg_min_trade_cost_pct REAL,
+    avg_min_trade_cost_btc REAL,
+    avg_min_net_premium_pct REAL,
+    avg_min_estimated_profit_btc REAL,
+    avg_min_estimated_profit_fiat REAL,
+    avg_min_btc_amount REAL,
+    min_volume_analyzed BOOLEAN NOT NULL DEFAULT 0,
     price_type TEXT,
     best_route_cex TEXT,
     best_route_method TEXT
@@ -83,7 +90,12 @@ CREATE TABLE order_lifecycle (
     trade_cost_btc   REAL,
     net_premium_pct  REAL,
     net_premium_btc  REAL,
-    btc_amount       REAL
+    btc_amount       REAL,
+    min_trade_cost_pct REAL,
+    min_trade_cost_btc REAL,
+    min_net_premium_pct REAL,
+    min_net_premium_btc REAL,
+    min_btc_amount REAL
 );
 
 CREATE INDEX idx_snapshots_time ON snapshots(timestamp);
@@ -417,6 +429,42 @@ func TestPastOfferAnalysisUsesStoredUncappedCosts(t *testing.T) {
 	}
 	if full.CostPolicy != "historical_persisted" {
 		t.Fatalf("cost policy = %q", full.CostPolicy)
+	}
+}
+
+func TestPastOfferNetMinUsesCloseTimeMinimumAnalysis(t *testing.T) {
+	offer := storedPastOfferFixture("buy")
+	offer["btc_min"] = 0.02
+	offer["btc_max"] = 1.0
+	offer["min_volume_analyzed"] = true
+	offer["avg_min_trade_cost_pct"] = 2.25
+	offer["avg_min_trade_cost_btc"] = 0.00045
+	offer["avg_min_net_premium_pct"] = 2.75
+	offer["avg_min_estimated_profit_btc"] = 0.00055
+	offer["avg_min_estimated_profit_fiat"] = 0.055
+	offer["avg_min_btc_amount"] = 0.02
+
+	analysis := addPastOfferCostFieldsFull(offer, pastLifecycleAggregate{}, 0, nil, "", 0)
+	if !analysis.profitableInMode(takerOpportunityModeNetMin) {
+		t.Fatal("persisted minimum-volume scenario should be profitable")
+	}
+	btcSize, profitBTC := analysis.valuesForMode(takerOpportunityModeNetMin)
+	assertFloat(t, btcSize, 0.02)
+	assertFloat(t, profitBTC, 0.00055)
+
+	minScenario := buildPastOfferAPI(offer, pastLifecycleAggregate{}, 0, nil, "", 0).Analysis.MinVolume
+	if minScenario == nil {
+		t.Fatal("expected minimum-volume scenario")
+	}
+	assertFloat(t, minScenario.TradeSizeBTC, 0.02)
+	assertFloat(t, minScenario.Premium.AvgTradeCostPercent, 2.25)
+	assertFloat(t, minScenario.Premium.AvgNetPercent, 2.75)
+	assertFloat(t, minScenario.Profit.AvgBTC, 0.00055)
+
+	offer["avg_min_estimated_profit_btc"] = nil
+	analysis = addPastOfferCostFieldsFull(offer, pastLifecycleAggregate{}, 0, nil, "", 0)
+	if analysis.profitableInMode(takerOpportunityModeNetMin) {
+		t.Fatal("minimum-volume mode must exclude an offer with no profitable minimum snapshots")
 	}
 }
 

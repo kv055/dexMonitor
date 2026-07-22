@@ -385,6 +385,13 @@ export function degradePaymentMethodToAlias(id: number, providerId: number) {
   );
 }
 
+export function promotePaymentMethodAlias(id: number, alias: string) {
+  return request<{ payment_methods: PaymentMethodRow[] }>(
+    `/api/trading/payment_methods/${id}/aliases/promote`,
+    { method: 'POST', body: JSON.stringify({ alias }) },
+  );
+}
+
 export function deletePaymentMethod(id: number) {
   return request<{ ok: boolean }>(`/api/trading/payment_methods/${id}`, { method: 'DELETE' });
 }

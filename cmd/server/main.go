@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"commons/fiat"
 	"commons/logging"
 	"commons/metrics"
 	"commons/tracing"
@@ -79,6 +80,8 @@ SELECT
 	hedge_open_fee_btc, hedge_close_fee_btc, hedge_funding_fee_btc, hedge_fee_sum_btc,
 	hedge_venue, hedge_instrument, hedge_transfer_minutes, dex_fee_btc,
 	avg_net_premium_pct, avg_estimated_profit_btc, avg_estimated_profit_fiat, avg_btc_amount,
+	avg_min_trade_cost_pct, avg_min_trade_cost_btc, avg_min_net_premium_pct,
+	avg_min_estimated_profit_btc, avg_min_estimated_profit_fiat, avg_min_btc_amount, min_volume_analyzed,
 	price_type, best_route_cex, best_route_method
 FROM offers
 WHERE last_seen >= ?
@@ -262,6 +265,7 @@ func main() {
 	mux.HandleFunc("PUT /api/trading/payment_methods/{id}", handleTradingPaymentMethodByID)
 	mux.HandleFunc("DELETE /api/trading/payment_methods/{id}", handleTradingPaymentMethodByID)
 	mux.HandleFunc("POST /api/trading/payment_methods/{id}/degrade-to-alias/{provider_id}", handleTradingPaymentMethodDegradeToAlias)
+	mux.HandleFunc("POST /api/trading/payment_methods/{id}/aliases/promote", handleTradingPaymentMethodPromoteAlias)
 	mux.HandleFunc("GET /api/trading/payment_methods/{id}/chat_templates", handleTradingPaymentMethodChatTemplates)
 	mux.HandleFunc("PUT /api/trading/payment_methods/{id}/chat_templates/{exchange}", handleTradingPaymentMethodChatTemplateByExchange)
 	mux.HandleFunc("DELETE /api/trading/payment_methods/{id}/chat_templates/{exchange}", handleTradingPaymentMethodChatTemplateByExchange)
@@ -410,6 +414,10 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	excludedCEXes := queryExcludedCEXes(r)
 	feeTier := queryFeeTier(r)
 	maxFiatLimitEUR := queryMaxFiatLimitEUR(r)
+	fiatCurrency := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("fiat")))
+	if fiatCurrency == "" {
+		fiatCurrency = "EUR"
+	}
 
 	rows, err := db.Query(
 		rebind("SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? ORDER BY last_seen DESC LIMIT ?"),
@@ -430,6 +438,13 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	filteredOffers := make([]map[string]any, 0, len(offers))
 	ids := make([]int64, 0, len(offers))
 	for _, o := range offers {
+		offerFiat := offerString(o, "fiat_currency")
+		if offerFiat == "" {
+			offerFiat = "EUR" // compatibility with historical rows and test fixtures
+		}
+		if !strings.EqualFold(offerFiat, fiatCurrency) {
+			continue
+		}
 		if offerHasExcludedPaymentMethod(o, excludedPaymentMethods) {
 			continue
 		}
@@ -1087,6 +1102,9 @@ type pastOfferAnalysis struct {
 	btcSizeCapped            float64
 	estimatedProfitBTCCapped float64
 	hasCap                   bool
+	btcSizeMin               float64
+	estimatedProfitBTCMin    float64
+	hasMin                   bool
 }
 
 type takerOpportunityMode string
@@ -1094,11 +1112,15 @@ type takerOpportunityMode string
 const (
 	takerOpportunityModeNetFull   takerOpportunityMode = "net_full"
 	takerOpportunityModeNetCapped takerOpportunityMode = "net_capped"
+	takerOpportunityModeNetMin    takerOpportunityMode = "net_min"
 )
 
 func (a pastOfferAnalysis) valuesForMode(mode takerOpportunityMode) (float64, float64) {
 	if mode == takerOpportunityModeNetCapped && a.hasCap {
 		return a.btcSizeCapped, a.estimatedProfitBTCCapped
+	}
+	if mode == takerOpportunityModeNetMin && a.hasMin {
+		return a.btcSizeMin, a.estimatedProfitBTCMin
 	}
 	return a.btcSize, a.estimatedProfitBTC
 }
@@ -1209,6 +1231,7 @@ type pastOfferScenario struct {
 type pastOfferAnalysisAPI struct {
 	FullVolume   pastOfferScenario  `json:"full_volume"`
 	CappedVolume *pastOfferScenario `json:"capped_volume,omitempty"`
+	MinVolume    *pastOfferScenario `json:"min_volume,omitempty"`
 }
 
 type pastOfferAPI struct {
@@ -1302,6 +1325,23 @@ func addPastOfferCostFieldsFull(o map[string]any, agg pastLifecycleAggregate, re
 		}
 	}
 
+	var btcSizeMin float64
+	var estimatedProfitBTCMin float64
+	hasMin := btcMinPtr != nil && *btcMinPtr > 0 && *btcMinPtr < btcSize
+	if hasMin {
+		btcSizeMin = *btcMinPtr
+		if stored := offerFloat(o, "avg_min_btc_amount"); stored > 0 {
+			btcSizeMin = stored
+		}
+		if offerBool(o, "min_volume_analyzed") {
+			estimatedProfitBTCMin = offerFloat(o, "avg_min_estimated_profit_btc")
+		} else {
+			minRep := buildCappedPastBreakdown(o, btcSize, btcSizeMin, avgRefPriceForCap, avgPremiumForCap,
+				agg.AvgHedgeNotionalEUR, agg.AvgLeverageUsed, agg.AvgRecommendedCollateralEUR)
+			estimatedProfitBTCMin = minRep.EstimatedProfitBTC
+		}
+	}
+
 	return pastOfferAnalysis{
 		hasPositiveRawSpread:     priceDiff > 0,
 		btcSize:                  btcSize,
@@ -1310,6 +1350,9 @@ func addPastOfferCostFieldsFull(o map[string]any, agg pastLifecycleAggregate, re
 		btcSizeCapped:            btcSizeCapped,
 		estimatedProfitBTCCapped: estimatedProfitBTCCapped,
 		hasCap:                   hasCap,
+		btcSizeMin:               btcSizeMin,
+		estimatedProfitBTCMin:    estimatedProfitBTCMin,
+		hasMin:                   hasMin,
 	}
 }
 
@@ -1434,6 +1477,38 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 		}
 	}
 
+	var minScenario *pastOfferScenario
+	if btcMinPtr != nil && *btcMinPtr > 0 && *btcMinPtr < fullTradeSizeBTC && avgRefPrice > 0 {
+		minTradeSizeBTC := tradecost.Round8(*btcMinPtr)
+		if stored := offerFloat(o, "avg_min_btc_amount"); stored > 0 {
+			minTradeSizeBTC = tradecost.Round8(stored)
+		}
+		minRep := buildCappedPastBreakdown(o, fullTradeSizeBTC, minTradeSizeBTC, avgRefPrice, avgPremiumPercent,
+			agg.AvgHedgeNotionalEUR, agg.AvgLeverageUsed, agg.AvgRecommendedCollateralEUR)
+		minTradeCostPct := tradecost.Round4(minRep.TotalCostPct)
+		minTradeCostBTC := tradecost.Round8(minRep.TotalCostBTC)
+		minNetPct := tradecost.Round4(minRep.EstimatedProfitPct)
+		minProfitBTC := tradecost.Round8(minRep.EstimatedProfitBTC)
+		minProfitFiat := tradecost.Round4(minProfitBTC * avgRefPrice)
+		if offerBool(o, "min_volume_analyzed") && o["avg_min_estimated_profit_btc"] != nil {
+			minTradeCostPct = tradecost.Round4(offerFloat(o, "avg_min_trade_cost_pct"))
+			minTradeCostBTC = tradecost.Round8(offerFloat(o, "avg_min_trade_cost_btc"))
+			minNetPct = tradecost.Round4(offerFloat(o, "avg_min_net_premium_pct"))
+			minProfitBTC = tradecost.Round8(offerFloat(o, "avg_min_estimated_profit_btc"))
+			minProfitFiat = tradecost.Round4(offerFloat(o, "avg_min_estimated_profit_fiat"))
+		}
+		minScenario = &pastOfferScenario{
+			CostPolicy:    "historical_min_volume",
+			Assumptions:   []string{"minimum executable offer volume", "historical route", "fixed historical transfer/network assumptions"},
+			TradeSizeBTC:  minTradeSizeBTC,
+			TradeSizeFiat: tradecost.Round4(minTradeSizeBTC * avgRefPrice),
+			Route:         pastOfferRoute{CEX: offerString(o, "best_route_cex"), Settlement: offerString(o, "best_route_method")},
+			Premium:       pastOfferPremium{AvgTradeCostPercent: minTradeCostPct, AvgNetPercent: minNetPct},
+			Profit:        pastOfferProfit{AvgBTC: minProfitBTC, AvgFiat: minProfitFiat},
+			Costs:         buildPastScenarioCosts(minRep, tradecost.Round4(minRep.NetworkFeePct), minTradeCostPct, minTradeCostBTC),
+		}
+	}
+
 	return pastOfferAPI{
 		ID:             id,
 		Exchange:       offerString(o, "exchange"),
@@ -1463,6 +1538,7 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 		Analysis: pastOfferAnalysisAPI{
 			FullVolume:   fullScenario,
 			CappedVolume: cappedScenario,
+			MinVolume:    minScenario,
 		},
 	}
 }
@@ -1538,6 +1614,9 @@ func buildPastProfitableOrderSummary(analysis pastOfferAnalysis, offerAnalysis p
 	}
 	if mode == takerOpportunityModeNetCapped && offerAnalysis.CappedVolume != nil {
 		summary.NetPercent = offerAnalysis.CappedVolume.Premium.AvgNetPercent
+	}
+	if mode == takerOpportunityModeNetMin && offerAnalysis.MinVolume != nil {
+		summary.NetPercent = offerAnalysis.MinVolume.Premium.AvgNetPercent
 	}
 	if offerAnalysis.CappedVolume != nil {
 		summary.CapFiat = offerAnalysis.CappedVolume.CapFiat
@@ -1957,24 +2036,26 @@ const maxOHLCBackfillHours = 24 * 180
 func handleOHLC(w http.ResponseWriter, r *http.Request) {
 	hours := queryInt(r, "hours", 24)
 	cex := queryCex(r)
+	fiatCurrency := queryFiat(r)
 	intervalMin := queryOHLCInterval(r)
 
 	if ohlcService == nil {
 		ohlcService = ohlc.NewService()
 	}
-	candles := ohlcService.Candles(r.Context(), cex, hours, intervalMin)
+	candles := ohlcService.CandlesForFiat(r.Context(), cex, fiatCurrency, hours, intervalMin)
 	if candles == nil {
 		candles = make([]map[string]any, 0)
 	}
 
 	// The ohlc table only holds Kraken data, so other CEXes stay API-only.
 	if cex == "kraken" {
-		candles = backfillOHLCFromDB(r.Context(), candles, hours, intervalMin)
+		candles = backfillOHLCFromDB(r.Context(), candles, fiatCurrency, hours, intervalMin)
 	}
 
 	writeJSON(w, map[string]any{
-		"candles":      candles,
-		"interval_min": intervalMin,
+		"candles":       candles,
+		"fiat_currency": fiatCurrency,
+		"interval_min":  intervalMin,
 	})
 }
 
@@ -1986,7 +2067,7 @@ type ohlcRow struct {
 // backfillOHLCFromDB prepends candles aggregated from the stored 1-min Kraken
 // data for the part of the requested window that the exchange API did not
 // cover. API candles stay authoritative for their own range.
-func backfillOHLCFromDB(ctx context.Context, apiCandles []map[string]any, hours int, intervalMin int) []map[string]any {
+func backfillOHLCFromDB(ctx context.Context, apiCandles []map[string]any, fiatCurrency string, hours int, intervalMin int) []map[string]any {
 	if db == nil {
 		return apiCandles
 	}
@@ -2009,8 +2090,8 @@ func backfillOHLCFromDB(ctx context.Context, apiCandles []map[string]any, hours 
 	}
 
 	rows, err := db.QueryContext(ctx,
-		rebind("SELECT time, open, high, low, close FROM ohlc WHERE time >= ? AND time < ? ORDER BY time"),
-		windowStart, apiOldest,
+		rebind("SELECT time, open, high, low, close FROM ohlc WHERE fiat_currency = ? AND time >= ? AND time < ? ORDER BY time"),
+		fiatCurrency, windowStart, apiOldest,
 	)
 	if err != nil {
 		fmt.Printf("[OHLC] backfill query error: %v\n", err)
@@ -2163,6 +2244,36 @@ func handleTradingPaymentMethodDegradeToAlias(w http.ResponseWriter, r *http.Req
 	if pmService != nil {
 		if err := pmService.RefreshNow(); err != nil {
 			slog.Warn("payment method groups refresh after alias degradation failed", "err", err)
+		}
+	}
+	rows, err := pmRepo.List(r.Context())
+	if err != nil {
+		writeError(w, err)
+		return
+	}
+	writeJSON(w, map[string]any{"payment_methods": rows})
+}
+
+func handleTradingPaymentMethodPromoteAlias(w http.ResponseWriter, r *http.Request) {
+	id, err := pathID(r, "id")
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	var payload struct {
+		Alias string `json:"alias"`
+	}
+	if err := decodeJSON(r, &payload); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if err := pmRepo.PromoteAlias(r.Context(), int64(id), payload.Alias); err != nil {
+		writeRepoError(w, err)
+		return
+	}
+	if pmService != nil {
+		if err := pmService.RefreshNow(); err != nil {
+			slog.Warn("payment method groups refresh after alias promotion failed", "err", err)
 		}
 	}
 	rows, err := pmRepo.List(r.Context())
@@ -3083,48 +3194,55 @@ func offerInt64Ptr(o map[string]any, key string) *int64 {
 
 func buildOfferTablePayload(o map[string]any) map[string]any {
 	return map[string]any{
-		"id":                         int64(offerFloat(o, "id")),
-		"exchange":                   offerString(o, "exchange"),
-		"direction":                  offerString(o, "direction"),
-		"price":                      offerFloatPtr(o, "price"),
-		"price_diff_percent":         offerFloatPtr(o, "price_diff_percent"),
-		"btc_min":                    offerFloatPtr(o, "btc_min"),
-		"btc_max":                    offerFloatPtr(o, "btc_max"),
-		"fiat_min":                   offerInt64Ptr(o, "fiat_min"),
-		"fiat_max":                   offerInt64Ptr(o, "fiat_max"),
-		"payment_methods":            offerStringSlice(o, "payment_methods"),
-		"offer_id":                   offerStringPtr(o, "offer_id"),
-		"first_seen":                 nilIfEmpty(offerString(o, "first_seen")),
-		"last_seen":                  nilIfEmpty(offerString(o, "last_seen")),
-		"is_live":                    offerBool(o, "is_live"),
-		"duration":                   offerInt64Ptr(o, "duration"),
-		"historical_analysis_status": nilIfEmpty(offerString(o, "historical_analysis_status")),
-		"avg_ref_price":              offerFloatPtr(o, "avg_ref_price"),
-		"avg_premium_pct":            offerFloatPtr(o, "avg_premium_pct"),
-		"avg_trade_cost_pct":         offerFloatPtr(o, "avg_trade_cost_pct"),
-		"avg_trade_cost_btc":         offerFloatPtr(o, "avg_trade_cost_btc"),
-		"avg_hedge_fee_sum_btc":      offerFloatPtr(o, "avg_hedge_fee_sum_btc"),
-		"cex_taker_fee_btc":          offerFloatPtr(o, "cex_taker_fee_btc"),
-		"cex_withdraw_fee_btc":       offerFloatPtr(o, "cex_withdraw_fee_btc"),
-		"network_fee_btc":            offerFloatPtr(o, "network_fee_btc"),
-		"hedge_open_fee_btc":         offerFloatPtr(o, "hedge_open_fee_btc"),
-		"hedge_close_fee_btc":        offerFloatPtr(o, "hedge_close_fee_btc"),
-		"hedge_funding_fee_btc":      offerFloatPtr(o, "hedge_funding_fee_btc"),
-		"hedge_fee_sum_btc":          offerFloatPtr(o, "hedge_fee_sum_btc"),
-		"hedge_venue":                offerStringPtr(o, "hedge_venue"),
-		"hedge_instrument":           offerStringPtr(o, "hedge_instrument"),
-		"hedge_transfer_minutes":     offerInt64Ptr(o, "hedge_transfer_minutes"),
-		"dex_fee_btc":                offerFloatPtr(o, "dex_fee_btc"),
-		"avg_net_premium_pct":        offerFloatPtr(o, "avg_net_premium_pct"),
-		"avg_estimated_profit_btc":   offerFloatPtr(o, "avg_estimated_profit_btc"),
-		"avg_estimated_profit_fiat":  offerFloatPtr(o, "avg_estimated_profit_fiat"),
-		"avg_btc_amount":             offerFloatPtr(o, "avg_btc_amount"),
-		"price_type":                 nilIfEmpty(offerString(o, "price_type")),
-		"best_route_cex":             nilIfEmpty(offerString(o, "best_route_cex")),
-		"best_route_method":          nilIfEmpty(offerString(o, "best_route_method")),
-		"seller_rating_score":        offerFloatPtrPreserveZero(o, "seller_rating_score"),
-		"seller_rating_confidence":   nilIfEmpty(offerString(o, "seller_rating_confidence")),
-		"seller_rating_raw":          offerRawJSON(o, "seller_rating_raw"),
+		"id":                            int64(offerFloat(o, "id")),
+		"exchange":                      offerString(o, "exchange"),
+		"direction":                     offerString(o, "direction"),
+		"price":                         offerFloatPtr(o, "price"),
+		"price_diff_percent":            offerFloatPtr(o, "price_diff_percent"),
+		"btc_min":                       offerFloatPtr(o, "btc_min"),
+		"btc_max":                       offerFloatPtr(o, "btc_max"),
+		"fiat_min":                      offerInt64Ptr(o, "fiat_min"),
+		"fiat_max":                      offerInt64Ptr(o, "fiat_max"),
+		"payment_methods":               offerStringSlice(o, "payment_methods"),
+		"offer_id":                      offerStringPtr(o, "offer_id"),
+		"first_seen":                    nilIfEmpty(offerString(o, "first_seen")),
+		"last_seen":                     nilIfEmpty(offerString(o, "last_seen")),
+		"is_live":                       offerBool(o, "is_live"),
+		"duration":                      offerInt64Ptr(o, "duration"),
+		"historical_analysis_status":    nilIfEmpty(offerString(o, "historical_analysis_status")),
+		"avg_ref_price":                 offerFloatPtr(o, "avg_ref_price"),
+		"avg_premium_pct":               offerFloatPtr(o, "avg_premium_pct"),
+		"avg_trade_cost_pct":            offerFloatPtr(o, "avg_trade_cost_pct"),
+		"avg_trade_cost_btc":            offerFloatPtr(o, "avg_trade_cost_btc"),
+		"avg_hedge_fee_sum_btc":         offerFloatPtr(o, "avg_hedge_fee_sum_btc"),
+		"cex_taker_fee_btc":             offerFloatPtr(o, "cex_taker_fee_btc"),
+		"cex_withdraw_fee_btc":          offerFloatPtr(o, "cex_withdraw_fee_btc"),
+		"network_fee_btc":               offerFloatPtr(o, "network_fee_btc"),
+		"hedge_open_fee_btc":            offerFloatPtr(o, "hedge_open_fee_btc"),
+		"hedge_close_fee_btc":           offerFloatPtr(o, "hedge_close_fee_btc"),
+		"hedge_funding_fee_btc":         offerFloatPtr(o, "hedge_funding_fee_btc"),
+		"hedge_fee_sum_btc":             offerFloatPtr(o, "hedge_fee_sum_btc"),
+		"hedge_venue":                   offerStringPtr(o, "hedge_venue"),
+		"hedge_instrument":              offerStringPtr(o, "hedge_instrument"),
+		"hedge_transfer_minutes":        offerInt64Ptr(o, "hedge_transfer_minutes"),
+		"dex_fee_btc":                   offerFloatPtr(o, "dex_fee_btc"),
+		"avg_net_premium_pct":           offerFloatPtr(o, "avg_net_premium_pct"),
+		"avg_estimated_profit_btc":      offerFloatPtr(o, "avg_estimated_profit_btc"),
+		"avg_estimated_profit_fiat":     offerFloatPtr(o, "avg_estimated_profit_fiat"),
+		"avg_btc_amount":                offerFloatPtr(o, "avg_btc_amount"),
+		"avg_min_trade_cost_pct":        offerFloatPtr(o, "avg_min_trade_cost_pct"),
+		"avg_min_trade_cost_btc":        offerFloatPtr(o, "avg_min_trade_cost_btc"),
+		"avg_min_net_premium_pct":       offerFloatPtr(o, "avg_min_net_premium_pct"),
+		"avg_min_estimated_profit_btc":  offerFloatPtr(o, "avg_min_estimated_profit_btc"),
+		"avg_min_estimated_profit_fiat": offerFloatPtr(o, "avg_min_estimated_profit_fiat"),
+		"avg_min_btc_amount":            offerFloatPtr(o, "avg_min_btc_amount"),
+		"min_volume_analyzed":           offerBool(o, "min_volume_analyzed"),
+		"price_type":                    nilIfEmpty(offerString(o, "price_type")),
+		"best_route_cex":                nilIfEmpty(offerString(o, "best_route_cex")),
+		"best_route_method":             nilIfEmpty(offerString(o, "best_route_method")),
+		"seller_rating_score":           offerFloatPtrPreserveZero(o, "seller_rating_score"),
+		"seller_rating_confidence":      nilIfEmpty(offerString(o, "seller_rating_confidence")),
+		"seller_rating_raw":             offerRawJSON(o, "seller_rating_raw"),
 	}
 }
 
@@ -3189,6 +3307,15 @@ func queryCex(r *http.Request) string {
 		return cex
 	}
 	return defaultCEX
+}
+
+// queryFiat reads the selected fiat currency. Invalid or missing values retain
+// the historic EUR default rather than accidentally querying a different pair.
+func queryFiat(r *http.Request) string {
+	if currency, ok := fiat.Normalize(r.URL.Query().Get("fiat")); ok {
+		return currency
+	}
+	return "EUR"
 }
 
 func queryInt(r *http.Request, key string, defaultVal int) int {
@@ -3295,6 +3422,8 @@ func queryTakerOpportunityMode(r *http.Request) takerOpportunityMode {
 	switch strings.TrimSpace(r.URL.Query().Get("premium_mode")) {
 	case string(takerOpportunityModeNetCapped):
 		return takerOpportunityModeNetCapped
+	case string(takerOpportunityModeNetMin):
+		return takerOpportunityModeNetMin
 	default:
 		return takerOpportunityModeNetFull
 	}

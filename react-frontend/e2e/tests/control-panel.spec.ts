@@ -13,14 +13,14 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
 
     // BTC reference price readout sits at the top of the panel
     await expect(cp.getByText(/^BTC\/EUR — Kraken$/)).toBeVisible();
-    await expect(cp.getByText(/^€[\d.]+$/)).toBeVisible();
+    await expect(cp.getByText(/^[\d.]+,\d{2}\s*€$/)).toBeVisible();
     // Shared between Live and Past mode
     await expect(label('Direction')).toBeVisible();
     await expect(label('Exchanges')).toBeVisible();
     // Live-only
     await expect(label('Payment')).toBeVisible();
     await expect(label('Premium')).toBeVisible();
-    await expect(label('Range %')).toBeVisible();
+    await expect(label('Premium range')).toBeVisible();
   });
 
   test('view mode toggle swaps live-only for past-only controls', async ({ page }) => {
@@ -31,8 +31,9 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
     await expect(label('Timeframe')).toBeVisible();
     await expect(label('Premium mode')).toBeVisible();
+    await expect(cp.getByRole('button', { name: 'Net Min', exact: true })).toBeVisible();
     await expect(label('Payment')).toHaveCount(0);
-    await expect(label('Range %')).toHaveCount(0);
+    await expect(label('Premium range')).toHaveCount(0);
     // Shared controls stay put
     await expect(label('Direction')).toBeVisible();
     await expect(label('Exchanges')).toBeVisible();

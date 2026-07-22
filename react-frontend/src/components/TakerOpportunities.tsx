@@ -16,19 +16,21 @@ import {
   getFiatMin,
   getFirstSeen,
   getLastSeen,
+  getMinTradeSizeBtc,
   getNetPremiumPercent,
   getOfferPrice,
   getPriceType,
   getRawPremiumPercent,
   getRefPrice,
   hasCappedScenario,
+  hasMinScenario,
   isOfferLive,
   pastProfitableOrderAsOffer,
 } from '../utils/offerAccess';
-import { CostBreakdownPanel, OfferTimeMeta, SizeToggle } from './OfferBreakdownPanel';
+import { CostBreakdownPanel, OfferTimeMeta, SizeToggle, type SizeMode } from './OfferBreakdownPanel';
 import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
-import { LiveOfferFilters } from './ControlPanel';
+import { LiveOfferFilters, PastOfferFilters } from './ControlPanel';
 import { OffersPreviewTable } from './OffersPreviewTable';
 import { DepthChart } from './DepthChart';
 import { TradeTracingPanel } from './TradeTracingPanel';
@@ -38,6 +40,8 @@ interface Props {
   statsAll: PastOrderStats | null;
   statsNetCapped: PastOrderStats | null;
   statsAllNetCapped: PastOrderStats | null;
+  statsNetMin: PastOrderStats | null;
+  statsAllNetMin: PastOrderStats | null;
   fastOrders: PastProfitableOrderCompact[];
   detailedOrders: PastProfitableOrder[];
   statsLoading: boolean;
@@ -98,6 +102,9 @@ function pickScenario(order: PastProfitableOrder, mode: TakerOpportunityMode) {
   // rather than misleadingly falling back to their full-size profit here.
   if (mode === 'net_capped' && order.analysis.capped_volume) {
     return order.analysis.capped_volume;
+  }
+  if (mode === 'net_min' && order.analysis.min_volume) {
+    return order.analysis.min_volume;
   }
   return order.analysis.full_volume;
 }
@@ -240,7 +247,7 @@ const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
 const VALID_VIEW_MODES = new Set<InsightsViewMode>(['live', 'past']);
 const VALID_TIMEFRAMES = new Set(['1h', '6h', '24h', '48h', '7d']);
 const VALID_DIRECTIONS = new Set<DirectionFilter>(['both', 'buy', 'sell']);
-const VALID_MODES = new Set<TakerOpportunityMode>(['net_full', 'net_capped']);
+const VALID_MODES = new Set<TakerOpportunityMode>(['net_full', 'net_capped', 'net_min']);
 const VALID_NET_PROFIT_UNITS = new Set<NetProfitUnit>(['btc', 'fiat']);
 const VALID_SIZE_UNITS = new Set<SizeUnit>(['btc', 'fiat']);
 const VALID_SORT_COLUMNS = new Set<SortColumn>([
@@ -734,7 +741,7 @@ interface TradeRowMetricProps {
 
 function TradeRowMetric({ value, valueClassName = 'text-text', className = '' }: TradeRowMetricProps) {
   return (
-    <span className={`block min-w-0 truncate text-right mono-nums tabular-nums ${valueClassName} ${className}`} title={value}>
+    <span className={`block min-w-0 truncate text-left mono-nums tabular-nums ${valueClassName} ${className}`} title={value}>
       {value}
     </span>
   );
@@ -754,12 +761,13 @@ function UnitToggle({ fiat, unit, onChange }: { fiat: string; unit: SizeUnit; on
   );
 }
 
-function SortHeaderButton({ label, column, sort, onSort, align = 'right' }: {
+function SortHeaderButton({ label, column, sort, onSort, align = 'left', fitContent = false }: {
   label: string;
   column: SortColumn;
   sort: SortState;
   onSort: (column: SortColumn) => void;
   align?: 'left' | 'right';
+  fitContent?: boolean;
 }) {
   const active = sort.column === column;
   return (
@@ -768,12 +776,19 @@ function SortHeaderButton({ label, column, sort, onSort, align = 'right' }: {
       onClick={() => onSort(column)}
       title={`Sort by ${label.toLowerCase()}`}
       aria-sort={active ? (sort.dir === 'asc' ? 'ascending' : 'descending') : undefined}
-      className={`flex min-w-0 items-center gap-1 border-none bg-transparent p-0 text-[0.65rem] font-semibold uppercase tracking-wide transition-colors ${align === 'right' ? 'justify-end text-right' : 'justify-start text-left'} ${active ? 'text-accent' : 'text-muted hover:text-text'}`}
+      className={`flex min-w-0 items-center gap-1 border-none bg-transparent p-0 text-[0.65rem] font-semibold uppercase tracking-wide transition-colors ${fitContent ? 'w-fit shrink-0' : 'w-full'} ${align === 'right' ? 'justify-end text-right' : 'justify-start text-left'} ${active ? 'text-accent' : 'text-muted hover:text-text'}`}
     >
+	  {align === 'right' && (
+		<span className={`shrink-0 text-[0.55rem] leading-none ${active ? '' : 'opacity-50'}`} aria-hidden>
+		  {active ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}
+		</span>
+	  )}
       <span className="truncate">{label}</span>
-      <span className={`shrink-0 text-[0.55rem] leading-none ${active ? '' : 'opacity-50'}`} aria-hidden>
-        {active ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}
-      </span>
+	  {align === 'left' && (
+		<span className={`shrink-0 text-[0.55rem] leading-none ${active ? '' : 'opacity-50'}`} aria-hidden>
+		  {active ? (sort.dir === 'asc' ? '▲' : '▼') : '↕'}
+		</span>
+	  )}
     </button>
   );
 }
@@ -793,15 +808,15 @@ function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUni
 }) {
   const th = 'truncate text-[0.65rem] font-semibold uppercase tracking-wide text-muted';
   return (
-    <div className={`${PROFITABLE_TRADES_GRID_COLS} shrink-0 border-b border-border bg-surface/70 px-3 py-1.5`}>
+    <div data-testid="past-offers-header" className={`${PROFITABLE_TRADES_GRID_COLS} sticky top-0 z-20 shrink-0 border-b border-border bg-surface/95 px-3 py-1.5`}>
       <SortHeaderButton label="Offer" column="exchange" sort={sort} onSort={onSort} align="left" />
       <SortHeaderButton label="Dir" column="direction" sort={sort} onSort={onSort} align="left" />
       <SortHeaderButton label="Payment method" column="payment_method" sort={sort} onSort={onSort} align="left" />
       <span className="hidden lg:flex">
-        <SortHeaderButton label="First seen" column="first_seen" sort={sort} onSort={onSort} align="right" />
+		<SortHeaderButton label="First seen" column="first_seen" sort={sort} onSort={onSort} />
       </span>
       <span className="hidden lg:flex">
-        <SortHeaderButton label="Last seen" column="last_seen" sort={sort} onSort={onSort} align="right" />
+		<SortHeaderButton label="Last seen" column="last_seen" sort={sort} onSort={onSort} />
       </span>
       <span className="hidden sm:flex lg:hidden">
         <SortHeaderButton label="Duration" column="duration" sort={sort} onSort={onSort} />
@@ -809,27 +824,27 @@ function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUni
       <span className="hidden lg:flex">
         <SortHeaderButton label="Duration" column="duration" sort={sort} onSort={onSort} />
       </span>
-      <span className={`${th} hidden items-center justify-end gap-1 sm:flex lg:hidden`}>
+      <span className={`${th} hidden items-center justify-start gap-1 sm:flex lg:hidden`}>
+		<SortHeaderButton label="Size" column="size" sort={sort} onSort={onSort} fitContent />
+		<UnitToggle fiat={fiat} unit={sizeUnit} onChange={onSizeUnitChange} />
+      </span>
+      <span className={`${th} hidden items-center justify-start gap-1 sm:flex lg:hidden`}>
+		<SortHeaderButton label="Net profit" column="net_profit" sort={sort} onSort={onSort} fitContent />
+		<UnitToggle fiat={fiat} unit={netProfitUnit} onChange={onNetProfitUnitChange} />
+      </span>
+      <span className={`${th} flex items-center justify-start gap-1 sm:hidden`}>
         <SortHeaderButton label="Size" column="size" sort={sort} onSort={onSort} />
-        <UnitToggle fiat={fiat} unit={sizeUnit} onChange={onSizeUnitChange} />
       </span>
-      <span className={`${th} hidden items-center justify-end gap-1 sm:flex lg:hidden`}>
-        <SortHeaderButton label="Net profit" column="net_profit" sort={sort} onSort={onSort} />
-        <UnitToggle fiat={fiat} unit={netProfitUnit} onChange={onNetProfitUnitChange} />
-      </span>
-      <span className={`${th} flex items-center justify-end gap-1 sm:hidden`}>
-        <SortHeaderButton label="Size" column="size" sort={sort} onSort={onSort} />
-      </span>
-      <span className={`${th} flex items-center justify-end gap-1 sm:hidden`}>
+      <span className={`${th} flex items-center justify-start gap-1 sm:hidden`}>
         <SortHeaderButton label="Profit" column="net_profit" sort={sort} onSort={onSort} />
       </span>
-      <span className={`${th} hidden items-center justify-end gap-1 lg:flex`}>
-        <SortHeaderButton label="Size" column="size" sort={sort} onSort={onSort} />
-        <UnitToggle fiat={fiat} unit={sizeUnit} onChange={onSizeUnitChange} />
+      <span className={`${th} hidden items-center justify-start gap-1 lg:flex`}>
+		<SortHeaderButton label="Size" column="size" sort={sort} onSort={onSort} fitContent />
+		<UnitToggle fiat={fiat} unit={sizeUnit} onChange={onSizeUnitChange} />
       </span>
-      <span className={`${th} hidden items-center justify-end gap-1 lg:flex`}>
-        <SortHeaderButton label="Net profit" column="net_profit" sort={sort} onSort={onSort} />
-        <UnitToggle fiat={fiat} unit={netProfitUnit} onChange={onNetProfitUnitChange} />
+      <span className={`${th} hidden items-center justify-start gap-1 lg:flex`}>
+		<SortHeaderButton label="Net profit" column="net_profit" sort={sort} onSort={onSort} fitContent />
+		<UnitToggle fiat={fiat} unit={netProfitUnit} onChange={onNetProfitUnitChange} />
       </span>
       <span className="flex shrink-0 items-center justify-center">
         {showChartColumn && (
@@ -931,18 +946,22 @@ function PastOfferSupplementalDetails({ order, offer, fiat }: {
   );
 }
 
-function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
+function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
   order: PastProfitableOrder;
-  showCapped: boolean;
-  onToggleCapped: (value: boolean) => void;
+  scenarioMode: SizeMode;
+  onScenarioModeChange: (value: SizeMode) => void;
 }) {
   const { timezone } = useTimezone();
   const offer = pastProfitableOrderAsOffer(order);
   const refPrice = getRefPrice(offer);
   // The control-panel mode can request the capped view for an offer that has no
   // capped scenario (e.g. it sits below the cap); fall back to the full breakdown.
-  const showCappedEffective = showCapped && hasCappedScenario(offer);
-  const costBreakdown = getDisplayCostBreakdown(offer, showCappedEffective);
+  const effectiveMode: SizeMode = scenarioMode === 'capped' && !hasCappedScenario(offer)
+    ? 'full'
+    : scenarioMode === 'min' && !hasMinScenario(offer)
+      ? 'full'
+      : scenarioMode;
+  const costBreakdown = getDisplayCostBreakdown(offer, effectiveMode);
   const offerPrice = getOfferPrice(offer);
   const btcVolumeRange = formatRange(fmtBTC(getBtcMin(offer)), fmtBTC(getBtcMax(offer)));
 
@@ -978,20 +997,21 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
       />
       {costBreakdown ? (
         <div className="flex flex-col gap-3">
-          {hasCappedScenario(offer) && (
+          {(hasCappedScenario(offer) || hasMinScenario(offer)) && (
             <SizeToggle
-              mode={showCappedEffective ? 'capped' : 'full'}
-              onModeChange={mode => onToggleCapped(mode === 'capped')}
+              mode={effectiveMode}
+              onModeChange={onScenarioModeChange}
               fullBtc={getDisplayCostBreakdown(offer, 'full')?.btc_amount ?? getBtcMax(offer)}
               cappedBtc={getCappedTradeSizeBtc(offer)}
+              minBtc={getMinTradeSizeBtc(offer)}
               refPrice={refPrice}
             />
           )}
           <CostBreakdownPanel
             bd={costBreakdown}
-            abortCost={getDisplayAbortCost(offer, showCappedEffective)}
+            abortCost={getDisplayAbortCost(offer, effectiveMode)}
             priceDiffPct={getRawPremiumPercent(offer)}
-            netPremiumPct={getNetPremiumPercent(offer, showCappedEffective)}
+            netPremiumPct={getNetPremiumPercent(offer, effectiveMode)}
             refPrice={refPrice}
             offerPrice={offerPrice}
           />
@@ -1003,7 +1023,7 @@ function PastOrderBreakdown({ order, showCapped, onToggleCapped }: {
   );
 }
 
-export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailedOrders, ordersLoading, cappedLoading, maxFiatLimit, onRefreshLive, lastUpdatedAt, chart }: Props) {
+export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrders, detailedOrders, ordersLoading, cappedLoading, maxFiatLimit, onRefreshLive, lastUpdatedAt, chart }: Props) {
   const displayedOrders = detailedOrders.length > 0 ? detailedOrders : fastOrders;
   const deferredOrders = useDeferredValue(displayedOrders);
   const ordersPending = deferredOrders !== displayedOrders;
@@ -1050,7 +1070,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   const [durationRange, setDurationRange] = useState<[number, number] | null>(null);
   const [profitFiatRangeCents, setProfitFiatRangeCents] = useState<[number, number] | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
-  const [expandedShowCapped, setExpandedShowCapped] = useState(false);
+  const [expandedScenarioMode, setExpandedScenarioMode] = useState<SizeMode>('full');
   const [filtersCollapsed, setFiltersCollapsed] = useState(false);
   const [chartCollapsed, setChartCollapsed] = useState(false);
   const [depthCollapsed, setDepthCollapsed] = useState(false);
@@ -1147,10 +1167,14 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
 
   const hasExcluded = (stats?.excluded_payment_methods?.length ?? 0) > 0;
   const cappedOffersPending = cappedLoading && detailedOrders.length === 0;
-  const cappedDataPending = mode === 'net_capped' && cappedOffersPending;
-  const activeStats = mode === 'net_capped' ? (statsNetCapped ?? stats) : stats;
+  const scenarioDataPending = mode !== 'net_full' && cappedOffersPending;
+  const activeStats = mode === 'net_capped'
+    ? (statsNetCapped ?? stats)
+    : mode === 'net_min'
+      ? (statsNetMin ?? stats)
+      : stats;
   const activeOrders = useMemo(() => {
-    if (cappedDataPending) {
+    if (scenarioDataPending) {
       return [] as DisplayOrder[];
     }
     let list = deferredOrders.filter(order => displayOrderProfitable(order, mode));
@@ -1158,7 +1182,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
       list = list.filter(order => !order.payment_methods?.some(m => excludedMethods.includes(m)));
     }
     return list;
-  }, [cappedDataPending, deferredOrders, mode, hasExcluded, excludedMethods]);
+  }, [scenarioDataPending, deferredOrders, mode, hasExcluded, excludedMethods]);
 
   // Capped mode is only meaningful when the global Max Position Size is set.
   const capAvailable = maxFiatLimit != null && maxFiatLimit > 0;
@@ -1174,10 +1198,10 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   // Keep an expanded row's breakdown in sync with the control-panel mode, so
   // switching Net Full/Capped updates an already-open calculation in place.
   useEffect(() => {
-    setExpandedShowCapped(mode === 'net_capped');
+    setExpandedScenarioMode(mode === 'net_capped' ? 'capped' : mode === 'net_min' ? 'min' : 'full');
   }, [mode]);
 
-  const fiat = activeStats?.fiat_currency || 'EUR';
+  const fiat = activeStats?.fiat_currency || liveFilters.fiat;
   const selected = !activeStats
     ? null
     : activeStats.timeframes.find(row => row.timeframe === selectedTimeframe)
@@ -1267,10 +1291,10 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   }, [ordersBeforeDurationFilter, durationRange]);
 
   const profitFiatBounds = useMemo(
-    () => cappedDataPending
+    () => scenarioDataPending
       ? { minCents: 0, maxCents: 0, sliderMaxCents: 0, hasData: false }
       : computeProfitFiatBounds(ordersAfterDurationFilter, mode),
-    [cappedDataPending, ordersAfterDurationFilter, mode],
+    [scenarioDataPending, ordersAfterDurationFilter, mode],
   );
 
   useEffect(() => {
@@ -1419,7 +1443,13 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
       return;
     }
     setExpandedId(order.id);
-    setExpandedShowCapped(mode === 'net_capped' && !!detailedOrder?.analysis.capped_volume);
+    setExpandedScenarioMode(
+      mode === 'net_capped' && detailedOrder?.analysis.capped_volume
+        ? 'capped'
+        : mode === 'net_min' && detailedOrder?.analysis.min_volume
+          ? 'min'
+          : 'full',
+    );
   }, [mode]);
 
   // TanStack Virtual returns refs that React Compiler cannot memoize; usage here is localized.
@@ -1467,7 +1497,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
     setSizeUnit(DEFAULT_INSIGHTS_FILTERS.sizeUnit);
     setSummaryUnit(DEFAULT_INSIGHTS_FILTERS.summaryUnit);
     setExpandedId(null);
-    setExpandedShowCapped(false);
+    setExpandedScenarioMode('full');
     persistedDurationRef.current = { min: null, max: null };
     persistedProfitFiatRef.current = { minCents: null, maxCents: null };
     profitFiatBoundsInitializedRef.current = false;
@@ -1514,34 +1544,34 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
   }
 
   const summaryRows = [
-    { label: 'Orders', value: cappedDataPending ? 'Calculating…' : filteredSummary.premium_order_count.toLocaleString('de-DE'), className: 'text-text' },
+    { label: 'Orders', value: scenarioDataPending ? 'Calculating…' : filteredSummary.premium_order_count.toLocaleString('de-DE'), className: 'text-text' },
     {
       label: 'Net profit',
-      value: cappedDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.total_net_profit_btc) : fmtFiat(filteredSummary.total_net_profit_fiat, fiat),
+      value: scenarioDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.total_net_profit_btc) : fmtFiat(filteredSummary.total_net_profit_fiat, fiat),
       className: 'text-green',
     },
     {
       label: 'Avg Size',
-      value: cappedDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.average_order_size_btc) : fmtFiat(filteredSummary.average_order_size_fiat, fiat),
+      value: scenarioDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.average_order_size_btc) : fmtFiat(filteredSummary.average_order_size_fiat, fiat),
       className: 'text-text',
     },
     {
       label: 'Smallest',
-      value: cappedDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.smallest_order_size_btc) : fmtFiat(filteredSummary.smallest_order_size_fiat, fiat),
+      value: scenarioDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.smallest_order_size_btc) : fmtFiat(filteredSummary.smallest_order_size_fiat, fiat),
       className: 'text-muted',
     },
     {
       label: 'Biggest',
-      value: cappedDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.biggest_order_size_btc) : fmtFiat(filteredSummary.biggest_order_size_fiat, fiat),
+      value: scenarioDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.biggest_order_size_btc) : fmtFiat(filteredSummary.biggest_order_size_fiat, fiat),
       className: 'text-muted',
     },
   ];
 
   return (
     <div className="relative flex-1 min-h-0 flex flex-col overflow-hidden">
-      {viewMode === 'past' && (ordersPending || cappedDataPending) && displayedOrders.length > 0 && (
+      {viewMode === 'past' && (ordersPending || scenarioDataPending) && displayedOrders.length > 0 && (
         <div className="pointer-events-none absolute inset-x-0 top-0 z-10 border-b border-border bg-surface/80 px-3 py-1 text-[0.68rem] text-muted">
-          {cappedDataPending ? 'Calculating capped-volume profits…' : 'Updating profitable trades…'}
+          {scenarioDataPending ? 'Calculating selected-volume profits…' : 'Updating profitable trades…'}
         </div>
       )}
       <div className="mb-3 flex items-center justify-between gap-3 shrink-0">
@@ -1598,10 +1628,10 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
             title="Current CEX reference price"
           >
             <span className="text-[0.65rem] uppercase tracking-wide text-muted">
-              BTC/EUR — {liveFilters.cex.charAt(0).toUpperCase() + liveFilters.cex.slice(1)}
+              BTC/{liveFilters.fiat} — {liveFilters.cex.charAt(0).toUpperCase() + liveFilters.cex.slice(1)}
             </span>
             <span className={`text-[0.8rem] font-semibold tabular-nums mono-nums ${refPrice != null ? 'text-text' : 'text-muted'}`}>
-              {refPrice != null ? `€${refPrice.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : '—'}
+              {refPrice != null ? fmtFiat(refPrice, liveFilters.fiat) : '—'}
             </span>
           </div>
           <PillGroup
@@ -1630,6 +1660,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
           )}
           {viewMode === 'past' && (
           <>
+          <PastOfferFilters />
           <SelectGroup
             label="Timeframe"
             description="Show stats for orders closed within this window"
@@ -1657,7 +1688,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
             onChange={setProfitFiatRangeCents}
             formatValue={value => fmtFiat(profitFiatFromCents(value), fiat)}
             disabled={!profitFiatBounds.hasData || profitFiatRangeCents == null}
-            disabledMessage={cappedDataPending ? 'Capped profit is still being calculated' : 'No profit data in this window'}
+            disabledMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No profit data in this window'}
           />
           <PillGroup
             label="Premium mode"
@@ -1666,13 +1697,18 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
               { value: 'net_full', label: 'Net Full' },
               {
                 value: 'net_capped',
-                label: maxFiatLimit != null && maxFiatLimit > 0 ? `Net Capped €${maxFiatLimit.toLocaleString('de-DE', { maximumFractionDigits: 0 })}` : 'Net Capped',
+                label: maxFiatLimit != null && maxFiatLimit > 0 ? `Net Capped ${fmtFiat(maxFiatLimit, fiat)}` : 'Net Capped',
                 disabled: !cappedModeAvailable,
                 title: !capAvailable
                   ? 'Set a Max Position Size (Fiat) in Settings to enable capped mode'
                   : cappedOffersPending
                     ? 'Capped offers are still loading'
                     : undefined,
+              },
+              {
+                value: 'net_min',
+                label: 'Net Min',
+                title: 'Use each offer’s minimum executable volume',
               },
             ]}
             selected={mode}
@@ -1824,22 +1860,22 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
             </div>
           ) : (
           <div className="min-h-0 flex-1 flex flex-col overflow-hidden">
-            {sortedOrders.length > 0 && (
-              <ProfitableTradesHeader
-                fiat={fiat}
-                sizeUnit={sizeUnit}
-                onSizeUnitChange={setSizeUnit}
-                netProfitUnit={netProfitUnit}
-                onNetProfitUnitChange={setNetProfitUnit}
-                sort={sort}
-                onSort={handleSort}
-                showChartColumn={chart != null}
-                allChartVisible={allChartVisible}
-                someChartVisible={someChartVisible}
-                onToggleAllChartVisible={visible => setChartOfferKeysVisible(sortedStableKeys, visible)}
-              />
-            )}
             <div ref={tradesListRef} className="min-h-0 flex-1 overflow-y-auto overflow-x-auto">
+              {sortedOrders.length > 0 && (
+                <ProfitableTradesHeader
+                  fiat={fiat}
+                  sizeUnit={sizeUnit}
+                  onSizeUnitChange={setSizeUnit}
+                  netProfitUnit={netProfitUnit}
+                  onNetProfitUnitChange={setNetProfitUnit}
+                  sort={sort}
+                  onSort={handleSort}
+                  showChartColumn={chart != null}
+                  allChartVisible={allChartVisible}
+                  someChartVisible={someChartVisible}
+                  onToggleAllChartVisible={visible => setChartOfferKeysVisible(sortedStableKeys, visible)}
+                />
+              )}
               {ordersLoading && fastOrders.length === 0 ? (
                 <div className="relative min-h-64">
                   <LoadingSpinner size={112} label="Loading profitable trades" />
@@ -1888,7 +1924,7 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                         }}
                         className={`w-full min-w-0 cursor-pointer px-3 py-2 text-left transition-colors ${isOpen ? 'bg-bg/40' : 'hover:bg-white/5'}`}
                       >
-                        <div className={`${PROFITABLE_TRADES_GRID_COLS} text-[0.72rem]`}>
+                        <div data-testid="past-offers-row" className={`${PROFITABLE_TRADES_GRID_COLS} text-[0.72rem]`}>
                           <div className="min-w-0 overflow-hidden">
                             <ExchangeTag exchange={order.exchange} />
                           </div>
@@ -1902,10 +1938,10 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                           <TradeRowMetric value={seenLabel} className="hidden lg:block" />
                           <TradeRowMetric value={order.status.duration?.display || '—'} className="hidden sm:block" />
                           <TradeRowMetric
-                            value={cappedDataPending ? 'Calculating…' : sizeUnit === 'btc' ? fmtBTC(activeScenario.tradeSizeBTC) : fmtFiat(activeScenario.tradeSizeFiat, fiat)}
+                            value={scenarioDataPending ? 'Calculating…' : sizeUnit === 'btc' ? fmtBTC(activeScenario.tradeSizeBTC) : fmtFiat(activeScenario.tradeSizeFiat, fiat)}
                           />
                           <TradeRowMetric
-                            value={cappedDataPending ? 'Calculating…' : netProfitUnit === 'btc' ? fmtBTC(activeScenario.profitBTC) : fmtFiat(activeScenario.profitFiat, fiat)}
+                            value={scenarioDataPending ? 'Calculating…' : netProfitUnit === 'btc' ? fmtBTC(activeScenario.profitBTC) : fmtFiat(activeScenario.profitFiat, fiat)}
                             valueClassName="text-green"
                           />
                           <span className="flex shrink-0 items-center justify-center" onClick={e => e.stopPropagation()} onKeyDown={e => e.stopPropagation()}>
@@ -1924,10 +1960,10 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
 
                       {isOpen && (
                         <div className="border-t border-border bg-bg/20 px-3 py-3">
-                          {cappedDataPending ? (
+                          {scenarioDataPending ? (
                             <div className="flex items-center gap-3 px-1 py-2 text-[0.78rem] text-muted">
                               <LoadingSpinner size={28} />
-                              <span>Capped-volume breakdown is still being calculated.</span>
+                              <span>Selected-volume breakdown is still being calculated.</span>
                             </div>
                           ) : !detailedOrder ? (
                             <div className="flex items-center gap-3 px-1 py-2 text-[0.78rem] text-muted">
@@ -1937,8 +1973,8 @@ export function TakerOpportunities({ stats, statsNetCapped, fastOrders, detailed
                           ) : (
                             <PastOrderBreakdown
                               order={detailedOrder}
-                              showCapped={expandedShowCapped}
-                              onToggleCapped={setExpandedShowCapped}
+                              scenarioMode={expandedScenarioMode}
+                              onScenarioModeChange={setExpandedScenarioMode}
                             />
                           )}
                         </div>
