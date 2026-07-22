@@ -1,4 +1,5 @@
-import { test, expect, gotoAndWaitForData, waitForChartReady, depthPanel } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, waitForChartReady, depthPanel, ohlcPanel } from '../fixtures/base-fixture';
+import { MOCK_LIVE_OFFERS } from '../fixtures/mock-data';
 
 test.describe('DepthChart', () => {
   test.beforeEach(async ({ page }) => {
@@ -35,6 +36,48 @@ test.describe('DepthChart', () => {
     await expect(timestampSpan).toBeVisible();
     const text = await timestampSpan.textContent();
     expect(text).toMatch(/2026/);
+  });
+
+  test('keeps current depth visible and includes live offers on the newest candles', async ({ page }) => {
+    const staleLiveOffers = structuredClone(MOCK_LIVE_OFFERS).map(offer => ({
+      ...offer,
+      // A live offer's last_seen is only its latest snapshot time. Make the
+      // snapshot older than the newest candle to cover the live/open-ended case.
+      last_seen: '2026-04-01 10:00:00',
+      status: {
+        is_live: true,
+        first_seen: offer.first_seen,
+        last_seen: '2026-04-01 10:00:00',
+      },
+      // Opportunity filters must not remove liquidity from the market-depth view.
+      analysis: offer.analysis ? {
+        ...offer.analysis,
+        full_volume: {
+          ...offer.analysis.full_volume,
+          premium: { ...offer.analysis.full_volume.premium, net_percent: -1 },
+        },
+      } : offer.analysis,
+    }));
+    await page.route('**/api/live_offers*', route => route.fulfill({ json: staleLiveOffers }));
+    await page.reload();
+    await gotoAndWaitForData(page);
+
+    const depth = depthPanel(page);
+    const summary = depth.locator('text=/Bids.*Asks.*BTC/');
+    await expect(summary).toBeVisible();
+
+    const ohlcCanvas = ohlcPanel(page).locator('canvas').first();
+    const box = await ohlcCanvas.boundingBox();
+    expect(box).not.toBeNull();
+    // Hover the newest plotted candle (just left of the right-side price axis).
+    await page.mouse.move(box!.x + box!.width - 75, box!.y + box!.height / 2);
+    await expect(summary).toBeVisible();
+
+    // Leaving OHLC returns to the current book instead of clearing the chart.
+    const depthBox = await depth.boundingBox();
+    expect(depthBox).not.toBeNull();
+    await page.mouse.move(depthBox!.x + depthBox!.width / 2, depthBox!.y + 10);
+    await expect(summary).toBeVisible();
   });
 
   test('visual regression: depth chart renders correctly', async ({ page }) => {

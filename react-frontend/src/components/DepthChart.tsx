@@ -32,7 +32,7 @@ const MAX_ZOOM = 20;
 const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 
 function DepthChartInner() {
-  const { depthOffers, offers: allOffers, filters, loading, hoveredOhlcTime } = useFilters();
+  const { depthOffers, filters, loading, hoveredOhlcTime } = useFilters();
   const { timezone } = useTimezone();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -141,14 +141,17 @@ function DepthChartInner() {
   // Compute offers to display: live or historical snapshot
   const displayOffers = useMemo(() => {
     if (hoveredOhlcTime === null) return depthOffers;
-    return allOffers.filter(o => {
-      if (filters.exchange && o.exchange !== filters.exchange) return false;
-      if (filters.payment && !(o.payment_methods?.includes(filters.payment) ?? false)) return false;
+    return depthOffers.filter(o => {
       const fs = toUtcSec(getFirstSeen(o) || '');
       const ls = toUtcSec(getLastSeen(o) || '');
-      return fs <= hoveredOhlcTime && ls >= hoveredOhlcTime;
+      if (!Number.isFinite(fs) || fs > hoveredOhlcTime) return false;
+
+      // last_seen is the time of the latest snapshot, not the closing time of
+      // an offer that is still live. Treat live offers as open-ended so the
+      // newest OHLC candles remain hoverable between snapshot refreshes.
+      return isOfferLive(o) || (Number.isFinite(ls) && ls >= hoveredOhlcTime);
     });
-  }, [hoveredOhlcTime, depthOffers, allOffers, filters.exchange, filters.payment]);
+  }, [hoveredOhlcTime, depthOffers]);
 
   // Expensive aggregation should not rerun just because the theme changes.
   const chartData = useMemo(() => {

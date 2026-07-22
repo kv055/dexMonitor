@@ -154,7 +154,10 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
     [activeOffers, filters, paymentFilterFn],
   );
 
-  // Depth chart: all filters except direction — orderbook always shows both sides
+  // The depth chart represents the market book, so only market-selection
+  // filters apply. Opportunity-only filters (direction, status and premium)
+  // must not make the current book disappear when the offers table switches
+  // between Live/Past or narrows to profitable rows.
   const depthOffers = useMemo(() => {
     let f = activeOffers;
     if (filters.exchange) f = f.filter(o => o.exchange === filters.exchange);
@@ -163,11 +166,6 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
       f = f.filter(o => !excluded.has(o.exchange));
     }
     if (paymentFilterFn) f = f.filter(paymentFilterFn);
-    if (filters.status === 'open') f = f.filter(o => isOfferLive(o));
-    if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
-    if (filters.premiumOnly) {
-      f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
-    }
     return f;
   }, [activeOffers, filters, paymentFilterFn]);
 
