@@ -110,6 +110,18 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/trading/accounts', route =>
       route.fulfill({ json: MOCK_TRADING_ACCOUNTS }),
     );
+    await page.route('**/api/trading/accounts/*/credentials', route => {
+      const id = Number(new URL(route.request().url()).pathname.match(/\/accounts\/(\d+)\/credentials$/)?.[1]);
+      const account = MOCK_TRADING_ACCOUNTS.find(candidate => candidate.id === id);
+      return route.fulfill({
+        json: {
+          email: account?.email ?? '',
+          password: account?.password ?? '',
+          phone: account?.phone ?? '',
+          payment_tag: '$desk',
+        },
+      });
+    });
     await page.route('**/api/trading/accounts/priorities', route =>
       route.fulfill({ json: { ok: true } }),
     );
@@ -153,9 +165,54 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/trading/accounts/*/cex/spot-trades*', route =>
       route.fulfill({ json: [] }),
     );
-    await page.route('**/api/mm-controller/bisq/payment-accounts', route =>
-      route.fulfill({ json: MOCK_BISQ_PAYMENT_ACCOUNTS }),
+    const bisqAccountsState = structuredClone(MOCK_BISQ_PAYMENT_ACCOUNTS);
+    await page.route('**/api/mm-controller/bisq/payment-accounts', async route => {
+      if (route.request().method() === 'POST') {
+        const payload = await route.request().postDataJSON() as {
+          payment_method_id: string;
+          fields: Record<string, string>;
+        };
+        const created = {
+          id: `bisq-created-${bisqAccountsState.payment_accounts.length + 1}`,
+          account_name: payload.fields.accountName,
+          payment_method_id: payload.payment_method_id,
+          trade_currency: payload.fields.selectedTradeCurrency || '',
+        };
+        bisqAccountsState.payment_accounts.push(created);
+        await route.fulfill({ json: created });
+        return;
+      }
+      await route.fulfill({ json: bisqAccountsState });
+    });
+    await page.route('**/api/mm-controller/bisq/payment-methods', route =>
+      route.fulfill({
+        json: {
+          payment_methods: [
+            { id: 'REVOLUT', max_trade_period: 86_400_000, max_trade_limit: 100_000_000 },
+            { id: 'CASH_APP', max_trade_period: 86_400_000, max_trade_limit: 50_000_000 },
+          ],
+        },
+      }),
     );
+    await page.route('**/api/mm-controller/bisq/payment-methods/*/form', route => {
+      const id = new URL(route.request().url()).pathname.match(/payment-methods\/([^/]+)\/form$/)?.[1] ?? '';
+      return route.fulfill({
+        json: {
+          payment_method_id: id,
+          supported: true,
+          fields: id === 'REVOLUT'
+            ? {
+                paymentMethodId: 'REVOLUT',
+                accountName: 'your accountname',
+                tradeCurrencies: 'comma delimited currency code list',
+                selectedTradeCurrency: 'primary trading currency code',
+                userName: 'your username',
+                salt: '',
+              }
+            : { paymentMethodId: id, accountName: 'your accountname', cashTag: 'your cashtag', salt: '' },
+        },
+      });
+    });
     await page.route('**/api/mm-controller/lnd/wallet/state', route =>
       route.fulfill({ json: { lnd_reachable: true, lnd_state: 'RUNNING', wallet_exists: true, password_set: true, client_ready: true, can_create: false } }),
     );

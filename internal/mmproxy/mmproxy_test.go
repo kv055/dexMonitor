@@ -73,3 +73,51 @@ func TestForwardJSONForwardsResponseBody(t *testing.T) {
 		t.Fatalf("body = %q", body)
 	}
 }
+
+func TestForwardJSONForwardsAuthBodyAndValidationResponse(t *testing.T) {
+	var gotSecret string
+	var gotBody string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotSecret = r.Header.Get("X-Internal-Secret")
+		body, _ := io.ReadAll(r.Body)
+		gotBody = string(body)
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = io.WriteString(w, `{"error":"unknown payment account field"}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	proxy := New(srv.URL).WithInternalSecret("monitor-secret")
+	req := httptest.NewRequest(http.MethodPost, "/api/mm-controller/bisq/payment-accounts",
+		strings.NewReader(`{"payment_method_id":"REVOLUT","fields":{"bad":"value"}}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	proxy.ForwardJSON(rec, req, "/api/bisq/payment-accounts")
+
+	if gotSecret != "monitor-secret" {
+		t.Fatalf("internal secret = %q", gotSecret)
+	}
+	if !strings.Contains(gotBody, `"payment_method_id":"REVOLUT"`) {
+		t.Fatalf("request body was not forwarded: %s", gotBody)
+	}
+	if rec.Code != http.StatusBadRequest || !strings.Contains(rec.Body.String(), "unknown payment account field") {
+		t.Fatalf("validation response = %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+func TestForwardJSONForwardsBisqFormPath(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_, _ = io.WriteString(w, `{"supported":true}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	proxy := New(srv.URL)
+	req := httptest.NewRequest(http.MethodGet, "/api/mm-controller/bisq/payment-methods/REVOLUT/form", nil)
+	rec := httptest.NewRecorder()
+	proxy.ForwardJSON(rec, req, "/api/bisq/payment-methods/REVOLUT/form")
+	if gotPath != "/api/bisq/payment-methods/REVOLUT/form" || rec.Code != http.StatusOK {
+		t.Fatalf("path/status = %q %d", gotPath, rec.Code)
+	}
+}

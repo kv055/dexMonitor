@@ -279,6 +279,8 @@ func main() {
 	mux.HandleFunc("POST /api/mm-controller/cex/tradeflow", handleMmControllerCexTradeflow)
 	mux.HandleFunc("GET /api/mm-controller/cex/withdrawal-track", handleMmControllerCexWithdrawalTrack)
 	mux.HandleFunc("GET /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
+	mux.HandleFunc("GET /api/mm-controller/bisq/payment-methods", handleMmControllerBisqPaymentMethods)
+	mux.HandleFunc("GET /api/mm-controller/bisq/payment-methods/{id}/form", handleMmControllerBisqPaymentMethodForm)
 	mux.HandleFunc("POST /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
 	mux.HandleFunc("DELETE /api/mm-controller/bisq/payment-accounts/{id}", handleMmControllerBisqPaymentAccountByID)
 	mux.HandleFunc("GET /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
@@ -2315,6 +2317,21 @@ func handleMmControllerCexPreTradeCheck(w http.ResponseWriter, r *http.Request) 
 // daemon's own payment-account profile to dexMmController, which owns the bisq gRPC client.
 func handleMmControllerBisqPaymentAccounts(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/bisq/payment-accounts")
+}
+
+// handleMmControllerBisqPaymentMethods proxies the daemon-backed supported fiat methods.
+func handleMmControllerBisqPaymentMethods(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/bisq/payment-methods")
+}
+
+// handleMmControllerBisqPaymentMethodForm proxies one daemon-generated dynamic account form.
+func handleMmControllerBisqPaymentMethodForm(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		http.Error(w, "missing payment method id", http.StatusBadRequest)
+		return
+	}
+	forwardMMControllerJSON(w, r, "/api/bisq/payment-methods/"+url.PathEscape(id)+"/form")
 }
 
 // handleMmControllerBisqPaymentAccountByID proxies DELETE of a bisq payment account by id.

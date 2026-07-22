@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useState, type DragEvent, type ReactNode, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type DragEvent, type ReactNode, type SetStateAction } from 'react';
 import { TelegramBotSection } from './TelegramBotSection';
 import {
   createAccount,
@@ -28,6 +28,9 @@ import {
   revealTradingAccountCredentials,
   revealTradingAccountSecrets,
   fetchBisqPaymentAccounts,
+  fetchBisqPaymentMethods,
+  fetchBisqPaymentAccountForm,
+  fetchPaymentMethods,
   createBisqPaymentAccount,
   deleteBisqPaymentAccount,
   initLNDWallet,
@@ -57,7 +60,11 @@ import type {
   TradingAccountKeyPermissionResult,
   TradingBankAccount,
   BisqPaymentAccount,
+  BisqPaymentMethod,
+  BisqPaymentAccountForm,
+  PaymentMethodRow,
 } from '../types';
+import { useFilters } from '../hooks/useFilters';
 
 type ProviderOption = { value: string; label: string };
 
@@ -311,25 +318,63 @@ function isBisq2Provider(value: string) {
   return value.trim().toLowerCase() === 'bisq2';
 }
 
-function normalizeIban(iban: string | null | undefined) {
-  return (iban ?? '').replace(/\s+/g, '').toUpperCase();
+function paymentMethodMatchKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
-// sepaBisqAccountName builds a deterministic bisq account name from a bank account so the UI
-// can tell whether a catalog row has already been pushed into the bisq profile: create sends
-// this exact name, and the saved/pending check matches on it (the bisq GetPaymentAccounts
-// list exposes the account name but not the IBAN).
-function sepaBisqAccountName(ba: TradingBankAccount) {
-  return `${ba.owner_name} · SEPA · ${normalizeIban(ba.details.iban)}`;
+function bisqPaymentMethodLabel(id: string) {
+  const acronyms = new Set(['ACH', 'BLIK', 'F2F', 'IMPS', 'NEFT', 'PIX', 'SEPA', 'SWIFT', 'UPI']);
+  return id.trim().split('_').filter(Boolean).map(word => (
+    acronyms.has(word.toUpperCase())
+      ? word.toUpperCase()
+      : word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+  )).join(' ');
 }
 
-// sepaEligibility classifies a linked bank account for bisq1 SEPA sync.
-function sepaEligibility(ba: TradingBankAccount | undefined): 'eligible' | 'unsupported' {
-  if (!ba) return 'unsupported';
-  if (ba.scheme !== 'iban_bic') return 'unsupported';
-  if (!normalizeIban(ba.details.iban)) return 'unsupported';
-  if (!ba.country) return 'unsupported';
-  return 'eligible';
+// Bisq exposes stable IDs while the local catalog uses display names, aliases, and regexes.
+function catalogRowForBisqMethod(id: string, rows: PaymentMethodRow[]) {
+  const key = paymentMethodMatchKey(id);
+  const words = id.toLowerCase().split('_').filter(Boolean);
+  const label = words.join(' ');
+  const ranked = rows.map(row => {
+    if ([row.name, ...row.alias_list].some(name => paymentMethodMatchKey(name) === key)) {
+      return { row, score: 10_000 + row.name.length };
+    }
+    if (row.merge_regex) {
+      try {
+        if (new RegExp(row.merge_regex.replaceAll('(?i)', ''), 'i').test(label)) {
+          return { row, score: 5_000 + row.name.length };
+        }
+      } catch {
+        // The catalog editor surfaces bad regexes; exact/token matching can still succeed.
+      }
+    }
+    const rowWords = row.name.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+    const tokenMatch = rowWords.length > 0 && rowWords.every(word => words.includes(word));
+    return { row, score: tokenMatch ? 1_000 + rowWords.length * 100 : 0 };
+  });
+  return ranked.sort((a, b) => b.score - a.score).find(candidate => candidate.score > 0)?.row;
+}
+
+function bisqFieldLabel(name: string) {
+  if (name === 'paymentMethodId') return 'Payment method';
+  if (name === 'iban') return 'IBAN';
+  if (name === 'bic') return 'BIC';
+  return name.replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/^./, char => char.toUpperCase());
+}
+
+function cleanBisqTemplateValues(form: BisqPaymentAccountForm) {
+  return Object.fromEntries(Object.entries(form.fields).map(([name, value]) => {
+    if (name === 'paymentMethodId' || name === 'salt') return [name, value];
+    // Daemon templates contain instructional values ("your username", "primary trading …").
+    return [name, ''];
+  }));
+}
+
+function findDetail(details: Record<string, string>, fieldName: string) {
+  const wanted = paymentMethodMatchKey(fieldName);
+  const entry = Object.entries(details).find(([key]) => paymentMethodMatchKey(key) === wanted);
+  return entry?.[1]?.trim() ?? '';
 }
 
 function isLndWalletProvider(value: string) {
@@ -1654,6 +1699,7 @@ function AccountDetailPane({
 }
 
 export function TradingAccountsPanel() {
+  const { filters } = useFilters();
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
   const [activeTab, setActiveTab] = useState<'payment' | 'trading' | 'communication'>(() => {
     if (typeof window !== 'undefined') {
@@ -1688,6 +1734,14 @@ export function TradingAccountsPanel() {
   // Bisq1 "Saved payment methods" section state. Loaded lazily when the section is first
   // opened (it needs the DEX stack, which may be down independently of the panel).
   const [bisqPmAccounts, setBisqPmAccounts] = useState<BisqPaymentAccount[]>([]);
+  const [bisqSupportedMethods, setBisqSupportedMethods] = useState<BisqPaymentMethod[]>([]);
+  const [bisqCatalogRows, setBisqCatalogRows] = useState<PaymentMethodRow[]>([]);
+  const [bisqSelectedMethodID, setBisqSelectedMethodID] = useState('');
+  const [bisqAccountForm, setBisqAccountForm] = useState<BisqPaymentAccountForm | null>(null);
+  const [bisqFormValues, setBisqFormValues] = useState<Record<string, string>>({});
+  const [bisqFormStep, setBisqFormStep] = useState<'edit' | 'review'>('edit');
+  const [bisqFormLoading, setBisqFormLoading] = useState(false);
+  const bisqFormRequestID = useRef(0);
   const [bisqPmLoading, setBisqPmLoading] = useState(false);
   const [bisqPmError, setBisqPmError] = useState<string | null>(null);
   const [bisqPmLoaded, setBisqPmLoaded] = useState(false);
@@ -1998,15 +2052,25 @@ export function TradingAccountsPanel() {
     }
   }, [activeGroups, load]);
 
-  // loadBisqPaymentMethods fetches the bisq1 daemon's saved accounts so the section can
-  // reconcile our saved bank accounts against what already exists in the bisq profile.
-  // Errors are held locally (the DEX stack can be down without affecting the rest of the panel).
+  const loadBisqPaymentAccounts = useCallback(async () => {
+    const response = await fetchBisqPaymentAccounts();
+    setBisqPmAccounts(response.payment_accounts);
+  }, []);
+
+  // Load the three independent sources needed by the creation flow: daemon accounts,
+  // daemon-supported methods, and the local availability/link catalog.
   const loadBisqPaymentMethods = useCallback(async () => {
     setBisqPmLoading(true);
     setBisqPmError(null);
     try {
-      const bisq = await fetchBisqPaymentAccounts();
+      const [bisq, supported, catalog] = await Promise.all([
+        fetchBisqPaymentAccounts(),
+        fetchBisqPaymentMethods(),
+        fetchPaymentMethods(),
+      ]);
       setBisqPmAccounts(bisq.payment_accounts);
+      setBisqSupportedMethods(supported.payment_methods);
+      setBisqCatalogRows(catalog.payment_methods);
       setBisqPmLoaded(true);
     } catch (err) {
       setBisqPmError(err instanceof Error ? err.message : 'Failed to load bisq payment methods');
@@ -2169,16 +2233,141 @@ export function TradingAccountsPanel() {
     }
   };
 
-  // runBisqAction wraps a bisq payment-account mutation: it marks the row busy, surfaces any
-  // error inside the section (not the global banner), and reloads the reconciled lists.
+  // Existing-account actions refresh only the saved daemon list, leaving any in-progress
+  // creation form untouched.
   const runBisqAction = async (busyKey: string, fn: () => Promise<void>) => {
     setBisqPmBusyKey(busyKey);
-    setBisqPmError(null);
+      setBisqPmError(null);
     try {
       await fn();
-      await loadBisqPaymentMethods();
+      await loadBisqPaymentAccounts();
     } catch (err) {
       setBisqPmError(err instanceof Error ? err.message : 'Bisq payment request failed');
+    } finally {
+      setBisqPmBusyKey(null);
+    }
+  };
+
+  const resetBisqCreateForm = () => {
+    bisqFormRequestID.current += 1;
+    setBisqSelectedMethodID('');
+    setBisqAccountForm(null);
+    setBisqFormValues({});
+    setBisqFormStep('edit');
+    setBisqFormLoading(false);
+  };
+
+  const handleBisqMethodSelection = async (methodID: string) => {
+    const requestID = bisqFormRequestID.current + 1;
+    bisqFormRequestID.current = requestID;
+    setBisqSelectedMethodID(methodID);
+    setBisqAccountForm(null);
+    setBisqFormValues({});
+    setBisqFormStep('edit');
+    setBisqPmError(null);
+    if (!methodID) {
+      setBisqFormLoading(false);
+      return;
+    }
+
+    setBisqFormLoading(true);
+    try {
+      const form = await fetchBisqPaymentAccountForm(methodID);
+      if (requestID !== bisqFormRequestID.current) return;
+      setBisqAccountForm(form);
+      if (!form.supported) {
+        setBisqFormValues({});
+        return;
+      }
+
+      const values = cleanBisqTemplateValues(form);
+      // Make the daemon form usable immediately. Local secret reads below are best-effort
+      // prefills and must never prevent manual entry.
+      setBisqFormValues({ ...values });
+      const catalogRow = catalogRowForBisqMethod(methodID, bisqCatalogRows);
+      const bank = catalogRow?.bank_account_id == null
+        ? undefined
+        : accounts.flatMap(candidate => candidate.bank_accounts)
+          .find(candidate => candidate.id === catalogRow.bank_account_id);
+      const bankOwner = bank ? accounts.find(candidate => candidate.id === bank.account_id) : undefined;
+      let revealedBank = bank;
+      if (bankOwner && bank) {
+        try {
+          const revealedAccount = revealedAccountSecretsByAccount[bankOwner.id]
+            ?? await revealTradingAccountSecrets(bankOwner.id);
+          if (requestID !== bisqFormRequestID.current) return;
+          setRevealedAccountSecretsByAccount(current => ({ ...current, [bankOwner.id]: revealedAccount }));
+          revealedBank = revealedAccount.bank_accounts.find(candidate => candidate.id === bank.id) ?? bank;
+        } catch {
+          // Keep the blank editable form when local secrets cannot be revealed.
+        }
+      }
+
+      const linkedAccount = catalogRow?.account_id == null
+        ? undefined
+        : accounts.find(candidate => candidate.id === catalogRow.account_id);
+      let credentials = linkedAccount ? revealedCredentialsByAccount[linkedAccount.id] : undefined;
+      if (linkedAccount && !credentials) {
+        try {
+          credentials = await revealTradingAccountCredentials(linkedAccount.id);
+          if (requestID !== bisqFormRequestID.current) return;
+          setRevealedCredentialsByAccount(current => ({ ...current, [linkedAccount.id]: credentials! }));
+        } catch {
+          // A prefill miss is not a form-loading failure; the user can enter values manually.
+        }
+      }
+
+      const put = (field: string, value: string | null | undefined) => {
+        const trimmed = value?.trim();
+        if (field in values && trimmed) values[field] = trimmed;
+      };
+      if (revealedBank) {
+        for (const field of Object.keys(values)) put(field, findDetail(revealedBank.details, field));
+        put('accountName', `${bisqPaymentMethodLabel(methodID)} ${revealedBank.label || revealedBank.owner_name}`);
+        put('holderName', revealedBank.owner_name);
+        put('bankAccountName', revealedBank.owner_name);
+        put('contact', revealedBank.owner_name);
+        put('iban', revealedBank.details.iban);
+        put('bic', revealedBank.details.bic);
+        put('country', revealedBank.country);
+        put('tradeCurrencies', revealedBank.currency);
+        put('selectedTradeCurrency', revealedBank.currency);
+      }
+      if (linkedAccount && credentials) {
+        put('accountName', `${bisqPaymentMethodLabel(methodID)} ${linkedAccount.provider}`);
+        put('email', credentials.email);
+        put('userName', credentials.payment_tag || credentials.email);
+        put('holderName', credentials.payment_tag);
+        put('phone', credentials.phone);
+        put('mobileNr', credentials.phone);
+        put('accountId', credentials.payment_tag);
+        put('accountNr', credentials.payment_tag);
+        put('cashTag', credentials.payment_tag);
+      }
+      setBisqFormValues({ ...values });
+    } catch (err) {
+      if (requestID === bisqFormRequestID.current) {
+        setBisqPmError(err instanceof Error ? err.message : 'Failed to load Bisq payment account form');
+      }
+    } finally {
+      if (requestID === bisqFormRequestID.current) setBisqFormLoading(false);
+    }
+  };
+
+  const confirmBisqPaymentAccount = async () => {
+    if (!bisqAccountForm?.supported || !bisqSelectedMethodID) return;
+    setBisqPmBusyKey('create-confirm');
+    setBisqPmError(null);
+    try {
+      await createBisqPaymentAccount({
+        payment_method_id: bisqSelectedMethodID,
+        fields: bisqFormValues,
+      });
+      await loadBisqPaymentAccounts();
+      resetBisqCreateForm();
+    } catch (err) {
+      // Intentionally keep the review step and entered values for correction/retry.
+      setBisqPmError(err instanceof Error ? err.message : 'Bisq payment account creation failed');
     } finally {
       setBisqPmBusyKey(null);
     }
@@ -3186,110 +3375,43 @@ export function TradingAccountsPanel() {
     );
   };
 
-  // renderSavedPaymentMethodsSection lists our saved bank accounts on the Bisq v1 card and
-  // reconciles each against the bisq1 daemon's own profile: every account shows whether it is
-  // Saved (present in bisq), Pending (SEPA-eligible but not yet pushed), or Not supported
-  // (non-SEPA for now), with an "Add to Bisq" / Delete action. No manual catalog-linking step
-  // is required — any SEPA bank account is pushable straight from here. A trailing list surfaces
-  // any bisq accounts that don't map to one of our bank accounts so they can be cleaned up.
+  // Creating a Bisq account is deliberately split into edit -> review -> confirm. Selecting a
+  // method and entering review perform reads/local state changes only; confirm is the sole POST.
   const renderSavedPaymentMethodsSection = (account: TradingAccount) => {
     const open = !!openSectionsByAccount[account.id]?.bisqPaymentMethods;
-
-    // Flatten every bank account across all trading accounts — a saved bank account can be
-    // pushed into the bisq1 profile regardless of which trading account it lives under.
     const bankAccounts = accounts
       .flatMap(acc => acc.bank_accounts)
       .sort((a, b) => a.owner_name.localeCompare(b.owner_name) || a.id - b.id);
-
-    const sepaAccounts = bisqPmAccounts.filter(a => a.payment_method_id === 'SEPA');
-    const expectedNames = new Set<string>();
+    const selectedFiat = filters.fiat.toUpperCase();
+    const supportedMethods = bisqSupportedMethods
+      .filter((method, index, all) => method.id && all.findIndex(candidate => candidate.id === method.id) === index)
+      .filter(method => {
+        const row = catalogRowForBisqMethod(method.id, bisqCatalogRows);
+        const bank = row?.bank_account_id == null
+          ? undefined
+          : bankAccounts.find(candidate => candidate.id === row.bank_account_id);
+        // A linked bank account's currency is reliable metadata. Methods without reliable
+        // currency metadata remain visible rather than being guessed away.
+        return !bank?.currency || bank.currency.toUpperCase() === selectedFiat;
+      })
+      .sort((a, b) => bisqPaymentMethodLabel(a.id).localeCompare(bisqPaymentMethodLabel(b.id)));
+    const selectedCatalogRow = bisqSelectedMethodID
+      ? catalogRowForBisqMethod(bisqSelectedMethodID, bisqCatalogRows)
+      : undefined;
+    const formCanReview = !!bisqAccountForm?.supported
+      && !!bisqFormValues.accountName?.trim()
+      && !bisqFormLoading;
+    const creating = bisqPmBusyKey === 'create-confirm';
 
     const onToggle = () => {
       toggleSection(account.id, 'bisqPaymentMethods');
       if (!bisqPmLoaded && !bisqPmLoading) void loadBisqPaymentMethods();
     };
 
-    const statusBadge = (cls: string, label: string) => (
-      <span className={`rounded-full border px-1.5 py-0.5 text-[0.65rem] whitespace-nowrap ${cls}`}>{label}</span>
-    );
-
-    const rows = bankAccounts.map(ba => {
-      const parentAccount = accounts.find(candidate => candidate.id === ba.account_id);
-      const ownerField = `bank:${ba.id}:owner`;
-      const ibanField = `bank:${ba.id}:iban`;
-      const bicField = `bank:${ba.id}:bic`;
-      const revealedBank = parentAccount
-        ? revealedAccountSecretsByAccount[parentAccount.id]?.bank_accounts.find(item => item.id === ba.id)
-        : undefined;
-      const visibleBankFields = parentAccount ? visibleAccountSecretsByAccount[parentAccount.id] ?? {} : {};
-      const eligibleBank = revealedBank && sepaEligibility(revealedBank) === 'eligible' ? revealedBank : null;
-      const expectedName = eligibleBank ? sepaBisqAccountName(eligibleBank) : '';
-      if (eligibleBank && expectedName) expectedNames.add(expectedName);
-      const savedAccount = eligibleBank ? sepaAccounts.find(a => a.account_name === expectedName) : undefined;
-      const busyKey = `ba-${ba.id}`;
-      const busy = bisqPmBusyKey === busyKey;
-
-      let badge: ReactNode;
-      if (!eligibleBank) badge = statusBadge('border-border bg-surface text-muted', 'Reveal bank details to check SEPA');
-      else if (savedAccount) badge = statusBadge('border-green/40 bg-green/10 text-green', 'Saved ✓');
-      else badge = statusBadge('border-yellow/40 bg-yellow/10 text-yellow', 'Pending');
-
-      return (
-        <ResourceCard key={`ba-${ba.id}`} title={ba.label?.trim() || ba.owner_name} meta={ba.scheme}>
-          <div className="flex flex-wrap items-center justify-between gap-1.5">
-            <div className="flex flex-wrap items-center gap-1.5 text-[0.65rem] text-muted">
-              {badge}
-              {parentAccount ? <span className="flex items-center gap-1"><span>{visibleBankFields[ownerField] ? revealedBank?.owner_name : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleBankFields[ownerField] ? 'Hide account owner' : 'Show account owner'} onClick={() => void toggleAccountSecretReveal(parentAccount, ownerField)} disabled={revealingCredentialsByAccount[parentAccount.id] === true}>👁</button></span> : null}
-              {ba.country ? <span>· {ba.country}</span> : null}
-              {parentAccount ? <span className="flex items-center gap-1"><span>· IBAN: {visibleBankFields[ibanField] ? normalizeIban(revealedBank?.details.iban) : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleBankFields[ibanField] ? 'Hide IBAN' : 'Show IBAN'} onClick={() => void toggleAccountSecretReveal(parentAccount, ibanField)} disabled={revealingCredentialsByAccount[parentAccount.id] === true}>👁</button></span> : null}
-              {parentAccount && ba.details.bic ? <span className="flex items-center gap-1"><span>BIC: {visibleBankFields[bicField] ? revealedBank?.details.bic : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleBankFields[bicField] ? 'Hide BIC' : 'Show BIC'} onClick={() => void toggleAccountSecretReveal(parentAccount, bicField)} disabled={revealingCredentialsByAccount[parentAccount.id] === true}>👁</button></span> : null}
-            </div>
-            <div className="flex gap-1">
-              {eligibleBank && !savedAccount ? (
-                <button
-                  type="button"
-                  className={compactButtonCls}
-                  disabled={busy || bisqPmLoading}
-                  onClick={() => runBisqAction(busyKey, async () => {
-                    await createBisqPaymentAccount({
-                      payment_method_type: 'SEPA',
-                      account_name: expectedName,
-                      holder_name: eligibleBank.owner_name,
-                      iban: normalizeIban(eligibleBank.details.iban),
-                      bic: eligibleBank.details.bic ?? '',
-                      country_code: (ba.country ?? '').toUpperCase(),
-                    });
-                  })}
-                >
-                  {busy ? 'Adding…' : 'Add to Bisq'}
-                </button>
-              ) : null}
-              {savedAccount ? (
-                <button
-                  type="button"
-                  className={`${compactButtonCls} text-red`}
-                  disabled={busy || bisqPmLoading}
-                  onClick={() => runBisqAction(busyKey, async () => {
-                    await deleteBisqPaymentAccount(savedAccount.id);
-                  })}
-                >
-                  {busy ? 'Deleting…' : 'Delete'}
-                </button>
-              ) : null}
-            </div>
-          </div>
-        </ResourceCard>
-      );
-    });
-
-    // Bisq accounts that don't map to one of our bank accounts (e.g. added out-of-band). Shown
-    // so they can be deleted from here too.
-    const orphanAccounts = bisqPmAccounts.filter(a => !expectedNames.has(a.account_name));
-
     return (
       <CollapsibleSection
         title="Saved payment methods"
-        count={bankAccounts.length}
+        count={bisqPmAccounts.length}
         open={open}
         onToggle={onToggle}
         actions={
@@ -3305,37 +3427,135 @@ export function TradingAccountsPanel() {
       >
         {bisqPmError ? <div className="text-[0.65rem] text-red px-1">{bisqPmError}</div> : null}
         {!bisqPmLoaded && bisqPmLoading ? <div className="text-[0.65rem] text-muted px-1">Loading…</div> : null}
-        {rows.length > 0 ? <div className="grid gap-1.5 sm:grid-cols-2">{rows}</div> : null}
-        {bankAccounts.length === 0 ? (
-          <div className="text-[0.65rem] text-muted px-1">
-            No bank accounts saved yet. Add one in the Bank Accounts section first.
+        {bisqPmLoaded ? (
+          <div className="grid gap-2 rounded-md border border-border bg-surface/40 p-2">
+            <label className="grid gap-1 text-[0.65rem] text-muted">
+              Bisq 1 payment method for {selectedFiat}
+              <select
+                aria-label="Bisq 1 payment method"
+                className={compactInputCls}
+                value={bisqSelectedMethodID}
+                disabled={bisqPmLoading || creating}
+                onChange={event => { void handleBisqMethodSelection(event.target.value); }}
+              >
+                <option value="">Select a payment method…</option>
+                {supportedMethods.map(method => {
+                  const row = catalogRowForBisqMethod(method.id, bisqCatalogRows);
+                  const available = !!row?.is_active && !!row?.is_linked;
+                  let reason = '';
+                  if (!row) reason = ' · unavailable locally';
+                  else if (!row.is_active) reason = ' · inactive locally';
+                  else if (!row.is_linked) reason = ' · not linked locally';
+                  return (
+                    <option key={method.id} value={method.id} disabled={!available}>
+                      {bisqPaymentMethodLabel(method.id)}{reason}
+                    </option>
+                  );
+                })}
+              </select>
+            </label>
+            <div className="text-[0.6rem] text-muted">
+              Methods supported by Bisq but unavailable in the local Payment Methods table stay visible in grey.
+            </div>
+            {bisqFormLoading ? <div className="text-[0.65rem] text-muted">Loading account form…</div> : null}
+            {bisqAccountForm && !bisqAccountForm.supported ? (
+              <div className="text-[0.65rem] text-yellow">
+                This Bisq form cannot be rendered safely: {bisqAccountForm.unsupported_reason || 'unsupported form shape'}
+              </div>
+            ) : null}
+            {bisqAccountForm?.supported && bisqFormStep === 'edit' ? (
+              <div className="grid gap-2">
+                {selectedCatalogRow ? (
+                  <div className="text-[0.6rem] text-muted">
+                    Local source: {selectedCatalogRow.name}{selectedCatalogRow.link_label ? ` · ${selectedCatalogRow.link_label}` : ''}. Prefilled values remain editable.
+                  </div>
+                ) : null}
+                <div className="grid gap-1.5 sm:grid-cols-2">
+                  {Object.keys(bisqAccountForm.fields).map(field => (
+                    <label key={field} className="grid gap-1 text-[0.65rem] text-muted">
+                      {bisqFieldLabel(field)}
+                      <input
+                        className={compactInputCls}
+                        value={bisqFormValues[field] ?? ''}
+                        readOnly={field === 'paymentMethodId'}
+                        placeholder={field === 'salt' ? 'Optional account-age salt (hex)' : bisqAccountForm.fields[field]}
+                        onChange={event => setBisqFormValues(current => ({ ...current, [field]: event.target.value }))}
+                      />
+                    </label>
+                  ))}
+                </div>
+                <div className="flex justify-end gap-1.5">
+                  <button type="button" className={compactButtonCls} onClick={resetBisqCreateForm}>Cancel</button>
+                  <button
+                    type="button"
+                    className={compactPrimaryButtonCls}
+                    disabled={!formCanReview}
+                    onClick={() => {
+                      setBisqPmError(null);
+                      setBisqFormStep('review');
+                    }}
+                  >
+                    Review payment account
+                  </button>
+                </div>
+              </div>
+            ) : null}
+            {bisqAccountForm?.supported && bisqFormStep === 'review' ? (
+              <div className="grid gap-2 rounded border border-border bg-surface p-2">
+                <div className="text-[0.68rem] font-semibold text-text">Review before creating in Bisq</div>
+                <dl className="grid gap-1 text-[0.65rem] sm:grid-cols-2">
+                  {Object.entries(bisqFormValues).map(([field, value]) => (
+                    <div key={field} className="min-w-0">
+                      <dt className="text-muted">{bisqFieldLabel(field)}</dt>
+                      <dd className="break-all text-text">{field === 'salt' && !value ? 'Generated by Bisq' : value || '—'}</dd>
+                    </div>
+                  ))}
+                </dl>
+                <div className="text-[0.6rem] text-yellow">
+                  Nothing has been created yet. The next button is the only action that writes to the Bisq daemon.
+                </div>
+                <div className="flex flex-wrap justify-end gap-1.5">
+                  <button type="button" className={compactButtonCls} disabled={creating} onClick={() => setBisqFormStep('edit')}>
+                    Back to edit
+                  </button>
+                  <button
+                    type="button"
+                    className={compactPrimaryButtonCls}
+                    disabled={creating}
+                    onClick={() => { void confirmBisqPaymentAccount(); }}
+                  >
+                    {creating ? 'Creating…' : 'Create and link payment account'}
+                  </button>
+                </div>
+              </div>
+            ) : null}
           </div>
         ) : null}
-        {orphanAccounts.length > 0 ? (
-          <div className="grid gap-1.5">
-            <div className="text-[0.65rem] font-semibold text-muted px-1 pt-1">Other accounts in Bisq</div>
-            <div className="grid gap-1.5 sm:grid-cols-2">
-              {orphanAccounts.map(acct => {
-                const busyKey = `orphan-${acct.id}`;
-                const busy = bisqPmBusyKey === busyKey;
-                return (
-                  <ResourceCard key={busyKey} title={acct.account_name} meta={`${acct.payment_method_id}${acct.trade_currency ? ` · ${acct.trade_currency}` : ''}`}>
-                    <div className="flex items-center justify-between gap-1.5">
-                      <span className="text-[0.65rem] text-muted">Not linked to one of our payment methods</span>
-                      <button
-                        type="button"
-                        className={`${compactButtonCls} text-red`}
-                        disabled={busy || bisqPmLoading}
-                        onClick={() => runBisqAction(busyKey, async () => { await deleteBisqPaymentAccount(acct.id); })}
-                      >
-                        {busy ? 'Deleting…' : 'Delete'}
-                      </button>
-                    </div>
-                  </ResourceCard>
-                );
-              })}
-            </div>
+        {bisqPmAccounts.length > 0 ? (
+          <div className="grid gap-1.5 sm:grid-cols-2">
+            {bisqPmAccounts.map(acct => {
+              const busyKey = `saved-${acct.id}`;
+              const busy = bisqPmBusyKey === busyKey;
+              return (
+                <ResourceCard key={acct.id} title={acct.account_name} meta={`${bisqPaymentMethodLabel(acct.payment_method_id)}${acct.trade_currency ? ` · ${acct.trade_currency}` : ''}`}>
+                  <div className="flex items-center justify-between gap-1.5">
+                    <span className="text-[0.65rem] text-green">Linked ✓</span>
+                    <button
+                      type="button"
+                      className={`${compactButtonCls} text-red`}
+                      disabled={busy || bisqPmLoading || creating}
+                      onClick={() => runBisqAction(busyKey, async () => { await deleteBisqPaymentAccount(acct.id); })}
+                    >
+                      {busy ? 'Deleting…' : 'Delete'}
+                    </button>
+                  </div>
+                </ResourceCard>
+              );
+            })}
           </div>
+        ) : null}
+        {bisqPmLoaded && bisqPmAccounts.length === 0 ? (
+          <div className="text-[0.65rem] text-muted px-1">No payment accounts saved in Bisq 1 yet.</div>
         ) : null}
       </CollapsibleSection>
     );

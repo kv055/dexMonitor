@@ -12,6 +12,7 @@ const BASE_FILTERS: Filters = {
   premiumMode: 'net_full',
   hours: '24',
   cex: 'kraken',
+  fiat: 'EUR',
 };
 
 /** Used by resetFilters — premium range cleared */

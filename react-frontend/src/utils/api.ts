@@ -29,7 +29,9 @@ import type {
   PaymentMethodChatTemplate,
   TradingWalletAddress,
   BisqPaymentAccount,
-  BisqCreateSepaPayload,
+  BisqPaymentMethod,
+  BisqPaymentAccountForm,
+  BisqCreatePaymentAccountPayload,
 } from '../types';
 
 const API_BASE = '';
@@ -422,7 +424,17 @@ export function fetchBisqPaymentAccounts() {
   return request<{ payment_accounts: BisqPaymentAccount[] }>('/api/mm-controller/bisq/payment-accounts');
 }
 
-export function createBisqPaymentAccount(payload: BisqCreateSepaPayload) {
+export function fetchBisqPaymentMethods() {
+  return request<{ payment_methods: BisqPaymentMethod[] }>('/api/mm-controller/bisq/payment-methods');
+}
+
+export function fetchBisqPaymentAccountForm(paymentMethodId: string) {
+  return request<BisqPaymentAccountForm>(
+    `/api/mm-controller/bisq/payment-methods/${encodeURIComponent(paymentMethodId)}/form`,
+  );
+}
+
+export function createBisqPaymentAccount(payload: BisqCreatePaymentAccountPayload) {
   return request<BisqPaymentAccount>('/api/mm-controller/bisq/payment-accounts', {
     method: 'POST',
     body: JSON.stringify(payload),

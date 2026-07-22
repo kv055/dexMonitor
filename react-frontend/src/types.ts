@@ -674,15 +674,30 @@ export interface BisqPaymentAccount {
   trade_currency: string;
 }
 
-// BisqCreateSepaPayload is the body for POST /api/mm-controller/bisq/payment-accounts. Only
-// SEPA is supported for now (payment_method_type defaults to SEPA server-side).
-export interface BisqCreateSepaPayload {
+export interface BisqPaymentMethod {
+  id: string;
+  max_trade_period: number;
+  max_trade_limit: number;
+}
+
+export interface BisqPaymentAccountForm {
+  payment_method_id: string;
+  fields: Record<string, string>;
+  supported: boolean;
+  unsupported_reason?: string;
+}
+
+// Generic callers submit the camelCase fields from the fresh Bisq form. The legacy SEPA
+// properties remain optional so older callers retain their existing request shape.
+export interface BisqCreatePaymentAccountPayload {
+  payment_method_id?: string;
   payment_method_type?: string;
-  account_name: string;
-  holder_name: string;
-  iban: string;
-  bic: string;
-  country_code: string;
+  fields?: Record<string, string>;
+  account_name?: string;
+  holder_name?: string;
+  iban?: string;
+  bic?: string;
+  country_code?: string;
 }
 
 export interface PaymentMethodUpdatePayload {
@@ -813,6 +828,7 @@ export interface Filters {
   premiumMode: PremiumFilterMode;
   hours: string;
   cex: string;
+  fiat: string;
 }
 
 export interface CexDepositAddress {

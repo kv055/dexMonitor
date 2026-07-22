@@ -395,6 +395,7 @@ export const MOCK_BISQ_PAYMENT_ACCOUNTS = {
       id: 'bisq-sepa-1',
       account_name: 'Alice Example · SEPA · DE12345678901234567890',
       payment_method_id: 'SEPA',
+      trade_currency: 'EUR',
     },
   ],
 };
