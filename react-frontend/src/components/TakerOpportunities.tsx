@@ -4,6 +4,7 @@ import type { Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCom
 import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
+import { useTemporaryChartVisibility } from '../hooks/useTemporaryChartVisibility';
 import { buildOfferKeys, buildStableOfferKey } from '../utils/offerIdentity';
 import { durationMinutes, formatDateTimeLabel, formatDuration, formatTime, parseUtcTimestamp } from '../utils/formatters';
 import {
@@ -1394,6 +1395,14 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const expandedDetailedOrder = expandedOrder == null
     ? undefined
     : isDetailedOrder(expandedOrder) ? expandedOrder : detailedOrdersByID.get(expandedOrder.id);
+  const selectedPastChartKey = expandedOrder == null ? null : orderStableChartKey(expandedOrder);
+
+  useTemporaryChartVisibility(
+    viewMode === 'past' ? expandedId : null,
+    viewMode === 'past' ? selectedPastChartKey : null,
+    isChartOfferVisible,
+    setChartOfferKeysVisible,
+  );
 
   // A changed filter can remove the open order from the list. Return to the
   // list rather than leaving a detail view without a matching result.

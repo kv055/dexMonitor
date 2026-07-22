@@ -4,6 +4,7 @@ import { SellerRatingBadge } from './SellerRatingBadge';
 import { formatBtc, premiumClass } from '../utils/formatters';
 import { formatFiat } from '../utils/currency';
 import { useTimezone } from '../hooks/useTimezone';
+import { useTemporaryChartVisibility } from '../hooks/useTemporaryChartVisibility';
 import { useFilters, type ChartScope } from '../hooks/useFilters';
 import { LoadingSpinner } from './LoadingSpinner';
 import { CostBreakdownPanel, OfferTimeMeta, SizeToggle } from './OfferBreakdownPanel';
@@ -98,12 +99,8 @@ export function OffersPreviewTable({ chartScope = 'monitor' }: OffersPreviewTabl
   const someChartVisible = visibleCount > 0 && visibleCount < offers.length;
   const sizeMode: SizeMode = sizeSelection.offerKey === selectedOfferKey ? sizeSelection.mode : 'full';
 
-  // Selecting a row for the detail view implies wanting to see it on the chart too —
-  // otherwise a previously-unchecked offer would open its breakdown panel while
-  // silently having no line on the OHLC chart to correspond to.
-  const selectOffer = (offerKey: string | null, stableKey: string) => {
+  const selectOffer = (offerKey: string | null) => {
     setSelectedOfferKey(offerKey);
-    if (offerKey != null) setChartOfferKeysVisible([stableKey], true);
   };
 
   useEffect(() => {
@@ -115,7 +112,15 @@ export function OffersPreviewTable({ chartScope = 'monitor' }: OffersPreviewTabl
 
   const selectedOfferIndex = selectedOfferKey != null ? offerKeys.indexOf(selectedOfferKey) : -1;
   const selectedOffer = selectedOfferIndex >= 0 ? offers[selectedOfferIndex] : null;
+  const selectedStableKey = selectedOfferIndex >= 0 ? stableOfferKeys[selectedOfferIndex] : null;
   const hasSelection = selectedOffer !== null;
+
+  useTemporaryChartVisibility(
+    selectedOfferKey,
+    selectedStableKey,
+    isChartOfferVisible,
+    setChartOfferKeysVisible,
+  );
 
   useEffect(() => {
     selectedRowRef.current?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
@@ -159,7 +164,7 @@ export function OffersPreviewTable({ chartScope = 'monitor' }: OffersPreviewTabl
                   <tr
                     key={offerKey}
                     ref={isSelected ? selectedRowRef : null}
-                    onClick={() => selectOffer(isSelected ? null : offerKey, stableKey)}
+                    onClick={() => selectOffer(isSelected ? null : offerKey)}
                     className={`cursor-pointer transition-colors ${
                       isSelected ? 'offer-row-selected' : 'offer-row-hover'
                     }`}
@@ -303,7 +308,7 @@ export function OffersPreviewTable({ chartScope = 'monitor' }: OffersPreviewTabl
                 <tr
                   key={offerKey}
                   ref={isSelected ? selectedRowRef : null}
-                  onClick={() => selectOffer(isSelected ? null : offerKey, stableKey)}
+                  onClick={() => selectOffer(isSelected ? null : offerKey)}
                   className={`cursor-pointer transition-colors ${
                     isSelected ? 'offer-row-selected' : 'offer-row-hover'
                   }`}
