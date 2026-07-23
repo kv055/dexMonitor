@@ -1,10 +1,12 @@
 import { useEffect, useState } from 'react';
 import {
+	createTelegramPairing,
   fetchTelegramConfig,
   saveTelegramConfig,
   setTelegramWebhook,
   testTelegram,
   type TelegramConfig,
+	 type TelegramPairing,
   type TelegramService,
 } from '../utils/api';
 
@@ -22,10 +24,11 @@ const EMPTY: FieldState = { botToken: '', chatId: '', dexmmWebhookUrl: '', pushp
 export function TelegramBotSection() {
   const [config, setConfig] = useState<TelegramConfig | null>(null);
   const [fields, setFields] = useState<FieldState>(EMPTY);
-  const [showSetup, setShowSetup] = useState(false);
+  const [showAdvanced, setShowAdvanced] = useState(false);
   const [status, setStatus] = useState<Status>('idle');
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState<string>('');
+  const [pairing, setPairing] = useState<TelegramPairing | null>(null);
 
   useEffect(() => {
     let active = true;
@@ -49,6 +52,21 @@ export function TelegramBotSection() {
       });
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (!pairing) return;
+    const timer = window.setInterval(() => {
+      fetchTelegramConfig().then(cfg => {
+        setConfig(cfg);
+        if (cfg.chat_id) {
+          setPairing(null);
+          setStatus('ok');
+          setMessage('Telegram connected. A confirmation message was sent to your phone.');
+        }
+      }).catch(() => undefined);
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [pairing]);
 
   const dirty =
     (fields.botToken !== '' && !config?.bot_token_present) ||
@@ -80,8 +98,15 @@ export function TelegramBotSection() {
         dexmmWebhookUrl: saved.dexmm_webhook_url,
         pushpushWebhookUrl: saved.pushpush_webhook_url,
       }));
-      setStatus('ok');
-      setMessage('Saved. DEXMM webhook re-registered with Telegram.');
+      if (!saved.chat_id && fields.botToken.trim() !== '') {
+        const nextPairing = await createTelegramPairing();
+        setPairing(nextPairing);
+        setStatus('ok');
+        setMessage('Scan the pairing QR code in Telegram, then press Start.');
+      } else {
+        setStatus('ok');
+        setMessage('Saved. DEXMM webhook re-registered with Telegram.');
+      }
     } catch (err) {
       setStatus('error');
       setMessage(err instanceof Error ? err.message : String(err));
@@ -117,6 +142,22 @@ export function TelegramBotSection() {
     }
   }
 
+  async function handleStartPairing() {
+    setBusy('pair');
+    setMessage('');
+    try {
+      const nextPairing = await createTelegramPairing();
+      setPairing(nextPairing);
+      setStatus('ok');
+      setMessage('Scan the pairing QR code in Telegram, then press Start.');
+    } catch (err) {
+      setStatus('error');
+      setMessage(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusy('');
+    }
+  }
+
   async function handleTest(service: TelegramService) {
     setBusy('test:' + service);
     setMessage('');
@@ -137,6 +178,10 @@ export function TelegramBotSection() {
     }
   }
 
+  const botFatherURL = 'https://t.me/BotFather?start=newbot';
+  const botFatherQR = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&format=svg&data=${encodeURIComponent(botFatherURL)}`;
+  const pairingQR = pairing ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&format=svg&data=${encodeURIComponent(pairing.deep_link)}` : '';
+
   return (
     <section className="rounded-lg border border-border bg-bg/50 p-2.5">
       <div className="mb-2">
@@ -146,20 +191,46 @@ export function TelegramBotSection() {
         </p>
       </div>
 
-      <button
-        type="button"
-        onClick={() => setShowSetup(s => !s)}
-        className="text-[0.65rem] text-muted hover:text-text underline underline-offset-2 mb-2"
-      >
-        {showSetup ? 'Hide' : 'Show'} BotFather setup steps
-      </button>
-      {showSetup && (
-        <ol className="list-decimal pl-4 mb-2 text-[0.65rem] text-muted leading-relaxed space-y-0.5">
-          <li>Open @BotFather in Telegram and send <span className="mono-nums">/newbot</span>.</li>
-          <li>Copy the bot token it returns.</li>
-          <li>Start a chat with your new bot (press Start).</li>
-          <li>Get the chat ID via @userinfobot, or forward a message to the bot and read the <span className="mono-nums">chat.id</span> from the update.</li>
-        </ol>
+      {!config?.bot_token_present && (
+        <div className="mb-3 grid gap-4 rounded-lg border border-accent/25 bg-linear-to-br from-accent/8 via-surface to-bg p-3 sm:grid-cols-[220px_1fr] sm:items-center">
+          <div className="flex flex-col items-center gap-1.5 rounded-md border border-border/70 bg-white p-2 shadow-sm">
+            <img src={botFatherQR} width="196" height="196" alt="QR code to open Telegram BotFather" className="rounded" />
+            <span className="text-[0.58rem] font-medium uppercase tracking-wide text-slate-600">Scan with Telegram</span>
+          </div>
+          <div className="min-w-0">
+            <p className="mb-2 text-[0.7rem] font-medium text-text">Connect your Telegram bot</p>
+            <ol className="space-y-2 text-[0.65rem] text-muted">
+              <li className="flex gap-2">
+                <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[0.6rem] font-semibold text-accent">1</span>
+                <span><strong className="font-medium text-text">Scan the QR code</strong> and create a bot with BotFather.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[0.6rem] font-semibold text-accent">2</span>
+                <span><strong className="font-medium text-text">Copy its token</strong> from BotFather and paste it below.</span>
+              </li>
+              <li className="flex gap-2">
+                <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[0.6rem] font-semibold text-accent">3</span>
+                <span><strong className="font-medium text-text">Save the connection.</strong> Use advanced settings only for custom routing.</span>
+              </li>
+            </ol>
+            <a href={botFatherURL} target="_blank" rel="noreferrer" className="mt-2 inline-block text-[0.62rem] text-accent hover:underline">Open BotFather on this device ↗</a>
+          </div>
+        </div>
+      )}
+
+      {pairing && !config?.chat_id && (
+        <div className="mb-3 grid gap-4 rounded-lg border border-green/35 bg-linear-to-br from-green/10 via-surface to-bg p-3 sm:grid-cols-[220px_1fr] sm:items-center">
+          <div className="flex flex-col items-center gap-1.5 rounded-md border border-border/70 bg-white p-2 shadow-sm">
+            <img src={pairingQR} width="196" height="196" alt="QR code to connect your Telegram bot" className="rounded" />
+            <span className="text-[0.58rem] font-medium uppercase tracking-wide text-slate-600">Scan, then press Start</span>
+          </div>
+          <div className="min-w-0 text-[0.65rem] text-muted leading-relaxed">
+            <p className="mb-2 text-[0.7rem] font-medium text-text">Pair your phone</p>
+            <p>Open the QR code in Telegram and press <strong className="font-medium text-text">Start</strong>. We will securely capture this private chat and enable alerts automatically.</p>
+            <p className="mt-2">This pairing code expires at {new Date(pairing.expires_at).toLocaleTimeString()}.</p>
+            <a href={pairing.deep_link} target="_blank" rel="noreferrer" className="mt-2 inline-block text-accent hover:underline">Open the bot on this device ↗</a>
+          </div>
+        </div>
       )}
 
       <div className="flex flex-col gap-1.5">
@@ -175,37 +246,47 @@ export function TelegramBotSection() {
           />
         </label>
 
-        <label className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] uppercase tracking-wide text-muted">Chat ID</span>
-          <input
-            type="text"
-            placeholder="e.g. 123456789"
-            value={fields.chatId}
-            onChange={e => update({ chatId: e.target.value })}
-            className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent mono-nums"
+        <button
+          type="button"
+          onClick={() => setShowAdvanced(value => !value)}
+          className="self-start text-[0.6rem] text-muted hover:text-text underline underline-offset-2"
+        >
+          {showAdvanced ? 'Hide' : 'Show'} advanced connection settings
+        </button>
+
+        {showAdvanced && <>
+          <label className="flex flex-col gap-0.5">
+            <span className="text-[0.6rem] uppercase tracking-wide text-muted">Chat ID</span>
+            <input
+              type="text"
+              placeholder="e.g. 123456789"
+              value={fields.chatId}
+              onChange={e => update({ chatId: e.target.value })}
+              className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent mono-nums"
+            />
+          </label>
+
+          <p className="text-[0.6rem] text-muted leading-relaxed">
+            Advanced routing only. Use this when your deployment needs explicit chat or webhook values.
+          </p>
+
+          <WebhookField
+            label="DEXMM webhook URL"
+            value={fields.dexmmWebhookUrl}
+            set={config?.dexmm_webhook_set ?? false}
+            busy={busy === 'webhook:dexmm'}
+            onChange={v => update({ dexmmWebhookUrl: v })}
+            onSet={() => handleSetWebhook('dexmm')}
           />
-        </label>
-
-        <p className="text-[0.6rem] text-muted leading-relaxed">
-          Alerts and relay messages are sent to the bot directly and don&rsquo;t need this. A webhook is only for the return path: it tells Telegram where to deliver your replies and button taps, so DEXMM can act on trade-chat replies and PUSHPUSH on fiat-arrival confirmations.
-        </p>
-
-        <WebhookField
-          label="DEXMM webhook URL"
-          value={fields.dexmmWebhookUrl}
-          set={config?.dexmm_webhook_set ?? false}
-          busy={busy === 'webhook:dexmm'}
-          onChange={v => update({ dexmmWebhookUrl: v })}
-          onSet={() => handleSetWebhook('dexmm')}
-        />
-        <WebhookField
-          label="PUSHPUSH webhook URL"
-          value={fields.pushpushWebhookUrl}
-          set={config?.pushpush_webhook_set ?? false}
-          busy={busy === 'webhook:pushpush'}
-          onChange={v => update({ pushpushWebhookUrl: v })}
-          onSet={() => handleSetWebhook('pushpush')}
-        />
+          <WebhookField
+            label="PUSHPUSH webhook URL"
+            value={fields.pushpushWebhookUrl}
+            set={config?.pushpush_webhook_set ?? false}
+            busy={busy === 'webhook:pushpush'}
+            onChange={v => update({ pushpushWebhookUrl: v })}
+            onSet={() => handleSetWebhook('pushpush')}
+          />
+        </>}
       </div>
 
       <div className="mt-2 flex flex-wrap items-center gap-1.5">
@@ -217,6 +298,16 @@ export function TelegramBotSection() {
         >
           {busy === 'save' ? 'Saving…' : 'Save'}
         </button>
+        {config?.bot_token_present && !config.chat_id && !pairing && (
+          <button
+            type="button"
+            onClick={handleStartPairing}
+            disabled={busy === 'pair'}
+            className="text-[0.65rem] px-2 py-0.5 rounded-md border border-accent/60 text-accent hover:bg-accent/10 disabled:opacity-40 font-medium"
+          >
+            {busy === 'pair' ? 'Preparing QR…' : 'Pair phone'}
+          </button>
+        )}
         <button
           type="button"
           onClick={() => handleTest('dexmm')}

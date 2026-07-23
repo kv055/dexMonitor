@@ -507,6 +507,11 @@ export interface TelegramActionResult {
   url?: string;
 }
 
+export interface TelegramPairing {
+  deep_link: string;
+  expires_at: string;
+}
+
 export function fetchTelegramConfig() {
   return request<TelegramConfig>('/api/mm-controller/telegram/config');
 }
@@ -532,6 +537,10 @@ export function setTelegramWebhook(service: TelegramService) {
     `/api/mm-controller/telegram/set-webhook?service=${service}`,
     { method: 'POST' },
   );
+}
+
+export function createTelegramPairing() {
+  return request<TelegramPairing>('/api/mm-controller/telegram/pair', { method: 'POST' });
 }
 
 export function testTelegram(service: TelegramService) {

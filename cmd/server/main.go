@@ -289,6 +289,7 @@ func main() {
 	mux.HandleFunc("DELETE /api/mm-controller/bisq/payment-accounts/{id}", handleMmControllerBisqPaymentAccountByID)
 	mux.HandleFunc("GET /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
 	mux.HandleFunc("PUT /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
+	mux.HandleFunc("POST /api/mm-controller/telegram/pair", handleMmControllerTelegramPair)
 	mux.HandleFunc("POST /api/mm-controller/telegram/set-webhook", handleMmControllerTelegramSetWebhook)
 	mux.HandleFunc("POST /api/mm-controller/telegram/test", handleMmControllerTelegramTest)
 	mux.HandleFunc("GET /ws/cex/hedge-stream", handleMmControllerHedgeStreamWS)
@@ -2520,6 +2521,11 @@ func handleMmControllerTelegramConfig(w http.ResponseWriter, r *http.Request) {
 // handleMmControllerTelegramSetWebhook proxies POST set-webhook?service=dexmm|pushpush.
 func handleMmControllerTelegramSetWebhook(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/telegram/set-webhook")
+}
+
+// handleMmControllerTelegramPair proxies creation of a short-lived Telegram QR pairing link.
+func handleMmControllerTelegramPair(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/telegram/pair")
 }
 
 // handleMmControllerTelegramTest proxies POST test?service=dexmm|pushpush to send a
