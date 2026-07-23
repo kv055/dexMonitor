@@ -3,6 +3,7 @@ package tradingaccounts
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -161,6 +162,80 @@ type ValidationError struct {
 func (e ValidationError) Error() string { return e.err.Error() }
 func (e ValidationError) Unwrap() error { return e.err }
 
+// NotificationChannels contains the confirmed ways an incoming payment can
+// be detected for an account. A nil slice is stored and returned as SQL/JSON
+// null, meaning that no channel has been confirmed.
+type NotificationChannels []string
+
+var notificationChannelOrder = []string{"push", "email"}
+
+// Scan implements sql.Scanner for PostgreSQL enum arrays.
+func (channels *NotificationChannels) Scan(src any) error {
+	if src == nil {
+		*channels = nil
+		return nil
+	}
+	var literal string
+	switch value := src.(type) {
+	case string:
+		literal = value
+	case []byte:
+		literal = string(value)
+	default:
+		return fmt.Errorf("scan notification channels from %T", src)
+	}
+	literal = strings.TrimSpace(literal)
+	if literal == "" || literal == "{}" {
+		*channels = nil
+		return nil
+	}
+	if len(literal) < 2 || literal[0] != '{' || literal[len(literal)-1] != '}' {
+		return fmt.Errorf("invalid notification channels array %q", literal)
+	}
+	values := strings.Split(literal[1:len(literal)-1], ",")
+	normalized, err := normalizeNotificationChannels(values)
+	if err != nil {
+		return err
+	}
+	*channels = normalized
+	return nil
+}
+
+// Value implements driver.Valuer for PostgreSQL enum arrays.
+func (channels NotificationChannels) Value() (driver.Value, error) {
+	normalized, err := normalizeNotificationChannels(channels)
+	if err != nil {
+		return nil, err
+	}
+	if len(normalized) == 0 {
+		return nil, nil
+	}
+	return "{" + strings.Join(normalized, ",") + "}", nil
+}
+
+func normalizeNotificationChannels(values []string) (NotificationChannels, error) {
+	if len(values) == 0 {
+		return nil, nil
+	}
+	present := make(map[string]bool, len(values))
+	for _, raw := range values {
+		channel := strings.Trim(strings.TrimSpace(raw), `"`)
+		switch channel {
+		case "push", "email":
+			present[channel] = true
+		default:
+			return nil, ValidationError{fmt.Errorf("unsupported notification channel %q", channel)}
+		}
+	}
+	normalized := make(NotificationChannels, 0, len(present))
+	for _, channel := range notificationChannelOrder {
+		if present[channel] {
+			normalized = append(normalized, channel)
+		}
+	}
+	return normalized, nil
+}
+
 // validateEmail checks format and (best-effort) domain deliverability for a
 // non-empty email before it's persisted.
 func validateEmail(ctx context.Context, email string) error {
@@ -195,6 +270,8 @@ type Account struct {
 	Category string `json:"category"`
 	// PaymentPriority ranks payment accounts; one is the highest priority.
 	PaymentPriority int `json:"payment_priority"`
+	// NotificationChannels lists the confirmed incoming-payment alert paths.
+	NotificationChannels NotificationChannels `json:"notification_channels"`
 	// Email is the email value for the account.
 	Email *string `json:"email"`
 	// Password is the password value for the account.
@@ -415,6 +492,9 @@ type AccountPayload struct {
 	Phone string `json:"phone"`
 	// PaymentTag is the payment identifier shown to counterparties, such as a Revolut revtag or Wise tag.
 	PaymentTag string `json:"payment_tag"`
+	// NotificationChannels replaces the confirmed alert paths when present.
+	// Omitting it preserves the current value during updates.
+	NotificationChannels *NotificationChannels `json:"notification_channels"`
 }
 
 // CredentialReveal contains decrypted account credentials for an explicit
@@ -561,6 +641,7 @@ func (r Repository) List(ctx context.Context) ([]Account, error) {
 		       password,
 		       phone,
 		       payment_tag,
+		       notification_channels,
 		       is_healthy,
 		       last_health_check,
 		       created_at,
@@ -581,7 +662,7 @@ func (r Repository) List(ctx context.Context) ([]Account, error) {
 		var email, password, phone, paymentTag sql.NullString
 		var lastHealthCheck sql.NullTime
 		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&account.ID, &account.Provider, &account.Category, &account.PaymentPriority, &email, &password, &phone, &paymentTag, &account.IsHealthy, &lastHealthCheck, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&account.ID, &account.Provider, &account.Category, &account.PaymentPriority, &email, &password, &phone, &paymentTag, &account.NotificationChannels, &account.IsHealthy, &lastHealthCheck, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		account.Email = nullStringPtr(email)
@@ -717,17 +798,24 @@ func (r Repository) Create(ctx context.Context, payload AccountPayload) (int64, 
 			return 0, fmt.Errorf("encrypt account email: %w", err)
 		}
 	}
+	var notificationChannels NotificationChannels
+	if payload.NotificationChannels != nil {
+		notificationChannels, err = normalizeNotificationChannels(*payload.NotificationChannels)
+		if err != nil {
+			return 0, err
+		}
+	}
 	var id int64
 	err = r.DB.QueryRowContext(ctx, `
-		INSERT INTO accounts (provider, category, email, password, phone, payment_tag, payment_priority)
+		INSERT INTO accounts (provider, category, email, password, phone, payment_tag, notification_channels, payment_priority)
 		VALUES (
-			$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''),
+			$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7,
 			CASE WHEN $2 IN ('Fiat Transmitter', 'Bank', 'Wallet addresses')
 				THEN (SELECT COALESCE(MAX(payment_priority), 0) + 1 FROM accounts WHERE category IN ('Fiat Transmitter', 'Bank', 'Wallet addresses'))
 				ELSE NULL END
 		)
 		RETURNING id
-	`, provider, category, email, password, phone, paymentTag).Scan(&id)
+	`, provider, category, email, password, phone, paymentTag, notificationChannels).Scan(&id)
 	return id, err
 }
 
@@ -792,6 +880,14 @@ func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload
 			return fmt.Errorf("encrypt account email: %w", err)
 		}
 	}
+	var notificationChannels NotificationChannels
+	replaceNotificationChannels := payload.NotificationChannels != nil
+	if replaceNotificationChannels {
+		notificationChannels, err = normalizeNotificationChannels(*payload.NotificationChannels)
+		if err != nil {
+			return err
+		}
+	}
 	_, err = r.DB.ExecContext(ctx, `
 		UPDATE accounts
 		SET provider = $2,
@@ -800,9 +896,10 @@ func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload
 		    password = CASE WHEN $5 = '`+MaskedSecret+`' THEN password ELSE NULLIF($5, '') END,
 		    phone = CASE WHEN $6 = '`+MaskedSecret+`' THEN phone ELSE NULLIF($6, '') END,
 		    payment_tag = CASE WHEN $7 = '`+MaskedSecret+`' THEN payment_tag ELSE NULLIF($7, '') END,
+		    notification_channels = CASE WHEN $9 THEN $8 ELSE notification_channels END,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
-	`, id, provider, category, email, password, phone, paymentTag)
+	`, id, provider, category, email, password, phone, paymentTag, notificationChannels, replaceNotificationChannels)
 	return err
 }
 

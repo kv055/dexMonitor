@@ -389,6 +389,7 @@ export interface TradingAccount {
   provider: string;
   category: string;
   payment_priority: number;
+  notification_channels: Array<'push' | 'email'> | null;
   email: string | null;
   password: string | null;
   phone: string | null;

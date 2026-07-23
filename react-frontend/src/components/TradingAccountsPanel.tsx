@@ -162,6 +162,7 @@ function createPlaceholderAccount(provider: string, category: string, id: number
     provider,
     category,
     payment_priority: 0,
+    notification_channels: null,
     email: null,
     password: null,
     phone: null,
@@ -1710,6 +1711,7 @@ export function TradingAccountsPanel() {
   });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [savingNotificationChannelsByAccount, setSavingNotificationChannelsByAccount] = useState<Record<number, boolean>>({});
   const [revealedCredentialsByAccount, setRevealedCredentialsByAccount] = useState<Record<number, TradingAccountCredentialReveal>>({});
   const [visibleCredentialFieldsByAccount, setVisibleCredentialFieldsByAccount] = useState<Record<number, Partial<Record<CredentialField, boolean>>>>({});
   const [revealingCredentialsByAccount, setRevealingCredentialsByAccount] = useState<Record<number, boolean>>({});
@@ -2230,6 +2232,36 @@ export function TradingAccountsPanel() {
       await load();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Trading accounts request failed');
+    }
+  };
+
+  const setNotificationChannel = async (
+    account: TradingAccount,
+    channel: 'push' | 'email',
+    enabled: boolean,
+  ) => {
+    const nextChannels = new Set(account.notification_channels ?? []);
+    if (enabled) nextChannels.add(channel);
+    else nextChannels.delete(channel);
+    setSavingNotificationChannelsByAccount(prev => ({ ...prev, [account.id]: true }));
+    try {
+      setError(null);
+      await updateAccount(account.id, {
+        provider: account.provider,
+        category: account.category,
+        email: account.email ?? '',
+        password: account.password ?? '',
+        phone: account.phone ?? '',
+        payment_tag: account.payment_tag ?? '',
+        notification_channels: ['push', 'email'].filter(
+          candidate => nextChannels.has(candidate as 'push' | 'email'),
+        ) as Array<'push' | 'email'>,
+      });
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to save notification channels');
+    } finally {
+      setSavingNotificationChannelsByAccount(prev => ({ ...prev, [account.id]: false }));
     }
   };
 
@@ -4094,6 +4126,35 @@ export function TradingAccountsPanel() {
                 </div>
               ) : null}
               <div className="grid gap-2 text-xs text-muted sm:grid-cols-2 xl:grid-cols-3">
+                {isPaymentCategory(account.category || 'Uncategorized') ? (
+                  <fieldset
+                    className="grid gap-1 sm:col-span-2 xl:col-span-3"
+                    disabled={savingNotificationChannelsByAccount[account.id]}
+                  >
+                    <legend className="mb-1 text-text">Incoming payment notification channels</legend>
+                    <div className="flex flex-wrap gap-x-5 gap-y-2">
+                      {([
+                        ['push', 'Push endpoint'],
+                        ['email', 'Email'],
+                      ] as const).map(([channel, label]) => (
+                        <label key={channel} className="inline-flex cursor-pointer items-center gap-2">
+                          <input
+                            type="checkbox"
+                            checked={account.notification_channels?.includes(channel) ?? false}
+                            onChange={event => void setNotificationChannel(account, channel, event.target.checked)}
+                          />
+                          <span>{label} confirmed</span>
+                        </label>
+                      ))}
+                      {savingNotificationChannelsByAccount[account.id] ? (
+                        <span className="text-muted">Saving…</span>
+                      ) : null}
+                    </div>
+                    <span className="text-[0.65rem] text-muted">
+                      Confirm each channel that can report an incoming payment for this account.
+                    </span>
+                  </fieldset>
+                ) : null}
                 <div>
                   <span className="text-text">Last check:</span> {formatDate(account.last_health_check)}
                 </div>

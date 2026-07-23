@@ -176,14 +176,24 @@ export async function downloadBisqAccountFile(id: number) {
   return response.blob();
 }
 
-export function createAccount(payload: { provider: string; category?: string; email: string; password: string; phone: string; payment_tag: string }) {
+type AccountWritePayload = {
+  provider: string;
+  category?: string;
+  email: string;
+  password: string;
+  phone: string;
+  payment_tag: string;
+  notification_channels?: Array<'push' | 'email'>;
+};
+
+export function createAccount(payload: AccountWritePayload) {
   return request<TradingAccount>('/api/trading/accounts', {
     method: 'POST',
     body: JSON.stringify(payload),
   });
 }
 
-export function updateAccount(id: number, payload: { provider: string; category?: string; email: string; password: string; phone: string; payment_tag: string }) {
+export function updateAccount(id: number, payload: AccountWritePayload) {
   return request<TradingAccount>(`/api/trading/accounts/${id}`, {
     method: 'PUT',
     body: JSON.stringify(payload),

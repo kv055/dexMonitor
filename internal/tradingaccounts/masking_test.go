@@ -94,6 +94,7 @@ func TestUpdateKeepsMaskedSecrets(t *testing.T) {
 			password TEXT,
 			phone TEXT,
 			payment_tag TEXT,
+			notification_channels TEXT,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 			updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 		);
@@ -152,6 +153,38 @@ func TestUpdateKeepsMaskedSecrets(t *testing.T) {
 		t.Errorf("real password was not encrypted: %q", pw)
 	}
 
+	// Notification channels are normalized and can be cleared back to NULL.
+	channels := NotificationChannels{"email", "push", "email"}
+	if err := repo.Update(ctx, id, AccountPayload{
+		Provider:             "Kraken",
+		Password:             MaskedSecret,
+		NotificationChannels: &channels,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var storedChannels sql.NullString
+	if err := db.QueryRow(`SELECT notification_channels FROM accounts WHERE id = $1`, id).Scan(&storedChannels); err != nil {
+		t.Fatal(err)
+	}
+	if !storedChannels.Valid || storedChannels.String != "{push,email}" {
+		t.Errorf("notification_channels = %#v, want {push,email}", storedChannels)
+	}
+
+	noChannels := NotificationChannels{}
+	if err := repo.Update(ctx, id, AccountPayload{
+		Provider:             "Kraken",
+		Password:             MaskedSecret,
+		NotificationChannels: &noChannels,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.QueryRow(`SELECT notification_channels FROM accounts WHERE id = $1`, id).Scan(&storedChannels); err != nil {
+		t.Fatal(err)
+	}
+	if storedChannels.Valid {
+		t.Errorf("notification_channels = %q, want NULL", storedChannels.String)
+	}
+
 	// Same round-trip property for TOTP secrets.
 	totpID, err := repo.CreateTOTPSecret(ctx, id, TOTPSecretPayload{Secret: "JBSWY3DP", IsActive: true})
 	if err != nil {
@@ -203,5 +236,12 @@ func TestUpdateKeepsMaskedSecrets(t *testing.T) {
 	}
 	if bank.OwnerName != "Alice Example" {
 		t.Errorf("bank owner name = %q, want decrypted value", bank.OwnerName)
+	}
+}
+
+func TestNotificationChannelsRejectUnsupportedValue(t *testing.T) {
+	channels := NotificationChannels{"sms"}
+	if _, err := channels.Value(); err == nil {
+		t.Fatal("expected unsupported notification channel to fail validation")
 	}
 }
