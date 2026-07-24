@@ -33,13 +33,16 @@ import {
   fetchBisqPaymentAccountForm,
   fetchPaymentMethods,
   createBisqPaymentAccount,
+  deletePaymentMethodChatTemplate,
   deleteBisqPaymentAccount,
+  fetchPaymentMethodChatTemplates,
   initLNDWallet,
   openLNDChannel,
   runAccountHealthCheck,
   updateAccount,
   updateAPIKey,
   updateBankAccount,
+  updatePaymentMethodChatTemplate,
   reorderPaymentAccounts,
   updatePasskey,
   updateSeed,
@@ -64,6 +67,7 @@ import type {
   BisqPaymentMethod,
   BisqPaymentAccountForm,
   PaymentMethodRow,
+  PaymentMethodChatTemplate,
 } from '../types';
 import { useFilters } from '../hooks/useFilters';
 
@@ -163,6 +167,7 @@ function createPlaceholderAccount(provider: string, category: string, id: number
     provider,
     category,
     payment_priority: 0,
+    is_active: true,
     notification_channels: null,
     email: null,
     password: null,
@@ -318,6 +323,12 @@ function isBisq1Provider(value: string) {
 
 function isBisq2Provider(value: string) {
   return value.trim().toLowerCase() === 'bisq2';
+}
+
+function chatExchangeForProvider(value: string): 'RoboSats' | 'Bisq2' | null {
+  if (isRobosatsProvider(value)) return 'RoboSats';
+  if (isBisq2Provider(value)) return 'Bisq2';
+  return null;
 }
 
 function paymentMethodMatchKey(value: string) {
@@ -751,12 +762,18 @@ type AccountSectionKey =
   | 'seeds'
   | 'apiKeys'
   | 'bisqPaymentMethods'
+  | 'chatPaymentMethods'
   | 'lndBackup'
   | 'lightningManagement'
   | 'walletAddresses'
   | 'cexHedging'
   | 'cexSpotTrades'
   | 'cexWithdrawalAddresses';
+
+type ChatTemplateDraft = {
+  template: string;
+  is_active: boolean;
+};
 
 type CexSectionSlice<T> = {
   loading: boolean;
@@ -1561,7 +1578,7 @@ function AccountSummaryCard({
                 {paymentPriority}
               </span>
             ) : null}
-            <HealthBadge account={account} compact />
+            {!isPaymentCategory(account.category || 'Uncategorized') ? <HealthBadge account={account} compact /> : null}
           </div>
         </div>
       </div>
@@ -1641,6 +1658,7 @@ function AccountDetailPane({
   actions,
   healthMessage,
   onDismissHealthMessage,
+  onToggleActive,
   overview,
   children,
 }: {
@@ -1649,9 +1667,11 @@ function AccountDetailPane({
   actions: ReactNode;
   healthMessage?: AccountHealthMessage;
   onDismissHealthMessage?: () => void;
+  onToggleActive: () => void;
   overview: ReactNode;
   children: ReactNode;
 }) {
+  const isPaymentAccount = isPaymentCategory(account.category || 'Uncategorized');
   const healthMessageHealthy = healthMessage?.healthy === true;
 
   return (
@@ -1664,15 +1684,33 @@ function AccountDetailPane({
               <span className="rounded-full border border-border px-2 py-0.5 text-[0.68rem] text-muted">
                 {summaryView.category}
               </span>
-              <HealthBadge account={account} />
+              {!isPaymentAccount ? <HealthBadge account={account} /> : null}
             </div>
             <div className="mt-2 text-[0.68rem] text-muted">
               Created {summaryView.createdLabel} · Updated {summaryView.updatedLabel}
             </div>
           </div>
-          <div className="flex flex-wrap gap-1.5">{actions}</div>
+          <div className="flex flex-wrap items-center gap-1.5">
+            {account.category === 'Fiat Transmitter' || account.category === 'Bank' || account.category === 'Wallet addresses' ? (
+              <>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={account.is_active}
+                  aria-label={`${account.is_active ? 'Deactivate' : 'Activate'} ${summaryView.providerName}`}
+                  title={`${account.is_active ? 'Deactivate' : 'Activate'} payment method`}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${account.is_active ? 'border-green/50 bg-green/20' : 'border-border bg-border/50'}`}
+                  onClick={onToggleActive}
+                >
+                  <span className={`inline-block h-4 w-4 rounded-full bg-text transition-transform ${account.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
+                </button>
+                <span className={`text-xs ${account.is_active ? 'text-green' : 'text-muted'}`}>{account.is_active ? 'Active' : 'Inactive'}</span>
+              </>
+            ) : null}
+            {actions}
+          </div>
         </div>
-        {healthMessage ? (
+        {!isPaymentAccount && healthMessage ? (
           <div
             className={`flex items-start gap-2 rounded-lg border px-3 py-2 ${
               healthMessageHealthy ? 'border-green/30 bg-green/5' : 'border-red/30 bg-red/5'
@@ -1751,6 +1789,13 @@ export function TradingAccountsPanel() {
   const [bisqPmBusyKey, setBisqPmBusyKey] = useState<string | null>(null);
   const [bisqAccountFileDownloading, setBisqAccountFileDownloading] = useState<number | null>(null);
   const [bisqAccountFileError, setBisqAccountFileError] = useState<string | null>(null);
+  const [chatPaymentMethods, setChatPaymentMethods] = useState<PaymentMethodRow[]>([]);
+  const [chatTemplatesByMethod, setChatTemplatesByMethod] = useState<Record<number, PaymentMethodChatTemplate[]>>({});
+  const [chatTemplateDrafts, setChatTemplateDrafts] = useState<Record<number, ChatTemplateDraft>>({});
+  const [chatTemplateEditingMethods, setChatTemplateEditingMethods] = useState<Record<number, boolean>>({});
+  const [chatPaymentMethodsLoading, setChatPaymentMethodsLoading] = useState(false);
+  const [chatPaymentMethodsError, setChatPaymentMethodsError] = useState<string | null>(null);
+  const [chatTemplateSavingMethodID, setChatTemplateSavingMethodID] = useState<number | null>(null);
   const [uiState, dispatchUi] = useReducer(tradingPanelUiReducer, undefined, () => ({
     expandedId: null,
     showNewAccountForm: false,
@@ -2080,6 +2125,25 @@ export function TradingAccountsPanel() {
       setBisqPmLoaded(true);
     } finally {
       setBisqPmLoading(false);
+    }
+  }, []);
+
+  const loadChatPaymentMethods = useCallback(async () => {
+    setChatPaymentMethodsLoading(true);
+    setChatPaymentMethodsError(null);
+    try {
+      const { payment_methods: methods } = await fetchPaymentMethods();
+      const templates = await Promise.all(methods.map(async method => {
+        const response = await fetchPaymentMethodChatTemplates(method.id);
+        return [method.id, response.chat_templates] as const;
+      }));
+      setChatPaymentMethods(methods);
+      setChatTemplatesByMethod(Object.fromEntries(templates));
+      setChatTemplateDrafts({});
+    } catch (err) {
+      setChatPaymentMethodsError(err instanceof Error ? err.message : 'Failed to load chat payment methods');
+    } finally {
+      setChatPaymentMethodsLoading(false);
     }
   }, []);
 
@@ -3410,6 +3474,152 @@ export function TradingAccountsPanel() {
 
   // Creating a Bisq account is deliberately split into edit -> review -> confirm. Selecting a
   // method and entering review perform reads/local state changes only; confirm is the sole POST.
+  const renderChatPaymentMethodsSection = (account: TradingAccount) => {
+    const exchange = chatExchangeForProvider(account.provider);
+    if (!exchange) return null;
+    const open = !!openSectionsByAccount[account.id]?.chatPaymentMethods;
+    const methods = chatPaymentMethods.filter(method => {
+      const hasTemplate = chatTemplatesByMethod[method.id]?.some(template => template.exchange === exchange);
+      return method.is_active || hasTemplate;
+    });
+
+    const toggle = () => {
+      const willOpen = !open;
+      toggleSection(account.id, 'chatPaymentMethods');
+      if (willOpen) void loadChatPaymentMethods();
+    };
+
+    return (
+      <CollapsibleSection
+        title="Chat payment methods"
+        count={methods.length}
+        open={open}
+        onToggle={toggle}
+        actions={
+          <button type="button" className={compactButtonCls} disabled={chatPaymentMethodsLoading} onClick={() => void loadChatPaymentMethods()}>
+            {chatPaymentMethodsLoading ? 'Refreshing…' : 'Refresh'}
+          </button>
+        }
+      >
+        <div className="grid gap-2">
+          <p className="text-[0.65rem] text-muted">
+            Add a message template for each payment method you use on {exchange}. These chat-only venues do not create a separate DEX payment account.
+          </p>
+          {chatPaymentMethodsError ? <p className="text-[0.65rem] text-red">{chatPaymentMethodsError}</p> : null}
+          {chatPaymentMethodsLoading ? <p className="text-[0.65rem] text-muted">Loading payment methods…</p> : null}
+          {!chatPaymentMethodsLoading && methods.length === 0 ? (
+            <p className="rounded-md border border-dashed border-border px-2 py-2 text-[0.65rem] text-muted">
+              No active payment methods are available. Add or activate one in the Payment Method Catalog first.
+            </p>
+          ) : null}
+          {methods.map(method => {
+            const template = chatTemplatesByMethod[method.id]?.find(candidate => candidate.exchange === exchange);
+            const draft = chatTemplateDrafts[method.id] ?? {
+              template: template?.template ?? '',
+              is_active: template?.is_active ?? true,
+            };
+            const editing = chatTemplateEditingMethods[method.id] === true;
+            const saving = chatTemplateSavingMethodID === method.id;
+            const openEditor = () => {
+              setChatTemplateDrafts(current => ({ ...current, [method.id]: draft }));
+              setChatTemplateEditingMethods(current => ({ ...current, [method.id]: true }));
+            };
+            const closeEditor = () => {
+              setChatTemplateEditingMethods(current => ({ ...current, [method.id]: false }));
+              setChatTemplateDrafts(current => {
+                const next = { ...current };
+                delete next[method.id];
+                return next;
+              });
+            };
+            const save = async () => {
+              if (!draft.template.trim()) return;
+              setChatTemplateSavingMethodID(method.id);
+              setChatPaymentMethodsError(null);
+              try {
+                const response = await updatePaymentMethodChatTemplate(method.id, exchange, {
+                  template: draft.template.trim(),
+                  is_active: draft.is_active,
+                });
+                setChatTemplatesByMethod(current => ({ ...current, [method.id]: response.chat_templates }));
+                closeEditor();
+              } catch (err) {
+                setChatPaymentMethodsError(err instanceof Error ? err.message : 'Failed to save chat template');
+              } finally {
+                setChatTemplateSavingMethodID(null);
+              }
+            };
+            const remove = async () => {
+              if (!template) return;
+              setChatTemplateSavingMethodID(method.id);
+              setChatPaymentMethodsError(null);
+              try {
+                await deletePaymentMethodChatTemplate(method.id, exchange);
+                setChatTemplatesByMethod(current => ({
+                  ...current,
+                  [method.id]: (current[method.id] ?? []).filter(candidate => candidate.exchange !== exchange),
+                }));
+                closeEditor();
+              } catch (err) {
+                setChatPaymentMethodsError(err instanceof Error ? err.message : 'Failed to remove chat template');
+              } finally {
+                setChatTemplateSavingMethodID(null);
+              }
+            };
+
+            return (
+              <div key={method.id} className="rounded-md border border-border bg-surface/40 p-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 text-xs">
+                    <span className="font-medium text-text">{method.name}</span>
+                    {template ? (
+                      <span className={`ml-2 text-[0.62rem] ${template.is_active ? 'text-green' : 'text-muted'}`}>
+                        {template.is_active ? 'template active' : 'template inactive'}
+                      </span>
+                    ) : <span className="ml-2 text-[0.62rem] text-muted">no template</span>}
+                  </div>
+                  <button type="button" className={compactButtonCls} onClick={editing ? closeEditor : openEditor} disabled={saving}>
+                    {editing ? 'Close' : template ? 'Edit template' : 'Add template'}
+                  </button>
+                </div>
+                {editing ? (
+                  <div className="mt-2 grid gap-2">
+                    <textarea
+                      className={`${compactInputCls} min-h-20 resize-y`}
+                      value={draft.template}
+                      placeholder="Please send {{amount}} {{currency}} via this payment method."
+                      onChange={event => setChatTemplateDrafts(current => ({
+                        ...current,
+                        [method.id]: { ...draft, template: event.target.value },
+                      }))}
+                    />
+                    <label className="inline-flex items-center gap-2 text-[0.65rem] text-muted">
+                      <input
+                        type="checkbox"
+                        checked={draft.is_active}
+                        onChange={event => setChatTemplateDrafts(current => ({
+                          ...current,
+                          [method.id]: { ...draft, is_active: event.target.checked },
+                        }))}
+                      />
+                      Use this template for {exchange}
+                    </label>
+                    <div className="flex justify-end gap-1.5">
+                      {template ? <button type="button" className={`${compactButtonCls} text-red`} onClick={() => void remove()} disabled={saving}>Remove</button> : null}
+                      <button type="button" className={compactPrimaryButtonCls} onClick={() => void save()} disabled={saving || !draft.template.trim()}>
+                        {saving ? 'Saving…' : 'Save template'}
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+        </div>
+      </CollapsibleSection>
+    );
+  };
+
   const renderSavedPaymentMethodsSection = (account: TradingAccount) => {
     const open = !!openSectionsByAccount[account.id]?.bisqPaymentMethods;
     const bankAccounts = accounts
@@ -4064,19 +4274,33 @@ export function TradingAccountsPanel() {
       <AccountDetailPane
         account={account}
         summaryView={summaryView}
-        healthMessage={accountHealthMessage}
-        onDismissHealthMessage={() => dismissHealthMessage(account.id)}
+        healthMessage={isPaymentCategory(account.category || 'Uncategorized') ? undefined : accountHealthMessage}
+        onDismissHealthMessage={isPaymentCategory(account.category || 'Uncategorized') ? undefined : () => dismissHealthMessage(account.id)}
+        onToggleActive={() => withReload(async () => {
+          await updateAccount(account.id, {
+            provider: account.provider,
+            category: account.category,
+            // The account list masks secrets. Keep them unchanged while updating
+            // only the activation flag.
+            email: '***',
+            password: '***',
+            phone: '***',
+            payment_tag: '***',
+            is_active: !account.is_active,
+          });
+        })}
         actions={
           <>
-            <button
-              type="button"
-              className={`${compactButtonCls} disabled:cursor-not-allowed disabled:opacity-50`}
-              disabled={isPaymentCategory(account.category || 'Uncategorized') || !!checkingHealthByAccount[account.id]}
-              title={isPaymentCategory(account.category || 'Uncategorized') ? 'Health checks are not available for payment accounts' : undefined}
-              onClick={() => void triggerHealthCheck(account)}
-            >
-              {checkingHealthByAccount[account.id] ? 'Checking…' : 'Healthcheck'}
-            </button>
+            {!isPaymentCategory(account.category || 'Uncategorized') ? (
+              <button
+                type="button"
+                className={`${compactButtonCls} disabled:cursor-not-allowed disabled:opacity-50`}
+                disabled={!!checkingHealthByAccount[account.id]}
+                onClick={() => void triggerHealthCheck(account)}
+              >
+                {checkingHealthByAccount[account.id] ? 'Checking…' : 'Healthcheck'}
+              </button>
+            ) : null}
             {!isEditingAccount && (showDexIdentitySections(account.provider) || isLndWalletProvider(account.provider)) ? (
               <button type="button" className={compactButtonCls} onClick={() => startAccountEdit(account)}>
                 Edit
@@ -4156,9 +4380,11 @@ export function TradingAccountsPanel() {
                     </span>
                   </fieldset>
                 ) : null}
-                <div>
-                  <span className="text-text">Last check:</span> {formatDate(account.last_health_check)}
-                </div>
+                {!isPaymentCategory(account.category || 'Uncategorized') ? (
+                  <div>
+                    <span className="text-text">Last check:</span> {formatDate(account.last_health_check)}
+                  </div>
+                ) : null}
                 <div className="sm:col-span-2 xl:col-span-2">
                   <span className="text-text">Credentials:</span> {accountCredentialSummary(account)}
                 </div>
@@ -4220,6 +4446,7 @@ export function TradingAccountsPanel() {
       >
         {isBisqProvider(account.provider) ? renderAccountFileSection(account) : null}
         {isBisq1Provider(account.provider) ? renderSavedPaymentMethodsSection(account) : null}
+        {chatExchangeForProvider(account.provider) ? renderChatPaymentMethodsSection(account) : null}
         {showDexIdentitySections(account.provider) ? renderTOTPSection(account) : null}
         {showDexIdentitySections(account.provider) ? renderPasskeysSection(account) : null}
         {renderSeedsSection(account)}

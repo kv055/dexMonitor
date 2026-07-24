@@ -90,6 +90,7 @@ func TestUpdateKeepsMaskedSecrets(t *testing.T) {
 			provider TEXT NOT NULL,
 			category TEXT,
 			payment_priority INTEGER,
+			is_active BOOLEAN NOT NULL DEFAULT TRUE,
 			email TEXT,
 			password TEXT,
 			phone TEXT,

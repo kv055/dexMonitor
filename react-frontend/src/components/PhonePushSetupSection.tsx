@@ -237,20 +237,20 @@ export function PhonePushSetupSection() {
           <div className="grid min-h-36 place-items-center text-xs text-muted">{busy ? 'Loading phone setup…' : 'Phone setup is unavailable.'}</div>
         ) : (
           <>
-            <div className="grid gap-2.5 sm:grid-cols-3">
-              <div className="rounded-lg border border-border/70 bg-bg/45 px-3 py-2.5">
-                <span className="text-[0.56rem] font-semibold uppercase tracking-wider text-muted">Connection</span>
-                <p className={`mt-1 text-[0.72rem] font-medium ${setup.online ? 'text-green' : 'text-text'}`}>
+            <div className="grid grid-cols-3 gap-x-2">
+              <div className="flex min-w-0 items-baseline gap-1">
+                <span className="shrink-0 text-[0.43rem] font-semibold uppercase tracking-wide text-muted">Connection</span>
+                <p className={`truncate text-[0.55rem] font-medium ${setup.online ? 'text-green' : 'text-text'}`}>
                   {setup.online ? setup.device_id || 'Connected phone' : 'Not connected'}
                 </p>
               </div>
-              <div className="rounded-lg border border-border/70 bg-bg/45 px-3 py-2.5">
-                <span className="text-[0.56rem] font-semibold uppercase tracking-wider text-muted">Last heartbeat</span>
-                <p className="mt-1 truncate text-[0.68rem] font-medium text-text">{lastSeen}</p>
+              <div className="flex min-w-0 items-baseline gap-1">
+                <span className="shrink-0 text-[0.43rem] font-semibold uppercase tracking-wide text-muted">Last heartbeat</span>
+                <p className="truncate text-[0.55rem] font-medium text-text">{lastSeen}</p>
               </div>
-              <div className="rounded-lg border border-border/70 bg-bg/45 px-3 py-2.5">
-                <span className="text-[0.56rem] font-semibold uppercase tracking-wider text-muted">Offline after</span>
-                <p className="mt-1 text-[0.72rem] font-medium text-text">{Math.round(setup.max_age_seconds / 60)} minutes</p>
+              <div className="flex min-w-0 items-baseline gap-1">
+                <span className="shrink-0 text-[0.43rem] font-semibold uppercase tracking-wide text-muted">Offline after</span>
+                <p className="truncate text-[0.55rem] font-medium text-text">{Math.round(setup.max_age_seconds / 60)} minutes</p>
               </div>
             </div>
 

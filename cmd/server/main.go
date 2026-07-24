@@ -25,6 +25,7 @@ import (
 	"syscall"
 	"time"
 
+	"commons/exchangecredentials"
 	"commons/fiat"
 	"commons/logging"
 	"commons/metrics"
@@ -237,7 +238,8 @@ func main() {
 	}
 	authSvc := auth.New(db, auth.Config{CookieSecure: sessionCookieSecure})
 
-	orchestrator := tradecost.NewTradeCostEstimator()
+	credentialStore := exchangecredentials.NewStore(db)
+	orchestrator := tradecost.NewTradeCostEstimatorWithCredentials(credentialStore.Resolve)
 	tradeCostEstimators = make(map[string]*tradecost.TradeCostEstimator, len(supportedCEXes))
 	for _, c := range supportedCEXes {
 		tradeCostEstimators[c] = orchestrator

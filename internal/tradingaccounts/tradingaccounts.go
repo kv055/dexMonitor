@@ -270,6 +270,8 @@ type Account struct {
 	Category string `json:"category"`
 	// PaymentPriority ranks payment accounts; one is the highest priority.
 	PaymentPriority int `json:"payment_priority"`
+	// IsActive controls whether this payment account may be used for payments.
+	IsActive bool `json:"is_active"`
 	// NotificationChannels lists the confirmed incoming-payment alert paths.
 	NotificationChannels NotificationChannels `json:"notification_channels"`
 	// Email is the email value for the account.
@@ -495,6 +497,9 @@ type AccountPayload struct {
 	// NotificationChannels replaces the confirmed alert paths when present.
 	// Omitting it preserves the current value during updates.
 	NotificationChannels *NotificationChannels `json:"notification_channels"`
+	// IsActive updates whether this payment account may be used for payments.
+	// Omitting it preserves the current value during updates.
+	IsActive *bool `json:"is_active"`
 }
 
 // CredentialReveal contains decrypted account credentials for an explicit
@@ -637,6 +642,7 @@ func (r Repository) List(ctx context.Context) ([]Account, error) {
 		       provider,
 		       COALESCE(category, 'Uncategorized') AS category,
 		       COALESCE(payment_priority, 0) AS payment_priority,
+		       is_active,
 		       email,
 		       password,
 		       phone,
@@ -662,7 +668,7 @@ func (r Repository) List(ctx context.Context) ([]Account, error) {
 		var email, password, phone, paymentTag sql.NullString
 		var lastHealthCheck sql.NullTime
 		var createdAt, updatedAt time.Time
-		if err := rows.Scan(&account.ID, &account.Provider, &account.Category, &account.PaymentPriority, &email, &password, &phone, &paymentTag, &account.NotificationChannels, &account.IsHealthy, &lastHealthCheck, &createdAt, &updatedAt); err != nil {
+		if err := rows.Scan(&account.ID, &account.Provider, &account.Category, &account.PaymentPriority, &account.IsActive, &email, &password, &phone, &paymentTag, &account.NotificationChannels, &account.IsHealthy, &lastHealthCheck, &createdAt, &updatedAt); err != nil {
 			return nil, err
 		}
 		account.Email = nullStringPtr(email)
@@ -807,12 +813,13 @@ func (r Repository) Create(ctx context.Context, payload AccountPayload) (int64, 
 	}
 	var id int64
 	err = r.DB.QueryRowContext(ctx, `
-		INSERT INTO accounts (provider, category, email, password, phone, payment_tag, notification_channels, payment_priority)
+		INSERT INTO accounts (provider, category, email, password, phone, payment_tag, notification_channels, payment_priority, is_active)
 		VALUES (
 			$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7,
 			CASE WHEN $2 IN ('Fiat Transmitter', 'Bank', 'Wallet addresses')
 				THEN (SELECT COALESCE(MAX(payment_priority), 0) + 1 FROM accounts WHERE category IN ('Fiat Transmitter', 'Bank', 'Wallet addresses'))
-				ELSE NULL END
+				ELSE NULL END,
+			TRUE
 		)
 		RETURNING id
 	`, provider, category, email, password, phone, paymentTag, notificationChannels).Scan(&id)
@@ -888,6 +895,7 @@ func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload
 			return err
 		}
 	}
+	active := payload.IsActive != nil
 	_, err = r.DB.ExecContext(ctx, `
 		UPDATE accounts
 		SET provider = $2,
@@ -897,9 +905,10 @@ func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload
 		    phone = CASE WHEN $6 = '`+MaskedSecret+`' THEN phone ELSE NULLIF($6, '') END,
 		    payment_tag = CASE WHEN $7 = '`+MaskedSecret+`' THEN payment_tag ELSE NULLIF($7, '') END,
 		    notification_channels = CASE WHEN $9 THEN $8 ELSE notification_channels END,
+		    is_active = CASE WHEN $10 THEN $11 ELSE is_active END,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
-	`, id, provider, category, email, password, phone, paymentTag, notificationChannels, replaceNotificationChannels)
+	`, id, provider, category, email, password, phone, paymentTag, notificationChannels, replaceNotificationChannels, active, payload.IsActive)
 	return err
 }
 

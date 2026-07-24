@@ -184,6 +184,7 @@ type AccountWritePayload = {
   phone: string;
   payment_tag: string;
   notification_channels?: Array<'push' | 'email'>;
+  is_active?: boolean;
 };
 
 export function createAccount(payload: AccountWritePayload) {
