@@ -40,9 +40,10 @@ type AdminRow struct {
 }
 
 // UpdatePayload is the editable subset of a payment_methods row. Name,
-// match_order and is_linked are deliberately not editable: renaming a method
-// would orphan the names already stored in offers.payment_methods, match_order
-// is seeded matching data, and is_linked is a generated column.
+// match_order, is_linked and is_active are deliberately not editable:
+// renaming a method would orphan the names already stored in offers.payment_methods,
+// match_order is seeded matching data, is_linked is generated, and a payment
+// method becomes active only when it is linked to a saved payment account.
 type UpdatePayload struct {
 	MergeRegex      *string  `json:"merge_regex"`
 	AliasList       []string `json:"alias_list"`
@@ -50,7 +51,6 @@ type UpdatePayload struct {
 	BankAccountID   *int64   `json:"bank_account_id"`
 	AccountID       *int64   `json:"account_id"`
 	WalletAddressID *int64   `json:"wallet_address_id"`
-	IsActive        bool     `json:"is_active"`
 	Priority        int      `json:"priority"`
 }
 
@@ -157,6 +157,9 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 	if p.WalletAddressID != nil && category != "Crypto" {
 		return ValidationError{fmt.Errorf("only Crypto methods can link to a wallet address")}
 	}
+	// A method is usable only after a payment account has been assigned. Keep
+	// this derived server-side so clients cannot activate a method directly.
+	isActive := links == 1
 
 	tx, err := r.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -177,7 +180,7 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 			updated_at = CURRENT_TIMESTAMP
 		WHERE id = $9`,
 		p.MergeRegex, category, p.BankAccountID, p.AccountID, p.WalletAddressID,
-		p.IsActive, p.Priority, commonpm.TextArray(aliasList), id)
+		isActive, p.Priority, commonpm.TextArray(aliasList), id)
 	if err != nil {
 		return fmt.Errorf("update payment method %d: %w", id, err)
 	}

@@ -41,18 +41,16 @@ const compactPrimaryButtonCls =
 interface Draft {
   category: string;
   merge_regex: string;
-  alias_list: string;
+  alias_list: string[];
   link_id: number | null;
-  is_active: boolean;
 }
 
 function draftFromRow(row: PaymentMethodRow): Draft {
   return {
     category: row.category,
     merge_regex: row.merge_regex ?? '',
-    alias_list: (row.alias_list ?? []).join('\n'),
+    alias_list: row.alias_list ?? [],
     link_id: row.bank_account_id ?? row.account_id ?? row.wallet_address_id,
-    is_active: row.is_active,
   };
 }
 
@@ -61,16 +59,23 @@ function payloadFromDraft(draft: Draft, priority: number): PaymentMethodUpdatePa
   return {
     merge_regex: draft.merge_regex.trim() === '' ? null : draft.merge_regex.trim(),
     alias_list: draft.alias_list
-      .split('\n')
       .map(alias => alias.trim())
       .filter(alias => alias.length > 0),
     category: draft.category,
     bank_account_id: link === 'bank' ? draft.link_id : null,
     account_id: link === 'account' ? draft.link_id : null,
     wallet_address_id: link === 'wallet' ? draft.link_id : null,
-    is_active: draft.is_active,
     priority,
   };
+}
+
+function draftHasChanges(draft: Draft, row: PaymentMethodRow) {
+  const initial = draftFromRow(row);
+  return draft.category !== initial.category
+    || draft.merge_regex !== initial.merge_regex
+    || draft.link_id !== initial.link_id
+    || draft.alias_list.length !== initial.alias_list.length
+    || draft.alias_list.some((alias, index) => alias !== initial.alias_list[index]);
 }
 
 function bankAccountLabel(ba: TradingBankAccount, owner: TradingAccount | undefined) {
@@ -96,8 +101,7 @@ export function PaymentMethodsPanel() {
   const [categoryPickerError, setCategoryPickerError] = useState<string | null>(null);
   const [aliasPickerId, setAliasPickerId] = useState<number | null>(null);
   const [aliasPickerError, setAliasPickerError] = useState<string | null>(null);
-  const [aliasPromotePickerId, setAliasPromotePickerId] = useState<number | null>(null);
-  const [aliasPromoteError, setAliasPromoteError] = useState<string | null>(null);
+  const [aliasInput, setAliasInput] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -167,6 +171,7 @@ export function PaymentMethodsPanel() {
   function startEdit(row: PaymentMethodRow) {
     setEditingId(row.id);
     setDraft(draftFromRow(row));
+    setAliasInput('');
     setRowError(null);
   }
 
@@ -246,16 +251,36 @@ export function PaymentMethodsPanel() {
 
   async function promoteAlias(row: PaymentMethodRow, alias: string) {
     setSaving(true);
-    setAliasPromoteError(null);
+    setRowError(null);
     try {
       const res = await promotePaymentMethodAlias(row.id, alias);
       setRows(res.payment_methods);
-      setAliasPromotePickerId(null);
+      setEditingId(null);
+      setDraft(null);
+      setAliasInput('');
     } catch (err) {
-      setAliasPromoteError(err instanceof Error ? err.message : 'Alias promotion failed');
+      setRowError(err instanceof Error ? err.message : 'Could not create a payment method from this alias');
     } finally {
       setSaving(false);
     }
+  }
+
+  function addAlias() {
+    if (!draft) return;
+    const alias = aliasInput.trim();
+    if (alias === '') return;
+    if (draft.alias_list.some(candidate => candidate.localeCompare(alias, undefined, { sensitivity: 'accent' }) === 0)) {
+      setRowError('This alias is already in the list.');
+      return;
+    }
+    setDraft({ ...draft, alias_list: [...draft.alias_list, alias] });
+    setAliasInput('');
+    setRowError(null);
+  }
+
+  function removeAlias(alias: string) {
+    if (!draft) return;
+    setDraft({ ...draft, alias_list: draft.alias_list.filter(candidate => candidate !== alias) });
   }
 
   function renderLinkSelect(d: Draft) {
@@ -367,18 +392,6 @@ export function PaymentMethodsPanel() {
                           >
                             Change category
                           </button>
-                          {(row.alias_list?.length ?? 0) > 0 && (
-                            <button
-                              type="button"
-                              className={compactButtonCls}
-                              onClick={() => {
-                                setAliasPromoteError(null);
-                                setAliasPromotePickerId(prev => (prev === row.id ? null : row.id));
-                              }}
-                            >
-                              Promote alias
-                            </button>
-                          )}
                           {!row.is_linked && (
                             <button
                               type="button"
@@ -417,26 +430,6 @@ export function PaymentMethodsPanel() {
                             </select>
                           </label>
                           {categoryPickerError && <p className="text-[0.68rem] text-red">{categoryPickerError}</p>}
-                        </div>
-                      )}
-
-                      {aliasPromotePickerId === row.id && (row.alias_list?.length ?? 0) > 0 && (
-                        <div className="mt-2 flex items-end gap-1.5">
-                          <label className="flex flex-1 flex-col gap-1 text-[0.68rem] text-muted">
-                            Alias to make standalone
-                            <select
-                              className={compactInputCls}
-                              defaultValue=""
-                              onChange={e => {
-                                if (e.target.value !== '') void promoteAlias(row, e.target.value);
-                              }}
-                              disabled={saving}
-                            >
-                              <option value="">— select alias —</option>
-                              {row.alias_list.map(alias => <option key={alias} value={alias}>{alias}</option>)}
-                            </select>
-                          </label>
-                          {aliasPromoteError && <p className="text-[0.68rem] text-red">{aliasPromoteError}</p>}
                         </div>
                       )}
 
@@ -492,24 +485,69 @@ export function PaymentMethodsPanel() {
                               placeholder="(?i)^(?:paypal|pay pal)$"
                             />
                           </label>
-                          <label className="flex flex-col gap-1 text-[0.68rem] text-muted">
-                            Aliases (one exact alias per line)
-                            <textarea
-                              className={`${compactInputCls} min-h-[4.5rem]`}
-                              value={draft.alias_list}
-                              onChange={e => setDraft({ ...draft, alias_list: e.target.value })}
-                              placeholder={`Paypal\npay pal f & f`}
-                            />
-                          </label>
+                          <div className="flex flex-col gap-1 text-[0.68rem] text-muted">
+                            <span>Aliases</span>
+                            <p className="text-[0.62rem] text-muted">
+                              Exact offer labels that should be treated as “{row.name}”. Save changes before making an alias a payment method.
+                            </p>
+                            <div className="flex gap-1.5">
+                              <input
+                                className={compactInputCls}
+                                value={aliasInput}
+                                onChange={e => setAliasInput(e.target.value)}
+                                onKeyDown={e => {
+                                  if (e.key === 'Enter') {
+                                    e.preventDefault();
+                                    addAlias();
+                                  }
+                                }}
+                                placeholder="Add an alias"
+                              />
+                              <button
+                                type="button"
+                                className={compactPrimaryButtonCls}
+                                onClick={addAlias}
+                                disabled={aliasInput.trim() === ''}
+                              >
+                                Add
+                              </button>
+                            </div>
+                            {draft.alias_list.length > 0 ? (
+                              <ul className="overflow-hidden rounded-md border border-border divide-y divide-border">
+                                {draft.alias_list.map(alias => (
+                                  <li key={alias} className="flex items-center justify-between gap-2 bg-bg px-2 py-1.5">
+                                    <span className="min-w-0 truncate text-xs text-text" title={alias}>{alias}</span>
+                                    <div className="flex shrink-0 items-center gap-1">
+                                      <button
+                                        type="button"
+                                        className={compactButtonCls}
+                                        onClick={() => void promoteAlias(row, alias)}
+                                        disabled={saving || draftHasChanges(draft, row)}
+                                        title={draftHasChanges(draft, row)
+                                          ? 'Save your changes before creating a payment method from an alias'
+                                          : 'Create a separate payment method from this alias'}
+                                      >
+                                        Promote to payment method
+                                      </button>
+                                      <button
+                                        type="button"
+                                        className="rounded-md border border-red/40 px-2 py-1 text-xs font-medium text-red transition hover:bg-red/10"
+                                        onClick={() => removeAlias(alias)}
+                                        disabled={saving}
+                                      >
+                                        Remove
+                                      </button>
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="rounded-md border border-dashed border-border px-2 py-2 text-[0.68rem] text-muted">
+                                No aliases assigned.
+                              </p>
+                            )}
+                          </div>
                           {renderLinkSelect(draft)}
-                          <label className="flex items-center gap-2 text-[0.68rem] text-muted">
-                            <input
-                              type="checkbox"
-                              checked={draft.is_active}
-                              onChange={e => setDraft({ ...draft, is_active: e.target.checked })}
-                            />
-                            Active (usable for taking offers)
-                          </label>
                           {rowError && <p className="text-[0.68rem] text-red">{rowError}</p>}
                           <div className="flex items-center gap-1.5">
                             <button

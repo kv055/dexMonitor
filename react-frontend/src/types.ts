@@ -713,7 +713,6 @@ export interface PaymentMethodUpdatePayload {
   bank_account_id: number | null;
   account_id: number | null;
   wallet_address_id: number | null;
-  is_active: boolean;
   priority: number;
 }
 
