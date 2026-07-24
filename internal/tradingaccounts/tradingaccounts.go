@@ -572,7 +572,7 @@ func (r Repository) EncryptLegacySecrets(ctx context.Context) error {
 	for _, target := range []struct{ table, column string }{
 		{"accounts", "email"}, {"accounts", "password"}, {"accounts", "phone"}, {"accounts", "payment_tag"},
 		{"bank_accounts", "owner_name"},
-		{"totp_secrets", "secret"}, {"passkey_credentials", "private_key_pkcs8"}, {"seeds", "seed_phrase"},
+		{"totp_secrets", "secret"}, {"passkey_credentials", "private_key_pkcs8"}, {"seeds", "seed_phrase"}, // gitleaks:allow -- SQL identifiers, not credentials
 		{"api_keys", "api_key"}, {"api_keys", "api_secret"}, {"api_keys", "passphrase"},
 	} {
 		rows, err := r.DB.QueryContext(ctx, "SELECT id, "+target.column+" FROM "+target.table+" WHERE "+target.column+" IS NOT NULL AND "+target.column+" <> '' AND "+target.column+" NOT LIKE 'enc:v1:%'")
