@@ -46,21 +46,26 @@ import (
 const serviceName = "dexmonitor"
 
 var (
-	databaseURL         string
-	snapshotIntervalMin int
-	frontendDir         string
-	mmControllerAPIURL  string
-	mmInternalSecret    string
-	unifiedAPIURL       string
-	sessionCookieSecure bool
-	db                  *sql.DB
-	pmService           *paymentmethods.Service
-	pmRepo              *paymentmethods.Repo
-	lifecycleRepo       lifecycle.Repository
-	ohlcService         *ohlc.Service
-	snapshotLogRepo     snapshotlog.Repository
-	mmProxy             *mmproxy.Proxy
-	tradingAccountRepo  tradingaccounts.Repository
+	databaseURL             string
+	snapshotIntervalMin     int
+	frontendDir             string
+	mmControllerAPIURL      string
+	mmInternalSecret        string
+	unifiedAPIURL           string
+	fiatControllerURL       string
+	pushpushPublicBaseURL   string
+	pushpushNotifySecret    string
+	pushpushHeartbeatSecret string
+	pushpushHeartbeatMaxAge time.Duration
+	sessionCookieSecure     bool
+	db                      *sql.DB
+	pmService               *paymentmethods.Service
+	pmRepo                  *paymentmethods.Repo
+	lifecycleRepo           lifecycle.Repository
+	ohlcService             *ohlc.Service
+	snapshotLogRepo         snapshotlog.Repository
+	mmProxy                 *mmproxy.Proxy
+	tradingAccountRepo      tradingaccounts.Repository
 )
 
 // dashboardCacheTTL deduplicates parallel general_stats and lifecycle aggregate loads.
@@ -177,6 +182,23 @@ func init() {
 	if unifiedAPIURL == "" {
 		unifiedAPIURL = "http://localhost:5010"
 	}
+	fiatControllerURL = strings.TrimRight(strings.TrimSpace(os.Getenv("FIAT_CONTROLLER_URL")), "/")
+	if fiatControllerURL == "" {
+		fiatControllerURL = "http://localhost:8080"
+	}
+	pushpushPublicBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("PUSHPUSH_PUBLIC_BASE_URL")), "/")
+	if pushpushPublicBaseURL == "" {
+		pushpushPublicBaseURL = "https://dexmonitor.live"
+	}
+	pushpushNotifySecret = strings.TrimSpace(os.Getenv("PUSHPUSH_NOTIFY_SECRET"))
+	pushpushHeartbeatSecret = strings.TrimSpace(os.Getenv("PUSHPUSH_HEARTBEAT_SECRET"))
+	if pushpushHeartbeatSecret == "" {
+		pushpushHeartbeatSecret = pushpushNotifySecret
+	}
+	pushpushHeartbeatMaxAge = 15 * time.Minute
+	if configured, err := time.ParseDuration(strings.TrimSpace(os.Getenv("PUSHPUSH_HEARTBEAT_MAX_AGE"))); err == nil && configured > 0 {
+		pushpushHeartbeatMaxAge = configured
+	}
 
 	// Session cookie Secure attribute: default true (prod is HTTPS). Set
 	// SESSION_COOKIE_SECURE=false only for local HTTP dev, where browsers drop
@@ -292,6 +314,8 @@ func main() {
 	mux.HandleFunc("POST /api/mm-controller/telegram/pair", handleMmControllerTelegramPair)
 	mux.HandleFunc("POST /api/mm-controller/telegram/set-webhook", handleMmControllerTelegramSetWebhook)
 	mux.HandleFunc("POST /api/mm-controller/telegram/test", handleMmControllerTelegramTest)
+	mux.HandleFunc("GET /api/phone-push/setup", handlePhonePushSetup)
+	mux.HandleFunc("POST /api/phone-push/setup/reveal", handlePhonePushSetupReveal)
 	mux.HandleFunc("GET /ws/cex/hedge-stream", handleMmControllerHedgeStreamWS)
 	mux.HandleFunc("GET /api/trading/accounts", handleTradingAccounts)
 	mux.HandleFunc("POST /api/trading/accounts", handleTradingAccounts)
@@ -2532,6 +2556,82 @@ func handleMmControllerTelegramPair(w http.ResponseWriter, r *http.Request) {
 // one-way test message to the configured chat.
 func handleMmControllerTelegramTest(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/telegram/test")
+}
+
+// phonePushSetup is intentionally free of credentials so it can be refreshed
+// by the Communication Hub without ever putting deployment secrets in normal
+// API responses or QR payloads.
+type phonePushSetup struct {
+	NotifyURL                     string `json:"notify_url"`
+	HeartbeatURL                  string `json:"heartbeat_url"`
+	NotifyCredentialConfigured    bool   `json:"notify_credential_configured"`
+	HeartbeatCredentialConfigured bool   `json:"heartbeat_credential_configured"`
+	HeartbeatUsesNotifyCredential bool   `json:"heartbeat_uses_notify_credential"`
+	Online                        bool   `json:"online"`
+	DeviceID                      string `json:"device_id"`
+	LastSeen                      string `json:"last_seen"`
+	MaxAgeSeconds                 int64  `json:"max_age_seconds"`
+	HeartbeatStatusError          string `json:"heartbeat_status_error,omitempty"`
+}
+
+func phonePushSetupMetadata(ctx context.Context) phonePushSetup {
+	setup := phonePushSetup{
+		NotifyURL:                     fmt.Sprintf("%s/pushpush/notify", pushpushPublicBaseURL),
+		HeartbeatURL:                  fmt.Sprintf("%s/pushpush/phone-heartbeat", pushpushPublicBaseURL),
+		NotifyCredentialConfigured:    pushpushNotifySecret != "",
+		HeartbeatCredentialConfigured: pushpushHeartbeatSecret != "",
+		HeartbeatUsesNotifyCredential: strings.TrimSpace(os.Getenv("PUSHPUSH_HEARTBEAT_SECRET")) == "" && pushpushNotifySecret != "",
+		MaxAgeSeconds:                 int64(pushpushHeartbeatMaxAge.Seconds()),
+	}
+	if pushpushHeartbeatSecret == "" {
+		setup.HeartbeatStatusError = "Heartbeat credential is not configured. Public callbacks are disabled."
+		return setup
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fiatControllerURL+"/phone-heartbeat", nil)
+	if err != nil {
+		setup.HeartbeatStatusError = "Could not prepare heartbeat status request"
+		return setup
+	}
+	req.Header.Set("X-Webhook-Secret", pushpushHeartbeatSecret)
+	client := &http.Client{Timeout: 5 * time.Second}
+	res, err := client.Do(req)
+	if err != nil {
+		setup.HeartbeatStatusError = "Fiat Controller heartbeat status is unavailable"
+		return setup
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		setup.HeartbeatStatusError = "Fiat Controller rejected the heartbeat status request"
+		return setup
+	}
+	var status struct {
+		Online        bool      `json:"online"`
+		DeviceID      string    `json:"device_id"`
+		LastSeen      time.Time `json:"last_seen"`
+		MaxAgeSeconds int64     `json:"max_age_seconds"`
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 16<<10)).Decode(&status); err != nil {
+		setup.HeartbeatStatusError = "Fiat Controller returned an invalid heartbeat status"
+		return setup
+	}
+	setup.Online, setup.DeviceID, setup.MaxAgeSeconds = status.Online, status.DeviceID, status.MaxAgeSeconds
+	if !status.LastSeen.IsZero() {
+		setup.LastSeen = status.LastSeen.UTC().Format(time.RFC3339)
+	}
+	return setup
+}
+
+func handlePhonePushSetup(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, phonePushSetupMetadata(r.Context()))
+}
+
+// handlePhonePushSetupReveal deliberately requires the authenticated /api
+// session gate and is the only dashboard endpoint that returns these secrets.
+func handlePhonePushSetupReveal(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, map[string]string{
+		"notify_secret":    pushpushNotifySecret,
+		"heartbeat_secret": pushpushHeartbeatSecret,
+	})
 }
 
 func handleMmControllerCexTradeflow(w http.ResponseWriter, r *http.Request) {

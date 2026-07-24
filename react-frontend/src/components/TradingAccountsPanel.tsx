@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type DragEvent, type ReactNode, type SetStateAction } from 'react';
 import { TelegramBotSection } from './TelegramBotSection';
+import { PhonePushSetupSection } from './PhonePushSetupSection';
 import {
   createAccount,
   createAPIKey,
@@ -1487,7 +1488,7 @@ function AccountsSubtabBar({
   const tabs: Array<{ id: AccountsSubview; label: string; count: number | null }> = [
     { id: 'payment', label: 'Payments', count: paymentAccountCount },
     { id: 'trading', label: 'Trading', count: tradingAccountCount },
-    { id: 'communication', label: 'Communication', count: 1 },
+    { id: 'communication', label: 'Communication', count: 2 },
   ];
 
   return (
@@ -4252,8 +4253,9 @@ export function TradingAccountsPanel() {
         />
 
         {activeTab === 'communication' ? (
-          <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+          <div className="grid min-h-0 flex-1 items-start gap-4 overflow-y-auto pr-1 xl:grid-cols-2">
             <TelegramBotSection />
+            <PhonePushSetupSection />
           </div>
         ) : showNewAccountForm ? (
           <div className="grid gap-2 rounded-lg border border-border bg-bg p-3">

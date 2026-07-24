@@ -549,3 +549,29 @@ export function testTelegram(service: TelegramService) {
     { method: 'POST' },
   );
 }
+
+export interface PhonePushSetup {
+  notify_url: string;
+  heartbeat_url: string;
+  notify_credential_configured: boolean;
+  heartbeat_credential_configured: boolean;
+  heartbeat_uses_notify_credential: boolean;
+  online: boolean;
+  device_id: string;
+  last_seen: string;
+  max_age_seconds: number;
+  heartbeat_status_error?: string;
+}
+
+export interface PhonePushSecrets {
+  notify_secret: string;
+  heartbeat_secret: string;
+}
+
+export function fetchPhonePushSetup() {
+  return request<PhonePushSetup>('/api/phone-push/setup');
+}
+
+export function revealPhonePushSecrets() {
+  return request<PhonePushSecrets>('/api/phone-push/setup/reveal', { method: 'POST' });
+}

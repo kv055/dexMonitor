@@ -21,6 +21,14 @@ interface FieldState {
 
 const EMPTY: FieldState = { botToken: '', chatId: '', dexmmWebhookUrl: '', pushpushWebhookUrl: '' };
 
+function TelegramIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-5 fill-current">
+      <path d="M20.7 3.5 2.9 10.4c-1.2.5-1.2 1.2-.2 1.5l4.6 1.4 1.8 5.4c.2.6.1.9.8.9.5 0 .8-.2 1-.4l2.2-2.1 4.6 3.4c.8.5 1.5.2 1.7-.8l3-14.2c.3-1.3-.5-1.9-1.7-1.5ZM9 13l9-5.7c.4-.3.8-.1.5.2l-7.4 6.7-.3 3.2L9 13Z" />
+    </svg>
+  );
+}
+
 export function TelegramBotSection() {
   const [config, setConfig] = useState<TelegramConfig | null>(null);
   const [fields, setFields] = useState<FieldState>(EMPTY);
@@ -181,80 +189,107 @@ export function TelegramBotSection() {
   const botFatherURL = 'https://t.me/BotFather?start=newbot';
   const botFatherQR = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&format=svg&data=${encodeURIComponent(botFatherURL)}`;
   const pairingQR = pairing ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&format=svg&data=${encodeURIComponent(pairing.deep_link)}` : '';
+  const connected = Boolean(config?.bot_token_present && config.chat_id);
 
   return (
-    <section className="rounded-lg border border-border bg-bg/50 p-2.5">
-      <div className="mb-2">
-        <h3 className="text-xs font-medium">Telegram Bot</h3>
-        <p className="mt-0.5 text-[0.65rem] text-muted leading-tight">
-          Connects the shared bot used for trade-chat relay, anomaly alerts, and fiat-arrival escalation. Credentials are stored in the shared database and hot-reloaded by both controllers.
-        </p>
-      </div>
+    <section className="h-fit overflow-hidden rounded-xl border border-purple/30 bg-surface shadow-[0_12px_32px_rgba(0,0,0,0.08)]">
+      <header className="relative overflow-hidden border-b border-purple/20 bg-linear-to-r from-purple/15 via-purple/7 to-transparent px-4 py-3.5">
+        <div className="pointer-events-none absolute -right-8 -top-12 size-36 rounded-full bg-purple/10 blur-2xl" />
+        <div className="relative flex flex-wrap items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <span className="flex size-9 shrink-0 items-center justify-center rounded-xl bg-purple text-white shadow-sm">
+              <TelegramIcon />
+            </span>
+            <div className="min-w-0">
+              <div className="flex items-center gap-2">
+                <h3 className="text-sm font-semibold text-text">Telegram bot</h3>
+                <span className="rounded-full border border-purple/25 bg-purple/10 px-1.5 py-0.5 text-[0.52rem] font-semibold uppercase tracking-wider text-purple">
+                  Messaging
+                </span>
+              </div>
+              <p className="mt-0.5 text-[0.65rem] text-muted">Trade relay, anomaly alerts and payment escalation in one private chat.</p>
+            </div>
+          </div>
+          {config ? (
+            <span className={`flex items-center gap-1.5 rounded-full border px-2.5 py-1 text-[0.62rem] font-medium ${
+              connected
+                ? 'border-green/30 bg-green/10 text-green'
+                : 'border-purple/25 bg-purple/10 text-purple'
+            }`}>
+              <span className={`size-1.5 rounded-full ${connected ? 'bg-green shadow-[0_0_0_3px_rgba(63,185,80,0.15)]' : 'bg-purple'}`} />
+              {connected ? 'Connected' : config.bot_token_present ? 'Pairing needed' : 'Not connected'}
+            </span>
+          ) : null}
+        </div>
+      </header>
+
+      <div className="p-4">
 
       {!config?.bot_token_present && (
-        <div className="mb-3 grid gap-4 rounded-lg border border-accent/25 bg-linear-to-br from-accent/8 via-surface to-bg p-3 sm:grid-cols-[220px_1fr] sm:items-center">
+        <div className="mb-4 grid gap-3 rounded-xl border border-purple/20 bg-purple/5 p-3 sm:grid-cols-[9rem_1fr] sm:items-center">
           <div className="flex flex-col items-center gap-1.5 rounded-md border border-border/70 bg-white p-2 shadow-sm">
-            <img src={botFatherQR} width="196" height="196" alt="QR code to open Telegram BotFather" className="rounded" />
+            <img src={botFatherQR} width="128" height="128" alt="QR code to open Telegram BotFather" className="rounded" />
             <span className="text-[0.58rem] font-medium uppercase tracking-wide text-slate-600">Scan with Telegram</span>
           </div>
           <div className="min-w-0">
-            <p className="mb-2 text-[0.7rem] font-medium text-text">Connect your Telegram bot</p>
-            <ol className="space-y-2 text-[0.65rem] text-muted">
+            <p className="mb-2 text-[0.72rem] font-semibold text-text">Connect in three steps</p>
+            <ol className="space-y-1.5 text-[0.63rem] text-muted">
               <li className="flex gap-2">
-                <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[0.6rem] font-semibold text-accent">1</span>
-                <span><strong className="font-medium text-text">Scan the QR code</strong> and create a bot with BotFather.</span>
+                <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-purple/15 text-[0.58rem] font-semibold text-purple">1</span>
+                <span>Create a bot with <strong className="font-medium text-text">BotFather</strong>.</span>
               </li>
               <li className="flex gap-2">
-                <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[0.6rem] font-semibold text-accent">2</span>
-                <span><strong className="font-medium text-text">Copy its token</strong> from BotFather and paste it below.</span>
+                <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-purple/15 text-[0.58rem] font-semibold text-purple">2</span>
+                <span>Paste the token below and save.</span>
               </li>
               <li className="flex gap-2">
-                <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-accent/15 text-[0.6rem] font-semibold text-accent">3</span>
-                <span><strong className="font-medium text-text">Save the connection.</strong> Use advanced settings only for custom routing.</span>
+                <span className="flex size-4 shrink-0 items-center justify-center rounded-full bg-purple/15 text-[0.58rem] font-semibold text-purple">3</span>
+                <span>Pair your private chat when prompted.</span>
               </li>
             </ol>
-            <a href={botFatherURL} target="_blank" rel="noreferrer" className="mt-2 inline-block text-[0.62rem] text-accent hover:underline">Open BotFather on this device ↗</a>
+            <a href={botFatherURL} target="_blank" rel="noreferrer" className="mt-2 inline-block text-[0.62rem] font-medium text-purple hover:underline">Open BotFather ↗</a>
           </div>
         </div>
       )}
 
       {pairing && !config?.chat_id && (
-        <div className="mb-3 grid gap-4 rounded-lg border border-green/35 bg-linear-to-br from-green/10 via-surface to-bg p-3 sm:grid-cols-[220px_1fr] sm:items-center">
+        <div className="mb-4 grid gap-3 rounded-xl border border-green/30 bg-green/5 p-3 sm:grid-cols-[9rem_1fr] sm:items-center">
           <div className="flex flex-col items-center gap-1.5 rounded-md border border-border/70 bg-white p-2 shadow-sm">
-            <img src={pairingQR} width="196" height="196" alt="QR code to connect your Telegram bot" className="rounded" />
+            <img src={pairingQR} width="128" height="128" alt="QR code to connect your Telegram bot" className="rounded" />
             <span className="text-[0.58rem] font-medium uppercase tracking-wide text-slate-600">Scan, then press Start</span>
           </div>
           <div className="min-w-0 text-[0.65rem] text-muted leading-relaxed">
             <p className="mb-2 text-[0.7rem] font-medium text-text">Pair your phone</p>
             <p>Open the QR code in Telegram and press <strong className="font-medium text-text">Start</strong>. We will securely capture this private chat and enable alerts automatically.</p>
             <p className="mt-2">This pairing code expires at {new Date(pairing.expires_at).toLocaleTimeString()}.</p>
-            <a href={pairing.deep_link} target="_blank" rel="noreferrer" className="mt-2 inline-block text-accent hover:underline">Open the bot on this device ↗</a>
+            <a href={pairing.deep_link} target="_blank" rel="noreferrer" className="mt-2 inline-block font-medium text-purple hover:underline">Open the bot ↗</a>
           </div>
         </div>
       )}
 
-      <div className="flex flex-col gap-1.5">
+      <div className="rounded-xl border border-border/80 bg-bg/35 p-3">
         <label className="flex flex-col gap-0.5">
-          <span className="text-[0.6rem] uppercase tracking-wide text-muted">Bot token</span>
+          <span className="text-[0.58rem] font-semibold uppercase tracking-wider text-muted">Bot token</span>
           <input
             type="password"
             autoComplete="off"
             placeholder={config?.bot_token_present ? '•••••• stored (type to replace)' : 'Paste bot token from BotFather'}
             value={fields.botToken}
             onChange={e => update({ botToken: e.target.value })}
-            className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent"
+            className="mt-1 w-full rounded-lg border border-border bg-surface px-2.5 py-2 text-xs text-text outline-none transition focus:border-purple focus:ring-2 focus:ring-purple/10"
           />
         </label>
 
         <button
           type="button"
           onClick={() => setShowAdvanced(value => !value)}
-          className="self-start text-[0.6rem] text-muted hover:text-text underline underline-offset-2"
+          className="mt-2 flex w-full items-center justify-between rounded-md px-1 py-1 text-left text-[0.62rem] font-medium text-muted transition hover:text-purple"
         >
-          {showAdvanced ? 'Hide' : 'Show'} advanced connection settings
+          <span>{showAdvanced ? 'Hide' : 'Show'} advanced routing</span>
+          <span className={`transition ${showAdvanced ? 'rotate-180' : ''}`}>⌄</span>
         </button>
 
-        {showAdvanced && <>
+        {showAdvanced && <div className="mt-2 grid gap-2 border-t border-border pt-3">
           <label className="flex flex-col gap-0.5">
             <span className="text-[0.6rem] uppercase tracking-wide text-muted">Chat ID</span>
             <input
@@ -262,13 +297,9 @@ export function TelegramBotSection() {
               placeholder="e.g. 123456789"
               value={fields.chatId}
               onChange={e => update({ chatId: e.target.value })}
-              className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent mono-nums"
+              className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-purple mono-nums"
             />
           </label>
-
-          <p className="text-[0.6rem] text-muted leading-relaxed">
-            Advanced routing only. Use this when your deployment needs explicit chat or webhook values.
-          </p>
 
           <WebhookField
             label="DEXMM webhook URL"
@@ -286,15 +317,15 @@ export function TelegramBotSection() {
             onChange={v => update({ pushpushWebhookUrl: v })}
             onSet={() => handleSetWebhook('pushpush')}
           />
-        </>}
+        </div>}
       </div>
 
-      <div className="mt-2 flex flex-wrap items-center gap-1.5">
+      <div className="mt-3 flex flex-wrap items-center gap-2">
         <button
           type="button"
           onClick={handleSave}
           disabled={!dirty || busy === 'save'}
-          className="text-[0.65rem] px-2 py-0.5 rounded-md border border-accent/60 text-accent hover:bg-accent/10 disabled:opacity-40 disabled:hover:bg-transparent font-medium"
+          className="rounded-md bg-purple px-3 py-1.5 text-[0.65rem] font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-40"
         >
           {busy === 'save' ? 'Saving…' : 'Save'}
         </button>
@@ -303,7 +334,7 @@ export function TelegramBotSection() {
             type="button"
             onClick={handleStartPairing}
             disabled={busy === 'pair'}
-            className="text-[0.65rem] px-2 py-0.5 rounded-md border border-accent/60 text-accent hover:bg-accent/10 disabled:opacity-40 font-medium"
+            className="rounded-md border border-purple/40 bg-purple/5 px-2.5 py-1.5 text-[0.65rem] font-medium text-purple hover:bg-purple/10 disabled:opacity-40"
           >
             {busy === 'pair' ? 'Preparing QR…' : 'Pair phone'}
           </button>
@@ -312,15 +343,22 @@ export function TelegramBotSection() {
           type="button"
           onClick={() => handleTest('dexmm')}
           disabled={busy === 'test:dexmm' || !config?.bot_token_present}
-          className="text-[0.65rem] px-2 py-0.5 rounded-md border border-border text-muted hover:border-muted hover:text-text disabled:opacity-40"
+          className="rounded-md border border-border px-2.5 py-1.5 text-[0.65rem] text-muted transition hover:border-purple/40 hover:text-purple disabled:opacity-40"
         >
           {busy === 'test:dexmm' ? 'Sending…' : 'Send test message'}
         </button>
         {message && (
-          <span className={`text-[0.6rem] ${status === 'error' ? 'text-red' : status === 'ok' ? 'text-green' : 'text-muted'}`}>
+          <span className={`basis-full rounded-md border px-2.5 py-1.5 text-[0.61rem] ${
+            status === 'error'
+              ? 'border-red/25 bg-red/5 text-red'
+              : status === 'ok'
+                ? 'border-green/25 bg-green/5 text-green'
+                : 'border-border bg-bg text-muted'
+          }`}>
             {message}
           </span>
         )}
+      </div>
       </div>
     </section>
   );
@@ -350,13 +388,13 @@ function WebhookField({ label, value, set, busy, onChange, onSet }: WebhookField
           placeholder="https://your-host/telegram-webhook"
           value={value}
           onChange={e => onChange(e.target.value)}
-          className="flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent"
+          className="min-w-0 flex-1 rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-purple"
         />
         <button
           type="button"
           onClick={onSet}
           disabled={busy || value.trim() === ''}
-          className="shrink-0 text-[0.6rem] px-1.5 py-1 rounded border border-border text-muted hover:border-accent hover:text-accent disabled:opacity-40"
+          className="shrink-0 rounded border border-border px-1.5 py-1 text-[0.6rem] text-muted hover:border-purple hover:text-purple disabled:opacity-40"
         >
           {busy ? '…' : 'Set webhook'}
         </button>
