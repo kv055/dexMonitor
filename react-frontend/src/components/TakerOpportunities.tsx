@@ -2086,7 +2086,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                   DEX Premium Offer Overlay ▾
                 </button>
               ) : (
-                <div className="h-80 lg:h-auto lg:min-h-0 lg:min-w-0 overflow-hidden lg:flex-1 rounded-lg border border-border bg-surface p-3 flex flex-col">
+                <div className="h-80 lg:h-auto lg:min-h-0 lg:min-w-0 overflow-hidden lg:flex-1 rounded-lg border border-border bg-surface flex flex-col">
                   <div className="flex-1 min-h-0 relative">
                     <button
                       type="button"
@@ -2128,7 +2128,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                   ◂ Orderbook Depth
                 </button>
               ) : (
-                <div className="relative h-72 lg:h-auto lg:min-h-0 lg:w-80 xl:w-96 shrink-0 rounded-lg border border-border bg-surface p-3 flex flex-col">
+                <div className="relative h-72 lg:h-auto lg:min-h-0 lg:w-80 xl:w-96 shrink-0 overflow-hidden rounded-lg border border-border bg-surface flex flex-col">
                   <button
                     type="button"
                     aria-label="Hide orderbook depth chart"
@@ -2139,7 +2139,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                   >
                     ▸
                   </button>
-                  <div className="flex-1 min-h-0 pr-5">
+                  <div className="flex-1 min-h-0">
                     <DepthChart />
                   </div>
                 </div>

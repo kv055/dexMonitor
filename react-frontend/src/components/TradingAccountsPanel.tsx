@@ -4391,7 +4391,7 @@ export function TradingAccountsPanel() {
                 {isBisq1Provider(account.provider) ? <div><span className="text-text">Bisq 1:</span> {serviceVersions?.bisq1 || 'Unavailable'}</div> : null}
                 {isBisq2Provider(account.provider) ? <div><span className="text-text">Bisq 2:</span> {serviceVersions?.bisq2 || 'Unavailable'}</div> : null}
                 {isLndWalletProvider(account.provider) ? <div><span className="text-text">LND:</span> {serviceVersions?.lnd || 'Unavailable'}</div> : null}
-                {!isLndWalletProvider(account.provider) && (account.email || account.password || account.phone || account.payment_tag) ? (
+                {!isCexAccount(account) && !isLndWalletProvider(account.provider) && (account.email || account.password || account.phone || account.payment_tag) ? (
                   <>
                     <div className="flex items-center gap-1">
                       <span><span className="text-text">Email:</span> {visibleCredentialFields.email ? revealedCredentials?.email : (account.email ? '••••••••' : '—')}</span>
