@@ -938,8 +938,7 @@ function PastOfferOverview({ order, offer, fiat, timezone, amountUnit, onAmountU
       : fmtFiat(refPrice == null ? null : avgObservedBtc * refPrice, fiat);
 
   return (
-    <section aria-label="Offer overview" className="border-b border-border/70 pb-2.5">
-      <dl className="grid grid-cols-2 gap-x-5 gap-y-2.5 sm:grid-cols-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,0.7fr)_minmax(0,1.25fr)_minmax(0,0.9fr)_minmax(0,1.15fr)]">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5">
         <PastOfferMetric label="Internal ID" value={String(order.id)} />
         <PastOfferMetric label="Payment" value={order.payment_methods?.join(', ') || '—'} />
         <PastOfferMetric
@@ -970,7 +969,6 @@ function PastOfferOverview({ order, offer, fiat, timezone, amountUnit, onAmountU
           />
         )}
       </dl>
-    </section>
   );
 }
 
@@ -1007,14 +1005,6 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
 
   return (
     <div data-testid="past-offer-detail" className="flex flex-col gap-3">
-      <PastOfferOverview
-        order={order}
-        offer={offer}
-        fiat={order.pricing.fiat_currency || 'EUR'}
-        timezone={timezone}
-        amountUnit={amountUnit}
-        onAmountUnitChange={setAmountUnit}
-      />
       {costBreakdown ? (
         <div className="flex flex-col gap-3">
           {(hasCappedScenario(offer) || hasMinScenario(offer)) && (
@@ -1039,13 +1029,34 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
             netPremiumPct={getNetPremiumPercent(offer, effectiveMode)}
             refPrice={refPrice}
             offerPrice={offerPrice}
+            basicInformation={<PastOfferOverview
+              order={order}
+              offer={offer}
+              fiat={order.pricing.fiat_currency || 'EUR'}
+              timezone={timezone}
+              amountUnit={amountUnit}
+              onAmountUnitChange={setAmountUnit}
+            />}
             wideLayout
             amountUnit={amountUnit}
             onAmountUnitChange={setAmountUnit}
           />
         </div>
       ) : (
-        <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
+        <>
+          <section aria-label="Basic information">
+            <div className="border-b border-border/70 pb-2 text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Basic information</div>
+            <div className="pt-3"><PastOfferOverview
+              order={order}
+              offer={offer}
+              fiat={order.pricing.fiat_currency || 'EUR'}
+              timezone={timezone}
+              amountUnit={amountUnit}
+              onAmountUnitChange={setAmountUnit}
+            /></div>
+          </section>
+          <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
+        </>
       )}
     </div>
   );
@@ -1073,8 +1084,7 @@ function LiveOfferOverview({ offer, fiat, amountUnit, onAmountUnitChange }: {
   const btcRange = formatRange(fmtBTC(getBtcMin(offer)), fmtBTC(getBtcMax(offer)));
 
   return (
-    <section aria-label="Offer overview" className="border-b border-border/70 pb-2.5">
-      <dl className="grid grid-cols-2 gap-x-5 gap-y-2.5 sm:grid-cols-3 lg:grid-cols-[minmax(0,0.8fr)_minmax(0,1.25fr)_minmax(0,0.9fr)_minmax(0,1.15fr)]">
+      <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5">
         <PastOfferMetric label="Offer ID" value={offer.offer_id || String(offer.id)} />
         <PastOfferMetric label="Payment" value={offer.payment_methods?.join(', ') || '—'} />
         {(offerPrice > 0 || refPrice != null) && (
@@ -1092,7 +1102,6 @@ function LiveOfferOverview({ offer, fiat, amountUnit, onAmountUnitChange }: {
           />
         )}
       </dl>
-    </section>
   );
 }
 
@@ -1112,7 +1121,6 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange }:
 
   return (
     <div data-testid="live-offer-detail" className="flex flex-col gap-3">
-      <LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} onAmountUnitChange={setAmountUnit} />
       {costBreakdown ? (
         <div className="flex flex-col gap-3">
           {(hasCappedScenario(offer) || hasMinScenario(offer)) && (
@@ -1132,13 +1140,20 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange }:
             netPremiumPct={getNetPremiumPercent(offer, effectiveMode)}
             refPrice={getRefPrice(offer)}
             offerPrice={getOfferPrice(offer)}
+            basicInformation={<LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} onAmountUnitChange={setAmountUnit} />}
             wideLayout
             amountUnit={amountUnit}
             onAmountUnitChange={setAmountUnit}
           />
         </div>
       ) : (
-        <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
+        <>
+          <section aria-label="Basic information">
+            <div className="border-b border-border/70 pb-2 text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Basic information</div>
+            <div className="pt-3"><LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} onAmountUnitChange={setAmountUnit} /></div>
+          </section>
+          <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
+        </>
       )}
     </div>
   );
