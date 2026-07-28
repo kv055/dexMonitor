@@ -189,6 +189,7 @@ export function TelegramBotSection() {
 
   const botFatherURL = 'https://t.me/BotFather?start=newbot';
   const connected = Boolean(config?.bot_token_present && config.chat_id);
+  const botTokenEntered = fields.botToken.trim() !== '';
 
   return (
     <section className="h-fit overflow-hidden rounded-xl border border-purple/30 bg-surface shadow-[0_12px_32px_rgba(0,0,0,0.08)]">
@@ -224,7 +225,7 @@ export function TelegramBotSection() {
 
       <div className="p-4">
 
-      {!config?.bot_token_present && (
+      {!config?.bot_token_present && botTokenEntered && (
         <div className="mb-4 grid gap-3 rounded-xl border border-purple/20 bg-purple/5 p-3 sm:grid-cols-[9rem_1fr] sm:items-center">
           <div className="flex flex-col items-center gap-1.5 rounded-md border border-border/70 bg-white p-2 shadow-sm">
             <LocalQrCode
