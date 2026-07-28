@@ -187,7 +187,7 @@ export function TelegramBotSection() {
     }
   }
 
-  const botFatherURL = 'https://t.me/BotFather?start=newbot';
+  const botFatherURL = 'https://t.me/BotFather';
   const connected = Boolean(config?.bot_token_present && config.chat_id);
   const botTokenEntered = fields.botToken.trim() !== '';
 

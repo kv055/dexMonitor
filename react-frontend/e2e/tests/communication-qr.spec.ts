@@ -57,6 +57,11 @@ test('generates communication QR codes locally without third-party requests', as
   await expect(panel).toBeVisible();
   await panel.getByRole('button', { name: /^Communication/ }).click();
 
+  const telegramSection = panel
+    .getByRole('heading', { name: 'Telegram bot' })
+    .locator('xpath=ancestor::section');
+  await telegramSection.getByPlaceholder('Paste bot token from BotFather').fill('123456:test-token');
+
   const botFatherQr = panel.getByRole('img', { name: 'QR code to open Telegram BotFather' });
   const phoneSetupQr = panel.getByRole('img', {
     name: 'Non-secret combined phone monitoring setup reference QR code',
@@ -65,10 +70,7 @@ test('generates communication QR codes locally without third-party requests', as
   await expect(phoneSetupQr).toHaveAttribute('src', /^data:image\/png;base64,/);
   const botFatherQrSource = await botFatherQr.getAttribute('src');
 
-  const telegramSection = panel
-    .getByRole('heading', { name: 'Telegram bot' })
-    .locator('xpath=ancestor::section');
-  await telegramSection.getByPlaceholder('Paste bot token from BotFather').fill('123456:test-token');
+  await expect(telegramSection.getByRole('link', { name: 'Open BotFather ↗' })).toHaveAttribute('href', 'https://t.me/BotFather');
   await telegramSection.getByRole('button', { name: 'Save', exact: true }).click();
 
   const pairingQr = panel.getByRole('img', { name: 'QR code to connect your Telegram bot' });
