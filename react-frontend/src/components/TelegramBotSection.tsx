@@ -9,6 +9,7 @@ import {
 	 type TelegramPairing,
   type TelegramService,
 } from '../utils/api';
+import { LocalQrCode } from './LocalQrCode';
 
 type Status = 'idle' | 'saving' | 'ok' | 'error';
 
@@ -187,8 +188,6 @@ export function TelegramBotSection() {
   }
 
   const botFatherURL = 'https://t.me/BotFather?start=newbot';
-  const botFatherQR = `https://api.qrserver.com/v1/create-qr-code/?size=180x180&format=svg&data=${encodeURIComponent(botFatherURL)}`;
-  const pairingQR = pairing ? `https://api.qrserver.com/v1/create-qr-code/?size=300x300&format=svg&data=${encodeURIComponent(pairing.deep_link)}` : '';
   const connected = Boolean(config?.bot_token_present && config.chat_id);
 
   return (
@@ -228,7 +227,13 @@ export function TelegramBotSection() {
       {!config?.bot_token_present && (
         <div className="mb-4 grid gap-3 rounded-xl border border-purple/20 bg-purple/5 p-3 sm:grid-cols-[9rem_1fr] sm:items-center">
           <div className="flex flex-col items-center gap-1.5 rounded-md border border-border/70 bg-white p-2 shadow-sm">
-            <img src={botFatherQR} width="128" height="128" alt="QR code to open Telegram BotFather" className="rounded" />
+            <LocalQrCode
+              value={botFatherURL}
+              size={128}
+              alt="QR code to open Telegram BotFather"
+              fallback="Open BotFather with the link instead."
+              className="rounded"
+            />
             <span className="text-[0.58rem] font-medium uppercase tracking-wide text-slate-600">Scan with Telegram</span>
           </div>
           <div className="min-w-0">
@@ -255,7 +260,13 @@ export function TelegramBotSection() {
       {pairing && !config?.chat_id && (
         <div className="mb-4 grid gap-3 rounded-xl border border-green/30 bg-green/5 p-3 sm:grid-cols-[9rem_1fr] sm:items-center">
           <div className="flex flex-col items-center gap-1.5 rounded-md border border-border/70 bg-white p-2 shadow-sm">
-            <img src={pairingQR} width="128" height="128" alt="QR code to connect your Telegram bot" className="rounded" />
+            <LocalQrCode
+              value={pairing.deep_link}
+              size={128}
+              alt="QR code to connect your Telegram bot"
+              fallback="Open the bot with the link instead."
+              className="rounded"
+            />
             <span className="text-[0.58rem] font-medium uppercase tracking-wide text-slate-600">Scan, then press Start</span>
           </div>
           <div className="min-w-0 text-[0.65rem] text-muted leading-relaxed">

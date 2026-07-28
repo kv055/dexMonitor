@@ -5,6 +5,7 @@ import {
   type PhonePushSecrets,
   type PhonePushSetup,
 } from '../utils/api';
+import { LocalQrCode } from './LocalQrCode';
 
 type AutomationApp = 'MacroDroid' | 'Tasker';
 
@@ -160,9 +161,9 @@ export function PhonePushSetupSection() {
     }
   }
 
-  const qr = useMemo(() => {
+  const qrPayload = useMemo(() => {
     if (!setup) return '';
-    return `https://api.qrserver.com/v1/create-qr-code/?size=300x300&format=svg&data=${encodeURIComponent(JSON.stringify({
+    return JSON.stringify({
       format: 'dexarb-phone-push',
       version: 1,
       header: 'X-Webhook-Secret',
@@ -183,7 +184,7 @@ export function PhonePushSetupSection() {
           interval_minutes: 5,
         },
       ],
-    }))}`;
+    });
   }, [setup]);
 
   const lastSeen = setup?.last_seen ? new Date(setup.last_seen).toLocaleString() : 'No check-in yet';
@@ -288,11 +289,11 @@ export function PhonePushSetupSection() {
               <aside className="w-full rounded-xl border border-blue/20 bg-blue/5 p-3">
                 <div className="grid items-center gap-4 sm:grid-cols-[13.75rem_1fr]">
                   <div className="overflow-hidden rounded-lg border border-white/80 bg-white p-2 shadow-sm">
-                  <img
-                    src={qr}
-                    width="220"
-                    height="220"
+                  <LocalQrCode
+                    value={qrPayload}
+                    size={220}
                     alt="Non-secret combined phone monitoring setup reference QR code"
+                    fallback="Use the connection details below instead."
                     className="mx-auto aspect-square w-full"
                   />
                   </div>
