@@ -280,6 +280,11 @@ export function TelegramBotSection() {
       )}
 
       <div className="rounded-xl border border-border/80 bg-bg/35 p-3">
+        <p className="mb-3 text-[0.65rem] leading-relaxed text-muted">
+          To get a token, open{' '}
+          <a href={botFatherURL} target="_blank" rel="noreferrer" className="font-medium text-purple hover:underline">@BotFather</a>{' '}
+          in Telegram, send <code className="rounded bg-surface px-1 py-0.5 text-[0.6rem] text-text">/newbot</code>, follow the prompts, then copy the token it sends you. Keep it private.
+        </p>
         <label className="flex flex-col gap-0.5">
           <span className="text-[0.58rem] font-semibold uppercase tracking-wider text-muted">Bot token</span>
           <input
