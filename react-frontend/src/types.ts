@@ -361,6 +361,7 @@ export interface TradingAPIKey {
   is_active: boolean;
   permissions?: Record<string, string | boolean> | null;
   permissions_checked_at?: string | null;
+  permission_check_error?: string | null;
   created_at: string;
   updated_at: string;
 }
@@ -433,6 +434,7 @@ export interface TradingAccountKeyPermissionResult {
   key_id: number;
   name: string;
   permissions: Record<string, string | boolean>;
+  error?: string;
 }
 
 export interface TradingAccountHealthCheckResult {

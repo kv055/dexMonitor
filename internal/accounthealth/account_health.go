@@ -15,6 +15,7 @@ type KeyPermissionResult struct {
 	KeyID       uint              `json:"key_id"`
 	Name        string            `json:"name"`
 	Permissions map[string]string `json:"permissions"`
+	Error       string            `json:"error,omitempty"`
 }
 
 // MMControllerResponse represents a mmcontroller response.

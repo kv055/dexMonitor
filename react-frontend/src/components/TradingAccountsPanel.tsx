@@ -3967,13 +3967,14 @@ export function TradingAccountsPanel() {
               forceOpen={!!edit}
               title={itemTitle}
               meta={key.is_active ? 'Active' : 'Inactive'}
-              footer={key.permissions && Object.keys(key.permissions).length > 0 ? (
+              footer={(key.permissions && Object.keys(key.permissions).length > 0) || key.permission_check_error ? (
                 <div className="flex flex-wrap items-center gap-1.5">
                   <span className="text-[0.65rem] text-text whitespace-nowrap">
                     Validation
                     {key.permissions_checked_at ? ` · checked ${formatDate(key.permissions_checked_at)}` : ''}
                   </span>
-                  <APIKeyPermissionChips permissions={key.permissions} />
+                  <APIKeyPermissionChips permissions={key.permissions ?? {}} />
+                  {key.permission_check_error ? <span className="basis-full text-[0.65rem] text-red">{key.permission_check_error}</span> : null}
                 </div>
               ) : null}
               flat

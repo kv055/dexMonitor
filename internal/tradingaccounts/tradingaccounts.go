@@ -474,6 +474,8 @@ type APIKey struct {
 	Permissions map[string]string `json:"permissions,omitempty"`
 	// PermissionsCheckedAt records when permissions were last fetched from the exchange.
 	PermissionsCheckedAt *string `json:"permissions_checked_at,omitempty"`
+	// PermissionCheckError records the latest inspection failure for this key.
+	PermissionCheckError *string `json:"permission_check_error,omitempty"`
 	// CreatedAt records the relevant time for the apikey.
 	CreatedAt string `json:"created_at"`
 	// UpdatedAt records the relevant time for the apikey.
@@ -1192,13 +1194,14 @@ func (r Repository) GetAPIKey(ctx context.Context, id int64) (*APIKey, error) {
 	var createdAt, updatedAt time.Time
 	var permissionsJSON []byte
 	var permissionsCheckedAt sql.NullTime
+	var permissionCheckError sql.NullString
 	err := r.DB.QueryRowContext(ctx, `
-		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, permissions, permissions_checked_at, created_at, updated_at
+		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, permissions, permissions_checked_at, permission_check_error, created_at, updated_at
 		FROM api_keys
 		WHERE id = $1
 	`, id).Scan(
 		&item.ID, &item.AccountID, &item.Name, &item.APIKey, &apiSecret, &passphrase, &item.IsActive,
-		&permissionsJSON, &permissionsCheckedAt, &createdAt, &updatedAt,
+		&permissionsJSON, &permissionsCheckedAt, &permissionCheckError, &createdAt, &updatedAt,
 	)
 	if err != nil {
 		return nil, err
@@ -1216,6 +1219,7 @@ func (r Repository) GetAPIKey(ctx context.Context, id int64) (*APIKey, error) {
 	}
 	item.Permissions = decodePermissionsJSON(permissionsJSON)
 	item.PermissionsCheckedAt = nullTimePtr(permissionsCheckedAt)
+	item.PermissionCheckError = nullStringPtr(permissionCheckError)
 	item.CreatedAt = formatTime(createdAt)
 	item.UpdatedAt = formatTime(updatedAt)
 	return &item, nil
@@ -1390,7 +1394,7 @@ func (r Repository) appendLatestLNDChannelBackups(ctx context.Context, accounts 
 
 func (r Repository) appendAPIKeys(ctx context.Context, accounts []Account, accountIndex map[int64]int, accountIDs []int64) error {
 	rows, err := r.DB.QueryContext(ctx, `
-		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, permissions, permissions_checked_at, created_at, updated_at
+		SELECT id, account_id, name, api_key, api_secret, passphrase, is_active, permissions, permissions_checked_at, permission_check_error, created_at, updated_at
 		FROM api_keys
 		WHERE account_id = ANY($1)
 		ORDER BY updated_at DESC, id DESC
@@ -1404,10 +1408,11 @@ func (r Repository) appendAPIKeys(ctx context.Context, accounts []Account, accou
 		var apiSecret, passphrase sql.NullString
 		var permissionsJSON []byte
 		var permissionsCheckedAt sql.NullTime
+		var permissionCheckError sql.NullString
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(
 			&item.ID, &item.AccountID, &item.Name, &item.APIKey, &apiSecret, &passphrase, &item.IsActive,
-			&permissionsJSON, &permissionsCheckedAt, &createdAt, &updatedAt,
+			&permissionsJSON, &permissionsCheckedAt, &permissionCheckError, &createdAt, &updatedAt,
 		); err != nil {
 			return err
 		}
@@ -1434,6 +1439,7 @@ func (r Repository) appendAPIKeys(ctx context.Context, accounts []Account, accou
 		item.Passphrase = nullStringPtr(passphrase)
 		item.Permissions = decodePermissionsJSON(permissionsJSON)
 		item.PermissionsCheckedAt = nullTimePtr(permissionsCheckedAt)
+		item.PermissionCheckError = nullStringPtr(permissionCheckError)
 		item.CreatedAt = formatTime(createdAt)
 		item.UpdatedAt = formatTime(updatedAt)
 		if index, ok := accountIndex[item.AccountID]; ok {
