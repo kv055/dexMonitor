@@ -78,6 +78,26 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await expect(buyPill).toHaveClass(/text-accent/);
   });
 
+  test('fiat switching reloads live and historical offers with the selected currency', async ({ page }) => {
+    const cp = controlPanel(page);
+    const fiat = cp.getByTitle('Show live and past offers quoted in this currency');
+    const liveRequest = page.waitForRequest(req => {
+      const url = new URL(req.url());
+      return url.pathname === '/api/live_offers' && url.searchParams.get('fiat') === 'USD';
+    });
+    const pastRequest = page.waitForRequest(req => {
+      const url = new URL(req.url());
+      return url.pathname === '/api/past_offers' && url.searchParams.get('fiat') === 'USD';
+    });
+    await fiat.selectOption('USD');
+    await Promise.all([liveRequest, pastRequest]);
+    await expect(fiat).toHaveValue('USD');
+    await expect(cp.getByText(/^BTC\/USD — Kraken$/)).toBeVisible();
+
+    await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
+    await expect(cp.getByTitle('Show past offers quoted in this currency')).toHaveValue('USD');
+  });
+
   test('exchange pills toggle exchanges on and off', async ({ page }) => {
     const cp = controlPanel(page);
     const bisqPill = cp.getByRole('button', { name: /Bisq v1/ });

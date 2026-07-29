@@ -431,14 +431,23 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	excludedCEXes := queryExcludedCEXes(r)
 	feeTier := queryFeeTier(r)
 	maxFiatLimitEUR := queryMaxFiatLimitEUR(r)
-	fiatCurrency := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("fiat")))
+	rawFiat := strings.TrimSpace(r.URL.Query().Get("fiat"))
+	fiatCurrency := "EUR"
+	if rawFiat != "" {
+		var ok bool
+		fiatCurrency, ok = fiat.Normalize(rawFiat)
+		if !ok {
+			http.Error(w, "invalid fiat currency", http.StatusBadRequest)
+			return
+		}
+	}
 	if fiatCurrency == "" {
 		fiatCurrency = "EUR"
 	}
 
 	rows, err := db.Query(
-		rebind("SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? ORDER BY last_seen DESC LIMIT ?"),
-		cutoff, limit,
+		rebind("SELECT * FROM offers WHERE is_live = FALSE AND fiat_currency = ? AND last_seen >= ? ORDER BY last_seen DESC LIMIT ?"),
+		fiatCurrency, cutoff, limit,
 	)
 	if err != nil {
 		writeError(w, err)
@@ -455,13 +464,6 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	filteredOffers := make([]map[string]any, 0, len(offers))
 	ids := make([]int64, 0, len(offers))
 	for _, o := range offers {
-		offerFiat := offerString(o, "fiat_currency")
-		if offerFiat == "" {
-			offerFiat = "EUR" // compatibility with historical rows and test fixtures
-		}
-		if !strings.EqualFold(offerFiat, fiatCurrency) {
-			continue
-		}
 		if offerHasExcludedPaymentMethod(o, excludedPaymentMethods) {
 			continue
 		}
@@ -1575,7 +1577,7 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 		},
 		Pricing: pastOfferPricing{
 			PriceType:         normalizePastPriceType(offerString(o, "price_type")),
-			FiatCurrency:      "EUR",
+			FiatCurrency:      nonEmptyString(offerString(o, "fiat_currency"), "EUR"),
 			AvgOfferPrice:     avgOfferPrice,
 			AvgRefPrice:       avgRefPrice,
 			AvgPremiumPercent: avgPremiumPercent,
@@ -1644,7 +1646,7 @@ func buildPastOfferCompactAPI(o map[string]any) pastOfferCompactAPI {
 		},
 		Pricing: pastOfferPricing{
 			PriceType:         normalizePastPriceType(offerString(o, "price_type")),
-			FiatCurrency:      "EUR",
+			FiatCurrency:      nonEmptyString(offerString(o, "fiat_currency"), "EUR"),
 			AvgOfferPrice:     tradecost.Round4(offerFloat(o, "price")),
 			AvgRefPrice:       tradecost.Round4(offerRefPrice(o)),
 			AvgPremiumPercent: tradecost.Round4(nonZeroFloat(offerFloat(o, "avg_premium_pct"), offerFloat(o, "price_diff_percent"))),
@@ -3495,6 +3497,13 @@ func offerFloatPtr(o map[string]any, key string) *float64 {
 
 func nonZeroFloat(value, fallback float64) float64 {
 	if value != 0 {
+		return value
+	}
+	return fallback
+}
+
+func nonEmptyString(value, fallback string) string {
+	if strings.TrimSpace(value) != "" {
 		return value
 	}
 	return fallback
