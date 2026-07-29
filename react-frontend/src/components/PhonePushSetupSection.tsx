@@ -64,7 +64,17 @@ function InlineValue({ children, copyValue }: { children: ReactNode; copyValue: 
   );
 }
 
-function SetupGuide({ setup }: { setup: PhonePushSetup }) {
+function SetupGuide({
+  setup,
+  secrets,
+  busy,
+  onReveal,
+}: {
+  setup: PhonePushSetup;
+  secrets: PhonePushSecrets | null;
+  busy: boolean;
+  onReveal: () => void;
+}) {
   return (
     <ol className="mt-4">
       <Step number={1} title="Give notification access">
@@ -73,12 +83,36 @@ function SetupGuide({ setup }: { setup: PhonePushSetup }) {
       <Step number={2} title="Create a Notification Received trigger">
         Filter the trigger to the banking apps you trust. Use MacroDroid notification Magic Text for app, title, and text.
       </Step>
-      <Step number={3} title="Forward matching notifications">
-        Add an HTTP Request action using POST and the revealed notification secret.
+      <Step number={3} title="Reveal request-header secrets">
+        Add the relevant value below as the `X-Webhook-Secret` header parameter in each HTTP Request action.
+        {!secrets ? (
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onReveal}
+            className="mt-2 rounded-md bg-blue px-2.5 py-1.5 text-[0.62rem] font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-50"
+          >
+            Reveal header secrets
+          </button>
+        ) : (
+          <div className="mt-2 space-y-2">
+            <div>
+              <p className="text-[0.58rem] font-medium text-muted">Payment notification header value</p>
+              <InlineValue copyValue={secrets.notify_secret}>{secrets.notify_secret}</InlineValue>
+            </div>
+            <div>
+              <p className="text-[0.58rem] font-medium text-muted">Phone heartbeat header value{setup.heartbeat_uses_notify_credential ? ' (same value)' : ''}</p>
+              <InlineValue copyValue={secrets.heartbeat_secret}>{secrets.heartbeat_secret}</InlineValue>
+            </div>
+          </div>
+        )}
+      </Step>
+      <Step number={4} title="Forward matching notifications">
+        Add an HTTP Request action using POST and the notification header secret above.
         <InlineValue copyValue={setup.notify_url}>{setup.notify_url}</InlineValue>
       </Step>
-      <Step number={4} title="Keep the phone online">
-        Create a separate five-minute timer that POSTs the heartbeat payload. Run it once from the physical phone.
+      <Step number={5} title="Keep the phone online">
+        Create a separate five-minute timer that POSTs the heartbeat payload with the heartbeat header secret. Run it once from the physical phone.
         <InlineValue copyValue={setup.heartbeat_url}>{setup.heartbeat_url}</InlineValue>
       </Step>
     </ol>
@@ -291,7 +325,12 @@ PHONE SETTINGS
                     <p className="mt-0.5 text-[0.68rem] text-muted">Create the two MacroDroid macros on the phone.</p>
                   </div>
                 </div>
-                <SetupGuide setup={setup} />
+                <SetupGuide
+                  setup={setup}
+                  secrets={secrets}
+                  busy={busy}
+                  onReveal={() => void reveal()}
+                />
               </div>
 
               <aside className="w-full rounded-xl border border-blue/20 bg-blue/5 p-3">
