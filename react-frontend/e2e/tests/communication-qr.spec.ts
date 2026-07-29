@@ -42,7 +42,6 @@ test('generates communication QR codes locally without third-party requests', as
         heartbeat_url: 'https://dexarb.example.test/api/phone-push/heartbeat',
         notify_credential_configured: true,
         heartbeat_credential_configured: true,
-        heartbeat_uses_notify_credential: false,
         online: false,
         device_id: '',
         last_seen: '',

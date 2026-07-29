@@ -55,7 +55,6 @@ var (
 	unifiedAPIURL           string
 	fiatControllerURL       string
 	pushpushNotifySecret    string
-	pushpushHeartbeatSecret string
 	pushpushHeartbeatMaxAge time.Duration
 	sessionCookieSecure     bool
 	db                      *sql.DB
@@ -187,10 +186,6 @@ func init() {
 		fiatControllerURL = "http://localhost:8080"
 	}
 	pushpushNotifySecret = strings.TrimSpace(os.Getenv("PUSHPUSH_NOTIFY_SECRET"))
-	pushpushHeartbeatSecret = strings.TrimSpace(os.Getenv("PUSHPUSH_HEARTBEAT_SECRET"))
-	if pushpushHeartbeatSecret == "" {
-		pushpushHeartbeatSecret = pushpushNotifySecret
-	}
 	pushpushHeartbeatMaxAge = 15 * time.Minute
 	if configured, err := time.ParseDuration(strings.TrimSpace(os.Getenv("PUSHPUSH_HEARTBEAT_MAX_AGE"))); err == nil && configured > 0 {
 		pushpushHeartbeatMaxAge = configured
@@ -2563,7 +2558,6 @@ type phonePushSetup struct {
 	HeartbeatURL                  string                 `json:"heartbeat_url"`
 	NotifyCredentialConfigured    bool                   `json:"notify_credential_configured"`
 	HeartbeatCredentialConfigured bool                   `json:"heartbeat_credential_configured"`
-	HeartbeatUsesNotifyCredential bool                   `json:"heartbeat_uses_notify_credential"`
 	Online                        bool                   `json:"online"`
 	DeviceID                      string                 `json:"device_id"`
 	LastSeen                      string                 `json:"last_seen"`
@@ -2602,11 +2596,10 @@ func phonePushSetupMetadata(r *http.Request) phonePushSetup {
 		NotifyURL:                     fmt.Sprintf("%s/pushpush/notify", publicBaseURL),
 		HeartbeatURL:                  fmt.Sprintf("%s/pushpush/phone-heartbeat", publicBaseURL),
 		NotifyCredentialConfigured:    pushpushNotifySecret != "",
-		HeartbeatCredentialConfigured: pushpushHeartbeatSecret != "",
-		HeartbeatUsesNotifyCredential: strings.TrimSpace(os.Getenv("PUSHPUSH_HEARTBEAT_SECRET")) == "" && pushpushNotifySecret != "",
+		HeartbeatCredentialConfigured: pushpushNotifySecret != "",
 		MaxAgeSeconds:                 int64(pushpushHeartbeatMaxAge.Seconds()),
 	}
-	if pushpushHeartbeatSecret == "" {
+	if pushpushNotifySecret == "" {
 		setup.HeartbeatStatusError = "Heartbeat credential is not configured. Public callbacks are disabled."
 		return setup
 	}
@@ -2615,7 +2608,7 @@ func phonePushSetupMetadata(r *http.Request) phonePushSetup {
 		setup.HeartbeatStatusError = "Could not prepare heartbeat status request"
 		return setup
 	}
-	req.Header.Set("X-Webhook-Secret", pushpushHeartbeatSecret)
+	req.Header.Set("X-Webhook-Secret", pushpushNotifySecret)
 	client := &http.Client{Timeout: 5 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
@@ -2650,7 +2643,7 @@ func phonePushCallbackHistory(ctx context.Context) ([]phoneCallbackAttempt, stri
 	if err != nil {
 		return nil, "Could not prepare callback history request"
 	}
-	req.Header.Set("X-Webhook-Secret", pushpushHeartbeatSecret)
+	req.Header.Set("X-Webhook-Secret", pushpushNotifySecret)
 	res, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
 	if err != nil {
 		return nil, "Callback history is unavailable"
@@ -2676,8 +2669,7 @@ func handlePhonePushSetup(w http.ResponseWriter, r *http.Request) {
 // session gate and is the only dashboard endpoint that returns these secrets.
 func handlePhonePushSetupReveal(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, map[string]string{
-		"notify_secret":    pushpushNotifySecret,
-		"heartbeat_secret": pushpushHeartbeatSecret,
+		"shared_secret": pushpushNotifySecret,
 	})
 }
 

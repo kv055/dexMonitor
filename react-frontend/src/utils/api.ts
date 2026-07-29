@@ -556,7 +556,6 @@ export interface PhonePushSetup {
   heartbeat_url: string;
   notify_credential_configured: boolean;
   heartbeat_credential_configured: boolean;
-  heartbeat_uses_notify_credential: boolean;
   online: boolean;
   device_id: string;
   last_seen: string;
@@ -577,8 +576,7 @@ export interface PhoneCallbackAttempt {
 }
 
 export interface PhonePushSecrets {
-  notify_secret: string;
-  heartbeat_secret: string;
+  shared_secret: string;
 }
 
 export function fetchPhonePushSetup() {
