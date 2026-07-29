@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCompact, TakerOpportunityMode } from '../types';
+import type { CostBreakdown, ManualRouteOptions, Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCompact, TakerOpportunityMode } from '../types';
 import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
@@ -1105,6 +1105,63 @@ function LiveOfferOverview({ offer, fiat, amountUnit, onAmountUnitChange }: {
   );
 }
 
+type ManualRouteSelection = { spot: string; hedge: string };
+
+function applyManualRouteSelection(bd: CostBreakdown, options: ManualRouteOptions | null | undefined, selection: ManualRouteSelection, premiumPct: number | null): CostBreakdown {
+  if (!options || (selection.spot === 'auto' && selection.hedge === 'auto')) return bd;
+  const spot = selection.spot === 'auto' ? undefined : options.spot_taker_fees.find(option => option.exchange === selection.spot);
+  const withdrawal = selection.spot === 'auto' ? undefined : options.withdrawal_fees.find(option => option.exchange === selection.spot);
+  const hedge = selection.hedge === 'auto' ? undefined : options.hedge_costs.find(option => option.hedge.venue === selection.hedge && !option.disabled);
+  const next = { ...bd, capital: bd.capital ? { ...bd.capital } : null, hedge: hedge?.hedge ?? bd.hedge };
+  if (spot) {
+    next.route_cex = spot.exchange;
+    next.cex_taker_fee_btc = spot.fee_btc;
+    next.cex_taker_fee_pct = spot.fee_pct;
+  }
+  if (withdrawal && withdrawal.applicable !== false && next.trade_direction !== 'ask') {
+    next.withdrawal_fee_btc = withdrawal.fee_btc;
+    next.withdrawal_fee_pct = withdrawal.fee_pct;
+  }
+  if (next.capital) {
+    next.capital.hedge_collateral_eur = next.hedge.position?.recommended_collateral_eur ?? 0;
+    next.capital.total_eur = next.capital.spot_notional_eur + next.capital.hedge_collateral_eur + next.capital.security_deposit_eur;
+  }
+  const conversionBTC = next.conversion?.fee_sum_btc ?? 0;
+  next.total_cost_btc = next.cex_taker_fee_btc + next.withdrawal_fee_btc + next.network_fee_btc + conversionBTC + next.hedge.fee_sum_btc + next.dex_fee_btc;
+  next.total_cost_pct = next.btc_amount > 0 ? (next.total_cost_btc / next.btc_amount) * 100 : 0;
+  next.estimated_profit_pct = (premiumPct ?? 0) - next.total_cost_pct;
+  next.estimated_profit_btc = next.btc_amount * (next.estimated_profit_pct / 100);
+  return next;
+}
+
+function ManualRouteControls({ options, selection, onChange, isAsk }: { options: ManualRouteOptions; selection: ManualRouteSelection; onChange: (selection: ManualRouteSelection) => void; isAsk: boolean }) {
+  const selectClass = 'min-w-0 rounded border border-border bg-bg px-1.5 py-1 text-[0.6rem] text-text';
+  return (
+    <div className="rounded-md border border-blue/25 bg-blue/5 p-2.5">
+      <p className="text-[0.58rem] font-semibold uppercase tracking-wide text-blue">Manual route analysis</p>
+      <p className="mt-0.5 text-[0.58rem] text-muted">Local estimate only — trade execution and automatic ranking stay unchanged.</p>
+      <div className="mt-2 grid gap-2 sm:grid-cols-2">
+        <label className="grid gap-0.5 text-[0.55rem] text-muted">Spot CEX{isAsk ? '' : ' + withdrawal'}
+          <select className={selectClass} value={selection.spot} onChange={event => onChange({ ...selection, spot: event.target.value })}>
+            <option value="auto">Auto (cheapest)</option>
+            {options.spot_taker_fees.map(option => {
+              const withdrawal = options.withdrawal_fees.find(item => item.exchange === option.exchange);
+              const detail = !isAsk && withdrawal ? ` · withdraw ${withdrawal.fee_btc.toFixed(8)} BTC` : '';
+              return <option key={option.exchange} value={option.exchange}>{option.exchange} · taker {option.fee_pct.toFixed(4)}%{detail}</option>;
+            })}
+          </select>
+        </label>
+        <label className="grid gap-0.5 text-[0.55rem] text-muted">Hedge
+          <select className={selectClass} value={selection.hedge} onChange={event => onChange({ ...selection, hedge: event.target.value })}>
+            <option value="auto">Auto (cheapest)</option>
+            {options.hedge_costs.map(option => <option key={option.hedge.venue} value={option.hedge.venue} disabled={option.disabled}>{option.hedge.venue} · {option.hedge.fee_sum_pct.toFixed(4)}%{option.disabled ? ' (excluded)' : ''}</option>)}
+          </select>
+        </label>
+      </div>
+    </div>
+  );
+}
+
 function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange }: {
   offer: Offer;
   fiat: string;
@@ -1112,16 +1169,22 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange }:
   onScenarioModeChange: (value: SizeMode) => void;
 }) {
   const [amountUnit, setAmountUnit] = useState<SizeUnit>('fiat');
+  const [manualSelection, setManualSelection] = useState<ManualRouteSelection>({ spot: 'auto', hedge: 'auto' });
   const effectiveMode: SizeMode = scenarioMode === 'capped' && !hasCappedScenario(offer)
     ? 'full'
     : scenarioMode === 'min' && !hasMinScenario(offer)
       ? 'full'
       : scenarioMode;
   const costBreakdown = getDisplayCostBreakdown(offer, effectiveMode);
+  const scenario = effectiveMode === 'capped' ? offer.analysis?.capped_volume : effectiveMode === 'min' ? offer.analysis?.min_volume : offer.analysis?.full_volume;
+  const options = scenario?.manual_route_options;
+  const rawPremium = getRawPremiumPercent(offer);
+  const displayedBreakdown = costBreakdown ? applyManualRouteSelection(costBreakdown, options, manualSelection, rawPremium) : null;
+  const displayedNetPremium = displayedBreakdown ? displayedBreakdown.estimated_profit_pct : getNetPremiumPercent(offer, effectiveMode);
 
   return (
     <div data-testid="live-offer-detail" className="flex flex-col gap-3">
-      {costBreakdown ? (
+      {displayedBreakdown ? (
         <div className="flex flex-col gap-3">
           {(hasCappedScenario(offer) || hasMinScenario(offer)) && (
             <SizeToggle
@@ -1133,11 +1196,12 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange }:
               refPrice={getRefPrice(offer)}
             />
           )}
+          {options ? <ManualRouteControls options={options} selection={manualSelection} onChange={setManualSelection} isAsk={displayedBreakdown.trade_direction === 'ask'} /> : null}
           <CostBreakdownPanel
-            bd={costBreakdown}
+            bd={displayedBreakdown}
             abortCost={getDisplayAbortCost(offer, effectiveMode)}
-            priceDiffPct={getRawPremiumPercent(offer)}
-            netPremiumPct={getNetPremiumPercent(offer, effectiveMode)}
+            priceDiffPct={rawPremium}
+            netPremiumPct={displayedNetPremium}
             refPrice={getRefPrice(offer)}
             offerPrice={getOfferPrice(offer)}
             basicInformation={<LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} onAmountUnitChange={setAmountUnit} />}
