@@ -261,7 +261,7 @@ export function PhonePushSetupSection() {
               </p>
             ) : null}
 
-            <div className="mt-5 grid gap-5">
+            <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_14rem] lg:items-start">
               <div className="min-w-0">
                 <div className="flex items-end justify-between gap-3 border-b border-border">
                   <div>
@@ -287,15 +287,15 @@ export function PhonePushSetupSection() {
               </div>
 
               <aside className="w-full rounded-xl border border-blue/20 bg-blue/5 p-3">
-                <div className="grid items-center gap-4 sm:grid-cols-[13.75rem_1fr]">
+                <div className="grid gap-3">
                   <div className="overflow-hidden rounded-lg border border-white/80 bg-white p-2 shadow-sm">
-                  <LocalQrCode
-                    value={qrPayload}
-                    size={220}
-                    alt="Non-secret combined phone monitoring setup reference QR code"
-                    fallback="Use the connection details below instead."
-                    className="mx-auto aspect-square w-full"
-                  />
+                    <LocalQrCode
+                      value={qrPayload}
+                      size={220}
+                      alt="Non-secret combined phone monitoring setup reference QR code"
+                      fallback="Use the connection details below instead."
+                      className="mx-auto aspect-square w-full"
+                    />
                   </div>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
