@@ -7,8 +7,6 @@ import {
 } from '../utils/api';
 import { LocalQrCode } from './LocalQrCode';
 
-type AutomationApp = 'MacroDroid' | 'Tasker';
-
 const notifyBody = '{"app":"<bank-app>","title":"<notification-title>","text":"<notification-text>","time":"<optional-ISO-8601>"}';
 const heartbeatBody = '{"device_id":"<stable-phone-name>"}';
 
@@ -66,18 +64,14 @@ function InlineValue({ children, copyValue }: { children: ReactNode; copyValue: 
   );
 }
 
-function SetupGuide({ app, setup }: { app: AutomationApp; setup: PhonePushSetup }) {
-  const macro = app === 'MacroDroid';
-
+function SetupGuide({ setup }: { setup: PhonePushSetup }) {
   return (
     <ol className="mt-4">
       <Step number={1} title="Give notification access">
-        Allow {app} to read notifications, exclude it from battery optimisation, and permit background data.
+        Allow MacroDroid to read notifications, exclude it from battery optimisation, and permit background data.
       </Step>
-      <Step number={2} title={macro ? 'Create a Notification Received trigger' : 'Create a notification profile'}>
-        {macro
-          ? 'Filter the trigger to the banking apps you trust. Use MacroDroid notification magic text for app, title, and text.'
-          : 'Choose the banking apps in Tasker’s Notification event, then attach a new task to that profile.'}
+      <Step number={2} title="Create a Notification Received trigger">
+        Filter the trigger to the banking apps you trust. Use MacroDroid notification Magic Text for app, title, and text.
       </Step>
       <Step number={3} title="Forward matching notifications">
         Add an HTTP Request action using POST and the revealed notification secret.
@@ -129,7 +123,7 @@ function TechnicalRow({ label, value }: { label: string; value: string }) {
 export function PhonePushSetupSection() {
   const [setup, setSetup] = useState<PhonePushSetup | null>(null);
   const [secrets, setSecrets] = useState<PhonePushSecrets | null>(null);
-  const [activeApp, setActiveApp] = useState<AutomationApp>('MacroDroid');
+  const [activeTab, setActiveTab] = useState<'setup' | 'status'>('setup');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -163,31 +157,41 @@ export function PhonePushSetupSection() {
 
   const qrPayload = useMemo(() => {
     if (!setup) return '';
-    return JSON.stringify({
-      format: 'dexarb-phone-push',
-      version: 1,
-      header: 'X-Webhook-Secret',
-      secret: 'Copy the revealed credentials separately; this QR contains no credential.',
-      workflows: [
-        {
-          name: 'bank-notification',
-          endpoint: setup.notify_url,
-          method: 'POST',
-          body: notifyBody,
-          trigger: 'Selected banking-app notification',
-        },
-        {
-          name: 'phone-heartbeat',
-          endpoint: setup.heartbeat_url,
-          method: 'POST',
-          body: heartbeatBody,
-          interval_minutes: 5,
-        },
-      ],
-    });
+    return `DEXARB PHONE PAYMENT MONITORING
+Setup reference — not a MacroDroid import.
+Reveal the secrets in DexArb → Connection details. Never share them.
+
+PAYMENT NOTIFICATION MACRO
+1. Add Macro.
+2. Trigger: Device Events → Notification Received.
+   Select only trusted banking apps. Enable Prevent multiple triggers if needed.
+3. Action: Web Interactions → HTTP Request.
+   Method: POST
+   URL: ${setup.notify_url}
+   Content type: application/json
+   Header: X-Webhook-Secret = <Notification secret>
+   Body: {"app":"{not_app_name}","title":"{not_title}","text":"{notification}"}
+4. Save and test with a harmless real notification. Use MacroDroid's Magic Text picker for the values above.
+
+PHONE HEARTBEAT MACRO
+1. Add a second Macro.
+2. Trigger: Date/Time → Regular Interval → every 5 minutes.
+3. Action: Web Interactions → HTTP Request.
+   Method: POST
+   URL: ${setup.heartbeat_url}
+   Content type: application/json
+   Header: X-Webhook-Secret = <Heartbeat secret>
+   Body: {"device_id":"payment-phone"}
+4. Save and run it once manually. DexArb should show Phone online.
+
+PHONE SETTINGS
+• Grant Notification Access to MacroDroid.
+• Exclude it from battery optimisation and allow background data/activity.
+• Keep the payment and heartbeat macros separate.`;
   }, [setup]);
 
   const lastSeen = setup?.last_seen ? new Date(setup.last_seen).toLocaleString() : 'No check-in yet';
+  const callbackHistory = setup?.callback_history ?? [];
 
   return (
     <section className="h-fit overflow-hidden rounded-xl border border-blue/30 bg-surface shadow-[0_12px_32px_rgba(0,0,0,0.08)]">
@@ -261,29 +265,33 @@ export function PhonePushSetupSection() {
               </p>
             ) : null}
 
-            <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_14rem] lg:items-start">
+            <div className="mt-5 flex border-b border-border">
+              {(['setup', 'status'] as const).map(tab => (
+                <button
+                  key={tab}
+                  type="button"
+                  onClick={() => setActiveTab(tab)}
+                  className={`border-b-2 px-3 py-2 text-[0.64rem] font-medium transition ${
+                    activeTab === tab
+                      ? 'border-blue text-blue'
+                      : 'border-transparent text-muted hover:text-text'
+                  }`}
+                >
+                  {tab === 'setup' ? 'Setup guide' : 'Status'}
+                </button>
+              ))}
+            </div>
+
+            {activeTab === 'setup' ? (
+            <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start">
               <div className="min-w-0">
                 <div className="flex items-end justify-between gap-3 border-b border-border">
                   <div>
                     <p className="text-[0.58rem] font-semibold uppercase tracking-[0.14em] text-blue">Setup guide</p>
-                    <p className="mt-0.5 text-[0.68rem] text-muted">Choose the automation app installed on your phone.</p>
-                  </div>
-                  <div className="flex rounded-t-lg border border-b-0 border-border bg-bg p-0.5">
-                    {(['MacroDroid', 'Tasker'] as AutomationApp[]).map(app => (
-                      <button
-                        key={app}
-                        type="button"
-                        onClick={() => setActiveApp(app)}
-                        className={`rounded-md px-3 py-1.5 text-[0.65rem] font-medium transition ${
-                          activeApp === app ? 'bg-blue/12 text-blue shadow-sm' : 'text-muted hover:text-text'
-                        }`}
-                      >
-                        {app}
-                      </button>
-                    ))}
+                    <p className="mt-0.5 text-[0.68rem] text-muted">Create the two MacroDroid macros on the phone.</p>
                   </div>
                 </div>
-                <SetupGuide app={activeApp} setup={setup} />
+                <SetupGuide setup={setup} />
               </div>
 
               <aside className="w-full rounded-xl border border-blue/20 bg-blue/5 p-3">
@@ -291,7 +299,7 @@ export function PhonePushSetupSection() {
                   <div className="overflow-hidden rounded-lg border border-white/80 bg-white p-2 shadow-sm">
                     <LocalQrCode
                       value={qrPayload}
-                      size={220}
+                      size={256}
                       alt="Non-secret combined phone monitoring setup reference QR code"
                       fallback="Use the connection details below instead."
                       className="mx-auto aspect-square w-full"
@@ -299,20 +307,68 @@ export function PhonePushSetupSection() {
                   </div>
                   <div className="min-w-0">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-[0.64rem] font-semibold text-text">Transfer both workflows</p>
-                      <span className="rounded bg-blue/10 px-1.5 py-0.5 text-[0.46rem] font-semibold uppercase tracking-wider text-blue">Reference QR</span>
+                      <p className="text-[0.64rem] font-semibold text-text">MacroDroid setup reference</p>
+                      <span className="rounded bg-blue/10 px-1.5 py-0.5 text-[0.46rem] font-semibold uppercase tracking-wider text-blue">Guide QR</span>
                     </div>
                     <p className="mt-1.5 text-[0.55rem] leading-relaxed text-muted">
-                      Scanning opens one text bundle containing both callback URLs, the POST method, header name, JSON templates and five-minute heartbeat interval.
+                      Scanning opens a plain-text setup guide with the live callback URLs, HTTP settings, MacroDroid Magic Text and five-minute heartbeat interval.
                     </p>
                     <p className="mt-2 text-[0.55rem] leading-relaxed text-muted">
-                      It does not configure MacroDroid or Tasker automatically. Follow the guide to create the trigger, HTTP actions, banking-app filter and timer, then add the revealed secret separately.
+                      It does not configure MacroDroid automatically. Follow the guide to create the trigger, HTTP actions, banking-app filter and timer, then add the revealed secrets separately.
                     </p>
                     <p className="mt-2 text-[0.52rem] font-medium text-blue">No credentials are stored in this code.</p>
                   </div>
                 </div>
               </aside>
             </div>
+            ) : (
+              <div className="mt-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <p className="text-[0.58rem] font-semibold uppercase tracking-[0.14em] text-blue">Callback history</p>
+                    <p className="mt-0.5 text-[0.68rem] text-muted">Accepted, blocked, and malformed phone callback attempts.</p>
+                  </div>
+                  <span className="text-[0.58rem] text-muted">Latest 50 requests</span>
+                </div>
+                {setup.callback_history_error ? (
+                  <p className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-[0.63rem] text-amber-600">
+                    {setup.callback_history_error}
+                  </p>
+                ) : callbackHistory.length === 0 ? (
+                  <p className="mt-3 rounded-lg border border-border/80 bg-bg/35 px-3 py-5 text-center text-[0.65rem] text-muted">
+                    No callback attempts have been recorded yet. Run the heartbeat macro once from the physical phone.
+                  </p>
+                ) : (
+                  <div className="mt-3 overflow-hidden rounded-lg border border-border/80">
+                    <div className="max-h-96 divide-y divide-border/70 overflow-y-auto">
+                      {callbackHistory.map((attempt, index) => {
+                        const blocked = attempt.outcome === 'blocked';
+                        const accepted = attempt.outcome === 'accepted';
+                        const label = attempt.endpoint === 'notify' ? 'Payment notification' : 'Phone heartbeat';
+                        const actor = attempt.device_id || attempt.app || attempt.detail || 'No device or app label';
+                        return (
+                          <div key={`${attempt.received_at}-${attempt.endpoint}-${index}`} className="grid gap-1.5 px-3 py-2.5 sm:grid-cols-[1fr_auto] sm:items-center">
+                            <div className="min-w-0">
+                              <div className="flex flex-wrap items-center gap-2">
+                                <span className="text-[0.64rem] font-medium text-text">{label}</span>
+                                <span className={`rounded px-1.5 py-0.5 text-[0.5rem] font-semibold uppercase tracking-wide ${
+                                  accepted ? 'bg-green/10 text-green' : blocked ? 'bg-red/10 text-red' : 'bg-amber-500/10 text-amber-600'
+                                }`}>{attempt.outcome}</span>
+                                <span className="text-[0.55rem] text-muted">HTTP {attempt.status_code}</span>
+                              </div>
+                              <p className="mt-0.5 truncate text-[0.58rem] text-muted">{actor}</p>
+                            </div>
+                            <time className="text-[0.56rem] text-muted" dateTime={attempt.received_at}>
+                              {new Date(attempt.received_at).toLocaleString()}
+                            </time>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             <details className="group mt-5 rounded-lg border border-border/80 bg-bg/35">
               <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-3 py-2.5 text-[0.68rem] font-medium text-text">

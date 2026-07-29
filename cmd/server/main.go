@@ -54,7 +54,6 @@ var (
 	mmInternalSecret        string
 	unifiedAPIURL           string
 	fiatControllerURL       string
-	pushpushPublicBaseURL   string
 	pushpushNotifySecret    string
 	pushpushHeartbeatSecret string
 	pushpushHeartbeatMaxAge time.Duration
@@ -186,10 +185,6 @@ func init() {
 	fiatControllerURL = strings.TrimRight(strings.TrimSpace(os.Getenv("FIAT_CONTROLLER_URL")), "/")
 	if fiatControllerURL == "" {
 		fiatControllerURL = "http://localhost:8080"
-	}
-	pushpushPublicBaseURL = strings.TrimRight(strings.TrimSpace(os.Getenv("PUSHPUSH_PUBLIC_BASE_URL")), "/")
-	if pushpushPublicBaseURL == "" {
-		pushpushPublicBaseURL = "https://dexmonitor.live"
 	}
 	pushpushNotifySecret = strings.TrimSpace(os.Getenv("PUSHPUSH_NOTIFY_SECRET"))
 	pushpushHeartbeatSecret = strings.TrimSpace(os.Getenv("PUSHPUSH_HEARTBEAT_SECRET"))
@@ -2564,22 +2559,48 @@ func handleMmControllerTelegramTest(w http.ResponseWriter, r *http.Request) {
 // by the Communication Hub without ever putting deployment secrets in normal
 // API responses or QR payloads.
 type phonePushSetup struct {
-	NotifyURL                     string `json:"notify_url"`
-	HeartbeatURL                  string `json:"heartbeat_url"`
-	NotifyCredentialConfigured    bool   `json:"notify_credential_configured"`
-	HeartbeatCredentialConfigured bool   `json:"heartbeat_credential_configured"`
-	HeartbeatUsesNotifyCredential bool   `json:"heartbeat_uses_notify_credential"`
-	Online                        bool   `json:"online"`
-	DeviceID                      string `json:"device_id"`
-	LastSeen                      string `json:"last_seen"`
-	MaxAgeSeconds                 int64  `json:"max_age_seconds"`
-	HeartbeatStatusError          string `json:"heartbeat_status_error,omitempty"`
+	NotifyURL                     string                 `json:"notify_url"`
+	HeartbeatURL                  string                 `json:"heartbeat_url"`
+	NotifyCredentialConfigured    bool                   `json:"notify_credential_configured"`
+	HeartbeatCredentialConfigured bool                   `json:"heartbeat_credential_configured"`
+	HeartbeatUsesNotifyCredential bool                   `json:"heartbeat_uses_notify_credential"`
+	Online                        bool                   `json:"online"`
+	DeviceID                      string                 `json:"device_id"`
+	LastSeen                      string                 `json:"last_seen"`
+	MaxAgeSeconds                 int64                  `json:"max_age_seconds"`
+	HeartbeatStatusError          string                 `json:"heartbeat_status_error,omitempty"`
+	CallbackHistory               []phoneCallbackAttempt `json:"callback_history"`
+	CallbackHistoryError          string                 `json:"callback_history_error,omitempty"`
 }
 
-func phonePushSetupMetadata(ctx context.Context) phonePushSetup {
+type phoneCallbackAttempt struct {
+	ReceivedAt time.Time `json:"received_at"`
+	Endpoint   string    `json:"endpoint"`
+	Outcome    string    `json:"outcome"`
+	StatusCode int       `json:"status_code"`
+	DeviceID   string    `json:"device_id,omitempty"`
+	App        string    `json:"app,omitempty"`
+	Detail     string    `json:"detail,omitempty"`
+}
+
+func phonePushPublicBaseURL(r *http.Request) string {
+	scheme := strings.TrimSpace(r.Header.Get("X-Forwarded-Proto"))
+	if scheme != "http" && scheme != "https" {
+		if r.TLS != nil {
+			scheme = "https"
+		} else {
+			scheme = "http"
+		}
+	}
+	return fmt.Sprintf("%s://%s", scheme, r.Host)
+}
+
+func phonePushSetupMetadata(r *http.Request) phonePushSetup {
+	ctx := r.Context()
+	publicBaseURL := phonePushPublicBaseURL(r)
 	setup := phonePushSetup{
-		NotifyURL:                     fmt.Sprintf("%s/pushpush/notify", pushpushPublicBaseURL),
-		HeartbeatURL:                  fmt.Sprintf("%s/pushpush/phone-heartbeat", pushpushPublicBaseURL),
+		NotifyURL:                     fmt.Sprintf("%s/pushpush/notify", publicBaseURL),
+		HeartbeatURL:                  fmt.Sprintf("%s/pushpush/phone-heartbeat", publicBaseURL),
 		NotifyCredentialConfigured:    pushpushNotifySecret != "",
 		HeartbeatCredentialConfigured: pushpushHeartbeatSecret != "",
 		HeartbeatUsesNotifyCredential: strings.TrimSpace(os.Getenv("PUSHPUSH_HEARTBEAT_SECRET")) == "" && pushpushNotifySecret != "",
@@ -2620,11 +2641,35 @@ func phonePushSetupMetadata(ctx context.Context) phonePushSetup {
 	if !status.LastSeen.IsZero() {
 		setup.LastSeen = status.LastSeen.UTC().Format(time.RFC3339)
 	}
+	setup.CallbackHistory, setup.CallbackHistoryError = phonePushCallbackHistory(ctx)
 	return setup
 }
 
+func phonePushCallbackHistory(ctx context.Context) ([]phoneCallbackAttempt, string) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fiatControllerURL+"/phone-callback-history?limit=50", nil)
+	if err != nil {
+		return nil, "Could not prepare callback history request"
+	}
+	req.Header.Set("X-Webhook-Secret", pushpushHeartbeatSecret)
+	res, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		return nil, "Callback history is unavailable"
+	}
+	defer res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		return nil, "Fiat Controller rejected the callback history request"
+	}
+	var payload struct {
+		Attempts []phoneCallbackAttempt `json:"attempts"`
+	}
+	if err := json.NewDecoder(io.LimitReader(res.Body, 64<<10)).Decode(&payload); err != nil {
+		return nil, "Fiat Controller returned invalid callback history"
+	}
+	return payload.Attempts, ""
+}
+
 func handlePhonePushSetup(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, phonePushSetupMetadata(r.Context()))
+	writeJSON(w, phonePushSetupMetadata(r))
 }
 
 // handlePhonePushSetupReveal deliberately requires the authenticated /api

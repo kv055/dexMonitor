@@ -562,6 +562,18 @@ export interface PhonePushSetup {
   last_seen: string;
   max_age_seconds: number;
   heartbeat_status_error?: string;
+  callback_history: PhoneCallbackAttempt[];
+  callback_history_error?: string;
+}
+
+export interface PhoneCallbackAttempt {
+  received_at: string;
+  endpoint: string;
+  outcome: 'accepted' | 'blocked' | 'invalid' | 'error';
+  status_code: number;
+  device_id?: string;
+  app?: string;
+  detail?: string;
 }
 
 export interface PhonePushSecrets {
