@@ -84,7 +84,7 @@ function SetupGuide({
         Filter the trigger to the banking apps you trust. Use MacroDroid notification Magic Text for app, title, and text.
       </Step>
       <Step number={3} title="Reveal request-header secrets">
-        Add the relevant value below as the `X-Webhook-Secret` header parameter in each HTTP Request action.
+        Add the shared value below as the `X-Webhook-Secret` header parameter in each HTTP Request action.
         {!secrets ? (
           <button
             type="button"
@@ -97,22 +97,18 @@ function SetupGuide({
         ) : (
           <div className="mt-2 space-y-2">
             <div>
-              <p className="text-[0.58rem] font-medium text-muted">Payment notification header value</p>
-              <InlineValue copyValue={secrets.notify_secret}>{secrets.notify_secret}</InlineValue>
-            </div>
-            <div>
-              <p className="text-[0.58rem] font-medium text-muted">Phone heartbeat header value{setup.heartbeat_uses_notify_credential ? ' (same value)' : ''}</p>
-              <InlineValue copyValue={secrets.heartbeat_secret}>{secrets.heartbeat_secret}</InlineValue>
+              <p className="text-[0.58rem] font-medium text-muted">Shared callback header value</p>
+              <InlineValue copyValue={secrets.shared_secret}>{secrets.shared_secret}</InlineValue>
             </div>
           </div>
         )}
       </Step>
       <Step number={4} title="Forward matching notifications">
-        Add an HTTP Request action using POST and the notification header secret above.
+        Add an HTTP Request action using POST and the shared header secret above.
         <InlineValue copyValue={setup.notify_url}>{setup.notify_url}</InlineValue>
       </Step>
       <Step number={5} title="Keep the phone online">
-        Create a separate five-minute timer that POSTs the heartbeat payload with the heartbeat header secret. Run it once from the physical phone.
+        Create a separate five-minute timer that POSTs the heartbeat payload with the shared header secret. Run it once from the physical phone.
         <InlineValue copyValue={setup.heartbeat_url}>{setup.heartbeat_url}</InlineValue>
       </Step>
     </ol>
@@ -435,15 +431,9 @@ PHONE SETTINGS
                 </div>
                 <div className="rounded-lg border border-border/70 bg-surface px-3">
                   <SecretRow
-                    label="Notification secret"
+                    label="Shared callback secret"
                     configured={setup.notify_credential_configured}
-                    value={secrets?.notify_secret}
-                  />
-                  <SecretRow
-                    label="Heartbeat secret"
-                    configured={setup.heartbeat_credential_configured}
-                    value={secrets?.heartbeat_secret}
-                    note={setup.heartbeat_uses_notify_credential ? 'Uses the notification credential' : undefined}
+                    value={secrets?.shared_secret}
                   />
                 </div>
                 <div className="mt-3 rounded-lg border border-border/70 bg-surface px-3">
