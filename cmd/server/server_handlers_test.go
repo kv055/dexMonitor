@@ -33,6 +33,7 @@ CREATE TABLE snapshots (
 CREATE TABLE offers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     exchange TEXT NOT NULL,
+    fiat_currency TEXT NOT NULL DEFAULT 'EUR',
     direction TEXT NOT NULL,
     price REAL NOT NULL,
     btc_min REAL,
@@ -732,6 +733,69 @@ func TestPastOffersCompactOmitsHeavyAnalysis(t *testing.T) {
 	}
 	if _, ok := offers[0]["volume_limits"]; !ok {
 		t.Fatalf("compact offer missing volume_limits: %#v", offers[0])
+	}
+}
+
+func TestPastOffersFiltersFiatBeforeLimitAndSerializesStoredCurrency(t *testing.T) {
+	withTempOrdersDB(t)
+
+	tx, err := db.Begin()
+	if err != nil {
+		t.Fatalf("begin insert: %v", err)
+	}
+	for i := 0; i < 1001; i++ {
+		if _, err := tx.Exec(`
+			INSERT INTO offers (
+				exchange, fiat_currency, direction, price, offer_id,
+				avg_ref_price, first_seen, last_seen, is_live
+			) VALUES ('bisq', 'USD', 'buy', 101, ?, 100, datetime('now', '-2 minutes'), datetime('now', '-1 minute'), 0)
+		`, "newer-usd-"+strconv.Itoa(i)); err != nil {
+			_ = tx.Rollback()
+			t.Fatalf("insert USD offer %d: %v", i, err)
+		}
+	}
+	if _, err := tx.Exec(`
+		INSERT INTO offers (
+			exchange, fiat_currency, direction, price, offer_id,
+			avg_ref_price, first_seen, last_seen, is_live
+		) VALUES ('bisq', 'GBP', 'buy', 81, 'target-gbp', 80, datetime('now', '-20 minutes'), datetime('now', '-10 minutes'), 0)
+	`); err != nil {
+		_ = tx.Rollback()
+		t.Fatalf("insert GBP offer: %v", err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatalf("commit inserts: %v", err)
+	}
+
+	for _, compact := range []bool{true, false} {
+		path := "/api/past_offers?hours=24&limit=1&fiat=gbp"
+		if compact {
+			path += "&compact=true"
+		}
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		handlePastOffers(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("compact=%v status=%d body=%s", compact, rec.Code, rec.Body.String())
+		}
+		var offers []map[string]any
+		if err := json.Unmarshal(rec.Body.Bytes(), &offers); err != nil {
+			t.Fatalf("compact=%v decode: %v", compact, err)
+		}
+		if len(offers) != 1 || offers[0]["offer_id"] != "target-gbp" {
+			t.Fatalf("compact=%v offers=%#v, want target-gbp", compact, offers)
+		}
+		pricing, _ := offers[0]["pricing"].(map[string]any)
+		if pricing["fiat_currency"] != "GBP" {
+			t.Fatalf("compact=%v fiat=%v, want GBP", compact, pricing["fiat_currency"])
+		}
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/past_offers?fiat=XYZ", nil)
+	rec := httptest.NewRecorder()
+	handlePastOffers(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid fiat status=%d, want %d", rec.Code, http.StatusBadRequest)
 	}
 }
 
