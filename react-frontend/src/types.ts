@@ -210,6 +210,26 @@ export interface LiveOfferScenarioCosts {
   total: LiveOfferCostComponent;
 }
 
+export interface ManualRouteFeeOption {
+  exchange: string;
+  fee_pct: number;
+  fee_btc: number;
+  applicable?: boolean;
+}
+
+export interface ManualHedgeCostOption {
+  exchange: string;
+  hedge: HedgeBreakdown;
+  disabled: boolean;
+  disabled_reason?: string;
+}
+
+export interface ManualRouteOptions {
+  spot_taker_fees: ManualRouteFeeOption[];
+  withdrawal_fees: ManualRouteFeeOption[];
+  hedge_costs: ManualHedgeCostOption[];
+}
+
 export interface LiveOfferScenario {
   cap_fiat?: number | null;
   cost_policy?: string | null;
@@ -222,6 +242,7 @@ export interface LiveOfferScenario {
   costs: LiveOfferScenarioCosts;
   abort_cost?: AbortCostBreakdown | null;
   capital?: CapitalRequirement | null;
+  manual_route_options?: ManualRouteOptions | null;
 }
 
 export interface LiveOfferAnalysis {
