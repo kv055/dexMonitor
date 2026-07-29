@@ -81,7 +81,6 @@ export function TelegramBotSection() {
     (fields.botToken !== '' && !config?.bot_token_present) ||
     fields.botToken !== '' ||
     fields.chatId !== (config?.chat_id ?? '') ||
-    fields.dexmmWebhookUrl !== (config?.dexmm_webhook_url ?? '') ||
     fields.pushpushWebhookUrl !== (config?.pushpush_webhook_url ?? '');
 
   function update(patch: Partial<FieldState>) {
@@ -96,7 +95,6 @@ export function TelegramBotSection() {
       const payload: Record<string, string> = {};
       if (fields.botToken.trim() !== '') payload.bot_token = fields.botToken.trim();
       payload.chat_id = fields.chatId.trim();
-      payload.dexmm_webhook_url = fields.dexmmWebhookUrl.trim();
       payload.pushpush_webhook_url = fields.pushpushWebhookUrl.trim();
       const saved = await saveTelegramConfig(payload);
       setConfig(saved);
@@ -297,6 +295,17 @@ export function TelegramBotSection() {
           />
         </label>
 
+        <div className="mt-3 rounded-lg border border-border/70 bg-surface/60 px-2.5 py-2">
+          <div className="flex items-center justify-between gap-2">
+            <span className="text-[0.58rem] font-semibold uppercase tracking-wider text-muted">DEXMM webhook</span>
+            <span className={`text-[0.55rem] uppercase tracking-wide ${config?.dexmm_webhook_set ? 'text-green' : 'text-muted'}`}>
+              {config?.dexmm_webhook_set ? 'registered' : 'managed by deployment'}
+            </span>
+          </div>
+          <p className="mt-1 break-all font-mono text-[0.62rem] text-text">{config?.dexmm_webhook_url || 'Waiting for deployment configuration'}</p>
+          <p className="mt-1 text-[0.58rem] text-muted">This public endpoint is derived from the active server edge and cannot be edited here.</p>
+        </div>
+
         <button
           type="button"
           onClick={() => setShowAdvanced(value => !value)}
@@ -318,14 +327,6 @@ export function TelegramBotSection() {
             />
           </label>
 
-          <WebhookField
-            label="DEXMM webhook URL"
-            value={fields.dexmmWebhookUrl}
-            set={config?.dexmm_webhook_set ?? false}
-            busy={busy === 'webhook:dexmm'}
-            onChange={v => update({ dexmmWebhookUrl: v })}
-            onSet={() => handleSetWebhook('dexmm')}
-          />
           <WebhookField
             label="PUSHPUSH webhook URL"
             value={fields.pushpushWebhookUrl}

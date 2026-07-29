@@ -11,7 +11,7 @@ test('generates communication QR codes locally without third-party requests', as
   let telegramConfig = {
     bot_token_present: false,
     chat_id: '',
-    dexmm_webhook_url: '',
+    dexmm_webhook_url: 'https://203.0.113.10/telegram-webhook',
     pushpush_webhook_url: '',
     dexmm_webhook_set: false,
     pushpush_webhook_set: false,
@@ -60,6 +60,8 @@ test('generates communication QR codes locally without third-party requests', as
   const telegramSection = panel
     .getByRole('heading', { name: 'Telegram bot' })
     .locator('xpath=ancestor::section');
+  await expect(telegramSection.getByText('https://203.0.113.10/telegram-webhook')).toBeVisible();
+  await expect(telegramSection.getByText('This public endpoint is derived from the active server edge and cannot be edited here.')).toBeVisible();
   await telegramSection.getByPlaceholder('Paste bot token from BotFather').fill('123456:test-token');
 
   const botFatherQr = panel.getByRole('img', { name: 'QR code to open Telegram BotFather' });
