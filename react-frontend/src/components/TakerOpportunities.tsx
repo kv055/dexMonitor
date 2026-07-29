@@ -1072,18 +1072,19 @@ const LIVE_SORT_DEFAULTS: Record<LiveSortColumn, SortDir> = {
   first_seen: 'desc', age: 'desc', size: 'desc', net_profit: 'desc',
 };
 
-function LiveOfferOverview({ offer, fiat, amountUnit, onAmountUnitChange }: {
+function LiveOfferOverview({ offer, fiat, amountUnit, onAmountUnitChange, children }: {
   offer: Offer;
   fiat: string;
   amountUnit: SizeUnit;
   onAmountUnitChange: (unit: SizeUnit) => void;
+  children?: ReactNode;
 }) {
   const offerPrice = getOfferPrice(offer);
   const refPrice = getRefPrice(offer);
   const fiatRange = formatRange(fmtFiat(getFiatMin(offer), fiat), fmtFiat(getFiatMax(offer), fiat));
   const btcRange = formatRange(fmtBTC(getBtcMin(offer)), fmtBTC(getBtcMax(offer)));
 
-  return (
+  return (<>
       <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5">
         <PastOfferMetric label="Offer ID" value={offer.offer_id || String(offer.id)} />
         <PastOfferMetric label="Payment" value={offer.payment_methods?.join(', ') || '—'} />
@@ -1102,7 +1103,8 @@ function LiveOfferOverview({ offer, fiat, amountUnit, onAmountUnitChange }: {
           />
         )}
       </dl>
-  );
+      {children}
+  </>);
 }
 
 type ManualRouteSelection = { spot: string; hedge: string };
@@ -1135,23 +1137,23 @@ function applyManualRouteSelection(bd: CostBreakdown, options: ManualRouteOption
 }
 
 function ManualRouteControls({ options, selection, onChange, isAsk }: { options: ManualRouteOptions; selection: ManualRouteSelection; onChange: (selection: ManualRouteSelection) => void; isAsk: boolean }) {
-  const selectClass = 'min-w-0 rounded border border-border bg-bg px-1.5 py-1 text-[0.6rem] text-text';
+  const selectClass = 'min-w-0 rounded border border-border bg-surface px-1.5 py-1 text-[0.62rem] text-text';
   return (
-    <div className="rounded-md border border-blue/25 bg-blue/5 p-2.5">
-      <p className="text-[0.58rem] font-semibold uppercase tracking-wide text-blue">Manual route analysis</p>
-      <p className="mt-0.5 text-[0.58rem] text-muted">Local estimate only — trade execution and automatic ranking stay unchanged.</p>
-      <div className="mt-2 grid gap-2 sm:grid-cols-2">
-        <label className="grid gap-0.5 text-[0.55rem] text-muted">Spot CEX{isAsk ? '' : ' + withdrawal'}
+    <div className="mt-3 border-t border-border/70 pt-3">
+      <p className="text-[0.62rem] font-medium text-text">Manual route analysis</p>
+      <p className="mt-0.5 text-[0.58rem] leading-snug text-muted">Local estimate only; automatic ranking and execution stay unchanged.</p>
+      <div className="mt-2.5 grid gap-2">
+        <label className="grid gap-0.5 text-[0.58rem] text-muted">Spot CEX{isAsk ? '' : ' + withdrawal'}
           <select className={selectClass} value={selection.spot} onChange={event => onChange({ ...selection, spot: event.target.value })}>
             <option value="auto">Auto (cheapest)</option>
             {options.spot_taker_fees.map(option => {
               const withdrawal = options.withdrawal_fees.find(item => item.exchange === option.exchange);
               const detail = !isAsk && withdrawal ? ` · withdraw ${withdrawal.fee_btc.toFixed(8)} BTC` : '';
-              return <option key={option.exchange} value={option.exchange}>{option.exchange} · taker {option.fee_pct.toFixed(4)}%{detail}</option>;
+              return <option key={option.exchange} value={option.exchange} disabled={option.disabled}>{option.exchange} · taker {option.fee_pct.toFixed(4)}%{detail}{option.disabled ? ' (excluded)' : ''}</option>;
             })}
           </select>
         </label>
-        <label className="grid gap-0.5 text-[0.55rem] text-muted">Hedge
+        <label className="grid gap-0.5 text-[0.58rem] text-muted">Hedge
           <select className={selectClass} value={selection.hedge} onChange={event => onChange({ ...selection, hedge: event.target.value })}>
             <option value="auto">Auto (cheapest)</option>
             {options.hedge_costs.map(option => <option key={option.hedge.venue} value={option.hedge.venue} disabled={option.disabled}>{option.hedge.venue} · {option.hedge.fee_sum_pct.toFixed(4)}%{option.disabled ? ' (excluded)' : ''}</option>)}
@@ -1196,7 +1198,6 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange }:
               refPrice={getRefPrice(offer)}
             />
           )}
-          {options ? <ManualRouteControls options={options} selection={manualSelection} onChange={setManualSelection} isAsk={displayedBreakdown.trade_direction === 'ask'} /> : null}
           <CostBreakdownPanel
             bd={displayedBreakdown}
             abortCost={getDisplayAbortCost(offer, effectiveMode)}
@@ -1204,7 +1205,11 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange }:
             netPremiumPct={displayedNetPremium}
             refPrice={getRefPrice(offer)}
             offerPrice={getOfferPrice(offer)}
-            basicInformation={<LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} onAmountUnitChange={setAmountUnit} />}
+            basicInformation={
+              <LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} onAmountUnitChange={setAmountUnit}>
+                {options ? <ManualRouteControls options={options} selection={manualSelection} onChange={setManualSelection} isAsk={displayedBreakdown.trade_direction === 'ask'} /> : null}
+              </LiveOfferOverview>
+            }
             wideLayout
             amountUnit={amountUnit}
             onAmountUnitChange={setAmountUnit}

@@ -215,6 +215,8 @@ export interface ManualRouteFeeOption {
   fee_pct: number;
   fee_btc: number;
   applicable?: boolean;
+  disabled?: boolean;
+  disabled_reason?: string;
 }
 
 export interface ManualHedgeCostOption {
