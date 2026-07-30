@@ -3,7 +3,7 @@ import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
 import type { PremiumFilterMode } from '../types';
 import { formatTimeOnly } from '../utils/formatters';
-import { getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
+import { getEstimatedProfitFiat, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
 
 const PAYMENT_PALETTE = [
   '#f7931a', '#3fb950', '#bc8cff', '#58a6ff', '#f85149',
@@ -64,6 +64,10 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
     const pMax = parseFloat(filters.premiumMax);
     if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
     if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
+    const profitMin = parseFloat(filters.profitMin);
+    const profitMax = parseFloat(filters.profitMax);
+    if (!isNaN(profitMin)) f = f.filter(o => (getEstimatedProfitFiat(o, 'full') ?? 0) >= profitMin);
+    if (!isNaN(profitMax)) f = f.filter(o => (getEstimatedProfitFiat(o, 'full') ?? 0) <= profitMax);
     if (filters.premiumOnly) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
     const counts: Record<string, number> = {};
@@ -281,6 +285,169 @@ function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls }: Premium
 const labelCls = "text-[0.65rem] font-semibold uppercase tracking-wide text-muted";
 const controlCls = "w-full rounded border border-border bg-bg/60 px-2 py-1.5 text-[0.75rem] font-medium text-text outline-none transition-colors hover:border-accent/50 focus:border-accent";
 
+interface DualRangeFilterProps {
+  label: string;
+  description: string;
+  min: number;
+  max: number;
+  value: [number, number];
+  onChange: (value: [number, number]) => void;
+  formatValue: (value: number) => string;
+  disabled?: boolean;
+  disabledMessage?: string;
+  step?: number;
+}
+
+export function DualRangeFilter({
+  label,
+  description,
+  min,
+  max,
+  value,
+  onChange,
+  formatValue,
+  disabled,
+  disabledMessage = 'No data in this window',
+  step = 1,
+}: DualRangeFilterProps) {
+  const [lo, hi] = value;
+  const span = Math.max(max - min, step);
+  const loPct = ((lo - min) / span) * 100;
+  const hiPct = ((hi - min) / span) * 100;
+  const rangeInputClass =
+    'pointer-events-none absolute inset-0 h-full w-full appearance-none bg-transparent [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-accent [&::-moz-range-thumb]:bg-bg [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:w-3.5 [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-accent [&::-webkit-slider-thumb]:bg-bg [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-runnable-track]:bg-transparent [&::-moz-range-track]:bg-transparent';
+
+  if (disabled) {
+    return (
+      <div className="flex flex-col gap-1">
+        <span className={labelCls}>{label}</span>
+        <span className="text-[0.7rem] text-muted">{disabledMessage}</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5" title={description}>
+      <span className={labelCls}>{label}</span>
+      <div className="flex justify-between gap-2 text-[0.65rem] text-muted mono-nums tabular-nums">
+        <span>{formatValue(lo)}</span>
+        <span>{formatValue(hi)}</span>
+      </div>
+      <div className="relative mx-0.5 h-6">
+        <div className="absolute top-1/2 h-1 w-full -translate-y-1/2 rounded bg-border" />
+        <div className="absolute top-1/2 h-1 -translate-y-1/2 rounded bg-accent/60" style={{ left: `${loPct}%`, right: `${100 - hiPct}%` }} />
+        <input type="range" min={min} max={max} step={step} value={lo} onChange={event => onChange([Math.min(Number(event.target.value), hi), hi])} className={rangeInputClass} style={{ zIndex: lo > max - step * 10 ? 5 : 3 }} />
+        <input type="range" min={min} max={max} step={step} value={hi} onChange={event => onChange([lo, Math.max(Number(event.target.value), lo)])} className={rangeInputClass} style={{ zIndex: 4 }} />
+      </div>
+    </div>
+  );
+}
+
+function PastPremiumRange() {
+  const { offers, filters, setFilters } = useFilters();
+  const bounds = useMemo(() => {
+    const premiums = offers
+      .filter(offer => !isOfferLive(offer))
+      .map(offer => getPremiumMetricValue(offer, filters.premiumMode))
+      .filter((value): value is number => value != null && Number.isFinite(value));
+    if (premiums.length === 0) return null;
+    return {
+      min: Math.floor(Math.min(...premiums) * 100),
+      max: Math.ceil(Math.max(...premiums) * 100),
+    };
+  }, [offers, filters.premiumMode]);
+
+  if (bounds == null) {
+    return null;
+  }
+
+  const min = bounds.min;
+  const max = Math.max(bounds.max, min + 1);
+  const parsedMin = parseFloat(filters.premiumMin);
+  const parsedMax = parseFloat(filters.premiumMax);
+  const currentMin = Math.max(min, Math.min(Math.round((Number.isNaN(parsedMin) ? min / 100 : parsedMin) * 100), max));
+  const currentMax = Math.max(currentMin, Math.min(Math.round((Number.isNaN(parsedMax) ? max / 100 : parsedMax) * 100), max));
+
+  return (
+    <DualRangeFilter
+      label="Premium range"
+      description="Filter past offers by premium percentage"
+      min={min}
+      max={max}
+      value={[currentMin, currentMax]}
+      onChange={([nextMin, nextMax]) => setFilters({ premiumMin: (nextMin / 100).toFixed(2), premiumMax: (nextMax / 100).toFixed(2) })}
+      formatValue={cents => `${(cents / 100).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}%`}
+    />
+  );
+}
+
+function LiveNetProfitRange() {
+  const { offers, filters, setFilters } = useFilters();
+  const [metric, setMetric] = useState<'profit' | 'premium'>('profit');
+  const bounds = useMemo(() => {
+    const profits = offers
+      .filter(isOfferLive)
+      .map(offer => metric === 'profit'
+        ? getEstimatedProfitFiat(offer, 'full')
+        : getPremiumMetricValue(offer, filters.premiumMode))
+      .filter((value): value is number => value != null && Number.isFinite(value));
+    if (profits.length === 0) return null;
+    return {
+      min: Math.floor(Math.min(...profits) * 100),
+      max: Math.ceil(Math.max(...profits) * 100),
+    };
+  }, [offers, metric, filters.premiumMode]);
+
+  useEffect(() => {
+    if (bounds == null) return;
+    const minKey = metric === 'profit' ? 'profitMin' : 'premiumMin';
+    const maxKey = metric === 'profit' ? 'profitMax' : 'premiumMax';
+    if (filters[minKey] === '' || filters[maxKey] === '') {
+      setFilters({ [minKey]: (bounds.min / 100).toFixed(2), [maxKey]: (bounds.max / 100).toFixed(2) });
+    }
+  }, [bounds, filters, metric, setFilters]);
+
+  if (bounds == null) {
+    return (
+      <div className="flex flex-col gap-1">
+        <span className={labelCls}>{metric === 'profit' ? `Net profit ${filters.fiat}` : 'Premium %'}</span>
+        <span className="text-[0.7rem] text-muted">No {metric === 'profit' ? 'profit' : 'premium'} data in live offers</span>
+      </div>
+    );
+  }
+
+  const min = bounds.min;
+  const max = Math.max(bounds.max, min + 1);
+  const minKey = metric === 'profit' ? 'profitMin' : 'premiumMin';
+  const maxKey = metric === 'profit' ? 'profitMax' : 'premiumMax';
+  const parsedMin = parseFloat(filters[minKey]);
+  const parsedMax = parseFloat(filters[maxKey]);
+  const currentMin = Math.max(min, Math.min(Math.round((Number.isNaN(parsedMin) ? min / 100 : parsedMin) * 100), max));
+  const currentMax = Math.max(currentMin, Math.min(Math.round((Number.isNaN(parsedMax) ? max / 100 : parsedMax) * 100), max));
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className={labelCls}>Range</span>
+        <div className="flex rounded border border-border bg-bg/60 p-0.5 text-[0.62rem] font-semibold">
+          <button type="button" onClick={() => setMetric('profit')} aria-pressed={metric === 'profit'} className={metric === 'profit' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>EUR</button>
+          <button type="button" onClick={() => setMetric('premium')} aria-pressed={metric === 'premium'} className={metric === 'premium' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>%</button>
+        </div>
+      </div>
+      <DualRangeFilter
+        label={metric === 'profit' ? `Net profit ${filters.fiat}` : 'Premium %'}
+        description={metric === 'profit' ? 'Filter live offers by net profit per order' : 'Filter live offers by premium percentage'}
+        min={min}
+        max={max}
+        value={[currentMin, currentMax]}
+        onChange={([nextMin, nextMax]) => setFilters({ [minKey]: (nextMin / 100).toFixed(2), [maxKey]: (nextMax / 100).toFixed(2) })}
+        formatValue={cents => metric === 'profit'
+          ? (cents / 100).toLocaleString('de-DE', { style: 'currency', currency: filters.fiat })
+          : `${(cents / 100).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}%`}
+      />
+    </div>
+  );
+}
+
 interface LiveOfferFiltersProps {
   onRefresh: () => void;
   lastUpdatedAt: string;
@@ -339,27 +506,7 @@ export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersP
         />
       </div>
 
-      <div className="flex flex-col gap-1">
-        <span className={labelCls}>Premium range</span>
-        <div className="grid grid-cols-2 gap-2 min-w-0">
-          <input
-            type="number"
-            className={`${controlCls} min-w-0`}
-            placeholder="Min"
-            step="0.1"
-            value={filters.premiumMin}
-            onChange={e => setFilters({ premiumMin: e.target.value })}
-          />
-          <input
-            type="number"
-            className={`${controlCls} min-w-0`}
-            placeholder="Max"
-            step="0.1"
-            value={filters.premiumMax}
-            onChange={e => setFilters({ premiumMax: e.target.value })}
-          />
-        </div>
-      </div>
+      <LiveNetProfitRange />
 
       <div className="flex items-center justify-between gap-2 border-t border-border/70 pt-2">
         <span className="text-[0.68rem] text-muted truncate">{lastUpdated}</span>
@@ -409,5 +556,15 @@ export function PastOfferFilters({ paymentFilter, onPaymentFilterChange }: {
         <option value="all">All payment methods</option>
       </select>
     </label>
+    <div className="flex flex-col gap-1">
+      <span className={labelCls}>Premium</span>
+      <PremiumModeDropdown
+        value={filters.premiumMode}
+        premiumOnly={filters.premiumOnly}
+        onChange={(v, premiumOnly) => setFilters({ premiumMode: v, ...(premiumOnly == null ? {} : { premiumOnly }) })}
+        inputCls={controlCls}
+      />
+    </div>
+    <PastPremiumRange />
   </>);
 }

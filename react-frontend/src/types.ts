@@ -856,6 +856,8 @@ export interface Filters {
   premiumOnly: boolean;
   premiumMin: string;
   premiumMax: string;
+  profitMin: string;
+  profitMax: string;
   premiumMode: PremiumFilterMode;
   hours: string;
   cex: string;

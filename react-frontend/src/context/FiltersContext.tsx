@@ -7,7 +7,7 @@ interface ChartScopeVisibility {
   exceptions: Set<string>;
 }
 import { INITIAL_FILTERS, filtersReducer } from './filtersState';
-import { getPremiumMetricValue, getRefPrice, hasZeroTrustScore, isOfferLive } from '../utils/offerAccess';
+import { getEstimatedProfitFiat, getPremiumMetricValue, getRefPrice, hasZeroTrustScore, isOfferLive } from '../utils/offerAccess';
 
 function countOffersByPaymentMethod(offers: Offer[]): Record<string, number> {
   const counts: Record<string, number> = {};
@@ -39,6 +39,10 @@ function applyMonitorFilters(
   const pMax = parseFloat(filters.premiumMax);
   if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
   if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
+  const profitMin = parseFloat(filters.profitMin);
+  const profitMax = parseFloat(filters.profitMax);
+  if (!isNaN(profitMin)) f = f.filter(o => (getEstimatedProfitFiat(o, 'full') ?? 0) >= profitMin);
+  if (!isNaN(profitMax)) f = f.filter(o => (getEstimatedProfitFiat(o, 'full') ?? 0) <= profitMax);
   if (filters.premiumOnly) {
     f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
   }

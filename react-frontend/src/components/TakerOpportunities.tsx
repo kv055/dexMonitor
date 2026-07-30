@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { CostBreakdown, ManualRouteOptions, Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCompact, TakerOpportunityMode } from '../types';
+import type { CostBreakdown, ManualRouteOptions, Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCompact, PremiumFilterMode, TakerOpportunityMode } from '../types';
 import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
@@ -33,7 +33,7 @@ import {
 import { CostBreakdownPanel, SizeToggle, type SizeMode } from './OfferBreakdownPanel';
 import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
-import { LiveOfferFilters, PastOfferFilters } from './ControlPanel';
+import { DualRangeFilter, LiveOfferFilters, PastOfferFilters } from './ControlPanel';
 import { DepthChart } from './DepthChart';
 import { TradeTracingPanel } from './TradeTracingPanel';
 
@@ -142,6 +142,12 @@ function orderDurationMinutes(order: DisplayOrder): number {
 
 function orderPremiumPercent(order: DisplayOrder): number | null {
   return order.pricing.avg_premium_percent ?? order.pricing.raw_premium_percent ?? null;
+}
+
+function orderPremiumMetric(order: DisplayOrder, mode: PremiumFilterMode): number | null {
+  if (mode === 'raw') return orderPremiumPercent(order);
+  const scenarioMode: TakerOpportunityMode = mode === 'net_capped' ? 'net_capped' : 'net_full';
+  return orderScenarioSummary(order, scenarioMode).netPercent;
 }
 
 function orderScenarioSummary(order: DisplayOrder, mode: TakerOpportunityMode) {
@@ -672,85 +678,6 @@ function SelectGroup({ label, description, options, selected, onChange }: Select
         ))}
       </select>
     </label>
-  );
-}
-
-interface DualRangeFilterProps {
-  label: string;
-  description: string;
-  min: number;
-  max: number;
-  value: [number, number];
-  onChange: (value: [number, number]) => void;
-  formatValue: (value: number) => string;
-  disabled?: boolean;
-  disabledMessage?: string;
-  step?: number;
-}
-
-function DualRangeFilter({
-  label,
-  description,
-  min,
-  max,
-  value,
-  onChange,
-  formatValue,
-  disabled,
-  disabledMessage = 'No data in this window',
-  step = 1,
-}: DualRangeFilterProps) {
-  const [lo, hi] = value;
-  const span = Math.max(max - min, step);
-  const loPct = ((lo - min) / span) * 100;
-  const hiPct = ((hi - min) / span) * 100;
-  const rangeInputClass =
-    'pointer-events-none absolute inset-0 h-full w-full appearance-none bg-transparent [&::-moz-range-thumb]:pointer-events-auto [&::-moz-range-thumb]:appearance-none [&::-moz-range-thumb]:rounded-full [&::-moz-range-thumb]:border-2 [&::-moz-range-thumb]:border-accent [&::-moz-range-thumb]:bg-bg [&::-moz-range-thumb]:h-3.5 [&::-moz-range-thumb]:w-3.5 [&::-webkit-slider-thumb]:pointer-events-auto [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:border-2 [&::-webkit-slider-thumb]:border-accent [&::-webkit-slider-thumb]:bg-bg [&::-webkit-slider-thumb]:h-3.5 [&::-webkit-slider-thumb]:w-3.5 [&::-webkit-slider-runnable-track]:bg-transparent [&::-moz-range-track]:bg-transparent';
-
-  if (disabled) {
-    return (
-      <div className="flex flex-col gap-1">
-        <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
-        <span className="text-[0.7rem] text-muted">{disabledMessage}</span>
-      </div>
-    );
-  }
-
-  return (
-    <div className="flex flex-col gap-1.5" title={description}>
-      <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
-      <div className="flex justify-between gap-2 text-[0.65rem] text-muted mono-nums tabular-nums">
-        <span>{formatValue(lo)}</span>
-        <span>{formatValue(hi)}</span>
-      </div>
-      <div className="relative mx-0.5 h-6">
-        <div className="absolute top-1/2 h-1 w-full -translate-y-1/2 rounded bg-border" />
-        <div
-          className="absolute top-1/2 h-1 -translate-y-1/2 rounded bg-accent/60"
-          style={{ left: `${loPct}%`, right: `${100 - hiPct}%` }}
-        />
-        <input
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={lo}
-          onChange={event => onChange([Math.min(Number(event.target.value), hi), hi])}
-          className={rangeInputClass}
-          style={{ zIndex: lo > max - step * 10 ? 5 : 3 }}
-        />
-        <input
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={hi}
-          onChange={event => onChange([lo, Math.max(Number(event.target.value), lo)])}
-          className={rangeInputClass}
-          style={{ zIndex: 4 }}
-        />
-      </div>
-    </div>
   );
 }
 
@@ -1540,11 +1467,19 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       return [] as DisplayOrder[];
     }
     let list = deferredOrders.filter(order => displayOrderProfitable(order, mode));
+    const premiumMin = parseFloat(liveFilters.premiumMin);
+    const premiumMax = parseFloat(liveFilters.premiumMax);
+    if (!Number.isNaN(premiumMin)) {
+      list = list.filter(order => (orderPremiumMetric(order, liveFilters.premiumMode) ?? 0) >= premiumMin);
+    }
+    if (!Number.isNaN(premiumMax)) {
+      list = list.filter(order => (orderPremiumMetric(order, liveFilters.premiumMode) ?? 0) <= premiumMax);
+    }
     if (paymentFilter === 'settings' && excludedMethods.length > 0) {
       list = list.filter(order => !order.payment_methods?.some(m => excludedMethods.includes(m)));
     }
     return list;
-  }, [scenarioDataPending, deferredOrders, mode, paymentFilter, excludedMethods]);
+  }, [scenarioDataPending, deferredOrders, mode, paymentFilter, excludedMethods, liveFilters.premiumMin, liveFilters.premiumMax, liveFilters.premiumMode]);
 
   // Capped mode is only meaningful when the global Max Position Size is set.
   const capAvailable = maxFiatLimit != null && maxFiatLimit > 0;

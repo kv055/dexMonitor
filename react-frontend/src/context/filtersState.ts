@@ -9,6 +9,8 @@ const BASE_FILTERS: Filters = {
   premiumOnly: true,
   premiumMin: '',
   premiumMax: '',
+  profitMin: '',
+  profitMax: '',
   premiumMode: 'net_full',
   hours: '24',
   cex: 'kraken',
