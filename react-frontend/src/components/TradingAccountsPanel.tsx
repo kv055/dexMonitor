@@ -415,7 +415,7 @@ function formatPermissionLabel(name: string) {
 type PermStatus = 'granted' | 'denied' | 'unsupported';
 
 // Canonical CEX permission order — mirrors accounthealth.CanonicalCEXPermissions.
-const CANONICAL_PERMISSIONS = ['spot_trading', 'read_balances', 'withdraw', 'hedge_positions'];
+const CANONICAL_PERMISSIONS = ['fetch_deposit_address', 'spot_trading', 'read_balances', 'withdraw', 'hedge_positions'];
 
 // Coerce a stored permission value to a tri-state status. Legacy rows stored
 // booleans (true→granted, false→denied) before the tri-state schema existed.

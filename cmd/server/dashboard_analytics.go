@@ -14,7 +14,9 @@ type dashboardAnalyticsParams struct {
 	Hours                 int      `json:"hours"`
 	Cex                   string   `json:"cex"`
 	ExcludePaymentMethods []string `json:"exclude_payment_methods"`
-	ExcludeCEXes          []string `json:"exclude_cexes"`
+	ExcludeCEXes          []string `json:"exclude_cexes"` // legacy: both categories
+	ExcludeSpotCEXes      []string `json:"exclude_spot_cexes"`
+	ExcludeHedgeCEXes     []string `json:"exclude_hedge_cexes"`
 	FeeTier               string   `json:"fee_tier"`
 	CoupledHedge          bool     `json:"coupled_hedge"`
 	MaxFiatLimitEUR       float64  `json:"max_fiat_limit"`
@@ -53,6 +55,8 @@ func parseDashboardAnalyticsParams(r *http.Request) (dashboardAnalyticsParams, e
 		body.Fiat = "EUR"
 	}
 	body.ExcludePaymentMethods = normalizePaymentMethodList(body.ExcludePaymentMethods)
+	body.ExcludeSpotCEXes = mergeCEXLists(body.ExcludeCEXes, normalizeCEXList(body.ExcludeSpotCEXes))
+	body.ExcludeHedgeCEXes = mergeCEXLists(body.ExcludeCEXes, normalizeCEXList(body.ExcludeHedgeCEXes))
 	body.Sections = normalizeAnalyticsSections(body.Sections)
 	return body, nil
 }
@@ -105,6 +109,8 @@ func (p dashboardAnalyticsParams) cacheKey() string {
 		p.Cex,
 		strings.Join(p.ExcludePaymentMethods, ","),
 		strings.Join(p.ExcludeCEXes, ","),
+		strings.Join(p.ExcludeSpotCEXes, ","),
+		strings.Join(p.ExcludeHedgeCEXes, ","),
 		p.FeeTier,
 		strconv.FormatBool(p.CoupledHedge),
 		strconv.FormatFloat(p.MaxFiatLimitEUR, 'f', -1, 64),
