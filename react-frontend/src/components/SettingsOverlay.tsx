@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
 import { useTradeCostConfig } from '../hooks/useTradeCostConfig';
+import { useCEXPermissions } from '../hooks/useCEXPermissions';
 import { fiatSymbol } from '../utils/currency';
 import type { PaymentMethodGroup } from '../types';
 
@@ -177,8 +178,10 @@ export function SettingsOverlay({
     excludedMethods,
     toggleMethod,
     toggleGroup,
-    excludedCEXes,
-    toggleCEX,
+    excludedSpotCEXes,
+    excludedHedgeCEXes,
+    toggleSpotCEX,
+    toggleHedgeCEX,
     feeTier,
     setFeeTier,
     coupledHedge,
@@ -190,15 +193,26 @@ export function SettingsOverlay({
   } = usePreferences();
   const { zeroTrustHiddenCount, paymentMethodCounts, filters } = useFilters();
   const { config: tradeCostConfig } = useTradeCostConfig(open);
+  const { exchanges, loading: cexPermissionsLoading, error: cexPermissionsError, reload: reloadCEXPermissions } = useCEXPermissions();
   const excludedSet = new Set(excludedMethods);
-  const excludedCEXSet = new Set(excludedCEXes);
+  const excludedSpotCEXSet = new Set(excludedSpotCEXes);
+  const excludedHedgeCEXSet = new Set(excludedHedgeCEXes);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
+  const [expandedCEXes, setExpandedCEXes] = useState<Set<string>>(() => new Set());
 
   const toggleCollapse = (name: string) =>
     setExpandedGroups(prev => {
       const next = new Set(prev);
       if (next.has(name)) next.delete(name);
       else next.add(name);
+      return next;
+    });
+
+  const toggleCEXCollapse = (exchange: string) =>
+    setExpandedCEXes(prev => {
+      const next = new Set(prev);
+      if (next.has(exchange)) next.delete(exchange);
+      else next.add(exchange);
       return next;
     });
 
@@ -381,32 +395,103 @@ export function SettingsOverlay({
               <div className="shrink-0">
                 <h3 className="text-xs font-medium">CEX Exchanges</h3>
               </div>
-              <p className="mt-0.5 lg:mt-0 lg:ml-auto lg:text-right text-[0.65rem] text-muted leading-tight">Disabled exchanges are excluded from the best-route cost calculation.</p>
+              <p className="mt-0.5 lg:mt-0 lg:ml-auto lg:text-right text-[0.65rem] text-muted leading-tight">Spot and hedge venues can be enabled independently. Permission-locked controls stay disabled.</p>
             </div>
 
-            {tradeCostConfig.cexes.length === 0 ? (
+            {cexPermissionsLoading ? (
               <p className="text-[0.65rem] text-muted">Loading exchanges…</p>
+            ) : cexPermissionsError ? (
+              <div className="flex items-center justify-between gap-2">
+                <p className="text-[0.65rem] text-red">Could not load exchange permissions: {cexPermissionsError}</p>
+                <button type="button" onClick={reloadCEXPermissions} className="text-[0.6rem] px-1.5 py-0.5 rounded border border-border text-muted hover:text-text">
+                  Retry
+                </button>
+              </div>
             ) : (
               <div className="flex flex-col gap-1">
-                {tradeCostConfig.cexes.map(cex => {
-                  const excluded = excludedCEXSet.has(cex.name);
-                  const label = cex.name.charAt(0).toUpperCase() + cex.name.slice(1);
+                {exchanges.filter(cex => cex.optimizer_supported).map(cex => {
+                  const spotExcluded = excludedSpotCEXSet.has(cex.exchange);
+                  const hedgeExcluded = excludedHedgeCEXSet.has(cex.exchange);
+                  const spotLocked = !cex.spot.available;
+                  const hedgeLocked = !cex.hedge.available;
+                  const spotDisabled = spotLocked || spotExcluded;
+                  const hedgeDisabled = hedgeLocked || hedgeExcluded;
+                  const allDisabled = spotDisabled && hedgeDisabled;
+                  const someDisabled = spotDisabled || hedgeDisabled;
+                  const collapsed = !expandedCEXes.has(cex.exchange);
+                  const reason = (kind: 'spot' | 'hedge') => {
+                    const availability = cex[kind];
+                    const permissions = availability.blocking_permissions.join(', ');
+                    return `Missing Permissions: ${permissions || 'unknown'}`;
+                  };
+                  const toggleWholeCEX = () => {
+                    if (allDisabled) {
+                      if (!spotLocked && spotExcluded) toggleSpotCEX(cex.exchange);
+                      if (!hedgeLocked && hedgeExcluded) toggleHedgeCEX(cex.exchange);
+                      return;
+                    }
+                    if (!spotLocked && !spotExcluded) toggleSpotCEX(cex.exchange);
+                    if (!hedgeLocked && !hedgeExcluded) toggleHedgeCEX(cex.exchange);
+                  };
                   return (
-                    <div key={cex.name} className={`flex items-center justify-between gap-1.5 px-2.5 py-1 rounded-md border border-border ${excluded ? 'opacity-50' : ''}`}>
-                      <div className="flex items-center gap-1.5 min-w-0">
-                        <span className={`text-[0.7rem] font-semibold ${excluded ? 'text-muted line-through' : 'text-text'}`}>{label}</span>
+                    <div key={cex.account_id} className="rounded-md border border-border overflow-hidden">
+                      <div className={`flex items-center gap-1.5 px-2.5 py-1.5 ${allDisabled ? 'bg-bg/80' : 'bg-bg/30'}`}>
+                        <button
+                          type="button"
+                          onClick={() => toggleCEXCollapse(cex.exchange)}
+                          className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
+                          aria-expanded={!collapsed}
+                        >
+                          <span className={`text-[0.55rem] text-muted transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}>▶</span>
+                          <span className={`text-[0.7rem] font-semibold ${allDisabled ? 'text-muted line-through' : 'text-text'}`}>{cex.provider}</span>
+                          <span className="text-[0.55rem] text-muted">{cex.active_key_count} active key{cex.active_key_count === 1 ? '' : 's'}</span>
+                          {someDisabled && !allDisabled && <span className="text-[0.5rem] uppercase tracking-wide text-accent border border-accent/40 rounded px-0.5 py-px">partial</span>}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={toggleWholeCEX}
+                          disabled={spotLocked && hedgeLocked}
+                          className={`shrink-0 text-[0.65rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
+                            spotLocked && hedgeLocked
+                              ? 'cursor-not-allowed border-border text-muted opacity-45'
+                              : allDisabled
+                                ? 'border-green/50 text-green hover:bg-green/10'
+                                : 'border-red/50 text-red hover:bg-red/10'
+                          }`}
+                        >
+                          {spotLocked && hedgeLocked ? 'Locked' : allDisabled ? 'Enable CEX' : 'Disable CEX'}
+                        </button>
                       </div>
-                      <button
-                        type="button"
-                        onClick={() => toggleCEX(cex.name)}
-                        className={`text-[0.6rem] px-1.5 py-0.5 rounded border font-medium transition-colors ${
-                          excluded
-                            ? 'border-green/40 text-green hover:bg-green/10'
-                            : 'border-border text-muted hover:border-red/50 hover:text-red'
-                        }`}
-                      >
-                        {excluded ? 'Enable' : 'Disable'}
-                      </button>
+
+                      {!collapsed && (
+                      <div className="divide-y divide-border/50">
+                        {([
+                          ['Spot', spotExcluded, spotLocked, () => toggleSpotCEX(cex.exchange), reason('spot')],
+                          ['Hedge (Futures)', hedgeExcluded, hedgeLocked, () => toggleHedgeCEX(cex.exchange), reason('hedge')],
+                        ] as const).map(([label, excluded, locked, toggle, lockedReason]) => (
+                          <div key={label} className="px-2.5 py-1 pl-4">
+                            <div className="flex items-center justify-between gap-1">
+                              <span className={`text-[0.6rem] font-medium ${locked ? 'opacity-45' : ''}`}>{label}</span>
+                              <button
+                                type="button"
+                                disabled={locked}
+                                onClick={toggle}
+                                className={`text-[0.55rem] px-1.5 py-0.5 rounded border font-medium ${locked ? 'opacity-45 ' : ''}${
+                                  locked
+                                    ? 'cursor-not-allowed border-border text-muted'
+                                    : excluded
+                                      ? 'border-green/40 text-green hover:bg-green/10'
+                                      : 'border-accent/40 text-accent hover:bg-accent/10'
+                                }`}
+                              >
+                                {locked ? 'Locked' : excluded ? 'Enable' : 'Enabled'}
+                              </button>
+                            </div>
+                            {locked && <p className="mt-1 text-[0.55rem] leading-tight text-muted">{lockedReason}</p>}
+                          </div>
+                        ))}
+                      </div>
+                      )}
                     </div>
                   );
                 })}

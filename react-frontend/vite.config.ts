@@ -73,6 +73,7 @@ export default defineConfig({
       '/ws/live_offers':        quietWsProxy('ws://localhost:5010'),
       '/api/live_offers':       'http://localhost:5010',
       '/api/trade_cost_config': 'http://localhost:5010',
+      '/api/cex_permissions': 'http://localhost:5010',
       '/api':                   DEV_DEXMONITOR,
       '/ws':                    quietWsProxy(`ws://localhost:5002`),
       // Grafana isn't exposed to the host in local dev; reach it through nginx

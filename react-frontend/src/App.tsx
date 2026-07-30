@@ -6,9 +6,11 @@ import { FiltersProvider } from './context/FiltersContext';
 import { TimezoneProvider } from './context/TimezoneContext';
 import { PreferencesProvider } from './context/PreferencesContext';
 import { AuthProvider } from './context/AuthContext';
+import { CEXPermissionsProvider } from './context/CEXPermissionsContext';
 import { useFilters } from './hooks/useFilters';
 import { usePreferences } from './hooks/usePreferences';
 import { useAuth } from './hooks/useAuth';
+import { useCEXPermissions } from './hooks/useCEXPermissions';
 import { LoginPage } from './components/LoginPage';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { Header } from './components/Header';
@@ -43,6 +45,10 @@ function MmControllerView() {
   );
 }
 
+function mergeCEXes(...lists: string[][]): string[] {
+  return [...new Set(lists.flat())];
+}
+
 function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastOrderStatsNetMin, pastOrderStatsAllNetMin, fastPastProfitableOrders, detailedPastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics, loadCore, refreshForCex, error, lastUpdatedAt, ohlcData, extendOhlc, allowOhlcExtend }: {
   pastOrderStats: ReturnType<typeof useDashboard>['pastOrderStats'];
   pastOrderStatsAll: ReturnType<typeof useDashboard>['pastOrderStatsAll'];
@@ -57,7 +63,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
   analyticsCappedLoading: boolean;
   loadAnalytics: ReturnType<typeof useDashboard>['loadAnalytics'];
   loadCore: ReturnType<typeof useDashboard>['loadCore'];
-  refreshForCex: (cex: string, excludedCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null, fiat?: string) => void;
+  refreshForCex: (cex: string, excludedSpotCEXes?: string[], excludedHedgeCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null, fiat?: string) => void;
   error: string | null;
   lastUpdatedAt: string;
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
@@ -65,21 +71,26 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
   allowOhlcExtend: boolean;
 }) {
   const { filters } = useFilters();
-  const { excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit } = usePreferences();
+  const { excludedMethods, excludedSpotCEXes: preferredExcludedSpotCEXes, excludedHedgeCEXes: preferredExcludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit } = usePreferences();
+  const { ready: cexPermissionsReady, lockedSpotCEXes, lockedHedgeCEXes } = useCEXPermissions();
+  const excludedSpotCEXes = useMemo(() => mergeCEXes(preferredExcludedSpotCEXes, lockedSpotCEXes), [preferredExcludedSpotCEXes, lockedSpotCEXes]);
+  const excludedHedgeCEXes = useMemo(() => mergeCEXes(preferredExcludedHedgeCEXes, lockedHedgeCEXes), [preferredExcludedHedgeCEXes, lockedHedgeCEXes]);
 
   useEffect(() => {
-    loadAnalytics(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat);
-  }, [filters.hours, filters.cex, filters.fiat, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadAnalytics]);
+    if (!cexPermissionsReady) return;
+    loadAnalytics(filters.hours, filters.cex, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat);
+  }, [filters.hours, filters.cex, filters.fiat, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, loadAnalytics, cexPermissionsReady]);
 
   // Same core-data refresh cycle as the Monitor tab: reload live offers and
   // the offers/OHLC dataset when the CEX or cost preferences change, and keep
   // them fresh with a 5-minute poll while the tab stays open.
   useEffect(() => {
-    refreshForCex(filters.cex, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat);
-    loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat);
-    const interval = setInterval(() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat), 5 * 60 * 1000);
+    if (!cexPermissionsReady) return;
+    refreshForCex(filters.cex, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat);
+    loadCore(filters.hours, filters.cex, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat);
+    const interval = setInterval(() => loadCore(filters.hours, filters.cex, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat), 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [filters.hours, filters.cex, filters.fiat, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, loadCore, refreshForCex]);
+  }, [filters.hours, filters.cex, filters.fiat, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, loadCore, refreshForCex, cexPermissionsReady]);
 
   return (
     <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -103,7 +114,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           ordersLoading={analyticsOrdersLoading}
           cappedLoading={analyticsCappedLoading}
           maxFiatLimit={maxFiatLimit}
-          onRefreshLive={() => loadCore(filters.hours, filters.cex, excludedMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat)}
+          onRefreshLive={() => loadCore(filters.hours, filters.cex, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat)}
           lastUpdatedAt={lastUpdatedAt}
           chart={(extraOffers, includeLiveOffers) => (
             <OHLCChart
@@ -259,7 +270,11 @@ function AuthGate() {
   if (status === 'anon') {
     return <LoginPage />;
   }
-  return <AppShell />;
+  return (
+    <CEXPermissionsProvider>
+      <AppShell />
+    </CEXPermissionsProvider>
+  );
 }
 
 export default function App() {

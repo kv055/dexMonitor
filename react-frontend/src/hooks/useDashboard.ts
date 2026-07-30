@@ -15,9 +15,10 @@ function excludedPaymentQuery(excludedPaymentMethods: string[]): string {
   return `&exclude_payment_methods=${encodeURIComponent(excludedPaymentMethods.join(','))}`;
 }
 
-function tradeCostQuery(excludedCEXes: string[], feeTier: string, maxFiatLimit: number | null = null): string {
+function tradeCostQuery(excludedSpotCEXes: string[], excludedHedgeCEXes: string[], feeTier: string, maxFiatLimit: number | null = null): string {
   let q = '';
-  if (excludedCEXes.length > 0) q += `&exclude_cexes=${encodeURIComponent(excludedCEXes.join(','))}`;
+  if (excludedSpotCEXes.length > 0) q += `&exclude_spot_cexes=${encodeURIComponent(excludedSpotCEXes.join(','))}`;
+  if (excludedHedgeCEXes.length > 0) q += `&exclude_hedge_cexes=${encodeURIComponent(excludedHedgeCEXes.join(','))}`;
   if (feeTier) q += `&fee_tier=${encodeURIComponent(feeTier)}`;
   if (maxFiatLimit != null && maxFiatLimit > 0) q += `&max_fiat_limit=${maxFiatLimit}`;
   return q;
@@ -27,7 +28,8 @@ type LoadParams = {
   hours: string;
   cex: string;
   excludedPaymentMethods: string[];
-  excludedCEXes: string[];
+  excludedSpotCEXes: string[];
+  excludedHedgeCEXes: string[];
   feeTier: string;
   coupledHedge: boolean;
   maxFiatLimit: number | null;
@@ -36,7 +38,7 @@ type LoadParams = {
 
 function buildLoadQueries(params: LoadParams) {
   const excludedQuery = excludedPaymentQuery(params.excludedPaymentMethods);
-  const tcQuery = `${tradeCostQuery(params.excludedCEXes, params.feeTier, params.maxFiatLimit)}${!params.coupledHedge ? '&coupled_hedge=false' : ''}`;
+  const tcQuery = `${tradeCostQuery(params.excludedSpotCEXes, params.excludedHedgeCEXes, params.feeTier, params.maxFiatLimit)}${!params.coupledHedge ? '&coupled_hedge=false' : ''}`;
   return { excludedQuery, tcQuery };
 }
 
@@ -63,7 +65,8 @@ function buildAnalyticsBody(params: LoadParams, sections?: string[]) {
     hours: Number(params.hours),
     cex: params.cex,
     exclude_payment_methods: params.excludedPaymentMethods,
-    exclude_cexes: params.excludedCEXes,
+    exclude_spot_cexes: params.excludedSpotCEXes,
+    exclude_hedge_cexes: params.excludedHedgeCEXes,
     fee_tier: params.feeTier,
     coupled_hedge: params.coupledHedge,
     max_fiat_limit: params.maxFiatLimit ?? 0,
@@ -212,8 +215,8 @@ export function useDashboard() {
     promise: Promise<void>;
   } | null>(null);
 
-  const loadCore = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null, fiat: string = 'EUR') => {
-    const params: LoadParams = { hours, cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, fiat };
+  const loadCore = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedSpotCEXes: string[] = [], excludedHedgeCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null, fiat: string = 'EUR') => {
+    const params: LoadParams = { hours, cex, excludedPaymentMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, fiat };
     const key = loadCoreKey(params);
 
     const inFlight = coreLoadRef.current;
@@ -260,8 +263,8 @@ export function useDashboard() {
     return promise;
   }, []);
 
-  const loadAnalytics = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null, fiat: string = 'EUR') => {
-    const params: LoadParams = { hours, cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, fiat };
+  const loadAnalytics = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedSpotCEXes: string[] = [], excludedHedgeCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null, fiat: string = 'EUR') => {
+    const params: LoadParams = { hours, cex, excludedPaymentMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, fiat };
     const key = loadCoreKey(params);
 
     const inFlight = analyticsLoadRef.current;
@@ -367,9 +370,9 @@ export function useDashboard() {
     return promise;
   }, []);
 
-  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null, fiat: string = 'EUR') => {
-    await loadCore(hours, cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, fiat);
-    await loadAnalytics(hours, cex, excludedPaymentMethods, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, fiat);
+  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedSpotCEXes: string[] = [], excludedHedgeCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null, fiat: string = 'EUR') => {
+    await loadCore(hours, cex, excludedPaymentMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, fiat);
+    await loadAnalytics(hours, cex, excludedPaymentMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, fiat);
   }, [loadCore, loadAnalytics]);
 
   const extendOhlc = useCallback(async (hours: number, cex: string = 'kraken', intervalMin: number = 1, fiat: string = 'EUR') => {

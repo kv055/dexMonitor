@@ -5,9 +5,10 @@ import type { Offer } from '../types';
 const POLL_INTERVAL_MS = 15_000;
 const RECONNECT_DELAY_MS = 5_000;
 
-function buildTradeCostQuery(excludedCEXes: string[], feeTier: string, coupledHedge: boolean, maxFiatLimit: number | null): string {
+function buildTradeCostQuery(excludedSpotCEXes: string[], excludedHedgeCEXes: string[], feeTier: string, coupledHedge: boolean, maxFiatLimit: number | null): string {
   let q = '';
-  if (excludedCEXes.length > 0) q += `&exclude_cexes=${encodeURIComponent(excludedCEXes.join(','))}`;
+  if (excludedSpotCEXes.length > 0) q += `&exclude_spot_cexes=${encodeURIComponent(excludedSpotCEXes.join(','))}`;
+  if (excludedHedgeCEXes.length > 0) q += `&exclude_hedge_cexes=${encodeURIComponent(excludedHedgeCEXes.join(','))}`;
   if (feeTier) q += `&fee_tier=${encodeURIComponent(feeTier)}`;
   if (!coupledHedge) q += '&coupled_hedge=false';
   if (maxFiatLimit != null && maxFiatLimit > 0) q += `&max_fiat_limit=${maxFiatLimit}`;
@@ -27,7 +28,8 @@ export function useLiveOffers() {
   const connectRef = useRef<(session: number) => void>(() => {});
   const cexRef      = useRef('kraken');
   const fiatRef     = useRef('EUR');
-  const excludedCEXesRef = useRef<string[]>([]);
+  const excludedSpotCEXesRef = useRef<string[]>([]);
+  const excludedHedgeCEXesRef = useRef<string[]>([]);
   const feeTierRef = useRef('');
   const coupledHedgeRef = useRef(true);
   const maxFiatLimitRef = useRef<number | null>(null);
@@ -41,7 +43,7 @@ export function useLiveOffers() {
   }, []);
 
   const buildQueryString = useCallback(() => {
-    return `cex=${cexRef.current}&fiat=${encodeURIComponent(fiatRef.current)}${buildTradeCostQuery(excludedCEXesRef.current, feeTierRef.current, coupledHedgeRef.current, maxFiatLimitRef.current)}`;
+    return `cex=${cexRef.current}&fiat=${encodeURIComponent(fiatRef.current)}${buildTradeCostQuery(excludedSpotCEXesRef.current, excludedHedgeCEXesRef.current, feeTierRef.current, coupledHedgeRef.current, maxFiatLimitRef.current)}`;
   }, []);
 
   const startPolling = useCallback((session: number) => {
@@ -126,14 +128,14 @@ export function useLiveOffers() {
 
   // Called by MonitorView when filters.cex or trade cost settings change.
   // Reconnects WS so the server pushes a fresh snapshot with updated query params.
-  const refreshForCex = useCallback((cex: string, excludedCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null, fiat: string = 'EUR') => {
+  const refreshForCex = useCallback((cex: string, excludedSpotCEXes: string[] = [], excludedHedgeCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null, fiat: string = 'EUR') => {
     // refreshForCex is only ever called from MonitorView's mount effect, so the tree is
     // mounted. Under React StrictMode the parent (AppShell) mount effect that resets
     // mountedRef to true runs AFTER this child effect, so without this connect() would see
     // a stale mountedRef === false (left over from the strict unmount cleanup) and bail —
     // leaving no WebSocket and no polling. Assert mounted here so connect() proceeds.
     mountedRef.current = true;
-    const refreshKey = JSON.stringify({ cex, excludedCEXes, feeTier, coupledHedge, maxFiatLimit, fiat });
+    const refreshKey = JSON.stringify({ cex, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, fiat });
     if (
       refreshKey === lastRefreshKeyRef.current
       && wsRef.current?.readyState === WebSocket.OPEN
@@ -144,7 +146,8 @@ export function useLiveOffers() {
 
     cexRef.current = cex;
     fiatRef.current = fiat;
-    excludedCEXesRef.current = excludedCEXes;
+    excludedSpotCEXesRef.current = excludedSpotCEXes;
+    excludedHedgeCEXesRef.current = excludedHedgeCEXes;
     feeTierRef.current = feeTier;
     coupledHedgeRef.current = coupledHedge;
     maxFiatLimitRef.current = maxFiatLimit;
