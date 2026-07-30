@@ -16,6 +16,7 @@ import {
   MOCK_SNAPSHOT_LOG_COMPACT,
   MOCK_SNAPSHOT_LOG_DETAIL,
   MOCK_TRADE_COST_CONFIG,
+  MOCK_CEX_PERMISSIONS,
   MOCK_TRADING_ACCOUNTS,
   MOCK_TRADING_PAYMENT_METHODS,
   MOCK_BISQ_PAYMENT_ACCOUNTS,
@@ -102,6 +103,9 @@ export const test = base.extend<Fixtures>({
     );
     await page.route('**/api/trade_cost_config', route =>
       route.fulfill({ json: MOCK_TRADE_COST_CONFIG }),
+    );
+    await page.route('**/api/cex_permissions', route =>
+      route.fulfill({ json: MOCK_CEX_PERMISSIONS }),
     );
     await page.route('**/api/payment_method_groups', route =>
       route.fulfill({ json: MOCK_PAYMENT_METHOD_GROUPS }),

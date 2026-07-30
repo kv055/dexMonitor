@@ -598,6 +598,64 @@ export const MOCK_TRADE_COST_CONFIG = {
   ],
 };
 
+export const MOCK_CEX_PERMISSIONS = {
+  exchanges: [
+    {
+      account_id: 33,
+      provider: 'Kraken',
+      exchange: 'kraken',
+      optimizer_supported: true,
+      active_key_count: 1,
+      permissions_checked_at: ts(1),
+      permissions: {
+        fetch_deposit_address: 'granted',
+        spot_trading: 'granted',
+        read_balances: 'granted',
+        withdraw: 'granted',
+        hedge_positions: 'unsupported',
+      },
+      spot: { available: true, blocking_permissions: [] },
+      hedge: { available: false, blocking_permissions: ['hedge_positions'] },
+    },
+    {
+      account_id: 34,
+      provider: 'Coinbase',
+      exchange: 'coinbase',
+      optimizer_supported: true,
+      active_key_count: 0,
+      permissions_checked_at: null,
+      permissions: {
+        fetch_deposit_address: 'unknown',
+        spot_trading: 'unknown',
+        read_balances: 'unknown',
+        withdraw: 'unknown',
+        hedge_positions: 'unknown',
+      },
+      spot: {
+        available: false,
+        blocking_permissions: ['fetch_deposit_address', 'spot_trading', 'read_balances', 'withdraw'],
+        reason: 'No active API keys are configured.',
+      },
+      hedge: {
+        available: false,
+        blocking_permissions: ['hedge_positions'],
+        reason: 'No active API keys are configured.',
+      },
+    },
+    {
+      account_id: 35,
+      provider: 'Bitstamp',
+      exchange: 'bitstamp',
+      optimizer_supported: false,
+      active_key_count: 1,
+      permissions_checked_at: ts(1),
+      permissions: {},
+      spot: { available: true, blocking_permissions: [] },
+      hedge: { available: true, blocking_permissions: [] },
+    },
+  ],
+};
+
 // ── OHLC ──────────────────────────────────────────────────────────────────────
 
 function candle(hoursAgo: number, open: number, high: number, low: number, close: number) {

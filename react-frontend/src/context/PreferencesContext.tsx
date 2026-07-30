@@ -6,7 +6,8 @@ type Action =
   | { type: 'TOGGLE_THEME' }
   | { type: 'TOGGLE_METHOD'; method: string }
   | { type: 'TOGGLE_GROUP'; methods: string[]; exclude: boolean }
-  | { type: 'TOGGLE_CEX'; cex: string }
+  | { type: 'TOGGLE_SPOT_CEX'; cex: string }
+  | { type: 'TOGGLE_HEDGE_CEX'; cex: string }
   | { type: 'SET_FEE_TIER'; tier: string }
   | { type: 'SET_COUPLED_HEDGE'; coupled: boolean }
   | { type: 'SET_MAX_FIAT_LIMIT'; limit: number | null }
@@ -48,11 +49,15 @@ function getInitialTheme(): ThemeMode {
 
 function getInitialState(): PreferencesState {
   const maxFiat = localStorage.getItem('dex-max-fiat-limit');
+  const legacyCEXes = readJsonArray('dex-excluded-cexes');
+  const storedSpotCEXes = localStorage.getItem('dex-excluded-spot-cexes');
+  const storedHedgeCEXes = localStorage.getItem('dex-excluded-hedge-cexes');
   return {
     theme: getInitialTheme(),
     preferredTimezone: localStorage.getItem('dex-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     excludedMethods: readJsonArray('dex-excluded-payment-methods'),
-    excludedCEXes: readJsonArray('dex-excluded-cexes'),
+    excludedSpotCEXes: storedSpotCEXes == null ? legacyCEXes : readJsonArray('dex-excluded-spot-cexes'),
+    excludedHedgeCEXes: storedHedgeCEXes == null ? legacyCEXes : readJsonArray('dex-excluded-hedge-cexes'),
     feeTier: localStorage.getItem('dex-fee-tier') || '',
     coupledHedge: localStorage.getItem('dex-coupled-hedge') !== 'false',
     maxFiatLimit: maxFiat ? Number(maxFiat) : null,
@@ -80,12 +85,19 @@ function preferencesReducer(state: PreferencesState, action: Action): Preference
         excludedMethods: action.exclude ? [...withoutGroup, ...action.methods] : withoutGroup,
       };
     }
-    case 'TOGGLE_CEX':
+    case 'TOGGLE_SPOT_CEX':
       return {
         ...state,
-        excludedCEXes: state.excludedCEXes.includes(action.cex)
-          ? state.excludedCEXes.filter(cex => cex !== action.cex)
-          : [...state.excludedCEXes, action.cex],
+        excludedSpotCEXes: state.excludedSpotCEXes.includes(action.cex)
+          ? state.excludedSpotCEXes.filter(cex => cex !== action.cex)
+          : [...state.excludedSpotCEXes, action.cex],
+      };
+    case 'TOGGLE_HEDGE_CEX':
+      return {
+        ...state,
+        excludedHedgeCEXes: state.excludedHedgeCEXes.includes(action.cex)
+          ? state.excludedHedgeCEXes.filter(cex => cex !== action.cex)
+          : [...state.excludedHedgeCEXes, action.cex],
       };
     case 'SET_FEE_TIER':
       return { ...state, feeTier: action.tier };
@@ -115,8 +127,12 @@ export function PreferencesProvider({ children }: Props) {
   }, [state.excludedMethods]);
 
   useLayoutEffect(() => {
-    localStorage.setItem('dex-excluded-cexes', JSON.stringify(state.excludedCEXes));
-  }, [state.excludedCEXes]);
+    localStorage.setItem('dex-excluded-spot-cexes', JSON.stringify(state.excludedSpotCEXes));
+  }, [state.excludedSpotCEXes]);
+
+  useLayoutEffect(() => {
+    localStorage.setItem('dex-excluded-hedge-cexes', JSON.stringify(state.excludedHedgeCEXes));
+  }, [state.excludedHedgeCEXes]);
 
   useLayoutEffect(() => {
     localStorage.setItem('dex-fee-tier', state.feeTier);
@@ -140,7 +156,8 @@ export function PreferencesProvider({ children }: Props) {
     toggleTheme: () => dispatch({ type: 'TOGGLE_THEME' }),
     toggleMethod: (method: string) => dispatch({ type: 'TOGGLE_METHOD', method }),
     toggleGroup: (methods: string[], exclude: boolean) => dispatch({ type: 'TOGGLE_GROUP', methods, exclude }),
-    toggleCEX: (cex: string) => dispatch({ type: 'TOGGLE_CEX', cex }),
+    toggleSpotCEX: (cex: string) => dispatch({ type: 'TOGGLE_SPOT_CEX', cex }),
+    toggleHedgeCEX: (cex: string) => dispatch({ type: 'TOGGLE_HEDGE_CEX', cex }),
     setFeeTier: (tier: string) => dispatch({ type: 'SET_FEE_TIER', tier }),
     setCoupledHedge: (coupled: boolean) => dispatch({ type: 'SET_COUPLED_HEDGE', coupled }),
     setMaxFiatLimit: (limit: number | null) => dispatch({ type: 'SET_MAX_FIAT_LIMIT', limit }),

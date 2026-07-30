@@ -6,7 +6,8 @@ export interface StatisticsLoadParams {
   hours: string;
   cex: string;
   excludedPaymentMethods: string[];
-  excludedCEXes: string[];
+  excludedSpotCEXes: string[];
+  excludedHedgeCEXes: string[];
   feeTier: string;
   coupledHedge: boolean;
   maxFiatLimit: number | null;
@@ -68,7 +69,8 @@ function buildBody(p: StatisticsLoadParams) {
     hours: Number(p.hours),
     cex: p.cex,
     exclude_payment_methods: p.excludedPaymentMethods,
-    exclude_cexes: p.excludedCEXes,
+    exclude_spot_cexes: p.excludedSpotCEXes,
+    exclude_hedge_cexes: p.excludedHedgeCEXes,
     fee_tier: p.feeTier,
     coupled_hedge: p.coupledHedge,
     max_fiat_limit: p.maxFiatLimit ?? 0,
