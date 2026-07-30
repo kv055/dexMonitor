@@ -428,7 +428,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	excludedPaymentMethods := queryExcludedPaymentMethods(r)
 	requiredConfirmations := queryConfirmations(r)
-	excludedCEXes := queryExcludedCEXes(r)
+	excludedCEXes := mergeCEXLists(queryExcludedSpotCEXes(r), queryExcludedHedgeCEXes(r))
 	feeTier := queryFeeTier(r)
 	maxFiatLimitEUR := queryMaxFiatLimitEUR(r)
 	rawFiat := strings.TrimSpace(r.URL.Query().Get("fiat"))
@@ -3589,12 +3589,46 @@ func queryFeeTier(r *http.Request) string {
 
 // queryExcludedCEXes reads the ?exclude_cexes= query param (comma-separated).
 func queryExcludedCEXes(r *http.Request) []string {
-	values := append([]string{}, r.URL.Query()["exclude_cexes"]...)
+	return queryCEXList(r, "exclude_cexes")
+}
+
+func queryExcludedSpotCEXes(r *http.Request) []string {
+	return mergeCEXLists(queryExcludedCEXes(r), queryCEXList(r, "exclude_spot_cexes"))
+}
+
+func queryExcludedHedgeCEXes(r *http.Request) []string {
+	return mergeCEXLists(queryExcludedCEXes(r), queryCEXList(r, "exclude_hedge_cexes"))
+}
+
+func queryCEXList(r *http.Request, key string) []string {
+	return normalizeCEXList(r.URL.Query()[key])
+}
+
+func normalizeCEXList(values []string) []string {
 	seen := make(map[string]struct{}, len(values))
 	result := make([]string, 0, len(values))
 	for _, raw := range values {
 		for _, part := range strings.Split(raw, ",") {
 			cex := strings.TrimSpace(strings.ToLower(part))
+			if cex == "" {
+				continue
+			}
+			if _, ok := seen[cex]; ok {
+				continue
+			}
+			seen[cex] = struct{}{}
+			result = append(result, cex)
+		}
+	}
+	return result
+}
+
+func mergeCEXLists(lists ...[]string) []string {
+	seen := make(map[string]struct{})
+	result := make([]string, 0)
+	for _, list := range lists {
+		for _, cex := range list {
+			cex = strings.TrimSpace(strings.ToLower(cex))
 			if cex == "" {
 				continue
 			}
