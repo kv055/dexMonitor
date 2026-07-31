@@ -287,7 +287,7 @@ function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls, scope }: 
 
   const categoryOffers = useMemo(
     () => baseOffersForPremiumCategory(offers, filters, scope),
-    [offers, filters.direction, filters.exchange, filters.excludedExchanges, scope],
+    [offers, filters, scope],
   );
 
   const availability = useMemo(() => {

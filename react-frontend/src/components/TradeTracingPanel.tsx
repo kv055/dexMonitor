@@ -443,14 +443,11 @@ export function TradeTracingPanel({
   useEffect(() => {
     if (controlledSizeMode == null) return;
     const nextBtc = bd?.btc_amount ?? btcMax ?? btcMin ?? 0;
-    setDraft(prev => {
-      if (unit === 'fiat' && canUseFiat) {
-        const next = nextBtc > 0 ? (nextBtc * refPrice!).toFixed(2) : '';
-        return next;
-      }
-      const next = nextBtc > 0 ? fmtBtc(nextBtc) : '';
-      return next;
-    });
+    if (unit === 'fiat' && canUseFiat) {
+      setDraft(nextBtc > 0 ? (nextBtc * refPrice!).toFixed(2) : '');
+    } else {
+      setDraft(nextBtc > 0 ? fmtBtc(nextBtc) : '');
+    }
     // Only re-sync when the controlled scenario or resolved trade size changes.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [controlledSizeMode, effectiveMode, bd?.btc_amount]);

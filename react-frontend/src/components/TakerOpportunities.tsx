@@ -11,6 +11,7 @@ import {
   getBtcMax,
   getBtcMin,
   getCappedTradeSizeBtc,
+  getDisplayAbortCost,
   getDisplayCostBreakdown,
   getEstimatedProfitBtc,
   getEstimatedProfitFiat,
