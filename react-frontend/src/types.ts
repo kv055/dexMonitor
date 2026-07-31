@@ -68,10 +68,14 @@ export interface CostBreakdown {
   capital?: CapitalRequirement | null;
 }
 
+export type TradeMode = 'hedgefull_single_collateral' | 'hedgeless_double_collateral';
+
 // CapitalRequirement is the capital that must be committed to execute the trade,
 // distinct from the fees consumed by it. Broken out into the spot leg (EUR to
 // buy BTC on the CEX), the perp hedge collateral, and the DEX security deposit,
 // plus the grand total. EUR figures are 0 when the ref price is unknown.
+// Hedgeless mode adds btc_liquidity_btc (position + deposit) and
+// fiat_collateral_eur (position×price only); total_eur = pool EUR + fiat.
 export interface CapitalRequirement {
   btc_amount: number;
   btc_price_eur: number;
@@ -83,6 +87,9 @@ export interface CapitalRequirement {
   security_deposit_eur: number;
   total_eur: number;
   deposit_estimated: boolean;     // true while using the configured %, not the real per-offer value
+  trade_mode?: TradeMode | string;
+  btc_liquidity_btc?: number;
+  fiat_collateral_eur?: number;
 }
 
 export interface AbortCostBreakdown {
@@ -232,6 +239,15 @@ export interface ManualRouteOptions {
   hedge_costs: ManualHedgeCostOption[];
 }
 
+/** Alternate trade-mode economics on the same spot route (hedgeless double collateral). */
+export interface LiveOfferModeVariant {
+  premium: LiveOfferPremium;
+  profit: LiveOfferProfit;
+  costs: LiveOfferScenarioCosts;
+  abort_cost?: AbortCostBreakdown | null;
+  capital?: CapitalRequirement | null;
+}
+
 export interface LiveOfferScenario {
   cap_fiat?: number | null;
   cost_policy?: string | null;
@@ -245,6 +261,7 @@ export interface LiveOfferScenario {
   abort_cost?: AbortCostBreakdown | null;
   capital?: CapitalRequirement | null;
   manual_route_options?: ManualRouteOptions | null;
+  hedgeless_double_collateral?: LiveOfferModeVariant | null;
 }
 
 export interface LiveOfferAnalysis {
@@ -941,6 +958,7 @@ export interface CexTradeflowRequest {
   selected_offer?: Record<string, unknown>;
   payment_method?: string;
   payment_methods?: string[];
+  trade_mode?: TradeMode | string;
 }
 
 export interface CexTradeflowResult {
@@ -1039,6 +1057,13 @@ export interface CexPreTradeCheckRequest {
   // The DEX venue slug (e.g. "bisq2", "robosats") — scopes the message-template
   // check to chat-style venues that need one.
   dex?: string;
+  // hedgefull_single_collateral (default) | hedgeless_double_collateral
+  trade_mode?: TradeMode | string;
+  // Futures venue for hedgefull mode; used to check hedge permissions on the
+  // hedge exchange when decoupled from the spot provider.
+  hedge_venue?: string;
+  // Hedgeless only: position_btc + security_deposit_btc for the LND wallet pool check.
+  required_btc_liquidity?: number;
 }
 
 export interface CexHedgeOpenResult {

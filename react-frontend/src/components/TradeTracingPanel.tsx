@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Offer, CexSpotBuyResult, CexHedgeOpenResult, CexTradeflowResult, HedgePositionUpdate, PreTradeCheckReport, WithdrawalTrackResult } from '../types';
+import type { Offer, CexSpotBuyResult, CexHedgeOpenResult, CexTradeflowResult, HedgePositionUpdate, PreTradeCheckReport, TradeMode, WithdrawalTrackResult } from '../types';
 import { ExchangeTag } from './ExchangeTag';
 import { stripTrailingZeros } from '../utils/numberFormat';
 import { premiumClass } from '../utils/formatters';
@@ -173,7 +173,10 @@ function LiveHedgePosition({ position, socketConnected }: { position: HedgePosit
   );
 }
 
-export function TradeTracingPanel({ offer }: { offer: Offer }) {
+export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collateral' }: {
+  offer: Offer;
+  tradeMode?: TradeMode;
+}) {
   const { filters } = useFilters();
   const hasCapped = hasCappedScenario(offer);
   const hasMin = hasMinScenario(offer);
@@ -184,15 +187,30 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
   // full size exceeds the fiat cap); otherwise there's nothing to cap, so
   // fall back to the max position size.
   const [sizeMode, setSizeMode] = useState<SizeMode>(() => (cappedAvailable ? 'capped' : 'full'));
+  const isHedgeless = tradeMode === 'hedgeless_double_collateral';
 
   const bd = getDisplayCostBreakdown(offer, sizeMode);
-  const abortCost = getDisplayAbortCost(offer, sizeMode);
+  const scenario = sizeMode === 'capped'
+    ? offer.analysis?.capped_volume
+    : sizeMode === 'min'
+      ? offer.analysis?.min_volume
+      : offer.analysis?.full_volume;
+  const hedgelessVariant = scenario?.hedgeless_double_collateral ?? null;
+  const tradeCapital = isHedgeless
+    ? (hedgelessVariant?.capital ?? bd?.capital ?? null)
+    : (bd?.capital ?? null);
+  const abortCost = isHedgeless && hedgelessVariant?.abort_cost
+    ? hedgelessVariant.abort_cost
+    : getDisplayAbortCost(offer, sizeMode);
   const refPrice = getRefPrice(offer);
   const fiatCurrency = offer.pricing?.fiat_currency ?? 'EUR';
   const isAsk = offer.direction === 'sell';
   const routeCex = bd?.route_cex ?? '';
+  const hedgeVenue = bd?.hedge?.venue ?? '';
   const cexLabel = routeCex ? routeCex.charAt(0).toUpperCase() + routeCex.slice(1) : '—';
-  const netPremium = getNetPremiumPercent(offer, sizeMode);
+  const netPremium = isHedgeless
+    ? (hedgelessVariant?.premium.net_percent ?? getNetPremiumPercent(offer, sizeMode))
+    : getNetPremiumPercent(offer, sizeMode);
   const btcMin = getBtcMin(offer);
   const btcMax = getBtcMax(offer);
 
@@ -282,7 +300,11 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
     }
   }
 
-  const canTrade = !!routeCex && clampedBtc > 0 && !!bd?.capital && !!bd?.hedge?.venue && submit.phase !== 'submitting';
+  const canTrade = !!routeCex
+    && clampedBtc > 0
+    && !!tradeCapital
+    && (isHedgeless || !!hedgeVenue)
+    && submit.phase !== 'submitting';
   const checksPassed = checks.phase === 'done' && !!checks.report?.ok;
 
   // Opening the confirm dialog immediately kicks off the (read-only) pre-trade checks
@@ -312,10 +334,16 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
       const report = await cexPreTradeCheck({
         provider: routeCex,
         fiat_currency: fiatCurrency,
-        required_capital_eur: bd?.capital?.total_eur ?? 0,
+        required_capital_eur: tradeCapital?.total_eur ?? 0,
         payment_method: resolvedPaymentMethod || undefined,
         payment_methods: offer.payment_methods ?? undefined,
         dex: offer.exchange,
+        trade_mode: tradeMode,
+        hedge_venue: isHedgeless ? undefined : hedgeVenue || undefined,
+        required_btc_liquidity: isHedgeless
+          ? (tradeCapital?.btc_liquidity_btc
+            ?? ((tradeCapital?.btc_amount ?? 0) + (tradeCapital?.security_deposit_btc ?? 0)))
+          : undefined,
       });
       setChecks({ phase: 'done', report });
       if (report.lnd_withdraw_address) {
@@ -327,7 +355,10 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
   }
 
   async function runTrade() {
-    const hedgeVenue = bd?.hedge?.venue;
+    if (isHedgeless) {
+      setSubmit({ phase: 'error', error: 'Hedgeless Double Collateral execution is not wired yet; pre-trade checks only.' });
+      return;
+    }
     if (!hedgeVenue) return;
 
     setConfirmOpen(false);
@@ -353,7 +384,7 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
         market_side: 'bid',
         btc_amount: clampedBtc,
         fiat_currency: fiatCurrency,
-        required_capital_eur: bd?.capital?.total_eur ?? 0,
+        required_capital_eur: tradeCapital?.total_eur ?? 0,
         hedge_venue: hedgeVenue,
         hedge_side: side,
         hedge_notional_btc: btcNotional,
@@ -363,6 +394,7 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
         fiat_amount: fiatAmount > 0 ? fiatAmount : undefined,
         payment_method: tradePaymentMethod || undefined,
         payment_methods: tradePaymentMethod ? undefined : offer.payment_methods ?? undefined,
+        trade_mode: tradeMode,
         selected_offer: {
           offer_id: offer.offer_id,
           exchange: offer.exchange,
@@ -508,7 +540,7 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
                 </span>
               </div>
 
-              {bd && <CapitalRequiredSection capital={bd.capital} />}
+              {bd && <CapitalRequiredSection capital={tradeCapital} />}
               <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
             </div>
           )}
