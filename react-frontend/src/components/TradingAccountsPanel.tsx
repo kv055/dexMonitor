@@ -431,6 +431,57 @@ const PERM_STYLES: Record<PermStatus, { cls: string; mark: string; title?: strin
   unsupported: { cls: 'border-border bg-surface text-muted', mark: '—', title: 'Not reported by this exchange' },
 };
 
+// Union of per-key permissions — mirrors AssessCEXPermissions (any grant wins).
+function aggregateAPIKeyPermissions(apiKeys: TradingAccount['api_keys']): Record<string, PermStatus> {
+  const combined: Record<string, PermStatus> = {};
+  for (const permission of CANONICAL_PERMISSIONS) {
+    let status: PermStatus = 'denied';
+    let sawUnsupported = false;
+    for (const key of apiKeys) {
+      const raw = key.permissions?.[permission];
+      if (raw === undefined || raw === null || raw === '') {
+        continue;
+      }
+      const value = toPermStatus(raw);
+      if (value === 'granted') {
+        status = 'granted';
+        break;
+      }
+      if (value === 'unsupported') {
+        sawUnsupported = true;
+      }
+    }
+    if (status !== 'granted' && sawUnsupported) {
+      status = 'unsupported';
+    }
+    combined[permission] = status;
+  }
+  return combined;
+}
+
+function AggregatedPermissionsRow({ apiKeys }: { apiKeys: TradingAccount['api_keys'] }) {
+  const aggregated = aggregateAPIKeyPermissions(apiKeys);
+  return (
+    <div className="rounded border border-border bg-surface/40 px-2 py-1.5 flex flex-wrap items-center gap-1.5">
+      <span className="text-[0.65rem] text-text whitespace-nowrap font-medium">Aggregated Permissions</span>
+      <div className="flex flex-wrap gap-1">
+        {CANONICAL_PERMISSIONS.map(name => {
+          const style = PERM_STYLES[aggregated[name] ?? 'denied'];
+          return (
+            <span
+              key={name}
+              title={style.title}
+              className={`rounded-full border px-1.5 py-0.5 text-[0.65rem] whitespace-nowrap ${style.cls}`}
+            >
+              {formatPermissionLabel(name)} {style.mark}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function APIKeyPermissionChips({ permissions }: { permissions: Record<string, string | boolean> }) {
   const entries = Object.entries(permissions).sort(([left], [right]) => {
     const li = CANONICAL_PERMISSIONS.indexOf(left);
@@ -3946,6 +3997,7 @@ export function TradingAccountsPanel() {
         {profile.helpText ? (
           <p className="text-[0.65rem] text-muted leading-relaxed px-1">{profile.helpText}</p>
         ) : null}
+        {isCexAccount(account) ? <AggregatedPermissionsRow apiKeys={account.api_keys} /> : null}
         {account.api_keys.map(key => {
           const edit = editingAPIKeyById[key.id];
           const secretKey = `api-key:${key.id}:key`;
@@ -4422,8 +4474,10 @@ export function TradingAccountsPanel() {
                         <span className="text-red">{cexDepositSlice.error}</span>
                       ) : cexMainnetDeposit ? (
                         <span className="inline-flex items-center gap-1"><span className="font-mono break-all text-text">{visibleAccountSecretsByAccount[account.id]?.[cexDepositField] ? cexMainnetDeposit.address : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleAccountSecretsByAccount[account.id]?.[cexDepositField] ? 'Hide deposit address' : 'Show deposit address'} onClick={() => toggleLocalSecretVisibility(account.id, cexDepositField)}>👁</button></span>
+                      ) : cexDepositSlice && !cexDepositSlice.loading ? (
+                        <span className="text-muted">No BTC deposit address on this account yet.</span>
                       ) : (
-                        '—'
+                        <span className="text-muted">—</span>
                       )}
                     </div>
                     <div className="sm:col-span-2 xl:col-span-3">
@@ -4434,8 +4488,10 @@ export function TradingAccountsPanel() {
                         <span className="text-red">{cexBalancesSlice.error}</span>
                       ) : cexBalanceSummary ? (
                         <span className="text-text">{cexBalanceSummary}</span>
+                      ) : cexBalancesSlice && !cexBalancesSlice.loading ? (
+                        <span className="text-muted">No balances returned.</span>
                       ) : (
-                        '—'
+                        <span className="text-muted">—</span>
                       )}
                     </div>
                   </>
