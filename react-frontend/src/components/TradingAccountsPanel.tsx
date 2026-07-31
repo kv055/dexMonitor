@@ -1443,7 +1443,7 @@ function buildAccountSummaryViewModel(account: TradingAccount): AccountSummaryVi
     capabilityBadges.push('Account file');
   }
   if (isLndWalletProvider(account.provider) && backupItems > 0) {
-    capabilityBadges.push(`${backupItems} Backups`);
+    capabilityBadges.push('Backup');
   }
   if (account.bank_accounts.length > 0) {
     capabilityBadges.push(`${account.bank_accounts.length} Bank accounts`);
