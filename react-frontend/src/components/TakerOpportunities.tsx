@@ -33,7 +33,7 @@ import {
 import { CostBreakdownPanel, SizeToggle, type SizeMode } from './OfferBreakdownPanel';
 import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
-import { DualRangeFilter, LiveOfferFilters, PastOfferFilters } from './ControlPanel';
+import { DualRangeFilter, LiveOfferFilters, PastOfferFilters, SharedOfferFilters } from './ControlPanel';
 import { DepthChart } from './DepthChart';
 import { TradeTracingPanel } from './TradeTracingPanel';
 import { SellerRatingBadge } from './SellerRatingBadge';
@@ -2130,6 +2130,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
             onEnableAll={() => applyDisabledExchanges([])}
             onDisableAll={() => applyDisabledExchanges([...activeExchangeFilter.exchanges])}
           />
+          <SharedOfferFilters scope={viewMode} />
           {viewMode === 'live' && (
             <LiveOfferFilters onRefresh={onRefreshLive} lastUpdatedAt={lastUpdatedAt} />
           )}

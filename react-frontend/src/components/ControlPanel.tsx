@@ -1,9 +1,15 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
-import type { PremiumFilterMode } from '../types';
+import type { Offer, PremiumFilterMode } from '../types';
 import { formatTimeOnly } from '../utils/formatters';
-import { getEstimatedProfitFiat, getPremiumMetricValue, isOfferLive, profitScenarioForPremiumMode } from '../utils/offerAccess';
+import {
+  getEstimatedProfitFiat,
+  getPremiumMetricValue,
+  hasCappedScenario,
+  isOfferLive,
+  profitScenarioForPremiumMode,
+} from '../utils/offerAccess';
 
 const PAYMENT_PALETTE = [
   '#f7931a', '#3fb950', '#bc8cff', '#58a6ff', '#f85149',
@@ -16,6 +22,45 @@ const PREMIUM_FILTER_OPTIONS: { value: PremiumFilterMode; label: string }[] = [
   { value: 'net_capped', label: 'Net Premium Capped' },
 ];
 
+/** Dropdown order top→bottom; fallback walks downward when a category is empty. */
+type PremiumCategory = { mode: PremiumFilterMode; premiumOnly: boolean; label: string };
+
+const PREMIUM_CATEGORIES: PremiumCategory[] = [
+  ...PREMIUM_FILTER_OPTIONS.map(opt => ({ mode: opt.value, premiumOnly: true, label: opt.label })),
+  { mode: 'net_full', premiumOnly: false, label: 'Incl. non premium offers' },
+];
+
+function baseOffersForPremiumCategory(offers: Offer[], filters: {
+  direction: string;
+  exchange: string;
+  excludedExchanges: string[];
+}, scope: 'live' | 'past'): Offer[] {
+  let f = offers.filter(o => (scope === 'live' ? isOfferLive(o) : !isOfferLive(o)));
+  if (filters.direction) f = f.filter(o => o.direction === filters.direction);
+  if (filters.exchange) f = f.filter(o => o.exchange === filters.exchange);
+  if (filters.excludedExchanges.length > 0) {
+    const excluded = new Set(filters.excludedExchanges);
+    f = f.filter(o => !excluded.has(o.exchange));
+  }
+  return f;
+}
+
+/** True when the premium category would show at least one offer. */
+function premiumCategoryAvailable(offers: Offer[], mode: PremiumFilterMode, premiumOnly: boolean): boolean {
+  if (offers.length === 0) return false;
+  if (!premiumOnly) return true;
+  if (mode === 'net_capped') {
+    // Capped mode only applies when at least one offer exceeds the fiat cap.
+    return offers.some(o => hasCappedScenario(o) && (getPremiumMetricValue(o, 'net_capped') ?? 0) > 0);
+  }
+  return offers.some(o => (getPremiumMetricValue(o, mode) ?? 0) > 0);
+}
+
+function categoryIndex(mode: PremiumFilterMode, premiumOnly: boolean): number {
+  if (!premiumOnly) return PREMIUM_CATEGORIES.length - 1;
+  const idx = PREMIUM_CATEGORIES.findIndex(c => c.premiumOnly && c.mode === mode);
+  return idx >= 0 ? idx : 0;
+}
 const FIAT_OPTIONS = ['EUR', 'USD', 'GBP', 'AUD', 'CHF', 'SEK', 'NOK', 'CAD'];
 const SOURCE_OPTIONS = ['kraken', 'coinbase', 'bitstamp', 'binance'];
 
@@ -232,12 +277,47 @@ interface PremiumModeDropdownProps {
   premiumOnly: boolean;
   onChange: (v: PremiumFilterMode, premiumOnly?: boolean) => void;
   inputCls: string;
+  scope: 'live' | 'past';
 }
 
-function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls }: PremiumModeDropdownProps) {
+function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls, scope }: PremiumModeDropdownProps) {
+  const { offers, filters, setFilters } = useFilters();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
+  const categoryOffers = useMemo(
+    () => baseOffersForPremiumCategory(offers, filters, scope),
+    [offers, filters.direction, filters.exchange, filters.excludedExchanges, scope],
+  );
+
+  const availability = useMemo(() => {
+    const map = new Map<string, boolean>();
+    for (const cat of PREMIUM_CATEGORIES) {
+      const key = cat.premiumOnly ? `${cat.mode}:only` : 'incl:all';
+      map.set(key, premiumCategoryAvailable(categoryOffers, cat.mode, cat.premiumOnly));
+    }
+    return map;
+  }, [categoryOffers]);
+
+  const isAvailable = (mode: PremiumFilterMode, only: boolean) =>
+    availability.get(only ? `${mode}:only` : 'incl:all') === true;
+
+  // When the active category has no offers, fall through to the next one below.
+  useEffect(() => {
+    const available = (mode: PremiumFilterMode, only: boolean) =>
+      availability.get(only ? `${mode}:only` : 'incl:all') === true;
+    if (available(value, premiumOnly)) return;
+    const start = categoryIndex(value, premiumOnly);
+    const below = PREMIUM_CATEGORIES.slice(start + 1);
+    const fallback = below.find(c => available(c.mode, c.premiumOnly))
+      ?? PREMIUM_CATEGORIES.find(c => available(c.mode, c.premiumOnly));
+    if (!fallback) return;
+    if (fallback.premiumOnly === premiumOnly && (!fallback.premiumOnly || fallback.mode === value)) return;
+    setFilters({
+      premiumMode: fallback.premiumOnly ? fallback.mode : value,
+      premiumOnly: fallback.premiumOnly,
+    });
+  }, [availability, value, premiumOnly, setFilters]);
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
@@ -262,21 +342,61 @@ function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls }: Premium
 
       {open && (
         <div className="absolute top-full left-0 mt-1 z-50 bg-surface border border-border rounded-md overflow-hidden min-w-full shadow-lg">
-          {PREMIUM_FILTER_OPTIONS.map(opt => (
-            <button
-              key={opt.value}
-              onClick={() => { onChange(opt.value, true); setOpen(false); }}
-              className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors ${premiumOnly && value === opt.value ? 'text-accent bg-bg' : 'text-text'}`}
-            >
-              <span className="text-[0.8rem]">{opt.label}</span>
-            </button>
-          ))}
-          <button
-            onClick={() => { onChange(value, false); setOpen(false); }}
-            className={`w-full text-left px-3 py-1.5 hover:bg-bg transition-colors border-t border-border/60 ${!premiumOnly ? 'text-accent bg-bg' : 'text-text'}`}
-          >
-            <span className="text-[0.8rem]">Incl. non premium offers</span>
-          </button>
+          {PREMIUM_FILTER_OPTIONS.map(opt => {
+            const enabled = isAvailable(opt.value, true);
+            const active = premiumOnly && value === opt.value;
+            return (
+              <button
+                key={opt.value}
+                type="button"
+                disabled={!enabled}
+                title={enabled
+                  ? undefined
+                  : opt.value === 'net_capped'
+                    ? 'No offers exceed the max fiat position (capped volume unused)'
+                    : `No ${opt.label.toLowerCase()} offers in the current list`}
+                onClick={() => {
+                  if (!enabled) return;
+                  onChange(opt.value, true);
+                  setOpen(false);
+                }}
+                className={`w-full text-left px-3 py-1.5 transition-colors ${
+                  !enabled
+                    ? 'text-muted/45 cursor-not-allowed'
+                    : active
+                      ? 'text-accent bg-bg hover:bg-bg'
+                      : 'text-text hover:bg-bg'
+                }`}
+              >
+                <span className="text-[0.8rem]">{opt.label}</span>
+              </button>
+            );
+          })}
+          {(() => {
+            const inclEnabled = isAvailable(value, false);
+            const active = !premiumOnly;
+            return (
+              <button
+                type="button"
+                disabled={!inclEnabled}
+                title={inclEnabled ? undefined : 'No offers in the current list'}
+                onClick={() => {
+                  if (!inclEnabled) return;
+                  onChange(value, false);
+                  setOpen(false);
+                }}
+                className={`w-full text-left px-3 py-1.5 transition-colors border-t border-border/60 ${
+                  !inclEnabled
+                    ? 'text-muted/45 cursor-not-allowed'
+                    : active
+                      ? 'text-accent bg-bg hover:bg-bg'
+                      : 'text-text hover:bg-bg'
+                }`}
+              >
+                <span className="text-[0.8rem]">Incl. non premium offers</span>
+              </button>
+            );
+          })()}
         </div>
       )}
     </div>
@@ -484,19 +604,14 @@ interface LiveOfferFiltersProps {
 }
 
 /**
- * Live-offer-specific filter controls (payment method, premium metric, premium
- * range) wired to the shared FiltersContext, plus the refresh action. Shared
- * Direction/Exchange controls are rendered by the Insights sidebar itself.
+ * Filters shared by Live and Past Insights views. Kept in a fixed order so
+ * switching Live ↔ Past does not jump Fiat / Premium / Range around.
  */
-export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersProps) {
+export function SharedOfferFilters({ scope }: { scope: 'live' | 'past' }) {
   const { filters, setFilters } = useFilters();
-  const { timezone } = useTimezone();
-  const panelRef = useRef<HTMLDivElement>(null);
-
-  const lastUpdated = lastUpdatedAt ? `Updated ${formatTimeOnly(lastUpdatedAt, timezone)}` : '';
 
   return (
-    <div ref={panelRef} className="relative flex flex-col gap-3 min-w-0">
+    <div className="flex flex-col gap-3 min-w-0">
       <label className="flex flex-col gap-1">
         <span className={labelCls}>Fiat</span>
         <select
@@ -509,6 +624,35 @@ export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersP
         </select>
       </label>
 
+      <div className="flex flex-col gap-1">
+        <span className={labelCls}>Premium</span>
+        <PremiumModeDropdown
+          value={filters.premiumMode}
+          premiumOnly={filters.premiumOnly}
+          onChange={(v, premiumOnly) => setFilters({ premiumMode: v, ...(premiumOnly == null ? {} : { premiumOnly }) })}
+          inputCls={controlCls}
+          scope={scope}
+        />
+      </div>
+
+      {scope === 'live' ? <LiveNetProfitRange /> : <PastPremiumRange />}
+    </div>
+  );
+}
+
+/**
+ * Live-only filter controls (reference CEX, payment method, refresh). Shared
+ * Fiat / Premium / Range live in SharedOfferFilters above this block.
+ */
+export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersProps) {
+  const { filters, setFilters } = useFilters();
+  const { timezone } = useTimezone();
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  const lastUpdated = lastUpdatedAt ? `Updated ${formatTimeOnly(lastUpdatedAt, timezone)}` : '';
+
+  return (
+    <div ref={panelRef} className="relative flex flex-col gap-3 min-w-0">
       <label className="flex flex-col gap-1">
         <span className={labelCls}>Reference source</span>
         <select
@@ -526,18 +670,6 @@ export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersP
         <PaymentDropdown value={filters.payment} onChange={v => setFilters({ payment: v })} inputCls={controlCls} containerRef={panelRef} />
       </div>
 
-      <div className="flex flex-col gap-1">
-        <span className={labelCls}>Premium</span>
-        <PremiumModeDropdown
-          value={filters.premiumMode}
-          premiumOnly={filters.premiumOnly}
-          onChange={(v, premiumOnly) => setFilters({ premiumMode: v, ...(premiumOnly == null ? {} : { premiumOnly }) })}
-          inputCls={controlCls}
-        />
-      </div>
-
-      <LiveNetProfitRange />
-
       <div className="flex items-center justify-between gap-2 border-t border-border/70 pt-2">
         <span className="text-[0.68rem] text-muted truncate">{lastUpdated}</span>
         <button
@@ -547,33 +679,20 @@ export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersP
           ↻ Refresh
         </button>
       </div>
-
     </div>
   );
 }
 
-// Past offers use the same frontend-only fiat selection as the live feed, but
-// their controls are shown in a separate panel. Keeping the selector here
-// makes the active historical dataset explicit while the Past Offers view is
-// open.
+/**
+ * Past-only payment-scope control. Fiat / Premium / Range live in
+ * SharedOfferFilters; timeframe / duration / profit / size mode stay in the
+ * Insights sidebar below this block.
+ */
 export function PastOfferFilters({ paymentFilter, onPaymentFilterChange }: {
   paymentFilter: 'settings' | 'all';
   onPaymentFilterChange: (filter: 'settings' | 'all') => void;
 }) {
-  const { filters, setFilters } = useFilters();
-
-  return (<>
-    <label className="flex flex-col gap-1">
-      <span className={labelCls}>Fiat</span>
-      <select
-        value={filters.fiat}
-        onChange={event => setFilters({ fiat: event.target.value })}
-        className={controlCls}
-        title="Show past offers quoted in this currency"
-      >
-        {FIAT_OPTIONS.map(currency => <option key={currency} value={currency}>{currency}</option>)}
-      </select>
-    </label>
+  return (
     <label className="flex flex-col gap-1">
       <span className={labelCls}>Payments</span>
       <select
@@ -586,15 +705,5 @@ export function PastOfferFilters({ paymentFilter, onPaymentFilterChange }: {
         <option value="all">All payment methods</option>
       </select>
     </label>
-    <div className="flex flex-col gap-1">
-      <span className={labelCls}>Premium</span>
-      <PremiumModeDropdown
-        value={filters.premiumMode}
-        premiumOnly={filters.premiumOnly}
-        onChange={(v, premiumOnly) => setFilters({ premiumMode: v, ...(premiumOnly == null ? {} : { premiumOnly }) })}
-        inputCls={controlCls}
-      />
-    </div>
-    <PastPremiumRange />
-  </>);
+  );
 }
