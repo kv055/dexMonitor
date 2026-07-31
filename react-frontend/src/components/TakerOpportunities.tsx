@@ -1,6 +1,6 @@
 import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { CostBreakdown, HedgeBreakdown, ManualRouteOptions, Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCompact, PremiumFilterMode, TakerOpportunityMode, TradeMode } from '../types';
+import type { ManualRouteOptions, Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCompact, PremiumFilterMode, TakerOpportunityMode, TradeMode } from '../types';
 import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
@@ -11,7 +11,6 @@ import {
   getBtcMax,
   getBtcMin,
   getCappedTradeSizeBtc,
-  getDisplayAbortCost,
   getDisplayCostBreakdown,
   getEstimatedProfitBtc,
   getEstimatedProfitFiat,
@@ -30,6 +29,11 @@ import {
   isOfferLive,
   pastProfitableOrderAsOffer,
 } from '../utils/offerAccess';
+import {
+  DEFAULT_MANUAL_ROUTE_SELECTION,
+  resolveTradeBreakdown,
+  type ManualRouteSelection,
+} from '../utils/manualRoute';
 import { CostBreakdownPanel, SizeToggle, type SizeMode } from './OfferBreakdownPanel';
 import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
@@ -1037,85 +1041,6 @@ function LiveOfferOverview({ offer, fiat, amountUnit, onAmountUnitChange, childr
   </>);
 }
 
-type ManualRouteSelection = { spot: string; hedge: string };
-
-const EMPTY_HEDGE: HedgeBreakdown = {
-  open_fee_pct: 0,
-  open_fee_btc: 0,
-  close_fee_pct: 0,
-  close_fee_btc: 0,
-  funding_fee_pct: 0,
-  funding_fee_btc: 0,
-  fee_sum_pct: 0,
-  fee_sum_btc: 0,
-  side: '',
-  venue: '',
-  instrument: '',
-  transfer_minutes: 0,
-  position: null,
-};
-
-function applyManualRouteSelection(bd: CostBreakdown, options: ManualRouteOptions | null | undefined, selection: ManualRouteSelection, premiumPct: number | null): CostBreakdown {
-  if (!options || (selection.spot === 'auto' && selection.hedge === 'auto')) return bd;
-  const spot = selection.spot === 'auto' ? undefined : options.spot_taker_fees.find(option => option.exchange === selection.spot);
-  const withdrawal = selection.spot === 'auto' ? undefined : options.withdrawal_fees.find(option => option.exchange === selection.spot);
-  const hedge = selection.hedge === 'auto' ? undefined : options.hedge_costs.find(option => option.hedge.venue === selection.hedge && !option.disabled);
-  const next = { ...bd, capital: bd.capital ? { ...bd.capital } : null, hedge: hedge?.hedge ?? bd.hedge };
-  if (spot) {
-    next.route_cex = spot.exchange;
-    next.cex_taker_fee_btc = spot.fee_btc;
-    next.cex_taker_fee_pct = spot.fee_pct;
-  }
-  if (withdrawal && withdrawal.applicable !== false && next.trade_direction !== 'ask') {
-    next.withdrawal_fee_btc = withdrawal.fee_btc;
-    next.withdrawal_fee_pct = withdrawal.fee_pct;
-  }
-  if (next.capital) {
-    next.capital.trade_mode = 'hedgefull_single_collateral';
-    next.capital.hedge_collateral = next.hedge.position?.recommended_collateral ?? 0;
-    next.capital.total_fiat = next.capital.spot_notional + next.capital.hedge_collateral + next.capital.security_deposit_fiat;
-  }
-  const conversionBTC = next.conversion?.fee_sum_btc ?? 0;
-  next.total_cost_btc = next.cex_taker_fee_btc + next.withdrawal_fee_btc + next.network_fee_btc + conversionBTC + next.hedge.fee_sum_btc + next.dex_fee_btc;
-  next.total_cost_pct = next.btc_amount > 0 ? (next.total_cost_btc / next.btc_amount) * 100 : 0;
-  next.estimated_profit_pct = (premiumPct ?? 0) - next.total_cost_pct;
-  next.estimated_profit_btc = next.btc_amount * (next.estimated_profit_pct / 100);
-  return next;
-}
-
-/** Client-side hedgeless derivation for manual route what-if (mirrors server DeriveHedgelessDoubleCollateral). */
-function deriveHedgelessBreakdown(bd: CostBreakdown): CostBreakdown {
-  const hedgeFeeBTC = bd.hedge.fee_sum_btc;
-  const hedgeFeePct = bd.hedge.fee_sum_pct;
-  const totalCostBTC = Math.max(0, bd.total_cost_btc - hedgeFeeBTC);
-  const totalCostPct = bd.btc_amount > 0 ? (totalCostBTC / bd.btc_amount) * 100 : 0;
-  const estimatedProfitPct = bd.estimated_profit_pct + hedgeFeePct;
-  const capital = bd.capital
-    ? (() => {
-        const btcLiquidity = bd.capital.btc_amount + bd.capital.security_deposit_btc;
-        const price = bd.capital.btc_price;
-        const fiatCollateral = price > 0 ? bd.capital.btc_amount * price : 0;
-        return {
-          ...bd.capital,
-          trade_mode: 'hedgeless_double_collateral' as const,
-          hedge_collateral: 0,
-          btc_liquidity_btc: btcLiquidity,
-          fiat_collateral: fiatCollateral,
-          total_fiat: price > 0 ? btcLiquidity * price + fiatCollateral : 0,
-        };
-      })()
-    : null;
-  return {
-    ...bd,
-    hedge: EMPTY_HEDGE,
-    total_cost_btc: totalCostBTC,
-    total_cost_pct: totalCostPct,
-    estimated_profit_pct: estimatedProfitPct,
-    estimated_profit_btc: bd.btc_amount * (estimatedProfitPct / 100),
-    capital,
-  };
-}
-
 function TradeModeToggle({ mode, onChange, hasHedgeless }: {
   mode: TradeMode;
   onChange: (mode: TradeMode) => void;
@@ -1154,7 +1079,7 @@ function ManualRouteControls({ options, selection, onChange, isAsk, hideHedge = 
   return (
     <div className="mt-3 border-t border-border/70 pt-3">
       <p className="text-[0.62rem] font-medium text-text">Manual route analysis</p>
-      <p className="mt-0.5 text-[0.58rem] leading-snug text-muted">Local estimate only; automatic ranking and execution stay unchanged.</p>
+      <p className="mt-0.5 text-[0.58rem] leading-snug text-muted">Overrides spot/hedge for this offer’s estimate, trade tracing, and pre-trade checks. Live ranking still uses the auto route.</p>
       <div className="mt-2.5 grid gap-2">
         <label className="grid gap-0.5 text-[0.58rem] text-muted">Spot CEX{isAsk ? '' : ' + withdrawal'}
           <select className={selectClass} value={selection.spot} onChange={event => onChange({ ...selection, spot: event.target.value })}>
@@ -1179,47 +1104,27 @@ function ManualRouteControls({ options, selection, onChange, isAsk, hideHedge = 
   );
 }
 
-function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, tradeMode, onTradeModeChange }: {
+function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, tradeMode, onTradeModeChange, manualSelection, onManualSelectionChange }: {
   offer: Offer;
   fiat: string;
   scenarioMode: SizeMode;
   onScenarioModeChange: (value: SizeMode) => void;
   tradeMode: TradeMode;
   onTradeModeChange: (mode: TradeMode) => void;
+  manualSelection: ManualRouteSelection;
+  onManualSelectionChange: (selection: ManualRouteSelection) => void;
 }) {
   const [amountUnit, setAmountUnit] = useState<SizeUnit>('fiat');
-  const [manualSelection, setManualSelection] = useState<ManualRouteSelection>({ spot: 'auto', hedge: 'auto' });
-  const effectiveMode: SizeMode = scenarioMode === 'capped' && !hasCappedScenario(offer)
-    ? 'full'
-    : scenarioMode === 'min' && !hasMinScenario(offer)
-      ? 'full'
-      : scenarioMode;
-  const costBreakdown = getDisplayCostBreakdown(offer, effectiveMode);
+  const { breakdown: displayedBreakdown, abortCost: displayedAbortCost, effectiveMode } = resolveTradeBreakdown(
+    offer,
+    scenarioMode,
+    tradeMode,
+    manualSelection,
+  );
   const scenario = effectiveMode === 'capped' ? offer.analysis?.capped_volume : effectiveMode === 'min' ? offer.analysis?.min_volume : offer.analysis?.full_volume;
   const hedgelessVariant = scenario?.hedgeless_double_collateral ?? null;
   const options = scenario?.manual_route_options;
   const rawPremium = getRawPremiumPercent(offer);
-  const manualIsAuto = manualSelection.spot === 'auto' && manualSelection.hedge === 'auto';
-  const hedgefullBreakdown = costBreakdown ? applyManualRouteSelection(costBreakdown, options, manualSelection, rawPremium) : null;
-  const displayedBreakdown = (() => {
-    if (!hedgefullBreakdown) return null;
-    if (tradeMode !== 'hedgeless_double_collateral') return hedgefullBreakdown;
-    if (manualIsAuto && hedgelessVariant) {
-      return {
-        ...hedgefullBreakdown,
-        hedge: hedgelessVariant.costs.hedge,
-        total_cost_btc: hedgelessVariant.costs.total.btc ?? 0,
-        total_cost_pct: hedgelessVariant.costs.total.pct ?? 0,
-        estimated_profit_pct: hedgelessVariant.premium.net_percent ?? 0,
-        estimated_profit_btc: hedgelessVariant.profit.btc ?? 0,
-        capital: hedgelessVariant.capital ?? null,
-      };
-    }
-    return deriveHedgelessBreakdown(hedgefullBreakdown);
-  })();
-  const displayedAbortCost = tradeMode === 'hedgeless_double_collateral' && manualIsAuto && hedgelessVariant?.abort_cost
-    ? hedgelessVariant.abort_cost
-    : getDisplayAbortCost(offer, effectiveMode);
   const displayedNetPremium: number | null = displayedBreakdown
     ? displayedBreakdown.estimated_profit_pct
     : getNetPremiumPercent(offer, effectiveMode);
@@ -1256,7 +1161,7 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
                   <ManualRouteControls
                     options={options}
                     selection={manualSelection}
-                    onChange={setManualSelection}
+                    onChange={onManualSelectionChange}
                     isAsk={displayedBreakdown.trade_direction === 'ask'}
                     hideHedge={tradeMode === 'hedgeless_double_collateral'}
                   />
@@ -1281,7 +1186,7 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
   );
 }
 
-function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChartOfferVisible, toggleChartOfferKey, setChartOfferKeysVisible, onSelectOffer, onCloseOffer, tradeMode, onTradeModeChange }: {
+function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChartOfferVisible, toggleChartOfferKey, setChartOfferKeysVisible, onSelectOffer, onCloseOffer, tradeMode, onTradeModeChange, scenarioMode, onScenarioModeChange, manualSelection, onManualSelectionChange }: {
   offers: Offer[];
   fiat: string;
   timezone: string;
@@ -1294,9 +1199,12 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
   onCloseOffer: () => void;
   tradeMode: TradeMode;
   onTradeModeChange: (mode: TradeMode) => void;
+  scenarioMode: SizeMode;
+  onScenarioModeChange: (mode: SizeMode) => void;
+  manualSelection: ManualRouteSelection;
+  onManualSelectionChange: (selection: ManualRouteSelection) => void;
 }) {
   const [expandedKey, setExpandedKey] = useState<string | null>(null);
-  const [scenarioMode, setScenarioMode] = useState<SizeMode>('full');
   const [sizeUnit, setSizeUnit] = useState<SizeUnit>('btc');
   const [netProfitUnit, setNetProfitUnit] = useState<NetProfitUnit>('fiat');
   const [sort, setSort] = useState<{ column: LiveSortColumn; dir: SortDir } | null>(null);
@@ -1362,9 +1270,11 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
             offer={expandedOffer}
             fiat={fiat}
             scenarioMode={scenarioMode}
-            onScenarioModeChange={setScenarioMode}
+            onScenarioModeChange={onScenarioModeChange}
             tradeMode={tradeMode}
             onTradeModeChange={onTradeModeChange}
+            manualSelection={manualSelection}
+            onManualSelectionChange={onManualSelectionChange}
           />
         </div>
       </div>
@@ -1413,11 +1323,11 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
               role="button"
               tabIndex={0}
               data-testid="live-offers-row"
-              onClick={() => { setScenarioMode('full'); setExpandedKey(stableKey); onSelectOffer(offer); }}
+              onClick={() => { onScenarioModeChange('full'); setExpandedKey(stableKey); onSelectOffer(offer); }}
               onKeyDown={event => {
                 if (event.key === 'Enter' || event.key === ' ') {
                   event.preventDefault();
-                  setScenarioMode('full');
+                  onScenarioModeChange('full');
                   setExpandedKey(stableKey);
                   onSelectOffer(offer);
                 }
@@ -1499,6 +1409,8 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedScenarioMode, setExpandedScenarioMode] = useState<SizeMode>('full');
   const [liveTradeMode, setLiveTradeMode] = useState<TradeMode>('hedgefull_single_collateral');
+  const [liveScenarioMode, setLiveScenarioMode] = useState<SizeMode>('full');
+  const [manualRouteSelection, setManualRouteSelection] = useState<ManualRouteSelection>(DEFAULT_MANUAL_ROUTE_SELECTION);
   const [filtersCollapsed, setFiltersCollapsed] = useState(false);
   const [chartCollapsed, setChartCollapsed] = useState(false);
   const [depthCollapsed, setDepthCollapsed] = useState(false);
@@ -1582,6 +1494,8 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
 
   useEffect(() => {
     setLiveTradeMode('hedgefull_single_collateral');
+    setLiveScenarioMode('full');
+    setManualRouteSelection(DEFAULT_MANUAL_ROUTE_SELECTION);
   }, [selectedOfferKey]);
 
   // The sidebar's Direction/Exchanges controls are shared between Live and Past
@@ -2277,7 +2191,13 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                       : 'shrink-0 lg:w-80 xl:w-96'
                   }`}
                 >
-                  <TradeTracingPanel offer={selectedLiveOffer} tradeMode={liveTradeMode} />
+                  <TradeTracingPanel
+                    offer={selectedLiveOffer}
+                    tradeMode={liveTradeMode}
+                    manualSelection={manualRouteSelection}
+                    sizeMode={liveScenarioMode}
+                    onSizeModeChange={setLiveScenarioMode}
+                  />
                 </section>
               ) : depthCollapsed ? (
                 <button
@@ -2347,6 +2267,10 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
               onCloseOffer={() => setSelectedOfferKey(null)}
               tradeMode={liveTradeMode}
               onTradeModeChange={setLiveTradeMode}
+              scenarioMode={liveScenarioMode}
+              onScenarioModeChange={setLiveScenarioMode}
+              manualSelection={manualRouteSelection}
+              onManualSelectionChange={setManualRouteSelection}
             />
           ) : (
           <div className="min-h-0 flex-1 flex flex-col overflow-hidden">

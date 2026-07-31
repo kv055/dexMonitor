@@ -13,14 +13,17 @@ import {
   getBtcMax,
   getBtcMin,
   getCappedTradeSizeBtc,
-  getDisplayAbortCost,
   getDisplayCostBreakdown,
-  getNetPremiumPercent,
   getRefPrice,
   getMinTradeSizeBtc,
   hasCappedScenario,
   hasMinScenario,
 } from '../utils/offerAccess';
+import {
+  DEFAULT_MANUAL_ROUTE_SELECTION,
+  resolveTradeBreakdown,
+  type ManualRouteSelection,
+} from '../utils/manualRoute';
 
 type Unit = 'btc' | 'fiat';
 type Tab = 'preview' | 'spot' | 'hedge' | 'wallet';
@@ -308,9 +311,18 @@ function LiveHedgePosition({ position, socketConnected }: { position: HedgePosit
   );
 }
 
-export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collateral' }: {
+export function TradeTracingPanel({
+  offer,
+  tradeMode = 'hedgefull_single_collateral',
+  manualSelection = DEFAULT_MANUAL_ROUTE_SELECTION,
+  sizeMode: controlledSizeMode,
+  onSizeModeChange,
+}: {
   offer: Offer;
   tradeMode?: TradeMode;
+  manualSelection?: ManualRouteSelection;
+  sizeMode?: SizeMode;
+  onSizeModeChange?: (mode: SizeMode) => void;
 }) {
   const { filters } = useFilters();
   const hasCapped = hasCappedScenario(offer);
@@ -318,34 +330,25 @@ export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collate
   const cappedBtc = getCappedTradeSizeBtc(offer);
   const minBtc = getMinTradeSizeBtc(offer) ?? getBtcMin(offer);
   const cappedAvailable = hasCapped && (minBtc == null || (cappedBtc != null && minBtc <= cappedBtc));
-  // Default to the capped scenario when one actually applies (the offer's
-  // full size exceeds the fiat cap); otherwise there's nothing to cap, so
-  // fall back to the max position size.
-  const [sizeMode, setSizeMode] = useState<SizeMode>(() => (cappedAvailable ? 'capped' : 'full'));
+  // Uncontrolled default: capped when it applies; otherwise max position size.
+  // When the parent drives sizeMode (Insights live + manual route), stay in sync.
+  const [uncontrolledSizeMode, setUncontrolledSizeMode] = useState<SizeMode>(() => (cappedAvailable ? 'capped' : 'full'));
+  const sizeMode = controlledSizeMode ?? uncontrolledSizeMode;
+  const setSizeMode = onSizeModeChange ?? setUncontrolledSizeMode;
   const isHedgeless = tradeMode === 'hedgeless_double_collateral';
 
-  const bd = getDisplayCostBreakdown(offer, sizeMode);
-  const scenario = sizeMode === 'capped'
-    ? offer.analysis?.capped_volume
-    : sizeMode === 'min'
-      ? offer.analysis?.min_volume
-      : offer.analysis?.full_volume;
-  const hedgelessVariant = scenario?.hedgeless_double_collateral ?? null;
-  const tradeCapital = isHedgeless
-    ? (hedgelessVariant?.capital ?? bd?.capital ?? null)
-    : (bd?.capital ?? null);
-  const abortCost = isHedgeless && hedgelessVariant?.abort_cost
-    ? hedgelessVariant.abort_cost
-    : getDisplayAbortCost(offer, sizeMode);
+  const { breakdown: bd, abortCost, effectiveMode } = useMemo(
+    () => resolveTradeBreakdown(offer, sizeMode, tradeMode, manualSelection),
+    [offer, sizeMode, tradeMode, manualSelection],
+  );
+  const tradeCapital = bd?.capital ?? null;
   const refPrice = getRefPrice(offer);
   const fiatCurrency = offer.pricing?.fiat_currency ?? 'EUR';
   const isAsk = offer.direction === 'sell';
   const routeCex = bd?.route_cex ?? '';
   const hedgeVenue = bd?.hedge?.venue ?? '';
   const cexLabel = routeCex ? routeCex.charAt(0).toUpperCase() + routeCex.slice(1) : '—';
-  const netPremium = isHedgeless
-    ? (hedgelessVariant?.premium.net_percent ?? getNetPremiumPercent(offer, sizeMode))
-    : getNetPremiumPercent(offer, sizeMode);
+  const netPremium = bd?.estimated_profit_pct ?? null;
   const btcMin = getBtcMin(offer);
   const btcMax = getBtcMax(offer);
 
@@ -426,7 +429,7 @@ export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collate
   function toggleSize(mode: SizeMode) {
     if (mode === sizeMode) return;
     setSizeMode(mode);
-    const sizeBd = getDisplayCostBreakdown(offer, mode);
+    const sizeBd = resolveTradeBreakdown(offer, mode, tradeMode, manualSelection).breakdown;
     const nextBtc = sizeBd?.btc_amount ?? btcMax ?? btcMin ?? 0;
     if (unit === 'fiat' && canUseFiat) {
       setDraft(nextBtc > 0 ? (nextBtc * refPrice!).toFixed(2) : '');
@@ -434,6 +437,23 @@ export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collate
       setDraft(nextBtc > 0 ? fmtBtc(nextBtc) : '');
     }
   }
+
+  // Keep the volume draft aligned when the parent changes size scenario (e.g. Size
+  // toggle in the expanded live offer) without going through toggleSize.
+  useEffect(() => {
+    if (controlledSizeMode == null) return;
+    const nextBtc = bd?.btc_amount ?? btcMax ?? btcMin ?? 0;
+    setDraft(prev => {
+      if (unit === 'fiat' && canUseFiat) {
+        const next = nextBtc > 0 ? (nextBtc * refPrice!).toFixed(2) : '';
+        return next;
+      }
+      const next = nextBtc > 0 ? fmtBtc(nextBtc) : '';
+      return next;
+    });
+    // Only re-sync when the controlled scenario or resolved trade size changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [controlledSizeMode, effectiveMode, bd?.btc_amount]);
 
   const canTrade = !!routeCex
     && clampedBtc > 0
@@ -448,7 +468,6 @@ export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collate
   // so their results are shown in the same card before the operator confirms.
   function openConfirm() {
     setConfirmOpen(true);
-    void runPreTradeChecks();
   }
 
   function closeConfirm() {
@@ -496,6 +515,28 @@ export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collate
       setChecks({ phase: 'error', error: err instanceof Error ? err.message : String(err) });
     }
   }
+
+  // Re-run when confirm opens or the effective execution route / capital inputs change.
+  useEffect(() => {
+    if (!confirmOpen || !routeCex) return;
+    void runPreTradeChecks();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    confirmOpen,
+    routeCex,
+    hedgeVenue,
+    tradeMode,
+    isHedgeless,
+    tradeCapital?.total_fiat,
+    tradeCapital?.fiat_collateral,
+    tradeCapital?.spot_notional,
+    tradeCapital?.btc_liquidity_btc,
+    tradeCapital?.btc_amount,
+    tradeCapital?.security_deposit_btc,
+    resolvedPaymentMethod,
+    fiatCurrency,
+    offer.exchange,
+  ]);
 
   async function runTrade() {
     if (isHedgeless) {
@@ -610,7 +651,7 @@ export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collate
               <div className="grid grid-cols-3 gap-x-3 gap-y-1.5">
                 <HeaderFact label="Direction">{isAsk ? 'Sell on DEX' : 'Buy on DEX'}</HeaderFact>
                 <HeaderFact label="DEX"><ExchangeTag exchange={offer.exchange} /></HeaderFact>
-                <HeaderFact label="Best CEX">{cexLabel}</HeaderFact>
+                <HeaderFact label={manualSelection.spot === 'auto' ? 'Best CEX' : 'Spot CEX'}>{cexLabel}</HeaderFact>
                 <HeaderFact label="Payment">{offer.payment_methods?.join(', ') ?? '—'}</HeaderFact>
                 <HeaderFact label="Net premium">
                   <span className={premiumClass(netPremium)}>{netPremium != null ? `${netPremium.toFixed(2)}%` : '—'}</span>
@@ -622,7 +663,7 @@ export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collate
 
               {(hasCapped || hasMin) && (
                 <SizeToggle
-                  mode={sizeMode}
+                  mode={effectiveMode}
                   onModeChange={toggleSize}
                   fullBtc={getDisplayCostBreakdown(offer, 'full')?.btc_amount ?? btcMax}
                   cappedBtc={cappedBtc}
