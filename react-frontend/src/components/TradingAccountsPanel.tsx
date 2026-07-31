@@ -431,6 +431,36 @@ const PERM_STYLES: Record<PermStatus, { cls: string; mark: string; title?: strin
   unsupported: { cls: 'border-border bg-surface text-muted', mark: '—', title: 'Not reported by this exchange' },
 };
 
+function APIKeyPermissionChips({ permissions }: { permissions: Record<string, string | boolean> }) {
+  const entries = Object.entries(permissions).sort(([left], [right]) => {
+    const li = CANONICAL_PERMISSIONS.indexOf(left);
+    const ri = CANONICAL_PERMISSIONS.indexOf(right);
+    if (li !== -1 || ri !== -1) {
+      return (li === -1 ? Infinity : li) - (ri === -1 ? Infinity : ri);
+    }
+    return left.localeCompare(right);
+  });
+  if (entries.length === 0) {
+    return null;
+  }
+  return (
+    <div className="flex flex-wrap gap-1">
+      {entries.map(([name, value]) => {
+        const style = PERM_STYLES[toPermStatus(value)];
+        return (
+          <span
+            key={name}
+            title={style.title}
+            className={`rounded-full border px-1.5 py-0.5 text-[0.65rem] whitespace-nowrap ${style.cls}`}
+          >
+            {formatPermissionLabel(name)} {style.mark}
+          </span>
+        );
+      })}
+    </div>
+  );
+}
+
 // Union of per-key permissions — mirrors AssessCEXPermissions (any grant wins).
 function aggregateAPIKeyPermissions(apiKeys: TradingAccount['api_keys']): Record<string, PermStatus> {
   const combined: Record<string, PermStatus> = {};
@@ -478,36 +508,6 @@ function AggregatedPermissionsRow({ apiKeys }: { apiKeys: TradingAccount['api_ke
           );
         })}
       </div>
-    </div>
-  );
-}
-
-function APIKeyPermissionChips({ permissions }: { permissions: Record<string, string | boolean> }) {
-  const entries = Object.entries(permissions).sort(([left], [right]) => {
-    const li = CANONICAL_PERMISSIONS.indexOf(left);
-    const ri = CANONICAL_PERMISSIONS.indexOf(right);
-    if (li !== -1 || ri !== -1) {
-      return (li === -1 ? Infinity : li) - (ri === -1 ? Infinity : ri);
-    }
-    return left.localeCompare(right);
-  });
-  if (entries.length === 0) {
-    return null;
-  }
-  return (
-    <div className="flex flex-wrap gap-1">
-      {entries.map(([name, value]) => {
-        const style = PERM_STYLES[toPermStatus(value)];
-        return (
-          <span
-            key={name}
-            title={style.title}
-            className={`rounded-full border px-1.5 py-0.5 text-[0.65rem] whitespace-nowrap ${style.cls}`}
-          >
-            {formatPermissionLabel(name)} {style.mark}
-          </span>
-        );
-      })}
     </div>
   );
 }
@@ -1742,14 +1742,14 @@ function AccountDetailPane({
             </div>
           </div>
           <div className="flex flex-wrap items-center gap-1.5">
-            {account.category === 'Fiat Transmitter' || account.category === 'Bank' || account.category === 'Wallet addresses' ? (
+            {isPaymentAccount || isCexAccount(account) ? (
               <>
                 <button
                   type="button"
                   role="switch"
                   aria-checked={account.is_active}
                   aria-label={`${account.is_active ? 'Deactivate' : 'Activate'} ${summaryView.providerName}`}
-                  title={`${account.is_active ? 'Deactivate' : 'Activate'} payment method`}
+                  title={`${account.is_active ? 'Deactivate' : 'Activate'} ${isCexAccount(account) ? 'trading account' : 'payment method'}`}
                   className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${account.is_active ? 'border-green/50 bg-green/20' : 'border-border bg-border/50'}`}
                   onClick={onToggleActive}
                 >
@@ -2662,6 +2662,34 @@ export function TradingAccountsPanel() {
       }
     }
     setVisibleAccountSecretsByAccount(prev => ({ ...prev, [account.id]: { ...prev[account.id], [field]: true } }));
+  };
+
+  const startBankAccountEdit = async (account: TradingAccount, bankAccount: TradingBankAccount) => {
+    setRevealingCredentialsByAccount(prev => ({ ...prev, [account.id]: true }));
+    setError(null);
+    try {
+      const revealedAccount = revealedAccountSecretsByAccount[account.id]
+        ?? await revealTradingAccountSecrets(account.id);
+      setRevealedAccountSecretsByAccount(prev => ({ ...prev, [account.id]: revealedAccount }));
+      const revealedBank = revealedAccount.bank_accounts.find(item => item.id === bankAccount.id);
+      setEditingBankAccountById(prev => ({
+        ...prev,
+        [bankAccount.id]: {
+          label: bankAccount.label ?? '',
+          owner_name: revealedBank?.owner_name ?? bankAccount.owner_name,
+          currency: bankAccount.currency,
+          country: bankAccount.country ?? '',
+          scheme: bankAccount.scheme,
+          iban: revealedBank?.details.iban ?? bankAccount.details.iban ?? '',
+          bic: revealedBank?.details.bic ?? bankAccount.details.bic ?? '',
+          is_active: bankAccount.is_active,
+        },
+      }));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to reveal bank account details');
+    } finally {
+      setRevealingCredentialsByAccount(prev => ({ ...prev, [account.id]: false }));
+    }
   };
 
   const toggleLocalSecretVisibility = (accountID: number, field: string) => {
@@ -3926,7 +3954,7 @@ export function TradingAccountsPanel() {
                   <div><span className="text-text">Currency:</span> {ba.currency}{ba.country ? ` · ${ba.country}` : ''}</div>
                   <div><span className="text-text">Active:</span> {ba.is_active ? 'Yes' : 'No'}</div>
                   <div className="flex gap-1 mt-1 sm:col-span-2">
-                    <button type="button" className={compactButtonCls} onClick={() => setEditingBankAccountById(prev => ({ ...prev, [ba.id]: form }))}>Edit</button>
+                    <button type="button" className={compactButtonCls} onClick={() => void startBankAccountEdit(account, ba)} disabled={revealingCredentialsByAccount[account.id] === true}>Edit</button>
                     <button type="button" className={`${compactButtonCls} text-red`} onClick={() => withReload(async () => { await deleteBankAccount(ba.id); })}>Del</button>
                   </div>
                 </div>

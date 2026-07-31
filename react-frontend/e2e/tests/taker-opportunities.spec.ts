@@ -1,4 +1,4 @@
-import { test, expect, gotoAndWaitForData } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, depthPanel } from '../fixtures/base-fixture';
 
 test.describe('Taker opportunities', () => {
   test('collapses the Insights filters into a side rail and restores them', async ({ page }) => {
@@ -25,19 +25,18 @@ test.describe('Taker opportunities', () => {
     await gotoAndWaitForData(page);
     await page.getByRole('button', { name: 'dex Monitor' }).click();
 
-    // Expanded panel renders the DepthChart with its own heading.
-    const depthHeading = page.locator('h3').filter({ hasText: 'Orderbook Depth' });
-    await expect(depthHeading).toBeVisible();
+    const depthCanvas = depthPanel(page).locator('canvas');
+    await expect(depthCanvas).toBeVisible();
 
     await page.getByRole('button', { name: 'Hide orderbook depth chart' }).click();
-    await expect(depthHeading).toHaveCount(0);
+    await expect(depthCanvas).toHaveCount(0);
 
     const showDepth = page.getByRole('button', { name: 'Show orderbook depth chart' });
     await expect(showDepth).toBeVisible();
     await expect(showDepth).toHaveAttribute('aria-expanded', 'false');
 
     await showDepth.click();
-    await expect(depthHeading).toBeVisible();
+    await expect(depthCanvas).toBeVisible();
     await expect(page.getByRole('button', { name: 'Hide orderbook depth chart' })).toHaveAttribute('aria-expanded', 'true');
   });
 
@@ -45,20 +44,20 @@ test.describe('Taker opportunities', () => {
     await gotoAndWaitForData(page);
     await page.getByRole('button', { name: 'dex Monitor' }).click();
 
-    const depthHeading = page.locator('h3').filter({ hasText: 'Orderbook Depth' });
+    const depthCanvas = depthPanel(page).locator('canvas');
     const tracingHeading = page.locator('h3').filter({ hasText: 'Trade Tracing' });
-    await expect(depthHeading).toBeVisible();
+    await expect(depthCanvas).toBeVisible();
 
     // Select a live offer row in the Live Offers table.
     const firstRow = page.locator('table tbody tr').first();
     await firstRow.click();
     await expect(tracingHeading).toBeVisible();
-    await expect(depthHeading).toHaveCount(0);
+    await expect(depthCanvas).toHaveCount(0);
 
     // Deselecting restores the depth chart.
     await firstRow.click({ force: true });
     await expect(tracingHeading).toHaveCount(0);
-    await expect(depthHeading).toBeVisible();
+    await expect(depthCanvas).toBeVisible();
   });
 
   test('trade tracing fills the space freed by a collapsed OHLC chart', async ({ page }) => {

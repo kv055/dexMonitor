@@ -675,10 +675,13 @@ export function TradeTracingPanel({ offer }: { offer: Offer }) {
                   {!c.passed && c.message && <span className="text-red text-[0.68rem] wrap-break-word">{c.message}</span>}
                 </div>
               ))}
-              {checks.phase === 'done' && checks.report && !checks.report.ok && (
-                <span className="text-red text-[0.68rem]">Resolve the failed check(s) above before trading.</span>
-              )}
             </div>
+
+            {checks.phase === 'done' && checks.report && !checks.report.ok && (
+              <div className="rounded-md border border-red/35 bg-red/10 px-3 py-2 text-[0.7rem] text-red">
+                Resolve the failed check(s) above before trading.
+              </div>
+            )}
 
             <div className="flex items-center justify-end gap-2">
               <button type="button" onClick={closeConfirm} className="text-[0.72rem] px-3 py-1.5 rounded-md border border-border text-muted hover:border-muted/60">Cancel</button>

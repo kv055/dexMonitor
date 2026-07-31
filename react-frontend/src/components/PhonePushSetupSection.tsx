@@ -9,6 +9,7 @@ import { LocalQrCode } from './LocalQrCode';
 
 const notifyBody = '{"app":"<bank-app>","title":"<notification-title>","text":"<notification-text>","time":"<optional-ISO-8601>"}';
 const heartbeatBody = '{"device_id":"<stable-phone-name>"}';
+type CallbackHistoryFilter = 'all' | 'heartbeat' | 'payment';
 
 function PhoneIcon() {
   return (
@@ -154,6 +155,7 @@ export function PhonePushSetupSection() {
   const [setup, setSetup] = useState<PhonePushSetup | null>(null);
   const [secrets, setSecrets] = useState<PhonePushSecrets | null>(null);
   const [activeTab, setActiveTab] = useState<'setup' | 'status'>('setup');
+  const [callbackHistoryFilter, setCallbackHistoryFilter] = useState<CallbackHistoryFilter>('all');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
@@ -222,6 +224,14 @@ PHONE SETTINGS
 
   const lastSeen = setup?.last_seen ? new Date(setup.last_seen).toLocaleString() : 'No check-in yet';
   const callbackHistory = setup?.callback_history ?? [];
+  const filteredCallbackHistory = useMemo(
+    () => callbackHistory.filter(attempt => (
+      callbackHistoryFilter === 'all'
+      || (callbackHistoryFilter === 'heartbeat' && attempt.endpoint === 'phone-heartbeat')
+      || (callbackHistoryFilter === 'payment' && attempt.endpoint === 'notify')
+    )),
+    [callbackHistory, callbackHistoryFilter],
+  );
 
   return (
     <section className="h-fit overflow-hidden rounded-xl border border-blue/30 bg-surface shadow-[0_12px_32px_rgba(0,0,0,0.08)]">
@@ -363,7 +373,30 @@ PHONE SETTINGS
                     <p className="text-[0.58rem] font-semibold uppercase tracking-[0.14em] text-blue">Callback history</p>
                     <p className="mt-0.5 text-[0.68rem] text-muted">Accepted, blocked, and malformed phone callback attempts.</p>
                   </div>
-                  <span className="text-[0.58rem] text-muted">Latest 50 requests</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <div className="flex rounded-md border border-border/80 bg-bg/35 p-0.5" aria-label="Filter callback history">
+                      {([
+                        ['all', 'Both'],
+                        ['heartbeat', 'Heartbeats'],
+                        ['payment', 'Payments'],
+                      ] as const).map(([filter, label]) => (
+                        <button
+                          key={filter}
+                          type="button"
+                          aria-pressed={callbackHistoryFilter === filter}
+                          onClick={() => setCallbackHistoryFilter(filter)}
+                          className={`rounded px-2 py-1 text-[0.55rem] font-medium transition ${
+                            callbackHistoryFilter === filter
+                              ? 'bg-blue text-white shadow-sm'
+                              : 'text-muted hover:text-text'
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      ))}
+                    </div>
+                    <span className="text-[0.58rem] text-muted">Latest 50 requests</span>
+                  </div>
                 </div>
                 {setup.callback_history_error ? (
                   <p className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-[0.63rem] text-amber-600">
@@ -373,10 +406,14 @@ PHONE SETTINGS
                   <p className="mt-3 rounded-lg border border-border/80 bg-bg/35 px-3 py-5 text-center text-[0.65rem] text-muted">
                     No callback attempts have been recorded yet. Run the heartbeat macro once from the physical phone.
                   </p>
+                ) : filteredCallbackHistory.length === 0 ? (
+                  <p className="mt-3 rounded-lg border border-border/80 bg-bg/35 px-3 py-5 text-center text-[0.65rem] text-muted">
+                    No {callbackHistoryFilter === 'heartbeat' ? 'heartbeat' : 'payment'} callback attempts are in the latest 50 requests.
+                  </p>
                 ) : (
                   <div className="mt-3 overflow-hidden rounded-lg border border-border/80">
                     <div className="max-h-96 divide-y divide-border/70 overflow-y-auto">
-                      {callbackHistory.map((attempt, index) => {
+                      {filteredCallbackHistory.map((attempt, index) => {
                         const blocked = attempt.outcome === 'blocked';
                         const accepted = attempt.outcome === 'accepted';
                         const label = attempt.endpoint === 'notify' ? 'Payment notification' : 'Phone heartbeat';

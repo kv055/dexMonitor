@@ -6,9 +6,9 @@ test.describe('DepthChart', () => {
     await gotoAndWaitForData(page);
   });
 
-  test('renders canvas with heading', async ({ page }) => {
+  test('renders canvas without a title row', async ({ page }) => {
     const panel = depthPanel(page);
-    await expect(panel.locator('text=Orderbook Depth')).toBeVisible();
+    await expect(panel.getByRole('heading', { name: 'Orderbook Depth' })).toHaveCount(0);
 
     const canvas = panel.locator('canvas');
     await expect(canvas).toBeVisible();
@@ -27,15 +27,6 @@ test.describe('DepthChart', () => {
 
     // Mid price info
     await expect(panel.locator('text=/Mid.*€/')).toBeVisible();
-  });
-
-  test('shows timestamp in header', async ({ page }) => {
-    const panel = depthPanel(page);
-    // With frozen time at 2026-04-01T12:00:00Z
-    const timestampSpan = panel.locator('.text-accent');
-    await expect(timestampSpan).toBeVisible();
-    const text = await timestampSpan.textContent();
-    expect(text).toMatch(/2026/);
   });
 
   test('keeps current depth visible and includes live offers on the newest candles', async ({ page }) => {
@@ -108,6 +99,34 @@ test.describe('DepthChart', () => {
 
     // Take after screenshot — should differ due to zoom
     const after = await panel.screenshot();
+    expect(Buffer.compare(before, after)).not.toBe(0);
+  });
+
+  test('dragging the volume axis zooms the x axis', async ({ page }) => {
+    const panel = depthPanel(page);
+    await waitForChartReady(panel, page);
+
+    const canvas = panel.locator('canvas');
+    const xAxis = panel.locator('[data-axis-zoom="x"]');
+    const box = await canvas.boundingBox();
+    expect(box).not.toBeNull();
+
+    // The full cumulative-volume label area is an explicit drag target.
+    await expect(xAxis).toHaveCSS('cursor', 'ew-resize');
+    const axisBox = await xAxis.boundingBox();
+    expect(axisBox).not.toBeNull();
+    const axisX = axisBox!.x + axisBox!.width / 2;
+    const axisY = axisBox!.y + axisBox!.height / 2;
+
+    const before = await canvas.screenshot();
+    await page.mouse.move(axisX, axisY);
+    await page.mouse.down();
+    // Pointer capture keeps zooming after the pointer leaves the axis strip.
+    await page.mouse.move(axisX - 100, axisY - 80);
+    await page.mouse.up();
+
+    await expect(panel.getByRole('button', { name: /Reset view/ })).toBeVisible();
+    const after = await canvas.screenshot();
     expect(Buffer.compare(before, after)).not.toBe(0);
   });
 });

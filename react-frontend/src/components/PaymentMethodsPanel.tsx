@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
+  PaymentMethodChatTemplate,
   PaymentMethodRow,
   PaymentMethodUpdatePayload,
   TradingAccount,
@@ -9,11 +10,14 @@ import type {
 import {
   degradePaymentMethodToAlias,
   deletePaymentMethod,
+  deletePaymentMethodChatTemplate,
+  fetchPaymentMethodChatTemplates,
   fetchPaymentMethods,
   fetchTradingAccounts,
   fetchTradingWalletAddresses,
   promotePaymentMethodAlias,
   updatePaymentMethod,
+  updatePaymentMethodChatTemplate,
 } from '../utils/api';
 
 // The six catalog categories — must match the payment_methods.category CHECK
@@ -31,6 +35,11 @@ const LINKABLE: Record<string, 'bank' | 'account' | 'wallet' | null> = {
   Others: null,
 };
 
+// Chat-style DEX venues that exchange payment details through trade chat.
+// These values must match payment_method_chat_templates.exchange.
+const CHAT_EXCHANGES = ['RoboSats', 'Bisq2'] as const;
+type ChatExchange = typeof CHAT_EXCHANGES[number];
+
 const compactInputCls =
   'w-full rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none focus:border-accent';
 const compactButtonCls =
@@ -43,6 +52,34 @@ interface Draft {
   merge_regex: string;
   alias_list: string[];
   link_id: number | null;
+}
+
+interface ChatTemplateDraft {
+  template: string;
+  isActive: boolean;
+  saved: boolean;
+}
+
+function emptyChatTemplateDrafts(): Record<ChatExchange, ChatTemplateDraft> {
+  return {
+    RoboSats: { template: '', isActive: true, saved: false },
+    Bisq2: { template: '', isActive: true, saved: false },
+  };
+}
+
+function chatTemplateDraftsFromRows(rows: PaymentMethodChatTemplate[]): Record<ChatExchange, ChatTemplateDraft> {
+  const drafts = emptyChatTemplateDrafts();
+  for (const exchange of CHAT_EXCHANGES) {
+    const row = rows.find(candidate => candidate.exchange === exchange);
+    if (row) {
+      drafts[exchange] = {
+        template: row.template,
+        isActive: row.is_active,
+        saved: true,
+      };
+    }
+  }
+  return drafts;
 }
 
 function draftFromRow(row: PaymentMethodRow): Draft {
@@ -102,6 +139,11 @@ export function PaymentMethodsPanel() {
   const [aliasPickerId, setAliasPickerId] = useState<number | null>(null);
   const [aliasPickerError, setAliasPickerError] = useState<string | null>(null);
   const [aliasInput, setAliasInput] = useState('');
+  const [chatTemplateDrafts, setChatTemplateDrafts] = useState<Record<ChatExchange, ChatTemplateDraft>>(
+    emptyChatTemplateDrafts,
+  );
+  const [chatTemplateLoading, setChatTemplateLoading] = useState(false);
+  const [chatTemplateError, setChatTemplateError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -130,6 +172,20 @@ export function PaymentMethodsPanel() {
   useEffect(() => {
     if (open) void load();
   }, [open, load]);
+
+  const loadChatTemplates = useCallback(async (id: number) => {
+    setChatTemplateLoading(true);
+    setChatTemplateError(null);
+    setChatTemplateDrafts(emptyChatTemplateDrafts());
+    try {
+      const response = await fetchPaymentMethodChatTemplates(id);
+      setChatTemplateDrafts(chatTemplateDraftsFromRows(response.chat_templates));
+    } catch (err) {
+      setChatTemplateError(err instanceof Error ? err.message : 'Failed to load chat templates');
+    } finally {
+      setChatTemplateLoading(false);
+    }
+  }, []);
 
   const fiatAccounts = useMemo(
     () => accounts.filter(a => a.category === 'Fiat Transmitter'),
@@ -173,6 +229,8 @@ export function PaymentMethodsPanel() {
     setDraft(draftFromRow(row));
     setAliasInput('');
     setRowError(null);
+    setChatTemplateError(null);
+    void loadChatTemplates(row.id);
   }
 
   async function saveDraft(id: number) {
@@ -205,6 +263,53 @@ export function PaymentMethodsPanel() {
       setRowError(err instanceof Error ? err.message : 'Delete failed');
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function saveChatTemplate(id: number, exchange: ChatExchange) {
+    const chatDraft = chatTemplateDrafts[exchange];
+    const template = chatDraft.template.trim();
+    setChatTemplateLoading(true);
+    setChatTemplateError(null);
+    try {
+      if (template === '') {
+        if (chatDraft.saved) {
+          await deletePaymentMethodChatTemplate(id, exchange);
+        }
+        setChatTemplateDrafts(current => ({
+          ...current,
+          [exchange]: { template: '', isActive: true, saved: false },
+        }));
+      } else {
+        const response = await updatePaymentMethodChatTemplate(id, exchange, {
+          template,
+          is_active: chatDraft.isActive,
+        });
+        setChatTemplateDrafts(chatTemplateDraftsFromRows(response.chat_templates));
+      }
+    } catch (err) {
+      setChatTemplateError(err instanceof Error ? err.message : 'Failed to save chat template');
+    } finally {
+      setChatTemplateLoading(false);
+    }
+  }
+
+  async function resetChatTemplateToDefault(id: number, exchange: ChatExchange) {
+    const chatDraft = chatTemplateDrafts[exchange];
+    setChatTemplateLoading(true);
+    setChatTemplateError(null);
+    try {
+      if (chatDraft.saved) {
+        await deletePaymentMethodChatTemplate(id, exchange);
+      }
+      setChatTemplateDrafts(current => ({
+        ...current,
+        [exchange]: { template: '', isActive: true, saved: false },
+      }));
+    } catch (err) {
+      setChatTemplateError(err instanceof Error ? err.message : 'Failed to reset chat template');
+    } finally {
+      setChatTemplateLoading(false);
     }
   }
 
@@ -315,6 +420,90 @@ export function PaymentMethodsPanel() {
         </select>
         {options.length === 0 && <span className="text-amber-400">{emptyHint}</span>}
       </label>
+    );
+  }
+
+  function renderChatTemplates(id: number) {
+    return (
+      <div className="flex flex-col gap-2 rounded-md border border-border bg-bg p-2">
+        <div>
+          <p className="text-[0.68rem] font-medium text-text">DEX chat request templates</p>
+          <p className="mt-0.5 text-[0.62rem] text-muted">
+            Messages sent to the counterparty when requesting payment details. Use{' '}
+            <code className="text-accent">{'{{amount}}'}</code> and{' '}
+            <code className="text-accent">{'{{currency}}'}</code> as placeholders. An empty value uses the controller default.
+          </p>
+        </div>
+        {chatTemplateError && <p className="text-[0.68rem] text-red">{chatTemplateError}</p>}
+        {chatTemplateLoading && (
+          <p className="text-[0.62rem] text-muted">Loading templates…</p>
+        )}
+        {CHAT_EXCHANGES.map(exchange => {
+          const chatDraft = chatTemplateDrafts[exchange];
+          return (
+            <div
+              key={exchange}
+              data-testid={`chat-template-${exchange.toLowerCase()}`}
+              className="flex flex-col gap-1 rounded-md border border-border bg-surface p-2"
+            >
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[0.68rem] font-medium text-text">{exchange}</span>
+                <span className={`text-[0.62rem] ${chatDraft.saved ? 'text-green' : 'text-muted'}`}>
+                  {chatDraft.saved ? (chatDraft.isActive ? 'template active' : 'template inactive') : 'controller default'}
+                </span>
+              </div>
+              <label className="flex flex-col gap-1 text-[0.62rem] text-muted">
+                <span className="sr-only">{exchange} template</span>
+                <textarea
+                  className={`${compactInputCls} min-h-20 resize-y font-mono`}
+                  aria-label={`${exchange} template`}
+                  value={chatDraft.template}
+                  onChange={event => setChatTemplateDrafts(current => ({
+                    ...current,
+                    [exchange]: { ...current[exchange], template: event.target.value },
+                  }))}
+                  placeholder={`Controller default for ${exchange}`}
+                  disabled={chatTemplateLoading}
+                />
+              </label>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <label className="inline-flex items-center gap-1.5 text-[0.62rem] text-muted">
+                  <input
+                    type="checkbox"
+                    checked={chatDraft.isActive}
+                    onChange={event => setChatTemplateDrafts(current => ({
+                      ...current,
+                      [exchange]: { ...current[exchange], isActive: event.target.checked },
+                    }))}
+                    disabled={chatTemplateLoading}
+                  />
+                  Use this template
+                </label>
+                <div className="flex items-center gap-1.5">
+                  {chatDraft.saved && (
+                    <button
+                      type="button"
+                      className={compactButtonCls}
+                      onClick={() => void resetChatTemplateToDefault(id, exchange)}
+                      disabled={chatTemplateLoading}
+                    >
+                      Use default
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    className={compactPrimaryButtonCls}
+                    onClick={() => void saveChatTemplate(id, exchange)}
+                    disabled={chatTemplateLoading || chatDraft.template.trim() === ''}
+                  >
+                    Save template
+                  </button>
+                </div>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     );
   }
 
@@ -548,6 +737,7 @@ export function PaymentMethodsPanel() {
                             )}
                           </div>
                           {renderLinkSelect(draft)}
+                          {renderChatTemplates(row.id)}
                           {rowError && <p className="text-[0.68rem] text-red">{rowError}</p>}
                           <div className="flex items-center gap-1.5">
                             <button

@@ -40,6 +40,7 @@ test.describe('TradingAccounts', () => {
 
     await panel.getByTestId('account-summary-card-33').click();
     await expect(detailPane).toContainText('Kraken');
+    await expect(detailPane.getByRole('switch', { name: /Deactivate Kraken/ })).toBeVisible();
     await expect(detailPane).toContainText('BTC 0.245');
     await expect(panel).toHaveScreenshot('trading-accounts-trading-desktop.png');
 
@@ -117,5 +118,41 @@ test.describe('TradingAccounts', () => {
     await expect(panel.getByText('Review before creating in Bisq')).toBeVisible();
     await panel.getByRole('button', { name: 'Back to edit' }).click();
     await expect(panel.getByLabel('User Name')).toHaveValue('alice-edited');
+  });
+
+  test('shows and edits DEX chat templates in the payment method catalog', async ({ page }) => {
+    await gotoAndWaitForData(page);
+    await page.getByRole('button', { name: 'Trading Accounts', exact: true }).click();
+
+    const catalogHeading = page.getByRole('heading', { name: 'Payment Methods', exact: true });
+    const catalog = catalogHeading.locator('../..');
+    await catalog.getByRole('button', { name: 'Manage', exact: true }).click();
+
+    const revolutRow = catalog.locator('li').filter({
+      has: page.getByText('Revolut', { exact: true }),
+    }).first();
+    await revolutRow.getByRole('button', { name: 'Edit', exact: true }).click();
+
+    await expect(revolutRow.getByText('DEX chat request templates', { exact: true })).toBeVisible();
+    await expect(revolutRow.getByLabel('RoboSats template')).toHaveValue(
+      'Send {{amount}} {{currency}} with Revolut.',
+    );
+    await expect(revolutRow.getByLabel('Bisq2 template')).toHaveValue(
+      'Use Revolut for {{amount}} {{currency}}.',
+    );
+
+    const robosatsTemplate = revolutRow.getByTestId('chat-template-robosats');
+    await robosatsTemplate.getByLabel('RoboSats template').fill(
+      'Updated {{amount}} {{currency}} request.',
+    );
+    await robosatsTemplate.getByRole('checkbox', { name: 'Use this template' }).uncheck();
+    await robosatsTemplate.getByRole('button', { name: 'Save template' }).click();
+    await expect(robosatsTemplate.getByText('template inactive', { exact: true })).toBeVisible();
+
+    await revolutRow.getByRole('button', { name: 'Close', exact: true }).click();
+    await revolutRow.getByRole('button', { name: 'Edit', exact: true }).click();
+    await expect(revolutRow.getByLabel('RoboSats template')).toHaveValue(
+      'Updated {{amount}} {{currency}} request.',
+    );
   });
 });

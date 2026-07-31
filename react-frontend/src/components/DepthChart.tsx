@@ -1,8 +1,16 @@
-import { memo, useEffect, useRef, useMemo, useLayoutEffect, useState } from 'react';
+import {
+  memo,
+  useEffect,
+  useRef,
+  useMemo,
+  useLayoutEffect,
+  useState,
+  type PointerEvent as ReactPointerEvent,
+  type WheelEvent as ReactWheelEvent,
+} from 'react';
 import { useFilters } from '../hooks/useFilters';
-import { useTimezone } from '../hooks/useTimezone';
 import { LoadingSpinner } from './LoadingSpinner';
-import { formatDateTimeLabel, toUtcSec } from '../utils/formatters';
+import { toUtcSec } from '../utils/formatters';
 import { formatFiat } from '../utils/currency';
 import { getBtcMax, getFirstSeen, getLastSeen, getOfferPrice, getRefPrice, isOfferLive } from '../utils/offerAccess';
 
@@ -33,32 +41,68 @@ const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 
 function DepthChartInner() {
   const { depthOffers, filters, loading, hoveredOhlcTime } = useFilters();
-  const { timezone } = useTimezone();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasMetricsRef = useRef<{ w: number; h: number; dpr: number } | null>(null);
-  const [referenceNowSec] = useState(() => Math.floor(Date.now() / 1000));
   const [resizeTick, setResizeTick] = useState(0);
-  // Price-axis zoom (1 = default window) and vertical pan expressed as a
-  // fraction of the natural data range, so it stays stable across zoom levels.
+  // Axis zoom (1 = default window) and vertical pan expressed as a fraction of
+  // the natural price range, so it stays stable across zoom levels.
+  const [xZoom, setXZoom] = useState(1.0);
   const [yZoom, setYZoom] = useState(1.0);
   const [panFrac, setPanFrac] = useState(0);
-  const headerTimestamp = formatDateTimeLabel(hoveredOhlcTime ?? referenceNowSec, timezone);
 
   // Mirror the interactive state into refs so the (mount-scoped) pointer
   // handlers always read the latest values without re-binding listeners.
+  const xZoomRef = useRef(xZoom);
   const yZoomRef = useRef(yZoom);
   const panFracRef = useRef(panFrac);
+  const xAxisDragRef = useRef<{ pointerId: number; startX: number; startZoom: number } | null>(null);
+  useEffect(() => { xZoomRef.current = xZoom; }, [xZoom]);
   useEffect(() => { yZoomRef.current = yZoom; }, [yZoom]);
   useEffect(() => { panFracRef.current = panFrac; }, [panFrac]);
   // Plot geometry published by the draw pass so pointer handlers can tell the
-  // price-axis margin (left) from the plot area and convert pixels ↔ price.
-  const layoutRef = useRef<{ ML: number; PH: number } | null>(null);
+  // axis margins from the plot area and convert pointer movement to scale.
+  const layoutRef = useRef<{ ML: number; MT: number; PW: number; PH: number } | null>(null);
 
-  const showReset = Math.abs(yZoom - 1) > 0.001 || Math.abs(panFrac) > 0.001;
+  const showReset = Math.abs(xZoom - 1) > 0.001 ||
+    Math.abs(yZoom - 1) > 0.001 ||
+    Math.abs(panFrac) > 0.001;
   const resetView = () => {
+    setXZoom(1);
     setYZoom(1);
     setPanFrac(0);
+  };
+
+  const handleXAxisPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    xAxisDragRef.current = {
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startZoom: xZoomRef.current,
+    };
+    event.currentTarget.setPointerCapture(event.pointerId);
+    event.preventDefault();
+  };
+
+  const handleXAxisPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = xAxisDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const dx = event.clientX - drag.startX;
+    setXZoom(clampZoom(drag.startZoom * Math.exp(-dx / 150)));
+  };
+
+  const finishXAxisDrag = (event: ReactPointerEvent<HTMLDivElement>) => {
+    const drag = xAxisDragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    xAxisDragRef.current = null;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
+  };
+
+  const handleXAxisWheel = (event: ReactWheelEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    setXZoom(z => clampZoom(z * (event.deltaY < 0 ? 1.15 : 1 / 1.15)));
   };
 
   // Resize observer
@@ -70,11 +114,12 @@ function DepthChartInner() {
     return () => ro.disconnect();
   }, []);
 
-  // Pan/zoom gestures on the price (y) axis — mirrors the OHLC chart:
-  //   · wheel over the chart zooms the price scale
+  // Pan/zoom gestures on the price axis — mirrors the OHLC chart:
+  //   · wheel over the plot or price axis zooms the price scale
   //   · dragging vertically on the left price-axis margin scales it
   //   · dragging vertically inside the plot pans up/down
-  // The cursor turns into the same ns-resize arrow over the axis labels.
+  // X-axis gestures use the dedicated interaction layer rendered over its
+  // labels below, ensuring the whole visible axis is a reliable drag target.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return;
@@ -84,13 +129,20 @@ function DepthChartInner() {
       setYZoom(z => clampZoom(z * (e.deltaY < 0 ? 1.15 : 1 / 1.15)));
     };
 
-    const drag = { active: false, mode: 'pan' as 'pan' | 'zoom', startY: 0, startZoom: 1, startPan: 0 };
+    type DragMode = 'pan-y' | 'zoom-y';
+    const drag = {
+      active: false,
+      mode: 'pan-y' as DragMode,
+      startY: 0,
+      startZoom: 1,
+      startPan: 0,
+    };
 
     const onWindowMove = (e: MouseEvent) => {
       const layout = layoutRef.current;
       if (!drag.active || !layout) return;
       const dy = e.clientY - drag.startY;
-      if (drag.mode === 'zoom') {
+      if (drag.mode === 'zoom-y') {
         setYZoom(clampZoom(drag.startZoom * Math.exp(-dy / 150)));
       } else {
         // Grab-and-pull: dragging down reveals higher prices (which sit at the top).
@@ -107,13 +159,21 @@ function DepthChartInner() {
     const onDown = (e: MouseEvent) => {
       const layout = layoutRef.current;
       if (!layout) return;
-      const x = e.clientX - canvas.getBoundingClientRect().left;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const overYAxis = x < layout.ML &&
+        y >= layout.MT && y <= layout.MT + layout.PH;
+      const insidePlot = x >= layout.ML && x <= layout.ML + layout.PW &&
+        y >= layout.MT && y <= layout.MT + layout.PH;
+      if (!overYAxis && !insidePlot) return;
+
       drag.active = true;
       drag.startY = e.clientY;
-      drag.startZoom = yZoomRef.current;
       drag.startPan = panFracRef.current;
-      drag.mode = x < layout.ML ? 'zoom' : 'pan';
-      canvas.style.cursor = drag.mode === 'zoom' ? 'ns-resize' : 'grabbing';
+      drag.mode = overYAxis ? 'zoom-y' : 'pan-y';
+      drag.startZoom = yZoomRef.current;
+      canvas.style.cursor = drag.mode === 'zoom-y' ? 'ns-resize' : 'grabbing';
       e.preventDefault();
       window.addEventListener('mousemove', onWindowMove);
       window.addEventListener('mouseup', onWindowUp);
@@ -122,8 +182,14 @@ function DepthChartInner() {
       if (drag.active) return;
       const layout = layoutRef.current;
       if (!layout) { canvas.style.cursor = 'default'; return; }
-      const x = e.clientX - canvas.getBoundingClientRect().left;
-      canvas.style.cursor = x < layout.ML ? 'ns-resize' : 'grab';
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const overYAxis = x < layout.ML &&
+        y >= layout.MT && y <= layout.MT + layout.PH;
+      const insidePlot = x >= layout.ML && x <= layout.ML + layout.PW &&
+        y >= layout.MT && y <= layout.MT + layout.PH;
+      canvas.style.cursor = overYAxis ? 'ns-resize' : insidePlot ? 'grab' : 'default';
     };
 
     canvas.addEventListener('wheel', onWheel, { passive: false });
@@ -177,7 +243,8 @@ function DepthChartInner() {
     const bids = cumulativeRows(rawBids);
     const asks = cumulativeRows(rawAsks);
 
-    const maxVol = Math.max(bids.at(-1)?.cum ?? 0, asks.at(-1)?.cum ?? 0) * 1.05 || 1;
+    const naturalMaxVol = Math.max(bids.at(-1)?.cum ?? 0, asks.at(-1)?.cum ?? 0) * 1.05 || 1;
+    const maxVol = naturalMaxVol / xZoom;
     const dataRange = Math.max(
       midPrice - (rawBids.at(-1)?.price ?? midPrice),
       (rawAsks.at(-1)?.price ?? midPrice) - midPrice
@@ -211,7 +278,7 @@ function DepthChartInner() {
       visibleAskBtc,
       spread: highestBid && lowestAsk ? lowestAsk - highestBid : null,
     };
-  }, [displayOffers, hoveredOhlcTime, yZoom, panFrac]);
+  }, [displayOffers, hoveredOhlcTime, xZoom, yZoom, panFrac]);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -252,7 +319,7 @@ function DepthChartInner() {
     const PH = H - MT - MB;
 
     // Publish geometry for the pointer handlers (axis margin vs plot, px↔price).
-    layoutRef.current = { ML, PH };
+    layoutRef.current = { ML, MT, PW, PH };
 
     const xOf = (v: number) => ML + (v / maxVol) * PW;
     const yOf = (p: number) => MT + (1 - (p - priceMin) / (priceMax - priceMin)) * PH;
@@ -358,22 +425,16 @@ function DepthChartInner() {
 
   return (
     <div className="flex flex-col h-full min-h-0">
-      <header className="mb-2 shrink-0">
-        <div className="flex items-baseline justify-between gap-2">
-          <h3 className="text-[0.65rem] font-semibold uppercase tracking-widest text-muted">Orderbook Depth</h3>
-          <span className="text-[0.6rem] tabular-nums text-accent">{headerTimestamp}</span>
+      {chartData && (
+        <div className="mb-2 flex shrink-0 flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[0.65rem] tabular-nums text-muted">
+          <span>Bids <span className="font-medium text-green">{chartData.visibleBidBtc.toFixed(3)}</span></span>
+          <span>Asks <span className="font-medium text-red">{chartData.visibleAskBtc.toFixed(3)}</span> BTC</span>
+          <span>Mid <span className="font-medium text-text">{formatFiat(chartData.midPrice, filters.fiat, { maximumFractionDigits: 0 })}</span></span>
+          {chartData.spread != null && (
+            <span>Spread <span className="font-medium text-text">{formatFiat(chartData.spread, filters.fiat, { maximumFractionDigits: 0 })}</span></span>
+          )}
         </div>
-        {chartData && (
-          <div className="mt-1 flex flex-wrap items-baseline gap-x-3 gap-y-0.5 text-[0.65rem] tabular-nums text-muted">
-            <span>Bids <span className="font-medium text-green">{chartData.visibleBidBtc.toFixed(3)}</span></span>
-            <span>Asks <span className="font-medium text-red">{chartData.visibleAskBtc.toFixed(3)}</span> BTC</span>
-			<span>Mid <span className="font-medium text-text">{formatFiat(chartData.midPrice, filters.fiat, { maximumFractionDigits: 0 })}</span></span>
-            {chartData.spread != null && (
-			  <span>Spread <span className="font-medium text-text">{formatFiat(chartData.spread, filters.fiat, { maximumFractionDigits: 0 })}</span></span>
-            )}
-          </div>
-        )}
-      </header>
+      )}
       <div ref={containerRef} className="flex-1 min-h-0 relative">
         {loading && <LoadingSpinner size={104} label="Loading orderbook" />}
         <canvas
@@ -385,6 +446,18 @@ function DepthChartInner() {
             opacity: loading ? 0 : 1,
             transition: 'opacity 0.35s ease',
           }}
+        />
+        <div
+          data-axis-zoom="x"
+          title="Drag to zoom cumulative BTC axis"
+          onPointerDown={handleXAxisPointerDown}
+          onPointerMove={handleXAxisPointerMove}
+          onPointerUp={finishXAxisDrag}
+          onPointerCancel={finishXAxisDrag}
+          onLostPointerCapture={() => { xAxisDragRef.current = null; }}
+          onWheel={handleXAxisWheel}
+          className="absolute inset-x-0 bottom-0 z-[5] h-7 cursor-ew-resize"
+          style={{ touchAction: 'none' }}
         />
         {showReset && (
           <button

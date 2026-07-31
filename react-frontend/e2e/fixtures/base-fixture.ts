@@ -132,12 +132,80 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/trading/payment_methods', route =>
       route.fulfill({ json: paymentMethodsState }),
     );
-    await page.route('**/api/trading/payment_methods/*', async route => {
+    const chatTemplatesByMethod: Record<number, Array<{
+      id: number;
+      exchange: string;
+      payment_method_id: number;
+      template: string;
+      is_active: boolean;
+      created_at: string;
+      updated_at: string;
+    }>> = {
+      1001: [
+        {
+          id: 7001,
+          exchange: 'RoboSats',
+          payment_method_id: 1001,
+          template: 'Send {{amount}} {{currency}} with Revolut.',
+          is_active: true,
+          created_at: new Date(FIXED_TIME).toISOString(),
+          updated_at: new Date(FIXED_TIME).toISOString(),
+        },
+        {
+          id: 7002,
+          exchange: 'Bisq2',
+          payment_method_id: 1001,
+          template: 'Use Revolut for {{amount}} {{currency}}.',
+          is_active: true,
+          created_at: new Date(FIXED_TIME).toISOString(),
+          updated_at: new Date(FIXED_TIME).toISOString(),
+        },
+      ],
+    };
+    await page.route('**/api/trading/payment_methods/**', async route => {
+      const pathname = new URL(route.request().url()).pathname;
+      const chatMatch = pathname.match(
+        /\/api\/trading\/payment_methods\/(\d+)\/chat_templates(?:\/([^/]+))?$/,
+      );
+      if (chatMatch) {
+        const id = Number(chatMatch[1]);
+        const exchange = chatMatch[2] ? decodeURIComponent(chatMatch[2]) : null;
+        const rows = chatTemplatesByMethod[id] ?? [];
+        if (route.request().method() === 'GET' && exchange === null) {
+          await route.fulfill({ json: { chat_templates: rows } });
+          return;
+        }
+        if (route.request().method() === 'PUT' && exchange !== null) {
+          const payload = await route.request().postDataJSON() as { template: string; is_active: boolean };
+          const existing = rows.find(template => template.exchange === exchange);
+          const now = new Date(FIXED_TIME).toISOString();
+          const updated = {
+            id: existing?.id ?? 7000 + Object.values(chatTemplatesByMethod).flat().length + 1,
+            exchange,
+            payment_method_id: id,
+            template: payload.template,
+            is_active: payload.is_active,
+            created_at: existing?.created_at ?? now,
+            updated_at: now,
+          };
+          chatTemplatesByMethod[id] = [
+            ...rows.filter(template => template.exchange !== exchange),
+            updated,
+          ];
+          await route.fulfill({ json: { chat_templates: chatTemplatesByMethod[id] } });
+          return;
+        }
+        if (route.request().method() === 'DELETE' && exchange !== null) {
+          chatTemplatesByMethod[id] = rows.filter(template => template.exchange !== exchange);
+          await route.fulfill({ json: { ok: true } });
+          return;
+        }
+      }
       if (route.request().method() !== 'PUT') {
         await route.fulfill({ json: { ok: true } });
         return;
       }
-      const id = Number(new URL(route.request().url()).pathname.match(/\/api\/trading\/payment_methods\/(\d+)$/)?.[1]);
+      const id = Number(pathname.match(/\/api\/trading\/payment_methods\/(\d+)$/)?.[1]);
       const payload = await route.request().postDataJSON() as { priority?: number };
       paymentMethodsState = {
         payment_methods: paymentMethodsState.payment_methods.map(row =>
