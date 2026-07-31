@@ -248,7 +248,7 @@ function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted">BTC ref price</span>
-			<span className="text-text mono-nums">{formatFiat(position.btc_price_eur, filters.fiat)}</span>
+			<span className="text-text mono-nums">{formatFiat(position.btc_price, filters.fiat)}</span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted">Hedge notional</span>
@@ -256,7 +256,7 @@ function HedgeFeeDetail({ bd }: { bd: CostBreakdown }) {
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted">Recommended collateral</span>
-			<span className="text-text mono-nums">{formatFiat(position.recommended_collateral_eur, filters.fiat)}</span>
+			<span className="text-text mono-nums">{formatFiat(position.recommended_collateral, filters.fiat)}</span>
           </div>
           {/* The remaining fields were never persisted historically — only show
               them for a freshly-simulated live position, not a reconstructed one. */}
@@ -397,7 +397,7 @@ export function AbortCostSection({ abortCost, refPrice }: {
 
 export function CapitalRequiredSection({ capital, flat = false }: { capital: CapitalRequirement | null | undefined; flat?: boolean }) {
 	const { filters } = useFilters();
-  if (!capital || capital.total_eur <= 0) return null;
+  if (!capital || capital.total_fiat <= 0) return null;
 
   const isHedgeless = capital.trade_mode === 'hedgeless_double_collateral';
   const hasDeposit = capital.security_deposit_btc > 0;
@@ -405,7 +405,7 @@ export function CapitalRequiredSection({ capital, flat = false }: { capital: Cap
     ? capital.security_deposit_side.charAt(0).toUpperCase() + capital.security_deposit_side.slice(1)
     : '';
   const btcLiquidity = capital.btc_liquidity_btc ?? (capital.btc_amount + capital.security_deposit_btc);
-  const fiatCollateral = capital.fiat_collateral_eur ?? capital.spot_notional_eur;
+  const fiatCollateral = capital.fiat_collateral ?? capital.spot_notional;
 
   return (
     <div className={`${flat ? 'border-t border-border pt-2.5' : 'rounded-lg border border-blue/30 bg-blue/5 px-3 py-2.5'} flex flex-col gap-1.5 text-[0.72rem]`}>
@@ -413,14 +413,14 @@ export function CapitalRequiredSection({ capital, flat = false }: { capital: Cap
         <span className="text-muted uppercase text-[0.62rem] tracking-widest font-semibold">
           Capital required{isHedgeless ? ' · hedgeless' : ''}
         </span>
-		<span className="mono-nums font-bold text-[0.95rem] text-text">{formatFiat(capital.total_eur, filters.fiat)}</span>
+		<span className="mono-nums font-bold text-[0.95rem] text-text">{formatFiat(capital.total_fiat, filters.fiat)}</span>
       </div>
       {isHedgeless ? (
         <>
           <div className="flex items-start justify-between gap-3">
             <span className="text-muted">BTC liquidity pool</span>
             <span className="text-right">
-              <div className="text-text mono-nums">{formatFiat(btcLiquidity * (capital.btc_price_eur || 0), filters.fiat)}</div>
+              <div className="text-text mono-nums">{formatFiat(btcLiquidity * (capital.btc_price || 0), filters.fiat)}</div>
               <div className="text-[0.64rem] text-muted mono-nums">{fmt8(btcLiquidity)} BTC</div>
             </span>
           </div>
@@ -436,7 +436,7 @@ export function CapitalRequiredSection({ capital, flat = false }: { capital: Cap
                 {capital.deposit_estimated && <Badge label="est." colorCls="text-muted" />}
               </span>
               <span className="text-right">
-                <div className="text-text mono-nums">{formatFiat(capital.security_deposit_eur, filters.fiat)}</div>
+                <div className="text-text mono-nums">{formatFiat(capital.security_deposit_fiat, filters.fiat)}</div>
                 <div className="text-[0.64rem] text-muted mono-nums">{fmt8(capital.security_deposit_btc)} BTC</div>
               </span>
             </div>
@@ -446,11 +446,11 @@ export function CapitalRequiredSection({ capital, flat = false }: { capital: Cap
         <>
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted">Spot notional (CEX buy)</span>
-            <span className="text-text mono-nums">{formatFiat(capital.spot_notional_eur, filters.fiat)}</span>
+            <span className="text-text mono-nums">{formatFiat(capital.spot_notional, filters.fiat)}</span>
           </div>
           <div className="flex items-center justify-between gap-3">
             <span className="text-muted">Hedge collateral</span>
-            <span className="text-text mono-nums">{formatFiat(capital.hedge_collateral_eur, filters.fiat)}</span>
+            <span className="text-text mono-nums">{formatFiat(capital.hedge_collateral, filters.fiat)}</span>
           </div>
           {hasDeposit && (
             <div className="flex items-start justify-between gap-3">
@@ -460,7 +460,7 @@ export function CapitalRequiredSection({ capital, flat = false }: { capital: Cap
                 {capital.deposit_estimated && <Badge label="est." colorCls="text-muted" />}
               </span>
               <span className="text-right">
-                <div className="text-text mono-nums">{formatFiat(capital.security_deposit_eur, filters.fiat)}</div>
+                <div className="text-text mono-nums">{formatFiat(capital.security_deposit_fiat, filters.fiat)}</div>
                 <div className="text-[0.64rem] text-muted mono-nums">{fmt8(capital.security_deposit_btc)} BTC</div>
               </span>
             </div>

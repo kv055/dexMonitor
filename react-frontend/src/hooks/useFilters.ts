@@ -14,6 +14,10 @@ export interface FiltersContextValue {
   resetFilters: () => void;
   offers: Offer[];
   filteredOffers: Offer[];
+  /** Live/past table filters without profitMin/Max — used to size the net-profit slider. */
+  offersForProfitRange: Offer[];
+  /** Live/past table filters without premiumMin/Max — used to size the premium % slider. */
+  offersForPremiumRange: Offer[];
   depthOffers: Offer[];
   paymentMethods: string[];
   /** Offer counts per payment method in the current monitor view (payment filter excluded). */

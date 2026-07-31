@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import type { Offer, CexSpotBuyResult, CexHedgeOpenResult, CexTradeflowResult, HedgePositionUpdate, PreTradeCheckReport, TradeMode, WithdrawalTrackResult } from '../types';
+import type { Offer, CexSpotBuyResult, CexHedgeOpenResult, CexTradeflowResult, HedgePositionUpdate, PreTradeCheckReport, PreTradeCheckResult, TradeMode, WithdrawalTrackResult } from '../types';
 import { ExchangeTag } from './ExchangeTag';
 import { stripTrailingZeros } from '../utils/numberFormat';
 import { premiumClass } from '../utils/formatters';
@@ -72,6 +72,141 @@ function clamp(value: number, min: number | null, max: number | null): number {
 function cexStatusLabel(status: string | undefined): string {
   if (!status) return '—';
   return status.replace(/_/g, ' ');
+}
+
+/** Logical display groups for pre-trade checks — order matches backend Run(). */
+const PRE_TRADE_CHECK_GROUPS: { id: string; title: string; names: string[] }[] = [
+  { id: 'capital', title: 'Capital', names: ['capital', 'liquidity_pool'] },
+  { id: 'exchange', title: 'Exchange', names: ['permissions', 'lnd_wallet', 'whitelist'] },
+  { id: 'payment', title: 'Payment', names: ['payment_setup', 'message_template'] },
+  { id: 'ops', title: 'Operations', names: ['communication_gateway', 'fiat_controller_service', 'fiat_controller'] },
+];
+
+function groupPreTradeChecks(checks: PreTradeCheckResult[], isHedgeless: boolean) {
+  const byName = new Map(checks.map(c => [c.name, c]));
+
+  // Hedgeless must always surface both capital legs — even if an older backend
+  // omitted the BTC pool check — so the operator never sees a single combined row.
+  if (isHedgeless && !byName.has('liquidity_pool')) {
+    byName.set('liquidity_pool', {
+      name: 'liquidity_pool',
+      label: 'BTC liquidity pool',
+      passed: false,
+      message: 'BTC liquidity pool check was not returned by the server; rebuild mm-controller.',
+    });
+  }
+  if (isHedgeless && byName.has('capital') && byName.get('capital')!.label === 'Sufficient capital') {
+    byName.set('capital', { ...byName.get('capital')!, label: 'Exchange fiat' });
+  }
+
+  const grouped = PRE_TRADE_CHECK_GROUPS
+    .map(g => ({
+      ...g,
+      checks: g.names
+        .filter(n => !(n === 'liquidity_pool' && !isHedgeless && !byName.has(n)))
+        .map(n => byName.get(n))
+        .filter((c): c is PreTradeCheckResult => !!c),
+    }))
+    .filter(g => g.checks.length > 0);
+  const known = new Set(PRE_TRADE_CHECK_GROUPS.flatMap(g => g.names));
+  const leftover = checks.filter(c => !known.has(c.name));
+  if (leftover.length > 0) {
+    grouped.push({ id: 'other', title: 'Other', names: leftover.map(c => c.name), checks: leftover });
+  }
+  return grouped;
+}
+
+function PreTradeChecksPanel({
+  phase,
+  report,
+  error,
+  isHedgeless = false,
+}: {
+  phase: ChecksState['phase'];
+  report?: PreTradeCheckReport;
+  error?: string;
+  isHedgeless?: boolean;
+}) {
+  const groups = report ? groupPreTradeChecks(report.checks, isHedgeless) : [];
+  const flatChecks = groups.flatMap(g => g.checks);
+  const passedCount = flatChecks.filter(c => c.passed).length;
+  const totalCount = flatChecks.length;
+  const allPassed = totalCount > 0 && passedCount === totalCount && !!report?.ok
+    && !(isHedgeless && !report.checks.some(c => c.name === 'liquidity_pool'));
+
+  return (
+    <div className="rounded-lg border border-border bg-bg overflow-hidden min-h-0 flex flex-col">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-border/80 bg-surface/40 shrink-0">
+        <span className="text-[0.62rem] uppercase tracking-widest font-semibold text-muted">Pre-trade checks</span>
+        {phase === 'running' && (
+          <span className="text-[0.62rem] text-accent animate-pulse">Running…</span>
+        )}
+        {phase === 'done' && report && (
+          <span className={`text-[0.62rem] font-medium mono-nums ${allPassed ? 'text-green' : 'text-red'}`}>
+            {passedCount}/{totalCount} passed
+          </span>
+        )}
+      </div>
+
+      <div className="p-2.5 min-h-0 overflow-y-auto">
+        {phase === 'running' && (
+          <div className="flex items-center gap-2 text-[0.72rem] text-muted py-1">
+            <span className="inline-block size-1.5 rounded-full bg-accent animate-pulse" />
+            Verifying capital, exchange, payment, and operations…
+          </div>
+        )}
+        {phase === 'error' && (
+          <span className="text-red text-[0.72rem] wrap-break-word">{error}</span>
+        )}
+        {phase === 'done' && (
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+            {groups.map(group => {
+              const groupOk = group.checks.every(c => c.passed);
+              return (
+                <div key={group.id} className="flex flex-col gap-1 min-w-0">
+                  <div className="flex items-center gap-1.5 px-0.5">
+                    <span className={`size-1.5 rounded-full shrink-0 ${groupOk ? 'bg-green/70' : 'bg-red/70'}`} />
+                    <span className="text-[0.58rem] uppercase tracking-widest font-semibold text-muted/90">
+                      {group.title}
+                    </span>
+                  </div>
+                  <div className="rounded-md border border-border/70 bg-surface/30 divide-y divide-border/50 overflow-hidden flex-1">
+                    {group.checks.map(c => (
+                      <div key={c.name} className="px-2.5 py-1.5 flex flex-col gap-0.5">
+                        <div className="flex items-center justify-between gap-2 text-[0.74rem]">
+                          <span className="text-text/90 min-w-0 truncate" title={c.label}>{c.label}</span>
+                          <span
+                            className={`shrink-0 inline-flex items-center gap-1 text-[0.64rem] font-semibold uppercase tracking-wide ${
+                              c.passed ? 'text-green' : 'text-red'
+                            }`}
+                          >
+                            <span
+                              className={`inline-flex items-center justify-center size-3.5 rounded-full text-[0.55rem] leading-none ${
+                                c.passed ? 'bg-green/15 text-green' : 'bg-red/15 text-red'
+                              }`}
+                              aria-hidden
+                            >
+                              {c.passed ? '✓' : '✗'}
+                            </span>
+                            {c.passed ? 'Pass' : 'Fail'}
+                          </span>
+                        </div>
+                        {!c.passed && c.message && (
+                          <span className="text-red/90 text-[0.66rem] leading-snug wrap-break-word pl-0.5">
+                            {c.message}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
 }
 
 // LiveWithdrawalStatus renders polled CEX withdrawal + mempool confirmation state.
@@ -305,7 +440,9 @@ export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collate
     && !!tradeCapital
     && (isHedgeless || !!hedgeVenue)
     && submit.phase !== 'submitting';
-  const checksPassed = checks.phase === 'done' && !!checks.report?.ok;
+  const checksPassed = checks.phase === 'done'
+    && !!checks.report?.ok
+    && (!isHedgeless || !!checks.report.checks.some(c => c.name === 'liquidity_pool' && c.passed));
 
   // Opening the confirm dialog immediately kicks off the (read-only) pre-trade checks
   // so their results are shown in the same card before the operator confirms.
@@ -331,19 +468,25 @@ export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collate
   async function runPreTradeChecks() {
     setChecks({ phase: 'running' });
     try {
+      // Hedgeless: exchange fiat check uses fiat collateral only; BTC pool is a
+      // separate LND wallet check. Hedgefull: total_fiat covers spot+hedge+deposit.
+      const requiredCapital = isHedgeless
+        ? (tradeCapital?.fiat_collateral ?? tradeCapital?.spot_notional ?? 0)
+        : (tradeCapital?.total_fiat ?? 0);
+      const requiredBtcLiquidity = isHedgeless
+        ? (tradeCapital?.btc_liquidity_btc
+          ?? ((tradeCapital?.btc_amount ?? 0) + (tradeCapital?.security_deposit_btc ?? 0)))
+        : undefined;
       const report = await cexPreTradeCheck({
         provider: routeCex,
         fiat_currency: fiatCurrency,
-        required_capital_eur: tradeCapital?.total_eur ?? 0,
+        required_capital: requiredCapital,
         payment_method: resolvedPaymentMethod || undefined,
         payment_methods: offer.payment_methods ?? undefined,
         dex: offer.exchange,
         trade_mode: tradeMode,
         hedge_venue: isHedgeless ? undefined : hedgeVenue || undefined,
-        required_btc_liquidity: isHedgeless
-          ? (tradeCapital?.btc_liquidity_btc
-            ?? ((tradeCapital?.btc_amount ?? 0) + (tradeCapital?.security_deposit_btc ?? 0)))
-          : undefined,
+        required_btc_liquidity: requiredBtcLiquidity,
       });
       setChecks({ phase: 'done', report });
       if (report.lnd_withdraw_address) {
@@ -384,7 +527,7 @@ export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collate
         market_side: 'bid',
         btc_amount: clampedBtc,
         fiat_currency: fiatCurrency,
-        required_capital_eur: tradeCapital?.total_eur ?? 0,
+        required_capital: tradeCapital?.total_fiat ?? 0,
         hedge_venue: hedgeVenue,
         hedge_side: side,
         hedge_notional_btc: btcNotional,
@@ -656,7 +799,7 @@ export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collate
       {/* Confirmation dialog */}
       {confirmOpen && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/60 p-0 sm:p-4"
           role="button"
           tabIndex={0}
           aria-label="Close confirmation dialog"
@@ -671,52 +814,60 @@ export function TradeTracingPanel({ offer, tradeMode = 'hedgefull_single_collate
           }}
         >
           <div
-            className="bg-surface border border-border rounded-lg p-4 w-full max-w-sm flex flex-col gap-3"
+            className="bg-surface border border-border sm:rounded-xl rounded-t-xl p-3 sm:p-4 w-full max-w-2xl max-h-[100dvh] sm:max-h-[min(100dvh-2rem,52rem)] flex flex-col gap-2.5 sm:gap-3 shadow-xl shadow-black/40"
             role="dialog"
             aria-modal="true"
             aria-labelledby="trade-confirm-title"
           >
-            <h3 id="trade-confirm-title" className="text-[0.8rem] font-semibold text-text">Confirm market buy</h3>
-            <p className="text-[0.72rem] text-muted">
-              This places a real market <span className="text-green font-medium">BUY</span> order. Funds will be spent immediately.
-            </p>
-            <div className="bg-bg border border-border rounded-md p-2.5 flex flex-col gap-1.5 text-[0.74rem]">
-              <div className="flex justify-between gap-2"><span className="text-muted">CEX</span><span className="text-text font-medium">{cexLabel}</span></div>
-              <div className="flex justify-between gap-2"><span className="text-muted">Amount</span><span className="text-text mono-nums">{fmtBtc(clampedBtc)} BTC</span></div>
-              <div className="flex justify-between gap-2"><span className="text-muted">Est. cost</span><span className="text-text mono-nums">{estFiat != null ? fmtFiat(estFiat, fiatCurrency) : '—'}</span></div>
-              <div className="flex justify-between gap-2"><span className="text-muted">Payment</span><span className="text-text font-medium">{resolvedPaymentMethod || (checks.phase === 'done' ? checks.report?.resolved_payment_method : undefined) || '—'}</span></div>
+            <div className="shrink-0 flex flex-col gap-1.5">
+              <h3 id="trade-confirm-title" className="text-[0.85rem] font-semibold text-text tracking-tight">Confirm market buy</h3>
+              <p className="text-[0.72rem] text-muted leading-relaxed">
+                This places a real market <span className="text-green font-medium">BUY</span> order. Funds will be spent immediately.
+              </p>
+            </div>
+
+            <div className="shrink-0 rounded-lg border border-border bg-bg px-3 py-2 grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5 text-[0.74rem]">
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className="text-[0.58rem] uppercase tracking-wide text-muted">CEX</span>
+                <span className="text-text font-medium truncate">{cexLabel}</span>
+              </div>
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className="text-[0.58rem] uppercase tracking-wide text-muted">Amount</span>
+                <span className="text-text mono-nums truncate">{fmtBtc(clampedBtc)} BTC</span>
+              </div>
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className="text-[0.58rem] uppercase tracking-wide text-muted">Est. cost</span>
+                <span className="text-text mono-nums truncate">{estFiat != null ? fmtFiat(estFiat, fiatCurrency) : '—'}</span>
+              </div>
+              <div className="flex flex-col gap-0.5 min-w-0">
+                <span className="text-[0.58rem] uppercase tracking-wide text-muted">Payment</span>
+                <span className="text-text font-medium truncate">{resolvedPaymentMethod || (checks.phase === 'done' ? checks.report?.resolved_payment_method : undefined) || '—'}</span>
+              </div>
             </div>
 
             {!resolvedPaymentMethod && (offer.payment_methods?.length ?? 0) > 1 && (
-              <p className="text-[0.68rem] text-muted">
+              <p className="shrink-0 text-[0.68rem] text-muted">
                 This offer accepts multiple payment methods — the highest-priority linked method from the Payments tab is used automatically.
               </p>
             )}
 
-            {/* Pre-trade checks — all run to completion before the buy can be confirmed. */}
-            <div className="bg-bg border border-border rounded-md p-2.5 flex flex-col gap-1.5 text-[0.74rem]">
-              <span className="text-[0.6rem] uppercase tracking-wide text-muted">Pre-trade checks</span>
-              {checks.phase === 'running' && <span className="text-accent">Running pre-trade checks…</span>}
-              {checks.phase === 'error' && <span className="text-red wrap-break-word">{checks.error}</span>}
-              {checks.phase === 'done' && checks.report && checks.report.checks.map(c => (
-                <div key={c.name} className="flex flex-col gap-0.5">
-                  <div className="flex justify-between gap-2">
-                    <span className="text-muted">{c.label}</span>
-                    <span className={c.passed ? 'text-green font-medium' : 'text-red font-medium'}>{c.passed ? '✓ pass' : '✗ fail'}</span>
-                  </div>
-                  {!c.passed && c.message && <span className="text-red text-[0.68rem] wrap-break-word">{c.message}</span>}
-                </div>
-              ))}
+            <div className="min-h-0 flex-1 overflow-hidden flex flex-col">
+              <PreTradeChecksPanel
+                phase={checks.phase}
+                report={checks.report}
+                error={checks.error}
+                isHedgeless={isHedgeless}
+              />
             </div>
 
             {checks.phase === 'done' && checks.report && !checks.report.ok && (
-              <div className="rounded-md border border-red/35 bg-red/10 px-3 py-2 text-[0.7rem] text-red">
+              <div className="shrink-0 rounded-lg border border-red/35 bg-red/10 px-3 py-2 text-[0.7rem] text-red leading-snug">
                 Resolve the failed check(s) above before trading.
               </div>
             )}
 
-            <div className="flex items-center justify-end gap-2">
-              <button type="button" onClick={closeConfirm} className="text-[0.72rem] px-3 py-1.5 rounded-md border border-border text-muted hover:border-muted/60">Cancel</button>
+            <div className="shrink-0 flex items-center justify-end gap-2 pt-0.5 border-t border-border/60 sm:border-0">
+              <button type="button" onClick={closeConfirm} className="text-[0.72rem] px-3 py-1.5 rounded-md border border-border text-muted hover:border-muted/60 hover:text-text transition-colors">Cancel</button>
               <button
                 type="button"
                 onClick={runTrade}

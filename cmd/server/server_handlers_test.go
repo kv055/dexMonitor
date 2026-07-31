@@ -564,7 +564,7 @@ func TestPastOfferFullVolumeUsesHistoricalHedgePositionWhenPersisted(t *testing.
 	agg := pastLifecycleAggregate{
 		AvgHedgeNotionalEUR:         50,
 		AvgLeverageUsed:             5,
-		AvgRecommendedCollateralEUR: 15,
+		AvgRecommendedCollateral: 15,
 	}
 
 	full := buildPastOfferAPI(offer, agg, 0, nil, "", 10_000).Analysis.FullVolume
@@ -578,8 +578,8 @@ func TestPastOfferFullVolumeUsesHistoricalHedgePositionWhenPersisted(t *testing.
 	}
 	assertFloat(t, pos.HedgeNotionalEUR, 50)
 	assertFloat(t, pos.LeverageUsed, 5)
-	assertFloat(t, pos.RecommendedCollateralEUR, 15)
-	assertFloat(t, pos.BTCPriceEUR, 100) // avg_ref_price from the fixture
+	assertFloat(t, pos.RecommendedCollateral, 15)
+	assertFloat(t, pos.BTCPrice, 100) // avg_ref_price from the fixture
 }
 
 func TestPastOfferCappedHedgePositionScalesWithTradeSize(t *testing.T) {
@@ -595,7 +595,7 @@ func TestPastOfferCappedHedgePositionScalesWithTradeSize(t *testing.T) {
 	agg := pastLifecycleAggregate{
 		AvgHedgeNotionalEUR:         50,
 		AvgLeverageUsed:             5,
-		AvgRecommendedCollateralEUR: 15,
+		AvgRecommendedCollateral: 15,
 	}
 
 	// maxFiatLimitEUR=5 with avg_ref_price=100 caps the trade at 0.05 BTC —
@@ -613,7 +613,7 @@ func TestPastOfferCappedHedgePositionScalesWithTradeSize(t *testing.T) {
 		t.Fatal("expected position.Historical = true for a past offer")
 	}
 	assertFloat(t, pos.HedgeNotionalEUR, 2.5)          // 50 * (0.05/1.0)
-	assertFloat(t, pos.RecommendedCollateralEUR, 0.75) // 15 * (0.05/1.0)
+	assertFloat(t, pos.RecommendedCollateral, 0.75) // 15 * (0.05/1.0)
 	assertFloat(t, pos.LeverageUsed, 5)                // leverage doesn't scale with size
 }
 

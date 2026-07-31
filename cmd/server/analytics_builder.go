@@ -100,7 +100,7 @@ func cappedNetPremium(o map[string]any, agg pastLifecycleAggregate, fullTradeSiz
 		avgPremiumPercent = tradecost.Round4(offerFloat(o, "avg_premium_pct"))
 	}
 	bd := buildCappedPastBreakdown(o, fullTradeSizeBTC, btcCap, avgRefPrice, avgPremiumPercent,
-		agg.AvgHedgeNotionalEUR, agg.AvgLeverageUsed, agg.AvgRecommendedCollateralEUR)
+		agg.AvgHedgeNotionalEUR, agg.AvgLeverageUsed, agg.AvgRecommendedCollateral)
 	return bd.EstimatedProfitPct
 }
 

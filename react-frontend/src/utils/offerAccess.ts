@@ -20,6 +20,11 @@ export function getPremiumMetricValue(offer: Offer, mode: PremiumFilterMode): nu
   }
 }
 
+/** Maps the live premium filter mode to the trade-size scenario used for net profit fiat. */
+export function profitScenarioForPremiumMode(mode: PremiumFilterMode): ScenarioKind {
+  return mode === 'net_capped' ? 'capped' : 'full';
+}
+
 export function getRefPrice(offer: Offer): number | null {
   return offer.pricing?.ref_price ?? offer.pricing?.avg_ref_price ?? offer.ref_price ?? null;
 }

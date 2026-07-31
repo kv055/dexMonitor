@@ -7,7 +7,7 @@ interface ChartScopeVisibility {
   exceptions: Set<string>;
 }
 import { INITIAL_FILTERS, filtersReducer } from './filtersState';
-import { getEstimatedProfitFiat, getPremiumMetricValue, getRefPrice, hasZeroTrustScore, isOfferLive } from '../utils/offerAccess';
+import { getEstimatedProfitFiat, getPremiumMetricValue, getRefPrice, hasZeroTrustScore, isOfferLive, profitScenarioForPremiumMode } from '../utils/offerAccess';
 
 function countOffersByPaymentMethod(offers: Offer[]): Record<string, number> {
   const counts: Record<string, number> = {};
@@ -23,7 +23,7 @@ function applyMonitorFilters(
   offers: Offer[],
   filters: Filters,
   paymentFilterFn: ((o: Offer) => boolean) | null,
-  options?: { skipPayment?: boolean },
+  options?: { skipPayment?: boolean; skipProfitRange?: boolean; skipPremiumRange?: boolean },
 ): Offer[] {
   let f = offers;
   if (filters.direction) f = f.filter(o => o.direction === filters.direction);
@@ -35,14 +35,19 @@ function applyMonitorFilters(
   if (!options?.skipPayment && paymentFilterFn) f = f.filter(paymentFilterFn);
   if (filters.status === 'open') f = f.filter(o => isOfferLive(o));
   if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
-  const pMin = parseFloat(filters.premiumMin);
-  const pMax = parseFloat(filters.premiumMax);
-  if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
-  if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
-  const profitMin = parseFloat(filters.profitMin);
-  const profitMax = parseFloat(filters.profitMax);
-  if (!isNaN(profitMin)) f = f.filter(o => (getEstimatedProfitFiat(o, 'full') ?? 0) >= profitMin);
-  if (!isNaN(profitMax)) f = f.filter(o => (getEstimatedProfitFiat(o, 'full') ?? 0) <= profitMax);
+  if (!options?.skipPremiumRange) {
+    const pMin = parseFloat(filters.premiumMin);
+    const pMax = parseFloat(filters.premiumMax);
+    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
+    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
+  }
+  if (!options?.skipProfitRange) {
+    const profitMin = parseFloat(filters.profitMin);
+    const profitMax = parseFloat(filters.profitMax);
+    const profitScenario = profitScenarioForPremiumMode(filters.premiumMode);
+    if (!isNaN(profitMin)) f = f.filter(o => (getEstimatedProfitFiat(o, profitScenario) ?? 0) >= profitMin);
+    if (!isNaN(profitMax)) f = f.filter(o => (getEstimatedProfitFiat(o, profitScenario) ?? 0) <= profitMax);
+  }
   if (filters.premiumOnly) {
     f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
   }
@@ -158,6 +163,17 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
     [activeOffers, filters, paymentFilterFn],
   );
 
+  // Universe for range sliders: same category/view filters as the table, but
+  // without the range being edited (so bounds can expand to the full category).
+  const offersForProfitRange = useMemo(
+    () => applyMonitorFilters(activeOffers, filters, paymentFilterFn, { skipProfitRange: true }),
+    [activeOffers, filters, paymentFilterFn],
+  );
+  const offersForPremiumRange = useMemo(
+    () => applyMonitorFilters(activeOffers, filters, paymentFilterFn, { skipPremiumRange: true }),
+    [activeOffers, filters, paymentFilterFn],
+  );
+
   // The depth chart represents the market book, so only market-selection
   // filters apply. Opportunity-only filters (direction, status and premium)
   // must not make the current book disappear when the offers table switches
@@ -174,7 +190,7 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
   }, [activeOffers, filters, paymentFilterFn]);
 
   return (
-    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, depthOffers, paymentMethods, paymentMethodCounts, groups, selectedOfferKey, setSelectedOfferKey, hoveredOhlcTime, setHoveredOhlcTime, loading, refPrice, zeroTrustHiddenCount, isChartOfferVisible, toggleChartOfferKey, setChartOfferKeysVisible, hideAllChartOffers }}>
+    <FiltersContext.Provider value={{ filters, setFilters, resetFilters, offers, filteredOffers, offersForProfitRange, offersForPremiumRange, depthOffers, paymentMethods, paymentMethodCounts, groups, selectedOfferKey, setSelectedOfferKey, hoveredOhlcTime, setHoveredOhlcTime, loading, refPrice, zeroTrustHiddenCount, isChartOfferVisible, toggleChartOfferKey, setChartOfferKeysVisible, hideAllChartOffers }}>
       {children}
     </FiltersContext.Provider>
   );

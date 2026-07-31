@@ -88,14 +88,14 @@ function offer(
         const spotEur = btcAmount * refPrice;
         return {
           btc_amount: btcAmount,
-          btc_price_eur: refPrice,
-          spot_notional_eur: spotEur,
-          hedge_collateral_eur: 0,
+          btc_price: refPrice,
+          spot_notional: spotEur,
+          hedge_collateral: 0,
           security_deposit_pct: depositPct,
           security_deposit_side: direction === 'sell' ? 'buyer' : 'seller',
           security_deposit_btc: depositBtc,
-          security_deposit_eur: depositEur,
-          total_eur: spotEur + depositEur,
+          security_deposit_fiat: depositEur,
+          total_fiat: spotEur + depositEur,
           deposit_estimated: depositPct > 0,
         };
       })(),

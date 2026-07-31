@@ -3,7 +3,7 @@ import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
 import type { PremiumFilterMode } from '../types';
 import { formatTimeOnly } from '../utils/formatters';
-import { getEstimatedProfitFiat, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
+import { getEstimatedProfitFiat, getPremiumMetricValue, isOfferLive, profitScenarioForPremiumMode } from '../utils/offerAccess';
 
 const PAYMENT_PALETTE = [
   '#f7931a', '#3fb950', '#bc8cff', '#58a6ff', '#f85149',
@@ -66,8 +66,9 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
     if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
     const profitMin = parseFloat(filters.profitMin);
     const profitMax = parseFloat(filters.profitMax);
-    if (!isNaN(profitMin)) f = f.filter(o => (getEstimatedProfitFiat(o, 'full') ?? 0) >= profitMin);
-    if (!isNaN(profitMax)) f = f.filter(o => (getEstimatedProfitFiat(o, 'full') ?? 0) <= profitMax);
+    const profitScenario = profitScenarioForPremiumMode(filters.premiumMode);
+    if (!isNaN(profitMin)) f = f.filter(o => (getEstimatedProfitFiat(o, profitScenario) ?? 0) >= profitMin);
+    if (!isNaN(profitMax)) f = f.filter(o => (getEstimatedProfitFiat(o, profitScenario) ?? 0) <= profitMax);
     if (filters.premiumOnly) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
     const counts: Record<string, number> = {};
@@ -344,9 +345,9 @@ export function DualRangeFilter({
 }
 
 function PastPremiumRange() {
-  const { offers, filters, setFilters } = useFilters();
+  const { filters, setFilters, offersForPremiumRange } = useFilters();
   const bounds = useMemo(() => {
-    const premiums = offers
+    const premiums = offersForPremiumRange
       .filter(offer => !isOfferLive(offer))
       .map(offer => getPremiumMetricValue(offer, filters.premiumMode))
       .filter((value): value is number => value != null && Number.isFinite(value));
@@ -355,7 +356,17 @@ function PastPremiumRange() {
       min: Math.floor(Math.min(...premiums) * 100),
       max: Math.ceil(Math.max(...premiums) * 100),
     };
-  }, [offers, filters.premiumMode]);
+  }, [offersForPremiumRange, filters.premiumMode]);
+
+  useEffect(() => {
+    if (bounds == null) return;
+    if (filters.premiumMin === '' || filters.premiumMax === '') {
+      setFilters({
+        premiumMin: (bounds.min / 100).toFixed(2),
+        premiumMax: (bounds.max / 100).toFixed(2),
+      });
+    }
+  }, [bounds, filters.premiumMin, filters.premiumMax, setFilters]);
 
   if (bounds == null) {
     return null;
@@ -382,36 +393,52 @@ function PastPremiumRange() {
 }
 
 function LiveNetProfitRange() {
-  const { offers, filters, setFilters } = useFilters();
+  const { filters, setFilters, offersForProfitRange, offersForPremiumRange } = useFilters();
   const [metric, setMetric] = useState<'profit' | 'premium'>('profit');
+  const profitScenario = profitScenarioForPremiumMode(filters.premiumMode);
+  const categoryKey = `${filters.premiumMode}:${filters.premiumOnly ? 'only' : 'all'}`;
+  const prevCategoryRef = useRef(categoryKey);
+
+  const boundOffers = metric === 'profit' ? offersForProfitRange : offersForPremiumRange;
   const bounds = useMemo(() => {
-    const profits = offers
+    const values = boundOffers
       .filter(isOfferLive)
       .map(offer => metric === 'profit'
-        ? getEstimatedProfitFiat(offer, 'full')
+        ? getEstimatedProfitFiat(offer, profitScenario)
         : getPremiumMetricValue(offer, filters.premiumMode))
       .filter((value): value is number => value != null && Number.isFinite(value));
-    if (profits.length === 0) return null;
+    if (values.length === 0) return null;
     return {
-      min: Math.floor(Math.min(...profits) * 100),
-      max: Math.ceil(Math.max(...profits) * 100),
+      min: Math.floor(Math.min(...values) * 100),
+      max: Math.ceil(Math.max(...values) * 100),
     };
-  }, [offers, metric, filters.premiumMode]);
+  }, [boundOffers, metric, filters.premiumMode, profitScenario]);
 
   useEffect(() => {
     if (bounds == null) return;
     const minKey = metric === 'profit' ? 'profitMin' : 'premiumMin';
     const maxKey = metric === 'profit' ? 'profitMax' : 'premiumMax';
+    const categoryChanged = prevCategoryRef.current !== categoryKey;
+    prevCategoryRef.current = categoryKey;
+    // Reset the active range whenever the premium category changes so min/max
+    // match the offers in that category (e.g. Net Premium Full vs all offers).
+    if (categoryChanged) {
+      setFilters({
+        [minKey]: (bounds.min / 100).toFixed(2),
+        [maxKey]: (bounds.max / 100).toFixed(2),
+      });
+      return;
+    }
     if (filters[minKey] === '' || filters[maxKey] === '') {
       setFilters({ [minKey]: (bounds.min / 100).toFixed(2), [maxKey]: (bounds.max / 100).toFixed(2) });
     }
-  }, [bounds, filters, metric, setFilters]);
+  }, [bounds, categoryKey, filters, metric, setFilters]);
 
   if (bounds == null) {
     return (
       <div className="flex flex-col gap-1">
         <span className={labelCls}>{metric === 'profit' ? `Net profit ${filters.fiat}` : 'Premium %'}</span>
-        <span className="text-[0.7rem] text-muted">No {metric === 'profit' ? 'profit' : 'premium'} data in live offers</span>
+        <span className="text-[0.7rem] text-muted">No {metric === 'profit' ? 'profit' : 'premium'} data in this premium category</span>
       </div>
     );
   }
@@ -424,18 +451,21 @@ function LiveNetProfitRange() {
   const parsedMax = parseFloat(filters[maxKey]);
   const currentMin = Math.max(min, Math.min(Math.round((Number.isNaN(parsedMin) ? min / 100 : parsedMin) * 100), max));
   const currentMax = Math.max(currentMin, Math.min(Math.round((Number.isNaN(parsedMax) ? max / 100 : parsedMax) * 100), max));
+  const fiatToggleLabel = filters.fiat.length <= 4 ? filters.fiat : filters.fiat.slice(0, 3);
   return (
     <div className="flex flex-col gap-1.5">
       <div className="flex items-center justify-between gap-2">
         <span className={labelCls}>Range</span>
         <div className="flex rounded border border-border bg-bg/60 p-0.5 text-[0.62rem] font-semibold">
-          <button type="button" onClick={() => setMetric('profit')} aria-pressed={metric === 'profit'} className={metric === 'profit' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>EUR</button>
+          <button type="button" onClick={() => setMetric('profit')} aria-pressed={metric === 'profit'} className={metric === 'profit' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>{fiatToggleLabel}</button>
           <button type="button" onClick={() => setMetric('premium')} aria-pressed={metric === 'premium'} className={metric === 'premium' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>%</button>
         </div>
       </div>
       <DualRangeFilter
         label={metric === 'profit' ? `Net profit ${filters.fiat}` : 'Premium %'}
-        description={metric === 'profit' ? 'Filter live offers by net profit per order' : 'Filter live offers by premium percentage'}
+        description={metric === 'profit'
+          ? `Filter offers in the selected premium category by net profit (${filters.premiumMode === 'net_capped' ? 'capped size' : 'full size'})`
+          : 'Filter offers in the selected premium category by premium percentage'}
         min={min}
         max={max}
         value={[currentMin, currentMax]}

@@ -71,25 +71,26 @@ export interface CostBreakdown {
 export type TradeMode = 'hedgefull_single_collateral' | 'hedgeless_double_collateral';
 
 // CapitalRequirement is the capital that must be committed to execute the trade,
-// distinct from the fees consumed by it. Broken out into the spot leg (EUR to
+// distinct from the fees consumed by it. Broken out into the spot leg (fiat to
 // buy BTC on the CEX), the perp hedge collateral, and the DEX security deposit,
-// plus the grand total. EUR figures are 0 when the ref price is unknown.
+// plus the grand total. Fiat figures are 0 when the ref price is unknown.
+// Amounts are in the selected fiat currency, not hardcoded to EUR.
 // Hedgeless mode adds btc_liquidity_btc (position + deposit) and
-// fiat_collateral_eur (position×price only); total_eur = pool EUR + fiat.
+// fiat_collateral (position×price only); total_fiat = pool fiat + fiat collateral.
 export interface CapitalRequirement {
   btc_amount: number;
-  btc_price_eur: number;
-  spot_notional_eur: number;
-  hedge_collateral_eur: number;
+  btc_price: number;
+  spot_notional: number;
+  hedge_collateral: number;
   security_deposit_pct: number;
   security_deposit_side: string;  // "buyer" | "seller" | ""
   security_deposit_btc: number;
-  security_deposit_eur: number;
-  total_eur: number;
+  security_deposit_fiat: number;
+  total_fiat: number;
   deposit_estimated: boolean;     // true while using the configured %, not the real per-offer value
   trade_mode?: TradeMode | string;
   btc_liquidity_btc?: number;
-  fiat_collateral_eur?: number;
+  fiat_collateral?: number;
 }
 
 export interface AbortCostBreakdown {
@@ -126,17 +127,17 @@ export interface HedgePositionDetail {
   leverage_used: number;
   hedge_notional_eur: number;
   initial_margin_eur: number;
-  recommended_collateral_eur: number;
+  recommended_collateral: number;
   stress_move_pct: number;
   stress_loss_eur: number;
   maintenance_requirement_eur: number;
   free_collateral_after_stress_eur: number;
   liquidation_move_pct: number;
-  btc_price_eur: number;
+  btc_price: number;
   // True when this position was reconstructed from persisted per-cycle
   // averages for a closed offer rather than freshly simulated for a live
   // one. Only hedge_ratio, leverage_used, hedge_notional_eur,
-  // recommended_collateral_eur, and btc_price_eur are meaningful then — the
+  // recommended_collateral, and btc_price are meaningful then — the
   // rest were never persisted and are exactly 0, not real measurements.
   historical?: boolean;
 }
@@ -946,7 +947,7 @@ export interface CexTradeflowRequest {
   market_side: string;
   btc_amount: number;
   fiat_currency: string;
-  required_capital_eur: number;
+  required_capital: number;
   hedge_venue: string;
   hedge_side: string;
   hedge_notional_btc: number;
@@ -1049,7 +1050,7 @@ export interface PreTradeCheckReport {
 export interface CexPreTradeCheckRequest {
   provider: string;
   fiat_currency: string;
-  required_capital_eur: number;
+  required_capital: number;
   payment_method?: string;
   // The offer's full accepted-method list; when payment_method is empty the
   // backend picks the highest-priority linked+active catalog entry.

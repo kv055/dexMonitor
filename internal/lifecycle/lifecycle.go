@@ -50,9 +50,9 @@ type PastAggregate struct {
 	// AvgLeverageUsed is the average leverage assumed for hedge sizing across
 	// the offer's lifecycle samples.
 	AvgLeverageUsed float64
-	// AvgRecommendedCollateralEUR is the average recommended hedge collateral
+	// AvgRecommendedCollateral is the average recommended hedge collateral
 	// in EUR across the offer's lifecycle samples.
-	AvgRecommendedCollateralEUR float64
+	AvgRecommendedCollateral float64
 }
 
 // Record represents a record.
@@ -151,7 +151,7 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 		        AVG(btc_amount) AS avg_btc_amount,
 		        AVG(hedge_notional_eur) AS avg_hedge_notional_eur,
 		        AVG(leverage_used) AS avg_leverage_used,
-		        AVG(recommended_collateral_eur) AS avg_recommended_collateral_eur
+		        AVG(recommended_collateral_eur) AS avg_recommended_collateral
 		   FROM order_lifecycle
 		  WHERE offer_db_id IN (%s)
 		  GROUP BY offer_db_id`,
@@ -167,13 +167,13 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 		var count int
 		var avgPrice, avgRefPrice, avgPremium sql.NullFloat64
 		var avgTradeCostPct, avgTradeCostBTC, avgNetPct, avgProfitBTC, avgProfitFiat, avgBTCAmount sql.NullFloat64
-		var avgHedgeNotionalEUR, avgLeverageUsed, avgRecommendedCollateralEUR sql.NullFloat64
+		var avgHedgeNotionalEUR, avgLeverageUsed, avgRecommendedCollateral sql.NullFloat64
 		if err := rows.Scan(
 			&offerID, &count,
 			&avgPrice, &avgRefPrice, &avgPremium,
 			&avgTradeCostPct, &avgTradeCostBTC, &avgNetPct,
 			&avgProfitBTC, &avgProfitFiat, &avgBTCAmount,
-			&avgHedgeNotionalEUR, &avgLeverageUsed, &avgRecommendedCollateralEUR,
+			&avgHedgeNotionalEUR, &avgLeverageUsed, &avgRecommendedCollateral,
 		); err != nil {
 			continue
 		}
@@ -211,8 +211,8 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 		if avgLeverageUsed.Valid {
 			agg.AvgLeverageUsed = tradecost.Round4(avgLeverageUsed.Float64)
 		}
-		if avgRecommendedCollateralEUR.Valid {
-			agg.AvgRecommendedCollateralEUR = tradecost.Round2(avgRecommendedCollateralEUR.Float64)
+		if avgRecommendedCollateral.Valid {
+			agg.AvgRecommendedCollateral = tradecost.Round2(avgRecommendedCollateral.Float64)
 		}
 		result[offerID] = agg
 	}

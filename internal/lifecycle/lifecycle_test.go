@@ -235,7 +235,7 @@ func TestLoadPastAggregatesComputesHedgePositionAverages(t *testing.T) {
 	got := agg[offerID]
 	assertFloat(t, got.AvgHedgeNotionalEUR, 55)
 	assertFloat(t, got.AvgLeverageUsed, 5)
-	assertFloat(t, got.AvgRecommendedCollateralEUR, 16)
+	assertFloat(t, got.AvgRecommendedCollateral, 16)
 }
 
 func TestPersistSnapshotLeavesAskWithdrawalFeeNull(t *testing.T) {

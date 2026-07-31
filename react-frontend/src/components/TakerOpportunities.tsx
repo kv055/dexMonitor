@@ -1072,8 +1072,8 @@ function applyManualRouteSelection(bd: CostBreakdown, options: ManualRouteOption
   }
   if (next.capital) {
     next.capital.trade_mode = 'hedgefull_single_collateral';
-    next.capital.hedge_collateral_eur = next.hedge.position?.recommended_collateral_eur ?? 0;
-    next.capital.total_eur = next.capital.spot_notional_eur + next.capital.hedge_collateral_eur + next.capital.security_deposit_eur;
+    next.capital.hedge_collateral = next.hedge.position?.recommended_collateral ?? 0;
+    next.capital.total_fiat = next.capital.spot_notional + next.capital.hedge_collateral + next.capital.security_deposit_fiat;
   }
   const conversionBTC = next.conversion?.fee_sum_btc ?? 0;
   next.total_cost_btc = next.cex_taker_fee_btc + next.withdrawal_fee_btc + next.network_fee_btc + conversionBTC + next.hedge.fee_sum_btc + next.dex_fee_btc;
@@ -1093,15 +1093,15 @@ function deriveHedgelessBreakdown(bd: CostBreakdown): CostBreakdown {
   const capital = bd.capital
     ? (() => {
         const btcLiquidity = bd.capital.btc_amount + bd.capital.security_deposit_btc;
-        const price = bd.capital.btc_price_eur;
+        const price = bd.capital.btc_price;
         const fiatCollateral = price > 0 ? bd.capital.btc_amount * price : 0;
         return {
           ...bd.capital,
           trade_mode: 'hedgeless_double_collateral' as const,
-          hedge_collateral_eur: 0,
+          hedge_collateral: 0,
           btc_liquidity_btc: btcLiquidity,
-          fiat_collateral_eur: fiatCollateral,
-          total_eur: price > 0 ? btcLiquidity * price + fiatCollateral : 0,
+          fiat_collateral: fiatCollateral,
+          total_fiat: price > 0 ? btcLiquidity * price + fiatCollateral : 0,
         };
       })()
     : null;
