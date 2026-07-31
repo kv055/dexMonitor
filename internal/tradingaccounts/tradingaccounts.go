@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -13,6 +14,59 @@ import (
 	"commons/paymentmethods"
 	"dexmonitor/internal/credentialcrypto"
 )
+
+// paymentCategories are the account categories that participate in the
+// operator-ordered payment_priority list (1 = preferred).
+const paymentCategorySQL = `'Fiat Transmitter', 'Bank', 'Wallet addresses'`
+
+func isPaymentCategory(category string) bool {
+	switch strings.TrimSpace(category) {
+	case "Fiat Transmitter", "Bank", "Wallet addresses":
+		return true
+	default:
+		return false
+	}
+}
+
+type queryExecer interface {
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+}
+
+// compactPaymentPriorities renumbers payment accounts to continuous 1..N,
+// preserving relative order (by current priority, then id).
+func compactPaymentPriorities(ctx context.Context, db queryExecer) error {
+	rows, err := db.QueryContext(ctx, `
+		SELECT id FROM accounts
+		WHERE category IN (`+paymentCategorySQL+`)
+		ORDER BY COALESCE(payment_priority, 2147483647), id
+	`)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		ids = append(ids, id)
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for i, id := range ids {
+		if _, err := db.ExecContext(ctx, `
+			UPDATE accounts
+			SET payment_priority = $2, updated_at = CURRENT_TIMESTAMP
+			WHERE id = $1
+		`, id, i+1); err != nil {
+			return err
+		}
+	}
+	return nil
+}
 
 // MaskedSecret replaces stored secret material (passwords, TOTP secrets, seed
 // phrases, API secrets, passkey private keys) in every API response. When an
@@ -818,8 +872,8 @@ func (r Repository) Create(ctx context.Context, payload AccountPayload) (int64, 
 		INSERT INTO accounts (provider, category, email, password, phone, payment_tag, notification_channels, payment_priority, is_active)
 		VALUES (
 			$1, NULLIF($2, ''), NULLIF($3, ''), NULLIF($4, ''), NULLIF($5, ''), NULLIF($6, ''), $7,
-			CASE WHEN $2 IN ('Fiat Transmitter', 'Bank', 'Wallet addresses')
-				THEN (SELECT COALESCE(MAX(payment_priority), 0) + 1 FROM accounts WHERE category IN ('Fiat Transmitter', 'Bank', 'Wallet addresses'))
+			CASE WHEN $2 IN (`+paymentCategorySQL+`)
+				THEN (SELECT COALESCE(MAX(payment_priority), 0) + 1 FROM accounts WHERE category IN (`+paymentCategorySQL+`))
 				ELSE NULL END,
 			TRUE
 		)
@@ -840,7 +894,7 @@ func (r Repository) ReorderPaymentAccounts(ctx context.Context, ids []int64) err
 		if _, err := tx.ExecContext(ctx, `
 			UPDATE accounts
 			SET payment_priority = $2, updated_at = CURRENT_TIMESTAMP
-			WHERE id = $1 AND category IN ('Fiat Transmitter', 'Bank', 'Wallet addresses')
+			WHERE id = $1 AND category IN (`+paymentCategorySQL+`)
 		`, id, i+1); err != nil {
 			return err
 		}
@@ -898,7 +952,36 @@ func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload
 		}
 	}
 	active := payload.IsActive != nil
-	_, err = r.DB.ExecContext(ctx, `
+	willBePayment := isPaymentCategory(category)
+
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var oldCategory sql.NullString
+	if err := tx.QueryRowContext(ctx, `SELECT COALESCE(category, '') FROM accounts WHERE id = $1`, id).Scan(&oldCategory); err != nil {
+		return err
+	}
+	wasPayment := isPaymentCategory(oldCategory.String)
+	leavingPayment := wasPayment && !willBePayment
+	enteringPayment := !wasPayment && willBePayment
+
+	var nextPriority any
+	if enteringPayment {
+		var n int
+		if err := tx.QueryRowContext(ctx, `
+			SELECT COALESCE(MAX(payment_priority), 0) + 1
+			FROM accounts
+			WHERE category IN (`+paymentCategorySQL+`)
+		`).Scan(&n); err != nil {
+			return err
+		}
+		nextPriority = n
+	}
+
+	_, err = tx.ExecContext(ctx, `
 		UPDATE accounts
 		SET provider = $2,
 		    category = NULLIF($3, ''),
@@ -908,16 +991,50 @@ func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload
 		    payment_tag = CASE WHEN $7 = '`+MaskedSecret+`' THEN payment_tag ELSE NULLIF($7, '') END,
 		    notification_channels = CASE WHEN $9 THEN $8 ELSE notification_channels END,
 		    is_active = CASE WHEN $10 THEN $11 ELSE is_active END,
+		    payment_priority = CASE
+		      WHEN $12 THEN NULL
+		      WHEN $13 THEN $14
+		      ELSE payment_priority
+		    END,
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
-	`, id, provider, category, email, password, phone, paymentTag, notificationChannels, replaceNotificationChannels, active, payload.IsActive)
-	return err
+	`, id, provider, category, email, password, phone, paymentTag, notificationChannels, replaceNotificationChannels, active, payload.IsActive, leavingPayment, enteringPayment, nextPriority)
+	if err != nil {
+		return err
+	}
+	if leavingPayment {
+		if err := compactPaymentPriorities(ctx, tx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // Delete removes an account by provider and category.
 func (r Repository) Delete(ctx context.Context, id int64) error {
-	_, err := r.DB.ExecContext(ctx, `DELETE FROM accounts WHERE id = $1`, id)
-	return err
+	tx, err := r.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	var category sql.NullString
+	err = tx.QueryRowContext(ctx, `SELECT COALESCE(category, '') FROM accounts WHERE id = $1`, id).Scan(&category)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM accounts WHERE id = $1`, id); err != nil {
+		return err
+	}
+	if isPaymentCategory(category.String) {
+		if err := compactPaymentPriorities(ctx, tx); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
 // CreateTOTPSecret creates a totpsecret.
