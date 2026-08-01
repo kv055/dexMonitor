@@ -155,6 +155,19 @@ export function hasMinScenario(offer: Offer): boolean {
   return !!offer.analysis?.min_volume;
 }
 
+/** Trade size for display/sort: prefer analysis, but never treat 0 as authoritative when volume_limits exist. */
+export function getTradeSizeBtc(offer: Offer, sel: ScenarioSelector = false): number | null {
+  const scenario = offer.analysis ? pickScenario(offer, sel) : null;
+  const fromAnalysis = scenario?.trade_size_btc;
+  if (fromAnalysis != null && fromAnalysis > 0) return fromAnalysis;
+  if (!offer.analysis) {
+    if (scenarioKind(sel) === 'min') return getBtcMin(offer);
+    const legacy = scenarioKind(sel) === 'capped' ? offer.cost_breakdown_capped?.btc_amount : offer.cost_breakdown?.btc_amount;
+    if (legacy != null && legacy > 0) return legacy;
+  }
+  return getBtcMax(offer) ?? getBtcMin(offer);
+}
+
 export function getDisplayCostBreakdown(offer: Offer, sel: ScenarioSelector = false): CostBreakdown | null {
   if (!offer.analysis) {
     if (scenarioKind(sel) === 'min') return null;
@@ -182,8 +195,12 @@ export function getDisplayCostBreakdown(offer: Offer, sel: ScenarioSelector = fa
   const totalBTC = scenario.costs.total.btc ?? scenario.costs.total.avg_btc ?? 0;
   const totalPct = scenario.costs.total.pct ?? scenario.costs.total.avg_pct ?? (scenario.trade_size_btc > 0 ? (totalBTC / scenario.trade_size_btc) * 100 : 0);
 
+  // Prefer scenario trade size, but fall back when cost routing left trade_size_btc at 0
+  // (non-positive premium / no route) while the offer still has volume_limits.
+  const resolvedTradeSize = getTradeSizeBtc(offer, sel) ?? 0;
+
   return {
-    btc_amount: scenario.trade_size_btc,
+    btc_amount: resolvedTradeSize,
     route_cex: scenario.route.cex,
     route_dex: offer.exchange,
     route_method: scenario.route.settlement,

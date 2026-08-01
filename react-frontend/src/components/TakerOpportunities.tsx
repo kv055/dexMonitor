@@ -25,6 +25,7 @@ import {
   getPriceType,
   getRawPremiumPercent,
   getRefPrice,
+  getTradeSizeBtc,
   hasCappedScenario,
   hasMinScenario,
   isOfferLive,
@@ -1221,7 +1222,7 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
         case 'payment_method': return offer.payment_methods?.join(', ') ?? '';
         case 'first_seen': return parseUtcTimestamp(getFirstSeen(offer))?.getTime() ?? 0;
         case 'age': return age(offer);
-        case 'size': return getDisplayCostBreakdown(offer, scenarioMode)?.btc_amount ?? getBtcMax(offer) ?? getBtcMin(offer) ?? 0;
+        case 'size': return getTradeSizeBtc(offer, scenarioMode) ?? 0;
         case 'net_profit': return netProfitUnit === 'btc' ? getEstimatedProfitBtc(offer, scenarioMode) ?? 0 : getEstimatedProfitFiat(offer, scenarioMode) ?? 0;
       }
     };
@@ -1315,7 +1316,7 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
       ) : sortedOffers.map((offer, index) => {
         const stableKey = stableKeys[index];
         const premium = getRawPremiumPercent(offer);
-        const tradeSize = getDisplayCostBreakdown(offer, scenarioMode)?.btc_amount ?? getBtcMax(offer) ?? getBtcMin(offer);
+        const tradeSize = getTradeSizeBtc(offer, scenarioMode);
         const netProfitBtc = getEstimatedProfitBtc(offer, scenarioMode);
         const netProfitFiat = getEstimatedProfitFiat(offer, scenarioMode);
         return (
