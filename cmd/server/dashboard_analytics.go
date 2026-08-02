@@ -57,6 +57,9 @@ func parseDashboardAnalyticsParams(r *http.Request) (dashboardAnalyticsParams, e
 	body.ExcludePaymentMethods = normalizePaymentMethodList(body.ExcludePaymentMethods)
 	body.ExcludeSpotCEXes = mergeCEXLists(body.ExcludeCEXes, normalizeCEXList(body.ExcludeSpotCEXes))
 	body.ExcludeHedgeCEXes = mergeCEXLists(body.ExcludeCEXes, normalizeCEXList(body.ExcludeHedgeCEXes))
+	policySpot, policyHedge := authoritativeCEXExclusions(r.Context())
+	body.ExcludeSpotCEXes = mergeCEXLists(body.ExcludeSpotCEXes, policySpot)
+	body.ExcludeHedgeCEXes = mergeCEXLists(body.ExcludeHedgeCEXes, policyHedge)
 	body.Sections = normalizeAnalyticsSections(body.Sections)
 	return body, nil
 }

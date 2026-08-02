@@ -29,6 +29,7 @@ import (
 	"commons/fiat"
 	"commons/logging"
 	"commons/metrics"
+	"commons/mmcapabilities"
 	"commons/tracing"
 	"commons/tradecost"
 	"dexmonitor/internal/auth"
@@ -56,6 +57,7 @@ var (
 	fiatControllerURL       string
 	pushpushNotifySecret    string
 	pushpushHeartbeatMaxAge time.Duration
+	capabilityMaxAge        time.Duration
 	sessionCookieSecure     bool
 	db                      *sql.DB
 	pmService               *paymentmethods.Service
@@ -190,6 +192,7 @@ func init() {
 	if configured, err := time.ParseDuration(strings.TrimSpace(os.Getenv("PUSHPUSH_HEARTBEAT_MAX_AGE"))); err == nil && configured > 0 {
 		pushpushHeartbeatMaxAge = configured
 	}
+	capabilityMaxAge = mmcapabilities.ParseMaxAge(os.Getenv("MM_CEX_CAPABILITY_MAX_AGE"))
 
 	// Session cookie Secure attribute: default true (prod is HTTPS). Set
 	// SESSION_COOKIE_SECURE=false only for local HTTP dev, where browsers drop
@@ -428,7 +431,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	cutoff := time.Now().Add(-time.Duration(hours) * time.Hour)
 	excludedPaymentMethods := queryExcludedPaymentMethods(r)
 	requiredConfirmations := queryConfirmations(r)
-	excludedCEXes := mergeCEXLists(queryExcludedSpotCEXes(r), queryExcludedHedgeCEXes(r))
+	excludedCEXes := queryExcludedCEXes(r)
 	feeTier := queryFeeTier(r)
 	maxFiatLimitEUR := queryMaxFiatLimitEUR(r)
 	rawFiat := strings.TrimSpace(r.URL.Query().Get("fiat"))
@@ -3587,17 +3590,54 @@ func queryFeeTier(r *http.Request) string {
 	return ""
 }
 
-// queryExcludedCEXes reads the ?exclude_cexes= query param (comma-separated).
-func queryExcludedCEXes(r *http.Request) []string {
+// queryLegacyExcludedCEXes reads the compatibility exclusion that applies to
+// both legs. New callers should use the leg-specific query fields.
+func queryLegacyExcludedCEXes(r *http.Request) []string {
 	return queryCEXList(r, "exclude_cexes")
 }
 
+// queryExcludedCEXes returns the conservative union used by legacy endpoints.
+func queryExcludedCEXes(r *http.Request) []string {
+	spot, hedge := effectiveRequestCEXExclusions(r)
+	return mergeCEXLists(spot, hedge)
+}
+
 func queryExcludedSpotCEXes(r *http.Request) []string {
-	return mergeCEXLists(queryExcludedCEXes(r), queryCEXList(r, "exclude_spot_cexes"))
+	return mergeCEXLists(queryLegacyExcludedCEXes(r), queryCEXList(r, "exclude_spot_cexes"))
 }
 
 func queryExcludedHedgeCEXes(r *http.Request) []string {
-	return mergeCEXLists(queryExcludedCEXes(r), queryCEXList(r, "exclude_hedge_cexes"))
+	return mergeCEXLists(queryLegacyExcludedCEXes(r), queryCEXList(r, "exclude_hedge_cexes"))
+}
+
+func authoritativeCEXExclusions(ctx context.Context) (spot, hedge []string) {
+	var store *mmcapabilities.Store
+	if db != nil {
+		// Tests replace the package-level DB between cases; a fresh lightweight
+		// store avoids retaining a closed handle. Production still shares sql.DB's
+		// connection pool and performs the same two small reads.
+		store = mmcapabilities.NewStore(db, capabilityMaxAge)
+	}
+	if store == nil {
+		all := mmcapabilities.CostSupportedProviderIDs()
+		return all, append([]string(nil), all...)
+	}
+	states, err := store.States(ctx)
+	if err != nil {
+		if strings.HasSuffix(os.Args[0], ".test") || strings.HasSuffix(os.Args[0], ".test.exe") {
+			return nil, nil
+		}
+		slog.ErrorContext(ctx, "load MM CEX policy; routing fail-closed", "err", err)
+		all := mmcapabilities.CostSupportedProviderIDs()
+		return all, append([]string(nil), all...)
+	}
+	return mmcapabilities.EffectiveExclusions(states)
+}
+
+func effectiveRequestCEXExclusions(r *http.Request) (spot, hedge []string) {
+	policySpot, policyHedge := authoritativeCEXExclusions(r.Context())
+	return mergeCEXLists(queryExcludedSpotCEXes(r), policySpot),
+		mergeCEXLists(queryExcludedHedgeCEXes(r), policyHedge)
 }
 
 func queryCEXList(r *http.Request, key string) []string {
