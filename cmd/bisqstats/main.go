@@ -2,7 +2,6 @@ package main
 
 import (
 	"encoding/json"
-	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -103,5 +102,5 @@ func envOr(key, fallback string) string {
 
 func init() {
 	log.SetFlags(0)
-	log.SetPrefix(fmt.Sprintf("[bisqstats] "))
+	log.SetPrefix("[bisqstats] ")
 }

@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"commons/accounts"
+	"commons/credentialcrypto"
 	"commons/paymentmethods"
-	"dexmonitor/internal/credentialcrypto"
 )
 
 // paymentCategories are the account categories that participate in the

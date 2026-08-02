@@ -262,87 +262,7 @@ func main() {
 	// endpoints are intentionally exempt from the requireSession gate below.
 	authSvc.RegisterRoutes(mux)
 
-	// API
-	mux.HandleFunc("GET /api/past_offers", handlePastOffers)
-	mux.HandleFunc("GET /api/past_offers/{id}/lifecycle", handlePastOfferLifecycle)
-	mux.HandleFunc("GET /api/past_order_stats", handlePastOrderStats)
-	mux.HandleFunc("GET /api/past_profitable_orders", handlePastProfitableOrders)
-	mux.HandleFunc("GET /api/general_stats/overview", handleGeneralStatsOverview)
-	mux.HandleFunc("GET /api/general_stats/past_premiums", handleGeneralStatsPastPremiums)
-	mux.HandleFunc("GET /api/general_stats/lifetimes", handleGeneralStatsLifetimes)
-	mux.HandleFunc("GET /api/general_stats/payment_methods", handleGeneralStatsPaymentMethods)
-	mux.HandleFunc("POST /api/dashboard/analytics", handleDashboardAnalytics)
-	mux.HandleFunc("POST /api/statistics", handleStatistics)
-	mux.HandleFunc("GET /api/stats", handleStats)
-	mux.HandleFunc("GET /api/ohlc", handleOHLC)
-	mux.HandleFunc("GET /api/snapshot-log", handleSnapshotLog)
-	mux.HandleFunc("GET /api/snapshot-log/{id}", handleSnapshotLogDetail)
-	mux.HandleFunc("GET /api/payment_method_groups", handlePaymentMethodGroups)
-	mux.HandleFunc("GET /api/trading/payment_methods", handleTradingPaymentMethods)
-	mux.HandleFunc("PUT /api/trading/payment_methods/{id}", handleTradingPaymentMethodByID)
-	mux.HandleFunc("DELETE /api/trading/payment_methods/{id}", handleTradingPaymentMethodByID)
-	mux.HandleFunc("POST /api/trading/payment_methods/{id}/degrade-to-alias/{provider_id}", handleTradingPaymentMethodDegradeToAlias)
-	mux.HandleFunc("POST /api/trading/payment_methods/{id}/aliases/promote", handleTradingPaymentMethodPromoteAlias)
-	mux.HandleFunc("GET /api/trading/payment_methods/{id}/chat_templates", handleTradingPaymentMethodChatTemplates)
-	mux.HandleFunc("PUT /api/trading/payment_methods/{id}/chat_templates/{exchange}", handleTradingPaymentMethodChatTemplateByExchange)
-	mux.HandleFunc("DELETE /api/trading/payment_methods/{id}/chat_templates/{exchange}", handleTradingPaymentMethodChatTemplateByExchange)
-	mux.HandleFunc("GET /api/trading/wallet_addresses", handleTradingWalletAddresses)
-	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
-	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
-	mux.HandleFunc("GET /api/mm-controller/lnd/wallet", handleMmControllerLNDWallet)
-	mux.HandleFunc("GET /api/mm-controller/lnd/wallet/state", handleMmControllerLNDWalletState)
-	mux.HandleFunc("GET /api/mm-controller/service-versions", handleMmControllerServiceVersions)
-	mux.HandleFunc("POST /api/mm-controller/lnd/wallet/init", handleMmControllerLNDWalletInit)
-	mux.HandleFunc("POST /api/mm-controller/lnd/addresses", handleMmControllerLNDCreateAddress)
-	mux.HandleFunc("POST /api/mm-controller/lnd/channels/open", handleMmControllerLNDOpenChannel)
-	mux.HandleFunc("POST /api/mm-controller/lnd/channels/close", handleMmControllerLNDCloseChannel)
-	mux.HandleFunc("POST /api/mm-controller/cex/pre-trade-check", handleMmControllerCexPreTradeCheck)
-	mux.HandleFunc("POST /api/mm-controller/cex/tradeflow", handleMmControllerCexTradeflow)
-	mux.HandleFunc("GET /api/mm-controller/cex/withdrawal-track", handleMmControllerCexWithdrawalTrack)
-	mux.HandleFunc("GET /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
-	mux.HandleFunc("GET /api/mm-controller/bisq/payment-methods", handleMmControllerBisqPaymentMethods)
-	mux.HandleFunc("GET /api/mm-controller/bisq/payment-methods/{id}/form", handleMmControllerBisqPaymentMethodForm)
-	mux.HandleFunc("POST /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
-	mux.HandleFunc("DELETE /api/mm-controller/bisq/payment-accounts/{id}", handleMmControllerBisqPaymentAccountByID)
-	mux.HandleFunc("GET /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
-	mux.HandleFunc("PUT /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
-	mux.HandleFunc("POST /api/mm-controller/telegram/pair", handleMmControllerTelegramPair)
-	mux.HandleFunc("POST /api/mm-controller/telegram/set-webhook", handleMmControllerTelegramSetWebhook)
-	mux.HandleFunc("POST /api/mm-controller/telegram/test", handleMmControllerTelegramTest)
-	mux.HandleFunc("GET /api/phone-push/setup", handlePhonePushSetup)
-	mux.HandleFunc("POST /api/phone-push/setup/reveal", handlePhonePushSetupReveal)
-	mux.HandleFunc("GET /ws/cex/hedge-stream", handleMmControllerHedgeStreamWS)
-	mux.HandleFunc("GET /api/trading/accounts", handleTradingAccounts)
-	mux.HandleFunc("POST /api/trading/accounts", handleTradingAccounts)
-	mux.HandleFunc("GET /api/trading/accounts/{id}/credentials", handleTradingAccountCredentials)
-	mux.HandleFunc("GET /api/trading/accounts/{id}/secrets", handleTradingAccountSecrets)
-	mux.HandleFunc("GET /api/trading/accounts/{id}/bisq-account-file", handleTradingAccountBisqAccountFile)
-	mux.HandleFunc("GET /api/trading/accounts/{id}/bisq-data-directory", handleTradingAccountBisqDataDirectory)
-	mux.HandleFunc("PUT /api/trading/accounts/{id}", handleTradingAccountByID)
-	mux.HandleFunc("PUT /api/trading/accounts/priorities", handleTradingAccountPriorities)
-	mux.HandleFunc("DELETE /api/trading/accounts/{id}", handleTradingAccountByID)
-	mux.HandleFunc("POST /api/trading/accounts/{id}/health_check", handleTradingAccountHealthCheck)
-	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/deposit-addresses", handleTradingAccountCexDepositAddresses)
-	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/withdrawal-addresses", handleTradingAccountCexWithdrawalAddresses)
-	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/balances", handleTradingAccountCexBalances)
-	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/hedge-positions", handleTradingAccountCexHedgePositions)
-	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/spot-trades", handleTradingAccountCexSpotTrades)
-	mux.HandleFunc("POST /api/trading/accounts/{id}/totp_secrets", handleTradingAccountTOTPSecrets)
-	mux.HandleFunc("POST /api/trading/accounts/{id}/passkey_credentials", handleTradingAccountPasskeys)
-	mux.HandleFunc("POST /api/trading/accounts/{id}/seeds", handleTradingAccountSeeds)
-	mux.HandleFunc("POST /api/trading/accounts/{id}/api_keys", handleTradingAccountAPIKeys)
-	mux.HandleFunc("PUT /api/trading/totp_secrets/{id}", handleTradingTOTPSecretByID)
-	mux.HandleFunc("DELETE /api/trading/totp_secrets/{id}", handleTradingTOTPSecretByID)
-	mux.HandleFunc("PUT /api/trading/passkey_credentials/{id}", handleTradingPasskeyByID)
-	mux.HandleFunc("DELETE /api/trading/passkey_credentials/{id}", handleTradingPasskeyByID)
-	mux.HandleFunc("PUT /api/trading/seeds/{id}", handleTradingSeedByID)
-	mux.HandleFunc("DELETE /api/trading/seeds/{id}", handleTradingSeedByID)
-	mux.HandleFunc("PUT /api/trading/api_keys/{id}", handleTradingAPIKeyByID)
-	mux.HandleFunc("DELETE /api/trading/api_keys/{id}", handleTradingAPIKeyByID)
-	mux.HandleFunc("POST /api/trading/accounts/{id}/bank_accounts", handleTradingAccountBankAccounts)
-	mux.HandleFunc("PUT /api/trading/bank_accounts/{id}", handleTradingBankAccountByID)
-	mux.HandleFunc("DELETE /api/trading/bank_accounts/{id}", handleTradingBankAccountByID)
-	mux.HandleFunc("GET /health", handleHealth)
+	registerBackendRoutes(mux)
 
 	mux.Handle("GET /metrics", metricsReg.Handler())
 
@@ -680,48 +600,46 @@ func generalStatsCacheKey(r *http.Request) string {
 func loadGeneralStatsContext(r *http.Request) (generalStatsContext, error) {
 	key := generalStatsCacheKey(r)
 	now := time.Now()
-	for {
-		generalStatsCache.Lock()
-		if entry, ok := generalStatsCache.entries[key]; ok && now.Before(entry.expiry) {
-			ctx := entry.ctx
-			generalStatsCache.Unlock()
-			return ctx, nil
-		}
-		if inflight, ok := generalStatsCache.inFlight[key]; ok {
-			generalStatsCache.Unlock()
-			<-inflight.done
-			if inflight.err != nil {
-				return generalStatsContext{}, inflight.err
-			}
-			return inflight.ctx, nil
-		}
-		if generalStatsCache.inFlight == nil {
-			generalStatsCache.inFlight = make(map[string]*generalStatsInFlightEntry)
-		}
-		inflight := &generalStatsInFlightEntry{done: make(chan struct{})}
-		generalStatsCache.inFlight[key] = inflight
+	generalStatsCache.Lock()
+	if entry, ok := generalStatsCache.entries[key]; ok && now.Before(entry.expiry) {
+		ctx := entry.ctx
 		generalStatsCache.Unlock()
-
-		ctx, err := loadGeneralStatsContextUncached(r)
-		inflight.ctx = ctx
-		inflight.err = err
-
-		generalStatsCache.Lock()
-		delete(generalStatsCache.inFlight, key)
-		if err == nil {
-			if generalStatsCache.entries == nil {
-				generalStatsCache.entries = make(map[string]generalStatsCacheEntry)
-			}
-			sweepGeneralStatsCache(now)
-			generalStatsCache.entries[key] = generalStatsCacheEntry{ctx: ctx, expiry: now.Add(dashboardCacheTTL)}
-		}
-		generalStatsCache.Unlock()
-		close(inflight.done)
-		if err != nil {
-			return generalStatsContext{}, err
-		}
 		return ctx, nil
 	}
+	if inflight, ok := generalStatsCache.inFlight[key]; ok {
+		generalStatsCache.Unlock()
+		<-inflight.done
+		if inflight.err != nil {
+			return generalStatsContext{}, inflight.err
+		}
+		return inflight.ctx, nil
+	}
+	if generalStatsCache.inFlight == nil {
+		generalStatsCache.inFlight = make(map[string]*generalStatsInFlightEntry)
+	}
+	inflight := &generalStatsInFlightEntry{done: make(chan struct{})}
+	generalStatsCache.inFlight[key] = inflight
+	generalStatsCache.Unlock()
+
+	ctx, err := loadGeneralStatsContextUncached(r)
+	inflight.ctx = ctx
+	inflight.err = err
+
+	generalStatsCache.Lock()
+	delete(generalStatsCache.inFlight, key)
+	if err == nil {
+		if generalStatsCache.entries == nil {
+			generalStatsCache.entries = make(map[string]generalStatsCacheEntry)
+		}
+		sweepGeneralStatsCache(now)
+		generalStatsCache.entries[key] = generalStatsCacheEntry{ctx: ctx, expiry: now.Add(dashboardCacheTTL)}
+	}
+	generalStatsCache.Unlock()
+	close(inflight.done)
+	if err != nil {
+		return generalStatsContext{}, err
+	}
+	return ctx, nil
 }
 
 func loadGeneralStatsContextUncached(r *http.Request) (generalStatsContext, error) {
@@ -781,10 +699,6 @@ func loadGeneralStatsContextUncached(r *http.Request) (generalStatsContext, erro
 
 func (ctx generalStatsContext) overview() pastorders.GeneralStatsOverview {
 	return pastorders.BuildGeneralStatsOverview(ctx.generalOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
-}
-
-func (ctx generalStatsContext) premiumSummary() pastorders.GeneralStatsPremiumSummary {
-	return pastorders.BuildGeneralStatsPremiumSummary(ctx.generalOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
 }
 
 func (ctx generalStatsContext) pastPremiums(r *http.Request, lifecycleAgg map[int64]pastLifecycleAggregate) []pastorders.PastPremiumTimeframeStats {
@@ -1306,10 +1220,6 @@ type pastOfferCompactAPI struct {
 
 type pastLifecycleAggregate = lifecycle.PastAggregate
 
-func addPastOfferCostFields(o map[string]any, requiredConfirmations int) pastOfferAnalysis {
-	return addPastOfferCostFieldsFull(o, pastLifecycleAggregate{}, requiredConfirmations, nil, "", 0)
-}
-
 func addPastOfferCostFieldsFull(o map[string]any, agg pastLifecycleAggregate, requiredConfirmations int, excludedCEXes []string, feeTier string, maxFiatLimitEUR float64) pastOfferAnalysis {
 	price := offerFloat(o, "price")
 	refPrice := offerRefPrice(o)
@@ -1446,10 +1356,6 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 		avgProfitFiat = tradecost.Round4(offerFloat(o, "avg_estimated_profit_fiat"))
 	}
 	avgNetworkPct := agg.AvgNetworkPct
-	avgBTCAmount := agg.AvgBTCAmount
-	if avgBTCAmount == 0 {
-		avgBTCAmount = tradecost.Round8(offerFloat(o, "avg_btc_amount"))
-	}
 
 	var btcMinPtr, btcMaxPtr *float64
 	if v := offerFloat(o, "btc_min"); v > 0 {
@@ -1811,13 +1717,13 @@ func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct,
 	// while it was live, not what it would cost to hedge at today's price.
 	if avgRecommendedCollateral > 0 {
 		hedge.Position = &tradecost.HedgePositionDetail{
-			Side:                     hedge.Side,
-			HedgeRatio:               1.0,
-			LeverageUsed:             tradecost.Round4(avgLeverageUsed),
-			HedgeNotionalEUR:         tradecost.Round2(avgHedgeNotionalEUR),
+			Side:                  hedge.Side,
+			HedgeRatio:            1.0,
+			LeverageUsed:          tradecost.Round4(avgLeverageUsed),
+			HedgeNotionalEUR:      tradecost.Round2(avgHedgeNotionalEUR),
 			RecommendedCollateral: tradecost.Round2(avgRecommendedCollateral),
 			BTCPrice:              tradecost.Round2(refPrice),
-			Historical:               true,
+			Historical:            true,
 		}
 	}
 	if tradeCostBTC == 0 {
@@ -1921,13 +1827,13 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 	// reason as the full-volume breakdown.
 	if avgRecommendedCollateral > 0 {
 		hedge.Position = &tradecost.HedgePositionDetail{
-			Side:                     hedge.Side,
-			HedgeRatio:               1.0,
-			LeverageUsed:             tradecost.Round4(avgLeverageUsed),
-			HedgeNotionalEUR:         tradecost.Round2(scaleSize(avgHedgeNotionalEUR)),
+			Side:                  hedge.Side,
+			HedgeRatio:            1.0,
+			LeverageUsed:          tradecost.Round4(avgLeverageUsed),
+			HedgeNotionalEUR:      tradecost.Round2(scaleSize(avgHedgeNotionalEUR)),
 			RecommendedCollateral: tradecost.Round2(scaleSize(avgRecommendedCollateral)),
 			BTCPrice:              tradecost.Round2(refPrice),
-			Historical:               true,
+			Historical:            true,
 		}
 	}
 
@@ -3896,11 +3802,6 @@ func forwardMMControllerWebSocket(w http.ResponseWriter, r *http.Request, path s
 // mm-controller to the browser, carrying through the ?venue= query parameter.
 func handleMmControllerHedgeStreamWS(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerWebSocket(w, r, "/ws/cex/hedge-stream")
-}
-
-func parseFloat(s string) float64 {
-	v, _ := strconv.ParseFloat(s, 64)
-	return v
 }
 
 func writeJSON(w http.ResponseWriter, data any) {

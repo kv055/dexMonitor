@@ -8,7 +8,6 @@ import (
 	"sync"
 	"time"
 
-	"google.golang.org/protobuf/encoding/protojson"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protodesc"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -342,16 +341,3 @@ func repeatedMessageField(name string, number int32, typeName string) *descripto
 func strptr(v string) *string { return &v }
 
 func int32ptr(v int32) *int32 { return &v }
-
-// DebugJSON returns a JSON representation useful while inspecting decoded Bisq records.
-func DebugJSON(data []byte) string {
-	msg := newMessage("PersistableEnvelope")
-	if err := proto.Unmarshal(data, msg); err != nil {
-		return err.Error()
-	}
-	b, err := protojson.MarshalOptions{Multiline: true}.Marshal(msg)
-	if err != nil {
-		return err.Error()
-	}
-	return string(b)
-}

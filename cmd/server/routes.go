@@ -1,0 +1,104 @@
+package main
+
+import "net/http"
+
+// registerBackendRoutes keeps the public HTTP contract in one place while
+// main remains responsible for dependency construction and server lifecycle.
+func registerBackendRoutes(mux *http.ServeMux) {
+	registerAnalyticsRoutes(mux)
+	registerPaymentMethodRoutes(mux)
+	registerMMControllerRoutes(mux)
+	registerTradingAccountRoutes(mux)
+	mux.HandleFunc("GET /health", handleHealth)
+}
+
+func registerAnalyticsRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/past_offers", handlePastOffers)
+	mux.HandleFunc("GET /api/past_offers/{id}/lifecycle", handlePastOfferLifecycle)
+	mux.HandleFunc("GET /api/past_order_stats", handlePastOrderStats)
+	mux.HandleFunc("GET /api/past_profitable_orders", handlePastProfitableOrders)
+	mux.HandleFunc("GET /api/general_stats/overview", handleGeneralStatsOverview)
+	mux.HandleFunc("GET /api/general_stats/past_premiums", handleGeneralStatsPastPremiums)
+	mux.HandleFunc("GET /api/general_stats/lifetimes", handleGeneralStatsLifetimes)
+	mux.HandleFunc("GET /api/general_stats/payment_methods", handleGeneralStatsPaymentMethods)
+	mux.HandleFunc("POST /api/dashboard/analytics", handleDashboardAnalytics)
+	mux.HandleFunc("POST /api/statistics", handleStatistics)
+	mux.HandleFunc("GET /api/stats", handleStats)
+	mux.HandleFunc("GET /api/ohlc", handleOHLC)
+	mux.HandleFunc("GET /api/snapshot-log", handleSnapshotLog)
+	mux.HandleFunc("GET /api/snapshot-log/{id}", handleSnapshotLogDetail)
+	mux.HandleFunc("GET /api/payment_method_groups", handlePaymentMethodGroups)
+}
+
+func registerPaymentMethodRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/trading/payment_methods", handleTradingPaymentMethods)
+	mux.HandleFunc("PUT /api/trading/payment_methods/{id}", handleTradingPaymentMethodByID)
+	mux.HandleFunc("DELETE /api/trading/payment_methods/{id}", handleTradingPaymentMethodByID)
+	mux.HandleFunc("POST /api/trading/payment_methods/{id}/degrade-to-alias/{provider_id}", handleTradingPaymentMethodDegradeToAlias)
+	mux.HandleFunc("POST /api/trading/payment_methods/{id}/aliases/promote", handleTradingPaymentMethodPromoteAlias)
+	mux.HandleFunc("GET /api/trading/payment_methods/{id}/chat_templates", handleTradingPaymentMethodChatTemplates)
+	mux.HandleFunc("PUT /api/trading/payment_methods/{id}/chat_templates/{exchange}", handleTradingPaymentMethodChatTemplateByExchange)
+	mux.HandleFunc("DELETE /api/trading/payment_methods/{id}/chat_templates/{exchange}", handleTradingPaymentMethodChatTemplateByExchange)
+	mux.HandleFunc("GET /api/trading/wallet_addresses", handleTradingWalletAddresses)
+}
+
+func registerMMControllerRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
+	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
+	mux.HandleFunc("GET /api/mm-controller/lnd/wallet", handleMmControllerLNDWallet)
+	mux.HandleFunc("GET /api/mm-controller/lnd/wallet/state", handleMmControllerLNDWalletState)
+	mux.HandleFunc("GET /api/mm-controller/service-versions", handleMmControllerServiceVersions)
+	mux.HandleFunc("POST /api/mm-controller/lnd/wallet/init", handleMmControllerLNDWalletInit)
+	mux.HandleFunc("POST /api/mm-controller/lnd/addresses", handleMmControllerLNDCreateAddress)
+	mux.HandleFunc("POST /api/mm-controller/lnd/channels/open", handleMmControllerLNDOpenChannel)
+	mux.HandleFunc("POST /api/mm-controller/lnd/channels/close", handleMmControllerLNDCloseChannel)
+	mux.HandleFunc("POST /api/mm-controller/cex/pre-trade-check", handleMmControllerCexPreTradeCheck)
+	mux.HandleFunc("POST /api/mm-controller/cex/tradeflow", handleMmControllerCexTradeflow)
+	mux.HandleFunc("GET /api/mm-controller/cex/withdrawal-track", handleMmControllerCexWithdrawalTrack)
+	mux.HandleFunc("GET /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
+	mux.HandleFunc("GET /api/mm-controller/bisq/payment-methods", handleMmControllerBisqPaymentMethods)
+	mux.HandleFunc("GET /api/mm-controller/bisq/payment-methods/{id}/form", handleMmControllerBisqPaymentMethodForm)
+	mux.HandleFunc("POST /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
+	mux.HandleFunc("DELETE /api/mm-controller/bisq/payment-accounts/{id}", handleMmControllerBisqPaymentAccountByID)
+	mux.HandleFunc("GET /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
+	mux.HandleFunc("PUT /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
+	mux.HandleFunc("POST /api/mm-controller/telegram/pair", handleMmControllerTelegramPair)
+	mux.HandleFunc("POST /api/mm-controller/telegram/set-webhook", handleMmControllerTelegramSetWebhook)
+	mux.HandleFunc("POST /api/mm-controller/telegram/test", handleMmControllerTelegramTest)
+	mux.HandleFunc("GET /api/phone-push/setup", handlePhonePushSetup)
+	mux.HandleFunc("POST /api/phone-push/setup/reveal", handlePhonePushSetupReveal)
+	mux.HandleFunc("GET /ws/cex/hedge-stream", handleMmControllerHedgeStreamWS)
+}
+
+func registerTradingAccountRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/trading/accounts", handleTradingAccounts)
+	mux.HandleFunc("POST /api/trading/accounts", handleTradingAccounts)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/credentials", handleTradingAccountCredentials)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/secrets", handleTradingAccountSecrets)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/bisq-account-file", handleTradingAccountBisqAccountFile)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/bisq-data-directory", handleTradingAccountBisqDataDirectory)
+	mux.HandleFunc("PUT /api/trading/accounts/{id}", handleTradingAccountByID)
+	mux.HandleFunc("PUT /api/trading/accounts/priorities", handleTradingAccountPriorities)
+	mux.HandleFunc("DELETE /api/trading/accounts/{id}", handleTradingAccountByID)
+	mux.HandleFunc("POST /api/trading/accounts/{id}/health_check", handleTradingAccountHealthCheck)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/deposit-addresses", handleTradingAccountCexDepositAddresses)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/withdrawal-addresses", handleTradingAccountCexWithdrawalAddresses)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/balances", handleTradingAccountCexBalances)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/hedge-positions", handleTradingAccountCexHedgePositions)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/cex/spot-trades", handleTradingAccountCexSpotTrades)
+	mux.HandleFunc("POST /api/trading/accounts/{id}/totp_secrets", handleTradingAccountTOTPSecrets)
+	mux.HandleFunc("POST /api/trading/accounts/{id}/passkey_credentials", handleTradingAccountPasskeys)
+	mux.HandleFunc("POST /api/trading/accounts/{id}/seeds", handleTradingAccountSeeds)
+	mux.HandleFunc("POST /api/trading/accounts/{id}/api_keys", handleTradingAccountAPIKeys)
+	mux.HandleFunc("PUT /api/trading/totp_secrets/{id}", handleTradingTOTPSecretByID)
+	mux.HandleFunc("DELETE /api/trading/totp_secrets/{id}", handleTradingTOTPSecretByID)
+	mux.HandleFunc("PUT /api/trading/passkey_credentials/{id}", handleTradingPasskeyByID)
+	mux.HandleFunc("DELETE /api/trading/passkey_credentials/{id}", handleTradingPasskeyByID)
+	mux.HandleFunc("PUT /api/trading/seeds/{id}", handleTradingSeedByID)
+	mux.HandleFunc("DELETE /api/trading/seeds/{id}", handleTradingSeedByID)
+	mux.HandleFunc("PUT /api/trading/api_keys/{id}", handleTradingAPIKeyByID)
+	mux.HandleFunc("DELETE /api/trading/api_keys/{id}", handleTradingAPIKeyByID)
+	mux.HandleFunc("POST /api/trading/accounts/{id}/bank_accounts", handleTradingAccountBankAccounts)
+	mux.HandleFunc("PUT /api/trading/bank_accounts/{id}", handleTradingBankAccountByID)
+	mux.HandleFunc("DELETE /api/trading/bank_accounts/{id}", handleTradingBankAccountByID)
+}

@@ -444,12 +444,6 @@ func (bc *analyticsBuildContext) buildTakerOrdersFullOnly() []pastProfitableOrde
 	return orders
 }
 
-func (bc *analyticsBuildContext) buildTakerAnalytics() takerAnalyticsResult {
-	result := bc.buildTakerStatsOnly()
-	result.orders = bc.buildTakerOrdersOnly()
-	return result
-}
-
 func (bc *analyticsBuildContext) applyOverviewSections(resp *dashboardAnalyticsResponse, p dashboardAnalyticsParams) {
 	resp.GeneralStatsOverview = bc.generalCtx.overview()
 	resp.PastPremiums, resp.PremiumLifetimes = buildPastPremiumAndLifetimeStats(
@@ -595,26 +589,6 @@ func (p analyticsBuildPlan) overlayBuiltSections(dst *analyticsResultCacheEntry,
 
 func (p analyticsBuildPlan) isEmpty() bool {
 	return !p.overview && !p.statsFull && !p.stats && !p.ordersFull && !p.orders
-}
-
-func (p analyticsBuildPlan) key() string {
-	var parts []string
-	if p.overview {
-		parts = append(parts, "overview")
-	}
-	if p.statsFull {
-		parts = append(parts, "statsFull")
-	}
-	if p.stats {
-		parts = append(parts, "stats")
-	}
-	if p.ordersFull {
-		parts = append(parts, "ordersFull")
-	}
-	if p.orders {
-		parts = append(parts, "orders")
-	}
-	return strings.Join(parts, ",")
 }
 
 func analyticsMissingBuildPlan(p dashboardAnalyticsParams, entry analyticsResultCacheEntry) analyticsBuildPlan {

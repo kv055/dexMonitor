@@ -168,8 +168,6 @@ func assertFloat(t *testing.T, got, want float64) {
 	}
 }
 
-func strPtr(v string) *string { return &v }
-
 func storedPastOfferFixture(direction string) map[string]any {
 	return map[string]any{
 		"id":                        int64(1),
@@ -562,8 +560,8 @@ func TestPastOfferFullVolumeUsesHistoricalHedgePositionWhenPersisted(t *testing.
 
 	offer := storedPastOfferFixture("buy")
 	agg := pastLifecycleAggregate{
-		AvgHedgeNotionalEUR:         50,
-		AvgLeverageUsed:             5,
+		AvgHedgeNotionalEUR:      50,
+		AvgLeverageUsed:          5,
 		AvgRecommendedCollateral: 15,
 	}
 
@@ -593,8 +591,8 @@ func TestPastOfferCappedHedgePositionScalesWithTradeSize(t *testing.T) {
 	offer["btc_min"] = 0.01
 	offer["btc_max"] = 1.0
 	agg := pastLifecycleAggregate{
-		AvgHedgeNotionalEUR:         50,
-		AvgLeverageUsed:             5,
+		AvgHedgeNotionalEUR:      50,
+		AvgLeverageUsed:          5,
 		AvgRecommendedCollateral: 15,
 	}
 
@@ -612,16 +610,15 @@ func TestPastOfferCappedHedgePositionScalesWithTradeSize(t *testing.T) {
 	if !pos.Historical {
 		t.Fatal("expected position.Historical = true for a past offer")
 	}
-	assertFloat(t, pos.HedgeNotionalEUR, 2.5)          // 50 * (0.05/1.0)
+	assertFloat(t, pos.HedgeNotionalEUR, 2.5)       // 50 * (0.05/1.0)
 	assertFloat(t, pos.RecommendedCollateral, 0.75) // 15 * (0.05/1.0)
-	assertFloat(t, pos.LeverageUsed, 5)                // leverage doesn't scale with size
+	assertFloat(t, pos.LeverageUsed, 5)             // leverage doesn't scale with size
 }
 
 func TestPastOfferCappedAnalysisKeepsStoredRouteAndFixedTransferCosts(t *testing.T) {
 	oldEstimators := tradeCostEstimators
 	t.Cleanup(func() { tradeCostEstimators = oldEstimators })
-	est := fixedCostEstimator("kraken", "bisq", 0.01, 0.99, 0.002, 0.99)
-	est = tradecost.NewFixedEstimatorWithHedgeRatesForTesting("kraken", "bisq", 0.01, 0.99, 0.002, 0.99, 0.001, 0.002, 0.003)
+	est := tradecost.NewFixedEstimatorWithHedgeRatesForTesting("kraken", "bisq", 0.01, 0.99, 0.002, 0.99, 0.001, 0.002, 0.003)
 	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{"kraken": est}
 
 	offer := storedPastOfferFixture("buy")

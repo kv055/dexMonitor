@@ -126,48 +126,46 @@ func (p dashboardAnalyticsParams) cacheKey() string {
 func loadGeneralStatsContextForParams(p dashboardAnalyticsParams) (generalStatsContext, error) {
 	key := p.cacheKey()
 	now := time.Now()
-	for {
-		generalStatsCache.Lock()
-		if entry, ok := generalStatsCache.entries[key]; ok && now.Before(entry.expiry) {
-			ctx := entry.ctx
-			generalStatsCache.Unlock()
-			return ctx, nil
-		}
-		if inflight, ok := generalStatsCache.inFlight[key]; ok {
-			generalStatsCache.Unlock()
-			<-inflight.done
-			if inflight.err != nil {
-				return generalStatsContext{}, inflight.err
-			}
-			return inflight.ctx, nil
-		}
-		if generalStatsCache.inFlight == nil {
-			generalStatsCache.inFlight = make(map[string]*generalStatsInFlightEntry)
-		}
-		inflight := &generalStatsInFlightEntry{done: make(chan struct{})}
-		generalStatsCache.inFlight[key] = inflight
+	generalStatsCache.Lock()
+	if entry, ok := generalStatsCache.entries[key]; ok && now.Before(entry.expiry) {
+		ctx := entry.ctx
 		generalStatsCache.Unlock()
-
-		ctx, err := loadGeneralStatsContextUncachedForParams(p)
-		inflight.ctx = ctx
-		inflight.err = err
-
-		generalStatsCache.Lock()
-		delete(generalStatsCache.inFlight, key)
-		if err == nil {
-			if generalStatsCache.entries == nil {
-				generalStatsCache.entries = make(map[string]generalStatsCacheEntry)
-			}
-			sweepGeneralStatsCache(now)
-			generalStatsCache.entries[key] = generalStatsCacheEntry{ctx: ctx, expiry: now.Add(dashboardCacheTTL)}
-		}
-		generalStatsCache.Unlock()
-		close(inflight.done)
-		if err != nil {
-			return generalStatsContext{}, err
-		}
 		return ctx, nil
 	}
+	if inflight, ok := generalStatsCache.inFlight[key]; ok {
+		generalStatsCache.Unlock()
+		<-inflight.done
+		if inflight.err != nil {
+			return generalStatsContext{}, inflight.err
+		}
+		return inflight.ctx, nil
+	}
+	if generalStatsCache.inFlight == nil {
+		generalStatsCache.inFlight = make(map[string]*generalStatsInFlightEntry)
+	}
+	inflight := &generalStatsInFlightEntry{done: make(chan struct{})}
+	generalStatsCache.inFlight[key] = inflight
+	generalStatsCache.Unlock()
+
+	ctx, err := loadGeneralStatsContextUncachedForParams(p)
+	inflight.ctx = ctx
+	inflight.err = err
+
+	generalStatsCache.Lock()
+	delete(generalStatsCache.inFlight, key)
+	if err == nil {
+		if generalStatsCache.entries == nil {
+			generalStatsCache.entries = make(map[string]generalStatsCacheEntry)
+		}
+		sweepGeneralStatsCache(now)
+		generalStatsCache.entries[key] = generalStatsCacheEntry{ctx: ctx, expiry: now.Add(dashboardCacheTTL)}
+	}
+	generalStatsCache.Unlock()
+	close(inflight.done)
+	if err != nil {
+		return generalStatsContext{}, err
+	}
+	return ctx, nil
 }
 
 func loadGeneralStatsContextUncachedForParams(p dashboardAnalyticsParams) (generalStatsContext, error) {

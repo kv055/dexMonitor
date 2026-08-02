@@ -23,13 +23,7 @@ func NewService() *Service {
 	return &Service{Client: &http.Client{Timeout: 15 * time.Second}}
 }
 
-// Candles fetches OHLC candles for the requested market.
-func (s *Service) Candles(ctx context.Context, exchange string, hours int, intervalMin int) []map[string]any {
-	return s.CandlesForFiat(ctx, exchange, "EUR", hours, intervalMin)
-}
-
 // CandlesForFiat fetches OHLC candles for the requested BTC/fiat market.
-// Candles remains as the EUR compatibility wrapper for existing callers.
 func (s *Service) CandlesForFiat(ctx context.Context, exchange, fiat string, hours int, intervalMin int) []map[string]any {
 	fiat = strings.ToUpper(strings.TrimSpace(fiat))
 	if fiat == "" {
