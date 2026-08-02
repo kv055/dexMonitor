@@ -6,7 +6,7 @@ import type {
   MMTransactionStatus,
   PreTradeCheckReport,
   WithdrawalTrackResult,
-} from '../types';
+} from './mmControllerContract';
 
 export function cexPreTradeCheck(payload: CexPreTradeCheckRequest) {
   return apiPost<PreTradeCheckReport>('/api/mm-controller/cex/pre-trade-check', payload);

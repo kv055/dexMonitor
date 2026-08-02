@@ -1,0 +1,1185 @@
+openapi: 3.1.0
+info:
+  title: 'dexMonitor HTTP API'
+  version: 0.1.0
+  description: |
+    Dashboard analytics, configuration, authentication, and controller proxy routes.
+    This file is a generated, complete route catalog. Operations marked
+    with `x-contract-status: route-catalog` do not yet claim fully typed
+    request and response schemas; consult the handler until formalized.
+servers:
+  - url: 'http://localhost:5002'
+paths:
+  '/api/auth/login':
+    post:
+      operationId: postApiAuthLogin
+      tags: ['auth']
+      summary: 'POST /api/auth/login'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/auth/logout':
+    post:
+      operationId: postApiAuthLogout
+      tags: ['auth']
+      summary: 'POST /api/auth/logout'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/auth/me':
+    get:
+      operationId: getApiAuthMe
+      tags: ['auth']
+      summary: 'GET /api/auth/me'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/auth/register':
+    post:
+      operationId: postApiAuthRegister
+      tags: ['auth']
+      summary: 'POST /api/auth/register'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/auth/registration_available':
+    get:
+      operationId: getApiAuthRegistrationAvailable
+      tags: ['auth']
+      summary: 'GET /api/auth/registration_available'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/dashboard/analytics':
+    post:
+      operationId: postApiDashboardAnalytics
+      tags: ['dashboard']
+      summary: 'POST /api/dashboard/analytics'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/general_stats/lifetimes':
+    get:
+      operationId: getApiGeneralStatsLifetimes
+      tags: ['general-stats']
+      summary: 'GET /api/general_stats/lifetimes'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/general_stats/overview':
+    get:
+      operationId: getApiGeneralStatsOverview
+      tags: ['general-stats']
+      summary: 'GET /api/general_stats/overview'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/general_stats/past_premiums':
+    get:
+      operationId: getApiGeneralStatsPastPremiums
+      tags: ['general-stats']
+      summary: 'GET /api/general_stats/past_premiums'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/general_stats/payment_methods':
+    get:
+      operationId: getApiGeneralStatsPaymentMethods
+      tags: ['general-stats']
+      summary: 'GET /api/general_stats/payment_methods'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/bisq/payment-accounts':
+    get:
+      operationId: getApiMmControllerBisqPaymentAccounts
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/bisq/payment-accounts'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    post:
+      operationId: postApiMmControllerBisqPaymentAccounts
+      tags: ['mm-controller']
+      summary: 'POST /api/mm-controller/bisq/payment-accounts'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/bisq/payment-accounts/{id}':
+    delete:
+      operationId: deleteApiMmControllerBisqPaymentAccountsId
+      tags: ['mm-controller']
+      summary: 'DELETE /api/mm-controller/bisq/payment-accounts/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/bisq/payment-methods':
+    get:
+      operationId: getApiMmControllerBisqPaymentMethods
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/bisq/payment-methods'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/bisq/payment-methods/{id}/form':
+    get:
+      operationId: getApiMmControllerBisqPaymentMethodsIdForm
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/bisq/payment-methods/{id}/form'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/cex/pre-trade-check':
+    post:
+      operationId: postApiMmControllerCexPreTradeCheck
+      tags: ['mm-controller']
+      summary: 'POST /api/mm-controller/cex/pre-trade-check'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/cex/tradeflow':
+    post:
+      operationId: postApiMmControllerCexTradeflow
+      tags: ['mm-controller']
+      summary: 'POST /api/mm-controller/cex/tradeflow'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/cex/withdrawal-track':
+    get:
+      operationId: getApiMmControllerCexWithdrawalTrack
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/cex/withdrawal-track'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/addresses':
+    post:
+      operationId: postApiMmControllerLndAddresses
+      tags: ['mm-controller']
+      summary: 'POST /api/mm-controller/lnd/addresses'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/channels/close':
+    post:
+      operationId: postApiMmControllerLndChannelsClose
+      tags: ['mm-controller']
+      summary: 'POST /api/mm-controller/lnd/channels/close'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/channels/open':
+    post:
+      operationId: postApiMmControllerLndChannelsOpen
+      tags: ['mm-controller']
+      summary: 'POST /api/mm-controller/lnd/channels/open'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/wallet':
+    get:
+      operationId: getApiMmControllerLndWallet
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/lnd/wallet'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/wallet/init':
+    post:
+      operationId: postApiMmControllerLndWalletInit
+      tags: ['mm-controller']
+      summary: 'POST /api/mm-controller/lnd/wallet/init'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/wallet/state':
+    get:
+      operationId: getApiMmControllerLndWalletState
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/lnd/wallet/state'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/service-versions':
+    get:
+      operationId: getApiMmControllerServiceVersions
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/service-versions'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/telegram/config':
+    get:
+      operationId: getApiMmControllerTelegramConfig
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/telegram/config'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    put:
+      operationId: putApiMmControllerTelegramConfig
+      tags: ['mm-controller']
+      summary: 'PUT /api/mm-controller/telegram/config'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/telegram/pair':
+    post:
+      operationId: postApiMmControllerTelegramPair
+      tags: ['mm-controller']
+      summary: 'POST /api/mm-controller/telegram/pair'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/telegram/set-webhook':
+    post:
+      operationId: postApiMmControllerTelegramSetWebhook
+      tags: ['mm-controller']
+      summary: 'POST /api/mm-controller/telegram/set-webhook'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/telegram/test':
+    post:
+      operationId: postApiMmControllerTelegramTest
+      tags: ['mm-controller']
+      summary: 'POST /api/mm-controller/telegram/test'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/transactions':
+    get:
+      operationId: getApiMmControllerTransactions
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/transactions'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/transactions/{id}':
+    get:
+      operationId: getApiMmControllerTransactionsId
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/transactions/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/ohlc':
+    get:
+      operationId: getApiOhlc
+      tags: ['ohlc']
+      summary: 'GET /api/ohlc'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/past_offers':
+    get:
+      operationId: getApiPastOffers
+      tags: ['past-offers']
+      summary: 'GET /api/past_offers'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/past_offers/{id}/lifecycle':
+    get:
+      operationId: getApiPastOffersIdLifecycle
+      tags: ['past-offers']
+      summary: 'GET /api/past_offers/{id}/lifecycle'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/past_order_stats':
+    get:
+      operationId: getApiPastOrderStats
+      tags: ['past-order-stats']
+      summary: 'GET /api/past_order_stats'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/past_profitable_orders':
+    get:
+      operationId: getApiPastProfitableOrders
+      tags: ['past-profitable-orders']
+      summary: 'GET /api/past_profitable_orders'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/payment_method_groups':
+    get:
+      operationId: getApiPaymentMethodGroups
+      tags: ['payment-method-groups']
+      summary: 'GET /api/payment_method_groups'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/phone-push/setup':
+    get:
+      operationId: getApiPhonePushSetup
+      tags: ['phone-push']
+      summary: 'GET /api/phone-push/setup'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/phone-push/setup/reveal':
+    post:
+      operationId: postApiPhonePushSetupReveal
+      tags: ['phone-push']
+      summary: 'POST /api/phone-push/setup/reveal'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/snapshot-log':
+    get:
+      operationId: getApiSnapshotLog
+      tags: ['snapshot-log']
+      summary: 'GET /api/snapshot-log'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/snapshot-log/{id}':
+    get:
+      operationId: getApiSnapshotLogId
+      tags: ['snapshot-log']
+      summary: 'GET /api/snapshot-log/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/statistics':
+    post:
+      operationId: postApiStatistics
+      tags: ['statistics']
+      summary: 'POST /api/statistics'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/stats':
+    get:
+      operationId: getApiStats
+      tags: ['stats']
+      summary: 'GET /api/stats'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts':
+    get:
+      operationId: getApiTradingAccounts
+      tags: ['trading']
+      summary: 'GET /api/trading/accounts'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    post:
+      operationId: postApiTradingAccounts
+      tags: ['trading']
+      summary: 'POST /api/trading/accounts'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/priorities':
+    put:
+      operationId: putApiTradingAccountsPriorities
+      tags: ['trading']
+      summary: 'PUT /api/trading/accounts/priorities'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}':
+    delete:
+      operationId: deleteApiTradingAccountsId
+      tags: ['trading']
+      summary: 'DELETE /api/trading/accounts/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    put:
+      operationId: putApiTradingAccountsId
+      tags: ['trading']
+      summary: 'PUT /api/trading/accounts/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/api_keys':
+    post:
+      operationId: postApiTradingAccountsIdApiKeys
+      tags: ['trading']
+      summary: 'POST /api/trading/accounts/{id}/api_keys'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/bank_accounts':
+    post:
+      operationId: postApiTradingAccountsIdBankAccounts
+      tags: ['trading']
+      summary: 'POST /api/trading/accounts/{id}/bank_accounts'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/bisq-account-file':
+    get:
+      operationId: getApiTradingAccountsIdBisqAccountFile
+      tags: ['trading']
+      summary: 'GET /api/trading/accounts/{id}/bisq-account-file'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/bisq-data-directory':
+    get:
+      operationId: getApiTradingAccountsIdBisqDataDirectory
+      tags: ['trading']
+      summary: 'GET /api/trading/accounts/{id}/bisq-data-directory'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/cex/balances':
+    get:
+      operationId: getApiTradingAccountsIdCexBalances
+      tags: ['trading']
+      summary: 'GET /api/trading/accounts/{id}/cex/balances'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/cex/deposit-addresses':
+    get:
+      operationId: getApiTradingAccountsIdCexDepositAddresses
+      tags: ['trading']
+      summary: 'GET /api/trading/accounts/{id}/cex/deposit-addresses'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/cex/hedge-positions':
+    get:
+      operationId: getApiTradingAccountsIdCexHedgePositions
+      tags: ['trading']
+      summary: 'GET /api/trading/accounts/{id}/cex/hedge-positions'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/cex/spot-trades':
+    get:
+      operationId: getApiTradingAccountsIdCexSpotTrades
+      tags: ['trading']
+      summary: 'GET /api/trading/accounts/{id}/cex/spot-trades'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/cex/withdrawal-addresses':
+    get:
+      operationId: getApiTradingAccountsIdCexWithdrawalAddresses
+      tags: ['trading']
+      summary: 'GET /api/trading/accounts/{id}/cex/withdrawal-addresses'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/credentials':
+    get:
+      operationId: getApiTradingAccountsIdCredentials
+      tags: ['trading']
+      summary: 'GET /api/trading/accounts/{id}/credentials'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/health_check':
+    post:
+      operationId: postApiTradingAccountsIdHealthCheck
+      tags: ['trading']
+      summary: 'POST /api/trading/accounts/{id}/health_check'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/passkey_credentials':
+    post:
+      operationId: postApiTradingAccountsIdPasskeyCredentials
+      tags: ['trading']
+      summary: 'POST /api/trading/accounts/{id}/passkey_credentials'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/secrets':
+    get:
+      operationId: getApiTradingAccountsIdSecrets
+      tags: ['trading']
+      summary: 'GET /api/trading/accounts/{id}/secrets'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/seeds':
+    post:
+      operationId: postApiTradingAccountsIdSeeds
+      tags: ['trading']
+      summary: 'POST /api/trading/accounts/{id}/seeds'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/accounts/{id}/totp_secrets':
+    post:
+      operationId: postApiTradingAccountsIdTotpSecrets
+      tags: ['trading']
+      summary: 'POST /api/trading/accounts/{id}/totp_secrets'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/api_keys/{id}':
+    delete:
+      operationId: deleteApiTradingApiKeysId
+      tags: ['trading']
+      summary: 'DELETE /api/trading/api_keys/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    put:
+      operationId: putApiTradingApiKeysId
+      tags: ['trading']
+      summary: 'PUT /api/trading/api_keys/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/bank_accounts/{id}':
+    delete:
+      operationId: deleteApiTradingBankAccountsId
+      tags: ['trading']
+      summary: 'DELETE /api/trading/bank_accounts/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    put:
+      operationId: putApiTradingBankAccountsId
+      tags: ['trading']
+      summary: 'PUT /api/trading/bank_accounts/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/passkey_credentials/{id}':
+    delete:
+      operationId: deleteApiTradingPasskeyCredentialsId
+      tags: ['trading']
+      summary: 'DELETE /api/trading/passkey_credentials/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    put:
+      operationId: putApiTradingPasskeyCredentialsId
+      tags: ['trading']
+      summary: 'PUT /api/trading/passkey_credentials/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/payment_methods':
+    get:
+      operationId: getApiTradingPaymentMethods
+      tags: ['trading']
+      summary: 'GET /api/trading/payment_methods'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/payment_methods/{id}':
+    delete:
+      operationId: deleteApiTradingPaymentMethodsId
+      tags: ['trading']
+      summary: 'DELETE /api/trading/payment_methods/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    put:
+      operationId: putApiTradingPaymentMethodsId
+      tags: ['trading']
+      summary: 'PUT /api/trading/payment_methods/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/payment_methods/{id}/aliases/promote':
+    post:
+      operationId: postApiTradingPaymentMethodsIdAliasesPromote
+      tags: ['trading']
+      summary: 'POST /api/trading/payment_methods/{id}/aliases/promote'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/payment_methods/{id}/chat_templates':
+    get:
+      operationId: getApiTradingPaymentMethodsIdChatTemplates
+      tags: ['trading']
+      summary: 'GET /api/trading/payment_methods/{id}/chat_templates'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/payment_methods/{id}/chat_templates/{exchange}':
+    delete:
+      operationId: deleteApiTradingPaymentMethodsIdChatTemplatesExchange
+      tags: ['trading']
+      summary: 'DELETE /api/trading/payment_methods/{id}/chat_templates/{exchange}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: 'exchange'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    put:
+      operationId: putApiTradingPaymentMethodsIdChatTemplatesExchange
+      tags: ['trading']
+      summary: 'PUT /api/trading/payment_methods/{id}/chat_templates/{exchange}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: 'exchange'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/payment_methods/{id}/degrade-to-alias/{provider_id}':
+    post:
+      operationId: postApiTradingPaymentMethodsIdDegradeToAliasProviderId
+      tags: ['trading']
+      summary: 'POST /api/trading/payment_methods/{id}/degrade-to-alias/{provider_id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: 'provider_id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/seeds/{id}':
+    delete:
+      operationId: deleteApiTradingSeedsId
+      tags: ['trading']
+      summary: 'DELETE /api/trading/seeds/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    put:
+      operationId: putApiTradingSeedsId
+      tags: ['trading']
+      summary: 'PUT /api/trading/seeds/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/totp_secrets/{id}':
+    delete:
+      operationId: deleteApiTradingTotpSecretsId
+      tags: ['trading']
+      summary: 'DELETE /api/trading/totp_secrets/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    put:
+      operationId: putApiTradingTotpSecretsId
+      tags: ['trading']
+      summary: 'PUT /api/trading/totp_secrets/{id}'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/trading/wallet_addresses':
+    get:
+      operationId: getApiTradingWalletAddresses
+      tags: ['trading']
+      summary: 'GET /api/trading/wallet_addresses'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/health':
+    get:
+      operationId: getHealth
+      tags: ['health']
+      summary: 'GET /health'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/ws/cex/hedge-stream':
+    get:
+      operationId: getWsCexHedgeStream
+      tags: ['cex']
+      summary: 'GET /ws/cex/hedge-stream'
+      x-contract-status: route-catalog
+      responses:
+        '101':
+          description: WebSocket protocol upgrade
+        default:
+          description: Error response

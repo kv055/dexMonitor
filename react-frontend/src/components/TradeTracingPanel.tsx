@@ -581,7 +581,10 @@ export function TradeTracingPanel({
 
     const hedgeRatio = bd?.hedge?.position?.hedge_ratio ?? 1.0;
     const leverage = bd?.hedge?.position?.leverage_used ?? 1.0;
-    const side = bd?.hedge?.side ?? (isAsk ? 'long' : 'short');
+    const rawHedgeSide = bd?.hedge?.side;
+    const side: 'long' | 'short' = rawHedgeSide === 'long' || rawHedgeSide === 'short'
+      ? rawHedgeSide
+      : isAsk ? 'long' : 'short';
     const btcNotional = clampedBtc * hedgeRatio;
     // Hedgeless spends both the position amount and seller security deposit
     // from LND. Keep that BTC requirement separate from the fiat collateral

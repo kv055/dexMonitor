@@ -1,0 +1,34 @@
+openapi: 3.1.0
+info:
+  title: 'dexMonitor bisqstats HTTP API'
+  version: 0.1.0
+  description: |
+    Standalone Bisq closed-trade statistics command.
+    This file is a generated, complete route catalog. Operations marked
+    with `x-contract-status: route-catalog` do not yet claim fully typed
+    request and response schemas; consult the handler until formalized.
+servers:
+  - url: 'http://localhost:9997'
+paths:
+  '/api/trade-stats':
+    get:
+      operationId: getApiTradeStats
+      tags: ['trade-stats']
+      summary: 'GET /api/trade-stats'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/health':
+    get:
+      operationId: getHealth
+      tags: ['health']
+      summary: 'GET /health'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
