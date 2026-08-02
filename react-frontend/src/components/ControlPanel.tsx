@@ -457,8 +457,8 @@ export function DualRangeFilter({
       <div className="relative mx-0.5 h-6">
         <div className="absolute top-1/2 h-1 w-full -translate-y-1/2 rounded bg-border" />
         <div className="absolute top-1/2 h-1 -translate-y-1/2 rounded bg-accent/60" style={{ left: `${loPct}%`, right: `${100 - hiPct}%` }} />
-        <input type="range" min={min} max={max} step={step} value={lo} onChange={event => onChange([Math.min(Number(event.target.value), hi), hi])} className={rangeInputClass} style={{ zIndex: lo > max - step * 10 ? 5 : 3 }} />
-        <input type="range" min={min} max={max} step={step} value={hi} onChange={event => onChange([lo, Math.max(Number(event.target.value), lo)])} className={rangeInputClass} style={{ zIndex: 4 }} />
+        <input aria-label={`${label} minimum`} type="range" min={min} max={max} step={step} value={lo} onChange={event => onChange([Math.min(Number(event.target.value), hi), hi])} className={rangeInputClass} style={{ zIndex: lo > max - step * 10 ? 5 : 3 }} />
+        <input aria-label={`${label} maximum`} type="range" min={min} max={max} step={step} value={hi} onChange={event => onChange([lo, Math.max(Number(event.target.value), lo)])} className={rangeInputClass} style={{ zIndex: 4 }} />
       </div>
     </div>
   );
@@ -554,9 +554,21 @@ function LiveNetProfitRange() {
     }
   }, [bounds, categoryKey, filters, metric, setFilters]);
 
+  const fiatToggleLabel = filters.fiat.length <= 4 ? filters.fiat : filters.fiat.slice(0, 3);
+  const metricToggle = (
+    <div className="flex items-center justify-between gap-2">
+      <span className={labelCls}>Range</span>
+      <div className="flex rounded border border-border bg-bg/60 p-0.5 text-[0.62rem] font-semibold">
+        <button type="button" onClick={() => setMetric('profit')} aria-pressed={metric === 'profit'} className={metric === 'profit' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>{fiatToggleLabel}</button>
+        <button type="button" onClick={() => setMetric('premium')} aria-pressed={metric === 'premium'} className={metric === 'premium' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>%</button>
+      </div>
+    </div>
+  );
+
   if (bounds == null) {
     return (
       <div className="flex flex-col gap-1">
+        {metricToggle}
         <span className={labelCls}>{metric === 'profit' ? `Net profit ${filters.fiat}` : 'Premium %'}</span>
         <span className="text-[0.7rem] text-muted">No {metric === 'profit' ? 'profit' : 'premium'} data in this premium category</span>
       </div>
@@ -571,16 +583,9 @@ function LiveNetProfitRange() {
   const parsedMax = parseFloat(filters[maxKey]);
   const currentMin = Math.max(min, Math.min(Math.round((Number.isNaN(parsedMin) ? min / 100 : parsedMin) * 100), max));
   const currentMax = Math.max(currentMin, Math.min(Math.round((Number.isNaN(parsedMax) ? max / 100 : parsedMax) * 100), max));
-  const fiatToggleLabel = filters.fiat.length <= 4 ? filters.fiat : filters.fiat.slice(0, 3);
   return (
     <div className="flex flex-col gap-1.5">
-      <div className="flex items-center justify-between gap-2">
-        <span className={labelCls}>Range</span>
-        <div className="flex rounded border border-border bg-bg/60 p-0.5 text-[0.62rem] font-semibold">
-          <button type="button" onClick={() => setMetric('profit')} aria-pressed={metric === 'profit'} className={metric === 'profit' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>{fiatToggleLabel}</button>
-          <button type="button" onClick={() => setMetric('premium')} aria-pressed={metric === 'premium'} className={metric === 'premium' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>%</button>
-        </div>
-      </div>
+      {metricToggle}
       <DualRangeFilter
         label={metric === 'profit' ? `Net profit ${filters.fiat}` : 'Premium %'}
         description={metric === 'profit'

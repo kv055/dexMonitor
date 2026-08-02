@@ -1,50 +1,18 @@
-import { useCallback, useReducer, useRef, startTransition } from 'react';
-import { apiFetch, apiPost } from '../utils/api';
+import { useCallback, useEffect, useReducer, useRef, startTransition } from 'react';
+import { apiFetch, apiPost } from '../api/client';
+import {
+  buildAnalyticsBody,
+  buildPastOffersSearch,
+  marketRequestKey,
+  type MarketRequestParams,
+} from '../shared/marketParams';
 import type {
   Offer,
-  Stats,
   OHLCData,
   PastOrderStats,
-  GeneralStatsData,
   PastProfitableOrder,
   PastProfitableOrderCompact,
 } from '../types';
-
-function excludedPaymentQuery(excludedPaymentMethods: string[]): string {
-  if (excludedPaymentMethods.length === 0) return '';
-  return `&exclude_payment_methods=${encodeURIComponent(excludedPaymentMethods.join(','))}`;
-}
-
-function tradeCostQuery(excludedSpotCEXes: string[], excludedHedgeCEXes: string[], feeTier: string, maxFiatLimit: number | null = null): string {
-  let q = '';
-  if (excludedSpotCEXes.length > 0) q += `&exclude_spot_cexes=${encodeURIComponent(excludedSpotCEXes.join(','))}`;
-  if (excludedHedgeCEXes.length > 0) q += `&exclude_hedge_cexes=${encodeURIComponent(excludedHedgeCEXes.join(','))}`;
-  if (feeTier) q += `&fee_tier=${encodeURIComponent(feeTier)}`;
-  if (maxFiatLimit != null && maxFiatLimit > 0) q += `&max_fiat_limit=${maxFiatLimit}`;
-  return q;
-}
-
-type LoadParams = {
-  hours: string;
-  cex: string;
-  excludedPaymentMethods: string[];
-  excludedSpotCEXes: string[];
-  excludedHedgeCEXes: string[];
-  feeTier: string;
-  coupledHedge: boolean;
-  maxFiatLimit: number | null;
-  fiat: string;
-};
-
-function buildLoadQueries(params: LoadParams) {
-  const excludedQuery = excludedPaymentQuery(params.excludedPaymentMethods);
-  const tcQuery = `${tradeCostQuery(params.excludedSpotCEXes, params.excludedHedgeCEXes, params.feeTier, params.maxFiatLimit)}${!params.coupledHedge ? '&coupled_hedge=false' : ''}`;
-  return { excludedQuery, tcQuery };
-}
-
-function loadCoreKey(params: LoadParams): string {
-  return JSON.stringify(params);
-}
 
 type AnalyticsOverviewResponse = {
   past_order_stats_all?: PastOrderStats;
@@ -60,24 +28,8 @@ type AnalyticsOrdersResponse = {
   past_profitable_orders_compact?: PastProfitableOrderCompact[];
 };
 
-function buildAnalyticsBody(params: LoadParams, sections?: string[]) {
-  return {
-    hours: Number(params.hours),
-    cex: params.cex,
-    exclude_payment_methods: params.excludedPaymentMethods,
-    exclude_spot_cexes: params.excludedSpotCEXes,
-    exclude_hedge_cexes: params.excludedHedgeCEXes,
-    fee_tier: params.feeTier,
-    coupled_hedge: params.coupledHedge,
-    max_fiat_limit: params.maxFiatLimit ?? 0,
-    fiat: params.fiat,
-    ...(sections ? { sections } : {}),
-  };
-}
-
 interface DashboardState {
   pastOffers: Offer[];
-  stats: Stats | null;
   pastOrderStats: PastOrderStats | null;
   pastOrderStatsAll: PastOrderStats | null;
   pastOrderStatsNetCapped: PastOrderStats | null;
@@ -86,8 +38,6 @@ interface DashboardState {
   pastOrderStatsAllNetMin: PastOrderStats | null;
   fastPastProfitableOrders: PastProfitableOrderCompact[];
   detailedPastProfitableOrders: PastProfitableOrder[];
-  pastProfitableOrders: PastProfitableOrder[];
-  generalStats: GeneralStatsData | null;
   ohlcData: OHLCData | null;
   lastUpdatedAt: string;
   error: string | null;
@@ -99,7 +49,7 @@ interface DashboardState {
   initialLoadComplete: boolean;
 }
 
-type CorePayload = Pick<DashboardState, 'stats' | 'pastOffers' | 'ohlcData' | 'lastUpdatedAt'>;
+type CorePayload = Pick<DashboardState, 'pastOffers' | 'ohlcData' | 'lastUpdatedAt'>;
 type AnalyticsOverviewPayload = Pick<DashboardState,
   | 'pastOrderStats'
   | 'pastOrderStatsAll'
@@ -107,7 +57,6 @@ type AnalyticsOverviewPayload = Pick<DashboardState,
   | 'pastOrderStatsAllNetCapped'
   | 'pastOrderStatsNetMin'
   | 'pastOrderStatsAllNetMin'
-  | 'generalStats'
 >;
 
 type DashboardAction =
@@ -117,13 +66,12 @@ type DashboardAction =
   | { type: 'ANALYTICS_LOAD_START' }
   | { type: 'ANALYTICS_OVERVIEW_SUCCESS'; payload: AnalyticsOverviewPayload }
   | { type: 'ANALYTICS_ORDERS_SUCCESS'; fastPastProfitableOrders: PastProfitableOrderCompact[] }
-  | { type: 'ANALYTICS_CAPPED_SUCCESS'; payload: Pick<DashboardState, 'pastOrderStatsNetCapped' | 'pastOrderStatsAllNetCapped' | 'pastOrderStatsNetMin' | 'pastOrderStatsAllNetMin' | 'detailedPastProfitableOrders' | 'pastProfitableOrders'> }
+  | { type: 'ANALYTICS_CAPPED_SUCCESS'; payload: Pick<DashboardState, 'pastOrderStatsNetCapped' | 'pastOrderStatsAllNetCapped' | 'pastOrderStatsNetMin' | 'pastOrderStatsAllNetMin' | 'detailedPastProfitableOrders'> }
   | { type: 'ANALYTICS_LOAD_ERROR'; error: string }
   | { type: 'EXTEND_OHLC_SUCCESS'; ohlcData: OHLCData };
 
 const initialDashboardState: DashboardState = {
   pastOffers: [],
-  stats: null,
   pastOrderStats: null,
   pastOrderStatsAll: null,
   pastOrderStatsNetCapped: null,
@@ -132,8 +80,6 @@ const initialDashboardState: DashboardState = {
   pastOrderStatsAllNetMin: null,
   fastPastProfitableOrders: [],
   detailedPastProfitableOrders: [],
-  pastProfitableOrders: [],
-  generalStats: null,
   ohlcData: null,
   lastUpdatedAt: '',
   error: null,
@@ -146,7 +92,7 @@ const initialDashboardState: DashboardState = {
 };
 
 function hasCoreData(state: DashboardState): boolean {
-  return state.stats !== null || state.ohlcData !== null || state.pastOffers.length > 0;
+  return state.ohlcData !== null || state.pastOffers.length > 0;
 }
 
 function dashboardReducer(state: DashboardState, action: DashboardAction): DashboardState {
@@ -166,7 +112,6 @@ function dashboardReducer(state: DashboardState, action: DashboardAction): Dashb
         analyticsError: null,
         fastPastProfitableOrders: [],
         detailedPastProfitableOrders: [],
-        pastProfitableOrders: [],
       };
     case 'ANALYTICS_OVERVIEW_SUCCESS':
       return {
@@ -215,12 +160,11 @@ export function useDashboard() {
     promise: Promise<void>;
   } | null>(null);
 
-  const loadCore = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedSpotCEXes: string[] = [], excludedHedgeCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null, fiat: string = 'EUR') => {
-    const params: LoadParams = { hours, cex, excludedPaymentMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, fiat };
-    const key = loadCoreKey(params);
+  const loadCore = useCallback(async (params: MarketRequestParams) => {
+    const key = marketRequestKey(params);
 
     const inFlight = coreLoadRef.current;
-    if (inFlight?.key === key) {
+    if (inFlight?.key === key && !inFlight.controller.signal.aborted) {
       return inFlight.promise;
     }
 
@@ -230,26 +174,24 @@ export function useDashboard() {
     const { signal } = controller;
     dispatch({ type: 'CORE_LOAD_START' });
 
-    const { excludedQuery, tcQuery } = buildLoadQueries(params);
     const promise = (async () => {
       try {
-        const [s, o, ohlc] = await Promise.all([
-          apiFetch<Stats>(`/api/stats?hours=${hours}`, { signal }),
-          apiFetch<Offer[]>(`/api/past_offers?hours=${hours}&limit=1000&compact=true&cex=${cex}&fiat=${encodeURIComponent(fiat)}${excludedQuery}${tcQuery}`, { signal }),
-		  apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}&fiat=${encodeURIComponent(fiat)}`, { signal }),
+        const [offers, ohlc] = await Promise.all([
+          apiFetch<Offer[]>(`/api/past_offers?${buildPastOffersSearch(params)}`, { signal }),
+		  apiFetch<OHLCData>(`/api/ohlc?${new URLSearchParams({ hours: params.hours, cex: params.cex, fiat: params.fiat })}`, { signal }),
         ]);
         if (signal.aborted) return;
         dispatch({
           type: 'CORE_LOAD_SUCCESS',
           payload: {
-            stats: s,
-            pastOffers: o,
+            pastOffers: offers,
             ohlcData: ohlc,
             lastUpdatedAt: new Date().toISOString(),
           },
         });
       } catch (e: unknown) {
         if (signal.aborted) return;
+        controller.abort();
         const message = e instanceof Error ? e.message : String(e);
         dispatch({ type: 'CORE_LOAD_ERROR', error: `Failed to load dashboard data: ${message}` });
       } finally {
@@ -263,12 +205,11 @@ export function useDashboard() {
     return promise;
   }, []);
 
-  const loadAnalytics = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedSpotCEXes: string[] = [], excludedHedgeCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null, fiat: string = 'EUR') => {
-    const params: LoadParams = { hours, cex, excludedPaymentMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, fiat };
-    const key = loadCoreKey(params);
+  const loadAnalytics = useCallback(async (params: MarketRequestParams) => {
+    const key = marketRequestKey(params);
 
     const inFlight = analyticsLoadRef.current;
-    if (inFlight?.key === key) {
+    if (inFlight?.key === key && !inFlight.controller.signal.aborted) {
       return inFlight.promise;
     }
 
@@ -280,7 +221,7 @@ export function useDashboard() {
     const { signal } = controller;
     dispatch({ type: 'ANALYTICS_LOAD_START' });
 
-    const { excludedQuery } = buildLoadQueries(params);
+    const hasPaymentExclusions = params.excludedPaymentMethods.length > 0;
     const promise = (async () => {
       try {
         // Fire the fast/full requests together. Both stay on persisted offer-row
@@ -297,14 +238,13 @@ export function useDashboard() {
             type: 'ANALYTICS_OVERVIEW_SUCCESS',
             payload: {
               pastOrderStatsAll: res.past_order_stats_all ?? null,
-              pastOrderStats: excludedQuery && res.past_order_stats
+              pastOrderStats: hasPaymentExclusions && res.past_order_stats
                 ? res.past_order_stats
                 : res.past_order_stats_all ?? null,
               pastOrderStatsAllNetCapped: null,
               pastOrderStatsNetCapped: null,
               pastOrderStatsAllNetMin: null,
               pastOrderStatsNetMin: null,
-              generalStats: null,
             },
           });
         });
@@ -337,15 +277,14 @@ export function useDashboard() {
               type: 'ANALYTICS_CAPPED_SUCCESS',
               payload: {
                 pastOrderStatsAllNetCapped: res.past_order_stats_all_net_capped ?? null,
-                pastOrderStatsNetCapped: excludedQuery && res.past_order_stats_net_capped
+                pastOrderStatsNetCapped: hasPaymentExclusions && res.past_order_stats_net_capped
                   ? res.past_order_stats_net_capped
                   : res.past_order_stats_all_net_capped ?? null,
                 pastOrderStatsAllNetMin: res.past_order_stats_all_net_min ?? null,
-                pastOrderStatsNetMin: excludedQuery && res.past_order_stats_net_min
+                pastOrderStatsNetMin: hasPaymentExclusions && res.past_order_stats_net_min
                   ? res.past_order_stats_net_min
                   : res.past_order_stats_all_net_min ?? null,
                 detailedPastProfitableOrders: res.past_profitable_orders ?? [],
-                pastProfitableOrders: res.past_profitable_orders ?? [],
               },
             });
           });
@@ -357,6 +296,7 @@ export function useDashboard() {
         }
       } catch (e: unknown) {
         if (signal.aborted) return;
+        controller.abort();
         const message = e instanceof Error ? e.message : String(e);
         dispatch({ type: 'ANALYTICS_LOAD_ERROR', error: `Failed to load analytics: ${message}` });
       } finally {
@@ -370,11 +310,6 @@ export function useDashboard() {
     return promise;
   }, []);
 
-  const load = useCallback(async (hours: string, cex: string = 'kraken', excludedPaymentMethods: string[] = [], excludedSpotCEXes: string[] = [], excludedHedgeCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null, fiat: string = 'EUR') => {
-    await loadCore(hours, cex, excludedPaymentMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, fiat);
-    await loadAnalytics(hours, cex, excludedPaymentMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, fiat);
-  }, [loadCore, loadAnalytics]);
-
   const extendOhlc = useCallback(async (hours: number, cex: string = 'kraken', intervalMin: number = 1, fiat: string = 'EUR') => {
     try {
 	  const ohlc = await apiFetch<OHLCData>(`/api/ohlc?hours=${hours}&cex=${cex}&fiat=${encodeURIComponent(fiat)}&interval_min=${intervalMin}`);
@@ -386,9 +321,13 @@ export function useDashboard() {
     }
   }, []);
 
+  useEffect(() => () => {
+    coreLoadRef.current?.controller.abort();
+    analyticsLoadRef.current?.controller.abort();
+  }, []);
+
   return {
     ...state,
-    load,
     loadCore,
     loadAnalytics,
     extendOhlc,

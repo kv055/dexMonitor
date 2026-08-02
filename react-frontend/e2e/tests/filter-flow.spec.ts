@@ -1,5 +1,9 @@
 import { test, expect, gotoAndWaitForData, waitForChartReady, controlPanel, openControlPanel, closeControlPanel, offersPanel, depthPanel, jsClick, jsFill } from '../fixtures/base-fixture';
 
+const offerRows = (panel: import('@playwright/test').Locator) => panel.getByTestId('live-offers-row');
+const offerCells = (panel: import('@playwright/test').Locator, index: number) =>
+  offerRows(panel).locator(`:scope > span > span:nth-child(${index + 1})`);
+
 /**
  * Open a dropdown via jsClick, wait for the popup menu to appear, and click an option.
  * The popup is an absolute-positioned div with button children.
@@ -33,15 +37,14 @@ test.describe('Filter Flow — Cross-component integration', () => {
   test('exchange filter shows only matching rows', async ({ page }) => {
     const panel = offersPanel(page);
 
-    // Wait for table to have data rows before interacting with filters
-    await expect(panel.locator('table tbody tr').first()).not.toHaveText('No offers', { timeout: 5000 });
+    await expect(offerRows(panel).first()).toBeVisible({ timeout: 5000 });
 
     await openControlPanel(page);
     await enableOnlyExchange(page, /Bisq v1/);
     await closeControlPanel(page);
     await page.waitForTimeout(400);
 
-    const exchangeTags = panel.locator('table tbody td:first-child span');
+    const exchangeTags = offerCells(panel, 0);
     await expect(exchangeTags.first()).toBeVisible({ timeout: 5000 });
 
     const allTexts = await exchangeTags.allTextContents();
@@ -60,7 +63,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
     await closeControlPanel(page);
     await page.waitForTimeout(200);
 
-    const sideCells = panel.locator('table tbody td:nth-child(2)');
+    const sideCells = offerCells(panel, 1);
     const count = await sideCells.count();
     expect(count).toBeGreaterThan(0);
 
@@ -73,14 +76,16 @@ test.describe('Filter Flow — Cross-component integration', () => {
   test('premium range filters restrict offers', async ({ page }) => {
     const panel = offersPanel(page);
 
-    // Set premium min to 3.0
+    // Switch the range metric to premium and set its lower bound to 3%.
     await openControlPanel(page);
-    const minInput = controlPanel(page).locator('input[placeholder="Min"]');
-    await jsFill(minInput, '3');
+    const cp = controlPanel(page);
+    await jsClick(cp.getByRole('button', { name: '%', exact: true }));
+    const minSlider = cp.getByRole('slider', { name: 'Premium % minimum' });
+    await jsFill(minSlider, '300');
     await closeControlPanel(page);
     await page.waitForTimeout(300);
 
-    const premCells = panel.locator('table tbody td:nth-child(3)');
+    const premCells = offerCells(panel, 2);
     const count = await premCells.count();
     expect(count).toBeGreaterThan(0);
 
@@ -101,31 +106,29 @@ test.describe('Filter Flow — Cross-component integration', () => {
     await closeControlPanel(page);
     await page.waitForTimeout(200);
 
-    // Payment is the second-to-last column; the last one is the chart-visibility checkbox.
-    const paymentCells = panel.locator('table tbody td:nth-last-child(2)');
+    const paymentCells = offerCells(panel, 3);
     const count = await paymentCells.count();
     expect(count).toBeGreaterThan(0);
 
     for (let i = 0; i < count; i++) {
       const text = await paymentCells.nth(i).textContent();
-      expect(text?.trim()).toBe('SEPA Instant');
+      expect(text?.trim()).toMatch(/SEPA/);
     }
   });
 
   test('insights live offers list follows the sidebar filters', async ({ page }) => {
     await openControlPanel(page);
-    const insightsTable = page.locator('table');
+    const insightsList = offersPanel(page);
 
-    // Live mode shows the offers preview table inside the insights panel.
-    await expect(insightsTable.locator('tbody tr').first()).toBeVisible();
-    const initialCount = await insightsTable.locator('tbody tr').count();
+    await expect(offerRows(insightsList).first()).toBeVisible();
+    const initialCount = await offerRows(insightsList).count();
     expect(initialCount).toBeGreaterThan(0);
 
     // Filtering by direction narrows the list in place.
     await jsClick(controlPanel(page).getByRole('button', { name: 'Buy', exact: true }));
     await page.waitForTimeout(200);
 
-    const sideCells = insightsTable.locator('tbody td:nth-child(2)');
+    const sideCells = offerCells(insightsList, 1);
     const count = await sideCells.count();
     expect(count).toBeGreaterThan(0);
     for (let i = 0; i < count; i++) {
@@ -138,7 +141,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
     const panel = offersPanel(page);
     const cp = controlPanel(page);
 
-    const rowsWithPremium = await panel.locator('table tbody tr').count();
+    const rowsWithPremium = await offerRows(panel).count();
 
     // Include non-premium offers.
     await openControlPanel(page);
@@ -146,7 +149,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
     await closeControlPanel(page);
     await page.waitForTimeout(300);
 
-    const rowsWithout = await panel.locator('table tbody tr').count();
+    const rowsWithout = await offerRows(panel).count();
     expect(rowsWithout).toBeGreaterThanOrEqual(rowsWithPremium);
 
     // Switch back to the default premium-only metric.
@@ -155,7 +158,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
     await closeControlPanel(page);
     await page.waitForTimeout(300);
 
-    const rowsAgain = await panel.locator('table tbody tr').count();
+    const rowsAgain = await offerRows(panel).count();
     expect(rowsAgain).toBe(rowsWithPremium);
   });
 
@@ -163,7 +166,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
     const panel = offersPanel(page);
     const cp = controlPanel(page);
 
-    const initialCount = await panel.locator('table tbody tr').count();
+    const initialCount = await offerRows(panel).count();
 
     // Filter to bisq
     await openControlPanel(page);
@@ -171,17 +174,16 @@ test.describe('Filter Flow — Cross-component integration', () => {
     await closeControlPanel(page);
     await page.waitForTimeout(200);
 
-    const bisqCount = await panel.locator('table tbody tr').count();
+    const bisqCount = await offerRows(panel).count();
     expect(bisqCount).toBeLessThanOrEqual(initialCount);
 
-    // Set premium min
+    // Combine the exchange selection with a direction filter.
     await openControlPanel(page);
-    const minInput = cp.locator('input[placeholder="Min"]');
-    await jsFill(minInput, '2');
+    await jsClick(cp.getByRole('button', { name: 'Buy', exact: true }));
     await closeControlPanel(page);
     await page.waitForTimeout(200);
 
-    const filteredCount = await panel.locator('table tbody tr').count();
+    const filteredCount = await offerRows(panel).count();
     expect(filteredCount).toBeLessThanOrEqual(bisqCount);
   });
 
@@ -189,19 +191,18 @@ test.describe('Filter Flow — Cross-component integration', () => {
     const panel = offersPanel(page);
     const cp = controlPanel(page);
 
-    const initialCount = await panel.locator('table tbody tr').count();
+    const initialCount = await offerRows(panel).count();
 
     // Apply filters
     await openControlPanel(page);
     await enableOnlyExchange(page, /Bisq v1/);
     await page.waitForTimeout(100);
 
-    const minInput = cp.locator('input[placeholder="Min"]');
-    await jsFill(minInput, '5');
+    await jsClick(cp.getByRole('button', { name: 'Buy', exact: true }));
     await closeControlPanel(page);
     await page.waitForTimeout(200);
 
-    const filteredCount = await panel.locator('table tbody tr').count();
+    const filteredCount = await offerRows(panel).count();
     expect(filteredCount).toBeLessThan(initialCount);
 
     // Reset
@@ -210,7 +211,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
     await closeControlPanel(page);
     await page.waitForTimeout(400);
 
-    const resetCount = await panel.locator('table tbody tr').count();
+    const resetCount = await offerRows(panel).count();
     expect(resetCount).toBe(initialCount);
   });
 

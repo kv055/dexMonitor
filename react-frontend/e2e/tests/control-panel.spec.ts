@@ -20,7 +20,8 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     // Live-only
     await expect(label('Payment')).toBeVisible();
     await expect(label('Premium')).toBeVisible();
-    await expect(label('Premium range')).toBeVisible();
+    await expect(label('Range')).toBeVisible();
+    await expect(label('Net profit EUR')).toBeVisible();
   });
 
   test('view mode toggle swaps live-only for past-only controls', async ({ page }) => {
@@ -29,6 +30,7 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
       cp.locator('span.uppercase').filter({ hasText: new RegExp(`^${text}$`) });
 
     await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
+    await expect(page.getByRole('heading', { name: 'Past Offers' })).toBeVisible();
     await expect(label('Timeframe')).toBeVisible();
     await expect(label('Premium mode')).toBeVisible();
     await expect(cp.getByRole('combobox', { name: 'Premium mode' })).toHaveValue('net_full');
@@ -95,7 +97,8 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await expect(cp.getByText(/^BTC\/USD — Kraken$/)).toBeVisible();
 
     await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
-    await expect(cp.getByTitle('Show past offers quoted in this currency')).toHaveValue('USD');
+    await expect(page.getByRole('heading', { name: 'Past Offers' })).toBeVisible();
+    await expect(cp.getByTitle('Show live and past offers quoted in this currency')).toHaveValue('USD');
   });
 
   test('exchange pills toggle exchanges on and off', async ({ page }) => {
@@ -123,17 +126,17 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await expect(cp.locator('button').filter({ hasText: 'SEPA Instant' })).toBeVisible();
   });
 
-  test('premium range inputs accept values', async ({ page }) => {
+  test('premium range sliders accept values', async ({ page }) => {
     const cp = controlPanel(page);
-    const minInput = cp.locator('input[placeholder="Min"]');
-    const maxInput = cp.locator('input[placeholder="Max"]');
+    await jsClick(cp.getByRole('button', { name: '%', exact: true }));
+    const minSlider = cp.getByRole('slider', { name: 'Premium % minimum' });
+    const maxSlider = cp.getByRole('slider', { name: 'Premium % maximum' });
+    const max = Number(await maxSlider.getAttribute('max'));
+    const nextMin = String(Math.min(300, max));
 
-    // Use evaluate to focus since canvas may intercept
-    await jsFill(minInput, '1.5');
-    await jsFill(maxInput, '5.0');
-
-    await expect(minInput).toHaveValue('1.5');
-    await expect(maxInput).toHaveValue('5.0');
+    await jsFill(minSlider, nextMin);
+    await expect(minSlider).toHaveValue(nextMin);
+    await expect(maxSlider).toBeVisible();
   });
 
   test('premium dropdown can include non premium offers', async ({ page }) => {
@@ -154,23 +157,25 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
   test('reset button restores default filters', async ({ page }) => {
     const cp = controlPanel(page);
 
-    // Disable an exchange and fill premium min
+    // Disable an exchange and change the premium range.
     await jsClick(cp.getByRole('button', { name: /Bisq v1/ }));
-    await jsFill(cp.locator('input[placeholder="Min"]'), '2.0');
+    await jsClick(cp.getByRole('button', { name: '%', exact: true }));
+    const minSlider = cp.getByRole('slider', { name: 'Premium % minimum' });
+    const initialMin = await minSlider.inputValue();
+    const max = Number(await minSlider.getAttribute('max'));
+    await jsFill(minSlider, String(Math.min(Number(initialMin) + 50, max)));
 
     await cp.locator('button').filter({ hasText: '↺ Reset filters' }).click();
 
     await expect(cp.getByRole('button', { name: /Bisq v1/ })).not.toHaveClass(/line-through/);
-    // Reset clears the premium range (RESET_FILTERS, unlike the pre-filled INITIAL_FILTERS)
-    await expect(cp.locator('input[placeholder="Min"]')).toHaveValue('');
-    await expect(cp.locator('input[placeholder="Max"]')).toHaveValue('');
+    await expect(minSlider).toHaveValue(initialMin);
     await expect(cp.locator('button').filter({ hasText: 'Net Premium Full' })).toBeVisible();
   });
 
   test('refresh button triggers API calls', async ({ page }) => {
     const cp = controlPanel(page);
-    const statsRequest = page.waitForRequest(req => req.url().includes('/api/stats'));
+    const offersRequest = page.waitForRequest(req => req.url().includes('/api/past_offers'));
     await cp.locator('button').filter({ hasText: '↻ Refresh' }).click();
-    await statsRequest;
+    await offersRequest;
   });
 });

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { apiFetch } from '../utils/api';
+import { apiFetch } from '../api/client';
 import type { PaymentMethodGroup } from '../types';
 
 // While the server-side cache is still empty (it self-populates a few seconds

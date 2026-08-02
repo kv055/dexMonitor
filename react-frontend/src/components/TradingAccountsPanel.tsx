@@ -70,45 +70,29 @@ import type {
   PaymentMethodChatTemplate,
 } from '../types';
 import { useFilters } from '../hooks/useFilters';
+import {
+  LND_WALLET_PROVIDER,
+  TRADING_CATEGORIES,
+  categoryRank,
+  chatExchangeForProvider,
+  groupedCreatableProviders,
+  isBisq1Provider,
+  isBisq2Provider,
+  isBisqProvider,
+  isHodlHodlProvider,
+  isLndWalletProvider,
+  isLocalWalletProvider,
+  isPaymentCategory,
+  isRobosatsProvider,
+  providerLabel,
+  providerOptionsForValue,
+  showContactFieldsForProvider,
+  showDexIdentitySections,
+  usesAPIKeysAtCreate,
+  type ProviderOption,
+} from '../features/trading/providerRegistry';
 
-type ProviderOption = { value: string; label: string };
-
-type ProviderDefinition = {
-  value: string;
-  label: string;
-  category: string;
-  creatable: boolean;
-};
-
-const LND_WALLET_PROVIDER = 'LND wallet';
-
-const PROVIDER_DEFINITIONS: ProviderDefinition[] = [
-  { value: 'PayPal', label: 'PayPal', category: 'Fiat Transmitter', creatable: true },
-  { value: 'Revolut', label: 'Revolut', category: 'Fiat Transmitter', creatable: true },
-  { value: 'WISE', label: 'WISE', category: 'Fiat Transmitter', creatable: true },
-  { value: 'N26', label: 'N26', category: 'Fiat Transmitter', creatable: true },
-  { value: 'HodlHodl', label: 'HodlHodl', category: 'DEX', creatable: true },
-  { value: 'Bisq', label: 'Bisq', category: 'DEX', creatable: false },
-  { value: 'Bisq2', label: 'Bisq2', category: 'DEX', creatable: false },
-  { value: 'Robosats', label: 'RoboSats', category: 'DEX', creatable: true },
-  { value: 'Peach', label: 'Peach Bitcoin', category: 'DEX', creatable: true },
-  { value: 'Kraken', label: 'Kraken', category: 'CEX', creatable: true },
-  { value: 'Coinbase', label: 'Coinbase', category: 'CEX', creatable: true },
-  { value: 'Binance', label: 'Binance', category: 'CEX', creatable: true },
-  { value: LND_WALLET_PROVIDER, label: 'LND wallet', category: 'Internal Infrastructure', creatable: false },
-];
-
-const CREATABLE_PROVIDER_CATEGORIES = ['Fiat Transmitter', 'DEX', 'CEX', 'Bank', 'Wallet addresses'] as const;
-
-const PAYMENT_CATEGORIES = ['Fiat Transmitter', 'Bank', 'Wallet addresses'] as const;
-const TRADING_CATEGORIES = ['DEX', 'CEX', 'Internal Infrastructure', 'Uncategorized'] as const;
 const TAB_STORAGE_KEY = 'tradingAccounts.activeTab';
-
-function isPaymentCategory(category: string): boolean {
-  return (PAYMENT_CATEGORIES as readonly string[]).includes(category);
-}
-
-const CATEGORY_ORDER = ['Fiat Transmitter', 'Bank', 'Wallet addresses', 'DEX', 'CEX', 'Internal Infrastructure', 'Uncategorized'];
 
 const inputCls =
   'w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-text outline-none focus:border-accent';
@@ -145,21 +129,6 @@ function formatAccountHeaderDate(value: string | null | undefined) {
       });
 }
 
-function providerLabel(value: string) {
-  const normalized = value.trim().toLowerCase();
-  const match = PROVIDER_DEFINITIONS.find(option => option.value.toLowerCase() === normalized);
-  return match?.label ?? value;
-}
-
-function groupedCreatableProviders(categoryFilter?: string) {
-  return CREATABLE_PROVIDER_CATEGORIES
-    .filter(category => !categoryFilter || category === categoryFilter)
-    .map(category => ({
-      category,
-      providers: PROVIDER_DEFINITIONS.filter(provider => provider.creatable && provider.category === category),
-    }))
-    .filter(group => group.providers.length > 0);
-}
 
 function createPlaceholderAccount(provider: string, category: string, id: number): TradingAccount {
   return {
@@ -210,13 +179,6 @@ function withInfrastructureAccounts(accounts: TradingAccount[]): TradingAccount[
   return result;
 }
 
-function isRobosatsProvider(value: string) {
-  return value.trim().toLowerCase() === 'robosats';
-}
-
-function isHodlHodlProvider(value: string) {
-  return value.trim().toLowerCase() === 'hodlhodl';
-}
 
 type APIKeyFormProfile = {
   sectionTitle: string;
@@ -297,39 +259,6 @@ function apiKeyPayloadExtras(profile: APIKeyFormProfile, form: APIKeyFormState) 
   };
 }
 
-function showDexIdentitySections(provider: string) {
-  return !isLocalWalletProvider(provider)
-    && !isLndWalletProvider(provider)
-    && providerCategoryFor(provider) !== 'CEX'
-    && !isRobosatsProvider(provider)
-    && !isHodlHodlProvider(provider);
-}
-
-function isLocalWalletProvider(value: string) {
-  const normalized = value.trim().toLowerCase();
-  return normalized === 'bisq' || normalized === 'bisq2' || normalized === 'lnd wallet';
-}
-
-function isBisqProvider(value: string) {
-  const normalized = value.trim().toLowerCase();
-  return normalized === 'bisq' || normalized === 'bisq2';
-}
-
-// isBisq1Provider matches only Bisq v1 — the "Saved payment methods" sync targets the bisq1
-// gRPC daemon; Bisq2 exposes a different REST API and is out of scope for this feature.
-function isBisq1Provider(value: string) {
-  return value.trim().toLowerCase() === 'bisq';
-}
-
-function isBisq2Provider(value: string) {
-  return value.trim().toLowerCase() === 'bisq2';
-}
-
-function chatExchangeForProvider(value: string): 'RoboSats' | 'Bisq2' | null {
-  if (isRobosatsProvider(value)) return 'RoboSats';
-  if (isBisq2Provider(value)) return 'Bisq2';
-  return null;
-}
 
 function paymentMethodMatchKey(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -388,11 +317,6 @@ function findDetail(details: Record<string, string>, fieldName: string) {
   const wanted = paymentMethodMatchKey(fieldName);
   const entry = Object.entries(details).find(([key]) => paymentMethodMatchKey(key) === wanted);
   return entry?.[1]?.trim() ?? '';
-}
-
-function isLndWalletProvider(value: string) {
-  const normalized = value.trim().toLowerCase();
-  return normalized === 'lnd wallet' || normalized === 'lnd' || normalized === 'lnd_wallet';
 }
 
 function isCexAccount(account: TradingAccount) {
@@ -534,34 +458,6 @@ function healthCheckDisplayMessage(
     return message.slice(0, keyDetailIndex);
   }
   return message;
-}
-
-function providerDefinition(provider: string) {
-  const normalized = provider.trim().toLowerCase();
-  return PROVIDER_DEFINITIONS.find(option => option.value.toLowerCase() === normalized);
-}
-
-function providerCategoryFor(provider: string) {
-  return providerDefinition(provider)?.category ?? null;
-}
-
-function isFiatProvider(provider: string) {
-  return providerCategoryFor(provider) === 'Fiat Transmitter';
-}
-
-function usesAPIKeysAtCreate(provider: string) {
-  const definition = providerDefinition(provider);
-  if (!definition) {
-    return false;
-  }
-  if (definition.category === 'CEX') {
-    return true;
-  }
-  return definition.category === 'DEX' && definition.creatable;
-}
-
-function showContactFieldsForProvider(provider: string) {
-  return isFiatProvider(provider);
 }
 
 function formatFileSize(bytes: number) {
@@ -715,20 +611,6 @@ function channelHealthClass(health: string) {
   }
 }
 
-function providerOptionsForValue(value: string, category?: string): ProviderOption[] {
-  const options: ProviderOption[] = [
-    { value: '', label: 'Please select provider' },
-    ...PROVIDER_DEFINITIONS
-      .filter(provider => !category || provider.category === category)
-      .map(provider => ({ value: provider.value, label: provider.label })),
-  ];
-  const trimmed = value.trim().toLowerCase();
-  if (!trimmed || options.some(option => option.value.toLowerCase() === trimmed)) {
-    return options;
-  }
-  return [...options, { value: value.trim(), label: value }];
-}
-
 function renderProviderSelectOptions(grouped: boolean, flatOptions: ProviderOption[], category?: string) {
   if (grouped) {
     return (
@@ -762,11 +644,6 @@ function renderProviderSelectOptions(grouped: boolean, flatOptions: ProviderOpti
       </option>
     );
   });
-}
-
-function categoryRank(category: string) {
-  const index = CATEGORY_ORDER.indexOf(category);
-  return index === -1 ? CATEGORY_ORDER.length : index;
 }
 
 function HealthBadge({ account, compact = false }: { account: TradingAccount; compact?: boolean }) {

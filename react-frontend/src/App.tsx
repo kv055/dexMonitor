@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
 import { useDashboard } from './hooks/useDashboard';
 import { useLiveOffers } from './hooks/useLiveOffers';
 import { usePaymentMethodGroups } from './hooks/usePaymentMethodGroups';
@@ -10,19 +10,25 @@ import { CEXPermissionsProvider } from './context/CEXPermissionsContext';
 import { useFilters } from './hooks/useFilters';
 import { usePreferences } from './hooks/usePreferences';
 import { useAuth } from './hooks/useAuth';
-import { useCEXPermissions } from './hooks/useCEXPermissions';
+import { useMarketRequestParams } from './hooks/useMarketRequestParams';
+import type { MarketRequestParams } from './shared/marketParams';
 import { LoginPage } from './components/LoginPage';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { Header } from './components/Header';
 import type { Tab } from './components/Header';
-import { SettingsOverlay } from './components/SettingsOverlay';
-import { OHLCChart } from './components/OHLCChart';
-import { SnapshotLog } from './components/SnapshotLog';
-import { MmTransactionsLog } from './components/MmTransactionsLog';
 import { TakerOpportunities } from './components/TakerOpportunities';
-import { TradingAccountsPanel } from './components/TradingAccountsPanel';
-import { PaymentMethodsPanel } from './components/PaymentMethodsPanel';
-import { StatisticsView } from './components/StatisticsView';
+
+const OHLCChart = lazy(() => import('./components/OHLCChart').then(module => ({ default: module.OHLCChart })));
+const SettingsOverlay = lazy(() => import('./components/SettingsOverlay').then(module => ({ default: module.SettingsOverlay })));
+const SnapshotLog = lazy(() => import('./components/SnapshotLog').then(module => ({ default: module.SnapshotLog })));
+const MmTransactionsLog = lazy(() => import('./components/MmTransactionsLog').then(module => ({ default: module.MmTransactionsLog })));
+const TradingAccountsPanel = lazy(() => import('./components/TradingAccountsPanel').then(module => ({ default: module.TradingAccountsPanel })));
+const PaymentMethodsPanel = lazy(() => import('./components/PaymentMethodsPanel').then(module => ({ default: module.PaymentMethodsPanel })));
+const StatisticsView = lazy(() => import('./components/StatisticsView').then(module => ({ default: module.StatisticsView })));
+
+function FeatureFallback({ label = 'Loading view' }: { label?: string }) {
+  return <div className="relative min-h-40 flex-1"><LoadingSpinner label={label} /></div>;
+}
 
 function MmControllerView() {
   return (
@@ -31,22 +37,18 @@ function MmControllerView() {
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-52 xl:min-h-0 overflow-hidden">
           <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Snapshot Log</h3>
           <div className="relative flex-1 min-h-0">
-            <SnapshotLog />
+            <Suspense fallback={<FeatureFallback label="Loading snapshot log" />}><SnapshotLog /></Suspense>
           </div>
         </div>
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-52 xl:min-h-0 overflow-hidden">
           <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">MM Controller Transactions</h3>
           <div className="relative flex-1 min-h-0">
-            <MmTransactionsLog />
+            <Suspense fallback={<FeatureFallback label="Loading transaction log" />}><MmTransactionsLog /></Suspense>
           </div>
         </div>
       </div>
     </div>
   );
-}
-
-function mergeCEXes(...lists: string[][]): string[] {
-  return [...new Set(lists.flat())];
 }
 
 function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapped, pastOrderStatsAllNetCapped, pastOrderStatsNetMin, pastOrderStatsAllNetMin, fastPastProfitableOrders, detailedPastProfitableOrders, analyticsOverviewLoading, analyticsOrdersLoading, analyticsCappedLoading, loadAnalytics, loadCore, refreshForCex, error, lastUpdatedAt, ohlcData, extendOhlc, allowOhlcExtend }: {
@@ -63,7 +65,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
   analyticsCappedLoading: boolean;
   loadAnalytics: ReturnType<typeof useDashboard>['loadAnalytics'];
   loadCore: ReturnType<typeof useDashboard>['loadCore'];
-  refreshForCex: (cex: string, excludedSpotCEXes?: string[], excludedHedgeCEXes?: string[], feeTier?: string, coupledHedge?: boolean, maxFiatLimit?: number | null, fiat?: string) => void;
+  refreshForCex: (params: MarketRequestParams) => void;
   error: string | null;
   lastUpdatedAt: string;
   ohlcData: ReturnType<typeof useDashboard>['ohlcData'];
@@ -71,26 +73,23 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
   allowOhlcExtend: boolean;
 }) {
   const { filters } = useFilters();
-  const { excludedMethods, excludedSpotCEXes: preferredExcludedSpotCEXes, excludedHedgeCEXes: preferredExcludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit } = usePreferences();
-  const { ready: cexPermissionsReady, lockedSpotCEXes, lockedHedgeCEXes } = useCEXPermissions();
-  const excludedSpotCEXes = useMemo(() => mergeCEXes(preferredExcludedSpotCEXes, lockedSpotCEXes), [preferredExcludedSpotCEXes, lockedSpotCEXes]);
-  const excludedHedgeCEXes = useMemo(() => mergeCEXes(preferredExcludedHedgeCEXes, lockedHedgeCEXes), [preferredExcludedHedgeCEXes, lockedHedgeCEXes]);
+  const { params, ready } = useMarketRequestParams();
 
   useEffect(() => {
-    if (!cexPermissionsReady) return;
-    loadAnalytics(filters.hours, filters.cex, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat);
-  }, [filters.hours, filters.cex, filters.fiat, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, loadAnalytics, cexPermissionsReady]);
+    if (!ready) return;
+    loadAnalytics(params);
+  }, [params, loadAnalytics, ready]);
 
   // Same core-data refresh cycle as the Monitor tab: reload live offers and
   // the offers/OHLC dataset when the CEX or cost preferences change, and keep
   // them fresh with a 5-minute poll while the tab stays open.
   useEffect(() => {
-    if (!cexPermissionsReady) return;
-    refreshForCex(filters.cex, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat);
-    loadCore(filters.hours, filters.cex, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat);
-    const interval = setInterval(() => loadCore(filters.hours, filters.cex, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat), 5 * 60 * 1000);
+    if (!ready) return;
+    refreshForCex(params);
+    loadCore(params);
+    const interval = setInterval(() => loadCore(params), 5 * 60 * 1000);
     return () => clearInterval(interval);
-  }, [filters.hours, filters.cex, filters.fiat, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, loadCore, refreshForCex, cexPermissionsReady]);
+  }, [params, loadCore, refreshForCex, ready]);
 
   return (
     <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -113,10 +112,11 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           statsLoading={analyticsOverviewLoading}
           ordersLoading={analyticsOrdersLoading}
           cappedLoading={analyticsCappedLoading}
-          maxFiatLimit={maxFiatLimit}
-          onRefreshLive={() => loadCore(filters.hours, filters.cex, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, filters.fiat)}
+          maxFiatLimit={params.maxFiatLimit}
+          onRefreshLive={() => loadCore(params)}
           lastUpdatedAt={lastUpdatedAt}
           chart={(extraOffers, includeLiveOffers) => (
+            <Suspense fallback={<FeatureFallback label="Loading market chart" />}>
             <OHLCChart
               data={ohlcData}
               loadedHours={Number(filters.hours)}
@@ -127,6 +127,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
               fitToOffers
               chartScope="insights"
             />
+            </Suspense>
           )}
         />
       </div>
@@ -138,22 +139,14 @@ function TradingView() {
   return (
     <div className="lg:flex-1 lg:min-h-0 lg:overflow-hidden flex flex-col gap-3">
       <div className="flex-1 min-h-0 overflow-hidden">
-        <TradingAccountsPanel />
+        <Suspense fallback={<FeatureFallback label="Loading trading accounts" />}><TradingAccountsPanel /></Suspense>
       </div>
       <div className="shrink-0 pt-1">
         <div className="mb-2 px-1 text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-muted">
           Payment Method Catalog
         </div>
-        <PaymentMethodsPanel />
+        <Suspense fallback={<FeatureFallback label="Loading payment methods" />}><PaymentMethodsPanel /></Suspense>
       </div>
-      {/* Trade Flow Monitor — temporarily disabled
-      <div className="min-h-0 rounded-lg border border-border bg-surface p-3 flex flex-col">
-        <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">Trade Flow Monitor</h3>
-        <div className="flex flex-1 items-center justify-center text-sm text-muted">
-          comming soon
-        </div>
-      </div>
-      */}
     </div>
   );
 }
@@ -172,6 +165,7 @@ function AppShell() {
     ohlcData,
     lastUpdatedAt,
     error,
+    analyticsError,
     loading,
     analyticsOverviewLoading,
     analyticsOrdersLoading,
@@ -181,7 +175,7 @@ function AppShell() {
     extendOhlc,
     initialLoadComplete,
   } = useDashboard();
-  const { liveOffers, wssConnected, pollError, refreshForCex } = useLiveOffers();
+  const { liveOffers, wssConnected, pollError, refreshForMarket } = useLiveOffers();
   const { groups } = usePaymentMethodGroups();
   const { preferredTimezone, excludedMethods, hideZeroTrustScore } = usePreferences();
   const [activeTab, setActiveTab] = useState<Tab>('insights');
@@ -208,11 +202,15 @@ function AppShell() {
           pollError={pollError}
         />
 
-        <SettingsOverlay
-          open={settingsOpen}
-          onClose={() => setSettingsOpen(false)}
-          groups={groups}
-        />
+        {settingsOpen && (
+          <Suspense fallback={null}>
+            <SettingsOverlay
+              open
+              onClose={() => setSettingsOpen(false)}
+              groups={groups}
+            />
+          </Suspense>
+        )}
 
         {activeTab === 'mmcontroller' && (
           <MmControllerView />
@@ -233,8 +231,8 @@ function AppShell() {
             analyticsCappedLoading={analyticsCappedLoading}
             loadAnalytics={loadAnalytics}
             loadCore={loadCore}
-            refreshForCex={refreshForCex}
-            error={error}
+            refreshForCex={refreshForMarket}
+            error={error ?? analyticsError}
             lastUpdatedAt={lastUpdatedAt}
             ohlcData={ohlcData}
             extendOhlc={extendOhlc}
@@ -247,7 +245,7 @@ function AppShell() {
         )}
 
         {activeTab === 'statistics' && (
-          <StatisticsView />
+          <Suspense fallback={<FeatureFallback label="Loading statistics" />}><StatisticsView /></Suspense>
         )}
       </div>
       </FiltersProvider>

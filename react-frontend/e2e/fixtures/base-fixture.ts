@@ -1,7 +1,6 @@
 import { test as base, expect, type Page, type Locator } from '@playwright/test';
 import {
   FIXED_TIME,
-  MOCK_STATS,
   MOCK_LIVE_OFFERS,
   MOCK_LIVE_OFFER_LIFECYCLES,
   MOCK_PAST_OFFERS,
@@ -79,9 +78,6 @@ export const test = base.extend<Fixtures>({
     );
 
     // Mock REST API endpoints
-    await page.route('**/api/stats*', route =>
-      route.fulfill({ json: MOCK_STATS }),
-    );
     await page.route('**/api/past_offers/*/lifecycle', route => {
       const id = Number(new URL(route.request().url()).pathname.match(/\/api\/past_offers\/(\d+)\/lifecycle$/)?.[1]);
       return route.fulfill({ json: MOCK_PAST_OFFER_LIFECYCLES[id] ?? [] });
@@ -104,9 +100,22 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/trade_cost_config', route =>
       route.fulfill({ json: MOCK_TRADE_COST_CONFIG }),
     );
-    await page.route('**/api/cex_permissions', route =>
-      route.fulfill({ json: MOCK_CEX_PERMISSIONS }),
-    );
+    const cexPermissionsState = structuredClone(MOCK_CEX_PERMISSIONS);
+    await page.route(/\/api\/cex_permissions(?:\/[^/?]+)?(?:\?.*)?$/, async route => {
+      if (route.request().method() === 'PUT') {
+        const exchange = new URL(route.request().url()).pathname.split('/').pop() ?? '';
+        const policy = route.request().postDataJSON() as { spot_enabled: boolean; hedge_enabled: boolean };
+        const current = cexPermissionsState.exchanges.find(item => item.exchange === exchange);
+        if (!current) return route.fulfill({ status: 404, json: { error: 'unknown provider' } });
+        current.policy = policy;
+        current.spot.policy_enabled = policy.spot_enabled;
+        current.spot.effective_enabled = current.spot.available && policy.spot_enabled;
+        current.hedge.policy_enabled = policy.hedge_enabled;
+        current.hedge.effective_enabled = current.hedge.available && policy.hedge_enabled;
+        return route.fulfill({ json: current });
+      }
+      return route.fulfill({ json: cexPermissionsState });
+    });
     await page.route('**/api/payment_method_groups', route =>
       route.fulfill({ json: MOCK_PAYMENT_METHOD_GROUPS }),
     );
@@ -382,11 +391,16 @@ export async function gotoAndWaitForData(page: Page) {
   const liveOffersResponse = page.waitForResponse(resp =>
     resp.url().includes('/api/live_offers') && resp.status() === 200,
   );
+  const analyticsResponse = page.waitForResponse(resp =>
+    resp.url().includes('/api/dashboard/analytics') && resp.status() === 200,
+  );
+  const ohlcResponse = page.waitForResponse(resp =>
+    resp.url().includes('/api/ohlc') && resp.status() === 200,
+  );
   await page.goto('/');
-  // Wait for offers table to populate (REST polling fallback)
-  await liveOffersResponse;
-  // Small delay for React to process state updates
-  await page.waitForTimeout(300);
+  // Wait for live data, analytics, and React's lazy-loaded offers view.
+  await Promise.all([liveOffersResponse, analyticsResponse, ohlcResponse]);
+  await page.getByTestId('live-offers-row').first().waitFor({ state: 'visible', timeout: 10_000 });
 }
 
 /**
@@ -477,9 +491,7 @@ export function depthPanel(page: Page) {
   }).last();
 }
 
-/** Locator for the Offers table panel (the surface wrapping the offers table) */
+/** Locator for the current Insights live-offer list. */
 export function offersPanel(page: Page) {
-  return page.locator('.bg-surface').filter({
-    has: page.locator('table.border-collapse'),
-  }).last();
+  return page.getByTestId('live-offers-list');
 }

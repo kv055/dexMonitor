@@ -1,19 +1,21 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
-import { apiFetch } from '../utils/api';
+import { apiFetch } from '../api/client';
+import { buildLiveOffersSearch, marketRequestKey, type MarketRequestParams } from '../shared/marketParams';
 import type { Offer } from '../types';
 
 const POLL_INTERVAL_MS = 15_000;
 const RECONNECT_DELAY_MS = 5_000;
 
-function buildTradeCostQuery(excludedSpotCEXes: string[], excludedHedgeCEXes: string[], feeTier: string, coupledHedge: boolean, maxFiatLimit: number | null): string {
-  let q = '';
-  if (excludedSpotCEXes.length > 0) q += `&exclude_spot_cexes=${encodeURIComponent(excludedSpotCEXes.join(','))}`;
-  if (excludedHedgeCEXes.length > 0) q += `&exclude_hedge_cexes=${encodeURIComponent(excludedHedgeCEXes.join(','))}`;
-  if (feeTier) q += `&fee_tier=${encodeURIComponent(feeTier)}`;
-  if (!coupledHedge) q += '&coupled_hedge=false';
-  if (maxFiatLimit != null && maxFiatLimit > 0) q += `&max_fiat_limit=${maxFiatLimit}`;
-  return q;
-}
+const defaultParams: MarketRequestParams = {
+  hours: '24',
+  cex: 'kraken',
+  fiat: 'EUR',
+  capabilityRevision: 0,
+  excludedPaymentMethods: [],
+  feeTier: '',
+  coupledHedge: true,
+  maxFiatLimit: null,
+};
 
 export function useLiveOffers() {
   const [liveOffers, setLiveOffers] = useState<Offer[]>([]);
@@ -26,14 +28,9 @@ export function useLiveOffers() {
   const everOpenRef = useRef(false);
   const sessionRef  = useRef(0);
   const connectRef = useRef<(session: number) => void>(() => {});
-  const cexRef      = useRef('kraken');
-  const fiatRef     = useRef('EUR');
-  const excludedSpotCEXesRef = useRef<string[]>([]);
-  const excludedHedgeCEXesRef = useRef<string[]>([]);
-  const feeTierRef = useRef('');
-  const coupledHedgeRef = useRef(true);
-  const maxFiatLimitRef = useRef<number | null>(null);
+  const paramsRef = useRef<MarketRequestParams>(defaultParams);
   const lastRefreshKeyRef = useRef('');
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const stopPolling = useCallback(() => {
     if (pollRef.current) {
@@ -43,7 +40,7 @@ export function useLiveOffers() {
   }, []);
 
   const buildQueryString = useCallback(() => {
-    return `cex=${cexRef.current}&fiat=${encodeURIComponent(fiatRef.current)}${buildTradeCostQuery(excludedSpotCEXesRef.current, excludedHedgeCEXesRef.current, feeTierRef.current, coupledHedgeRef.current, maxFiatLimitRef.current)}`;
+    return buildLiveOffersSearch(paramsRef.current);
   }, []);
 
   const startPolling = useCallback((session: number) => {
@@ -105,7 +102,7 @@ export function useLiveOffers() {
       if (sessionRef.current !== session || !mountedRef.current) return;
       setWssConnected(false);
       if (everOpenRef.current) {
-        setTimeout(() => connectRef.current(session), RECONNECT_DELAY_MS);
+        reconnectTimerRef.current = setTimeout(() => connectRef.current(session), RECONNECT_DELAY_MS);
       } else {
         startPolling(session);
       }
@@ -123,19 +120,20 @@ export function useLiveOffers() {
       sessionRef.current += 1;
       wsRef.current?.close();
       stopPolling();
+      if (reconnectTimerRef.current) clearTimeout(reconnectTimerRef.current);
     };
   }, [stopPolling]);
 
-  // Called by MonitorView when filters.cex or trade cost settings change.
+  // Called when market filters or trade-cost settings change.
   // Reconnects WS so the server pushes a fresh snapshot with updated query params.
-  const refreshForCex = useCallback((cex: string, excludedSpotCEXes: string[] = [], excludedHedgeCEXes: string[] = [], feeTier: string = '', coupledHedge = true, maxFiatLimit: number | null = null, fiat: string = 'EUR') => {
-    // refreshForCex is only ever called from MonitorView's mount effect, so the tree is
+  const refreshForMarket = useCallback((params: MarketRequestParams) => {
+    // This is only called from the active view's mount effect, so the tree is
     // mounted. Under React StrictMode the parent (AppShell) mount effect that resets
     // mountedRef to true runs AFTER this child effect, so without this connect() would see
     // a stale mountedRef === false (left over from the strict unmount cleanup) and bail —
     // leaving no WebSocket and no polling. Assert mounted here so connect() proceeds.
     mountedRef.current = true;
-    const refreshKey = JSON.stringify({ cex, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, fiat });
+    const refreshKey = marketRequestKey(params);
     if (
       refreshKey === lastRefreshKeyRef.current
       && wsRef.current?.readyState === WebSocket.OPEN
@@ -144,13 +142,7 @@ export function useLiveOffers() {
     }
     lastRefreshKeyRef.current = refreshKey;
 
-    cexRef.current = cex;
-    fiatRef.current = fiat;
-    excludedSpotCEXesRef.current = excludedSpotCEXes;
-    excludedHedgeCEXesRef.current = excludedHedgeCEXes;
-    feeTierRef.current = feeTier;
-    coupledHedgeRef.current = coupledHedge;
-    maxFiatLimitRef.current = maxFiatLimit;
+    paramsRef.current = params;
     const session = ++sessionRef.current;
     stopPolling();
     wsRef.current?.close();
@@ -159,5 +151,5 @@ export function useLiveOffers() {
     connect(session);
   }, [connect, stopPolling]);
 
-  return { liveOffers, wssConnected, pollError, refreshForCex };
+  return { liveOffers, wssConnected, pollError, refreshForMarket };
 }

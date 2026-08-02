@@ -1,7 +1,5 @@
 import { useMemo, useState } from 'react';
-import { LoadingSpinner } from './LoadingSpinner';
 import type {
-  GeneralStatsData,
   GeneralStatsPremiumSummaryData,
   NamedCount,
   PastPremiumTimeframeStats,
@@ -431,28 +429,5 @@ export function PaymentMethodsCard({ counts }: { counts: NamedCount[] }) {
       </div>
       <BreakdownPie entries={chartEntries} total={total} centerLabel="top mix" />
     </Card>
-  );
-}
-
-export function GeneralStats({ stats, loading }: { stats: GeneralStatsData | null; loading: boolean }) {
-  if (loading && !stats) {
-    return <div className="relative min-h-32"><LoadingSpinner size={88} label="Loading statistics" /></div>;
-  }
-  if (!stats) {
-    return <div className="text-sm text-muted">No statistics available.</div>;
-  }
-  return (
-    <div className="grid grid-cols-2 xl:grid-cols-5 gap-1.5">
-      <ExchangesCard exchangesLive={stats.exchanges_live} offersByExchange={stats.offers_by_exchange} />
-      <PremiumsCard premium={{
-        best_ask_premium_pct: stats.best_ask_premium_pct,
-        avg_ask_premium_pct: stats.avg_ask_premium_pct,
-        best_bid_premium_pct: stats.best_bid_premium_pct,
-        avg_bid_premium_pct: stats.avg_bid_premium_pct,
-      }} />
-      <PastPremiumsCard frames={stats.past_premiums ?? []} />
-      <LifetimeCard lifetimes={stats.premium_lifetimes ?? { raw: { avg_offer_lifetime_ms: stats.avg_offer_lifetime_ms, avg_offer_lifetime_ms_by_exchange: stats.avg_offer_lifetime_ms_by_exchange }, net_full: { avg_offer_lifetime_ms: null, avg_offer_lifetime_ms_by_exchange: [] }, net_capped: { avg_offer_lifetime_ms: null, avg_offer_lifetime_ms_by_exchange: [] } }} />
-      <PaymentMethodsCard counts={stats.payment_method_counts} />
-    </div>
   );
 }

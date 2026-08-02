@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from 'react';
 import type { WithdrawalTrackResult } from '../types';
-import { cexWithdrawalTrack } from '../utils/api';
+import { cexWithdrawalTrack } from '../api/execution';
 
 const POLL_INTERVAL_MS = 5_000;
 

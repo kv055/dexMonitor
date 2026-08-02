@@ -1,13 +1,12 @@
-import { useLayoutEffect, useMemo, useReducer, type ReactNode } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useReducer, type ReactNode } from 'react';
 import { PreferencesContext, type PreferencesState, type ThemeMode } from '../hooks/usePreferences';
+import { readStoredBoolean, readStoredNullableNumber, readStoredString, readStoredStringArray, writeStoredValue } from '../shared/storage';
 
 type Action =
   | { type: 'SET_TIMEZONE'; timezone: string }
   | { type: 'TOGGLE_THEME' }
   | { type: 'TOGGLE_METHOD'; method: string }
   | { type: 'TOGGLE_GROUP'; methods: string[]; exclude: boolean }
-  | { type: 'TOGGLE_SPOT_CEX'; cex: string }
-  | { type: 'TOGGLE_HEDGE_CEX'; cex: string }
   | { type: 'SET_FEE_TIER'; tier: string }
   | { type: 'SET_COUPLED_HEDGE'; coupled: boolean }
   | { type: 'SET_MAX_FIAT_LIMIT'; limit: number | null }
@@ -31,37 +30,20 @@ function normalizePaymentMethodList(methods: string[]): string[] {
   return result;
 }
 
-function readJsonArray(key: string): string[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(key) || '[]');
-    if (!Array.isArray(parsed)) return [];
-    const strings = parsed.filter((item): item is string => typeof item === 'string');
-    return key === 'dex-excluded-payment-methods' ? normalizePaymentMethodList(strings) : strings;
-  } catch {
-    return [];
-  }
-}
-
 function getInitialTheme(): ThemeMode {
-  const stored = localStorage.getItem('dex-theme');
+  const stored = readStoredString('dex-theme');
   return stored === 'light' ? 'light' : 'dark';
 }
 
 function getInitialState(): PreferencesState {
-  const maxFiat = localStorage.getItem('dex-max-fiat-limit');
-  const legacyCEXes = readJsonArray('dex-excluded-cexes');
-  const storedSpotCEXes = localStorage.getItem('dex-excluded-spot-cexes');
-  const storedHedgeCEXes = localStorage.getItem('dex-excluded-hedge-cexes');
   return {
     theme: getInitialTheme(),
-    preferredTimezone: localStorage.getItem('dex-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
-    excludedMethods: readJsonArray('dex-excluded-payment-methods'),
-    excludedSpotCEXes: storedSpotCEXes == null ? legacyCEXes : readJsonArray('dex-excluded-spot-cexes'),
-    excludedHedgeCEXes: storedHedgeCEXes == null ? legacyCEXes : readJsonArray('dex-excluded-hedge-cexes'),
-    feeTier: localStorage.getItem('dex-fee-tier') || '',
-    coupledHedge: localStorage.getItem('dex-coupled-hedge') !== 'false',
-    maxFiatLimit: maxFiat ? Number(maxFiat) : null,
-    hideZeroTrustScore: localStorage.getItem('dex-hide-zero-trust-score') === 'true',
+    preferredTimezone: readStoredString('dex-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
+    excludedMethods: normalizePaymentMethodList(readStoredStringArray('dex-excluded-payment-methods')),
+    feeTier: readStoredString('dex-fee-tier'),
+    coupledHedge: readStoredBoolean('dex-coupled-hedge', true),
+    maxFiatLimit: readStoredNullableNumber('dex-max-fiat-limit'),
+    hideZeroTrustScore: readStoredBoolean('dex-hide-zero-trust-score', false),
   };
 }
 
@@ -85,20 +67,6 @@ function preferencesReducer(state: PreferencesState, action: Action): Preference
         excludedMethods: action.exclude ? [...withoutGroup, ...action.methods] : withoutGroup,
       };
     }
-    case 'TOGGLE_SPOT_CEX':
-      return {
-        ...state,
-        excludedSpotCEXes: state.excludedSpotCEXes.includes(action.cex)
-          ? state.excludedSpotCEXes.filter(cex => cex !== action.cex)
-          : [...state.excludedSpotCEXes, action.cex],
-      };
-    case 'TOGGLE_HEDGE_CEX':
-      return {
-        ...state,
-        excludedHedgeCEXes: state.excludedHedgeCEXes.includes(action.cex)
-          ? state.excludedHedgeCEXes.filter(cex => cex !== action.cex)
-          : [...state.excludedHedgeCEXes, action.cex],
-      };
     case 'SET_FEE_TIER':
       return { ...state, feeTier: action.tier };
     case 'SET_COUPLED_HEDGE':
@@ -115,40 +83,17 @@ export function PreferencesProvider({ children }: Props) {
 
   useLayoutEffect(() => {
     document.documentElement.setAttribute('data-theme', state.theme);
-    localStorage.setItem('dex-theme', state.theme);
+    writeStoredValue('dex-theme', state.theme);
   }, [state.theme]);
 
-  useLayoutEffect(() => {
-    localStorage.setItem('dex-timezone', state.preferredTimezone);
-  }, [state.preferredTimezone]);
-
-  useLayoutEffect(() => {
-    localStorage.setItem('dex-excluded-payment-methods', JSON.stringify(state.excludedMethods));
-  }, [state.excludedMethods]);
-
-  useLayoutEffect(() => {
-    localStorage.setItem('dex-excluded-spot-cexes', JSON.stringify(state.excludedSpotCEXes));
-  }, [state.excludedSpotCEXes]);
-
-  useLayoutEffect(() => {
-    localStorage.setItem('dex-excluded-hedge-cexes', JSON.stringify(state.excludedHedgeCEXes));
-  }, [state.excludedHedgeCEXes]);
-
-  useLayoutEffect(() => {
-    localStorage.setItem('dex-fee-tier', state.feeTier);
-  }, [state.feeTier]);
-
-  useLayoutEffect(() => {
-    localStorage.setItem('dex-coupled-hedge', String(state.coupledHedge));
-  }, [state.coupledHedge]);
-
-  useLayoutEffect(() => {
-    localStorage.setItem('dex-max-fiat-limit', state.maxFiatLimit != null ? String(state.maxFiatLimit) : '');
-  }, [state.maxFiatLimit]);
-
-  useLayoutEffect(() => {
-    localStorage.setItem('dex-hide-zero-trust-score', String(state.hideZeroTrustScore));
-  }, [state.hideZeroTrustScore]);
+  useEffect(() => {
+    writeStoredValue('dex-timezone', state.preferredTimezone);
+    writeStoredValue('dex-excluded-payment-methods', state.excludedMethods);
+    writeStoredValue('dex-fee-tier', state.feeTier);
+    writeStoredValue('dex-coupled-hedge', state.coupledHedge);
+    writeStoredValue('dex-max-fiat-limit', state.maxFiatLimit);
+    writeStoredValue('dex-hide-zero-trust-score', state.hideZeroTrustScore);
+  }, [state]);
 
   const value = useMemo(() => ({
     ...state,
@@ -156,8 +101,6 @@ export function PreferencesProvider({ children }: Props) {
     toggleTheme: () => dispatch({ type: 'TOGGLE_THEME' }),
     toggleMethod: (method: string) => dispatch({ type: 'TOGGLE_METHOD', method }),
     toggleGroup: (methods: string[], exclude: boolean) => dispatch({ type: 'TOGGLE_GROUP', methods, exclude }),
-    toggleSpotCEX: (cex: string) => dispatch({ type: 'TOGGLE_SPOT_CEX', cex }),
-    toggleHedgeCEX: (cex: string) => dispatch({ type: 'TOGGLE_HEDGE_CEX', cex }),
     setFeeTier: (tier: string) => dispatch({ type: 'SET_FEE_TIER', tier }),
     setCoupledHedge: (coupled: boolean) => dispatch({ type: 'SET_COUPLED_HEDGE', coupled }),
     setMaxFiatLimit: (limit: number | null) => dispatch({ type: 'SET_MAX_FIAT_LIMIT', limit }),

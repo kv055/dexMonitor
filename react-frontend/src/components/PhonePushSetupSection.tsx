@@ -4,7 +4,7 @@ import {
   revealPhonePushSecrets,
   type PhonePushSecrets,
   type PhonePushSetup,
-} from '../utils/api';
+} from '../api/communication';
 import { LocalQrCode } from './LocalQrCode';
 
 const notifyBody = '{"app":"<bank-app>","title":"<notification-title>","text":"<notification-text>","time":"<optional-ISO-8601>"}';
@@ -223,14 +223,13 @@ PHONE SETTINGS
   }, [setup]);
 
   const lastSeen = setup?.last_seen ? new Date(setup.last_seen).toLocaleString() : 'No check-in yet';
-  const callbackHistory = setup?.callback_history ?? [];
   const filteredCallbackHistory = useMemo(
-    () => callbackHistory.filter(attempt => (
+    () => (setup?.callback_history ?? []).filter(attempt => (
       callbackHistoryFilter === 'all'
       || (callbackHistoryFilter === 'heartbeat' && attempt.endpoint === 'phone-heartbeat')
       || (callbackHistoryFilter === 'payment' && attempt.endpoint === 'notify')
     )),
-    [callbackHistory, callbackHistoryFilter],
+    [setup?.callback_history, callbackHistoryFilter],
   );
 
   return (
@@ -402,7 +401,7 @@ PHONE SETTINGS
                   <p className="mt-3 rounded-lg border border-amber-500/25 bg-amber-500/5 px-3 py-2 text-[0.63rem] text-amber-600">
                     {setup.callback_history_error}
                   </p>
-                ) : callbackHistory.length === 0 ? (
+                ) : setup.callback_history.length === 0 ? (
                   <p className="mt-3 rounded-lg border border-border/80 bg-bg/35 px-3 py-5 text-center text-[0.65rem] text-muted">
                     No callback attempts have been recorded yet. Run the heartbeat macro once from the physical phone.
                   </p>

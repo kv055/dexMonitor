@@ -10,7 +10,7 @@ import {
   type ISeriesApi,
   type UTCTimestamp,
 } from 'lightweight-charts';
-import type { LifecyclePoint, Offer, OHLCCandle, OHLCData } from '../types';
+import type { LifecyclePoint, Offer, OHLCData } from '../types';
 import { useFilters, type ChartScope } from '../hooks/useFilters';
 import { usePreferences } from '../hooks/usePreferences';
 import { getFirstSeen, getLastSeen, getOfferPrice, getPremiumMetricValue, isOfferLive } from '../utils/offerAccess';
@@ -18,7 +18,8 @@ import { useTimezone } from '../hooks/useTimezone';
 import { LoadingSpinner } from './LoadingSpinner';
 import { buildOfferKeys, buildStableOfferKey } from '../utils/offerIdentity';
 import { exchangeColor } from '../utils/exchangeColors';
-import { apiFetch } from '../utils/api';
+import { apiFetch } from '../api/client';
+import { aggregateOHLC, gapThresholdSeconds, requiredHoursForCandleSize, TARGET_VISIBLE_CANDLES, weakenColor } from '../features/insights/ohlcMath';
 
 interface Props {
   data: OHLCData | null;
@@ -77,86 +78,13 @@ const CANDLE_OPTIONS = [1, 5, 15, 30, 60, 240, 1440];
 const CANDLE_LABELS: Record<number, string> = {
   1: '1m', 5: '5m', 15: '15m', 30: '30m', 60: '1h', 240: '4h', 1440: '1d',
 };
-const TARGET_VISIBLE_CANDLES = 120;
-
-// A connector between two lifecycle observations is treated as a DATA GAP —
-// drawn dashed and muted rather than as a confident straight line — when it
-// spans far more than the offer's own typical snapshot cadence. The factor is
-// applied to the median spacing (so it adapts to 1m vs 4h buckets), with an
-// absolute floor so ordinary sub-minute jitter never trips it.
-const GAP_CADENCE_FACTOR = 2.5;
-const MIN_GAP_SECONDS = 90;
-
 function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
   return value || fallback;
 }
 
-function parseHexColor(color: string): { r: number; g: number; b: number } | null {
-  const m = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(color.trim());
-  if (!m) return null;
-  const hex = m[1].length === 3 ? m[1].split('').map((c) => c + c).join('') : m[1];
-  const n = parseInt(hex, 16);
-  return { r: (n >> 16) & 255, g: (n >> 8) & 255, b: n & 255 };
-}
-
-// Blend a line's color toward neutral grey (and drop its alpha a touch) so a
-// gap connector still carries the line's identity but clearly reads as
-// "uncertain — we don't actually know the price here".
-function weakenColor(color: string): string {
-  const rgb = parseHexColor(color);
-  if (!rgb) return 'rgba(139, 148, 158, 0.7)';
-  const GREY = 145;
-  const MIX = 0.62; // 0 = original color, 1 = fully grey
-  const r = Math.round(rgb.r + (GREY - rgb.r) * MIX);
-  const g = Math.round(rgb.g + (GREY - rgb.g) * MIX);
-  const b = Math.round(rgb.b + (GREY - rgb.b) * MIX);
-  return `rgba(${r}, ${g}, ${b}, 0.85)`;
-}
-
-// The offer's typical observation spacing × factor (with a floor). Connectors
-// longer than this are missing-data gaps.
-function gapThresholdSeconds(points: { utcSec?: number }[]): number {
-  const deltas: number[] = [];
-  for (let i = 1; i < points.length; i++) {
-    const a = points[i - 1].utcSec;
-    const b = points[i].utcSec;
-    if (a != null && b != null) deltas.push(b - a);
-  }
-  if (deltas.length === 0) return Infinity;
-  deltas.sort((x, y) => x - y);
-  const median = deltas[Math.floor(deltas.length / 2)];
-  return Math.max(median * GAP_CADENCE_FACTOR, MIN_GAP_SECONDS);
-}
-
 function getNowUtcSec(): number {
   return Math.floor(Date.now() / 1000);
-}
-
-// Re-aggregate raw candles into larger buckets client-side
-function aggregateOHLC(candles: OHLCCandle[], targetMin: number, sourceMin: number): OHLCCandle[] {
-  if (targetMin <= sourceMin || candles.length === 0) return candles;
-  const bucketSec = targetMin * 60;
-  const buckets = new Map<number, OHLCCandle>();
-  for (const c of candles) {
-    const tSec = toUtcSec(c.time);
-    const bStart = Math.floor(tSec / bucketSec) * bucketSec;
-    const existing = buckets.get(bStart);
-    if (!existing) {
-      // Use an ISO-like string so toUtcSec can parse it later
-      const isoTime = new Date(bStart * 1000).toISOString().replace('.000Z', 'Z');
-      buckets.set(bStart, { time: isoTime, open: c.open, high: c.high, low: c.low, close: c.close });
-    } else {
-      existing.high = Math.max(existing.high, c.high);
-      existing.low = Math.min(existing.low, c.low);
-      existing.close = c.close;
-    }
-  }
-  return Array.from(buckets.values()).sort((a, b) => toUtcSec(a.time) - toUtcSec(b.time));
-}
-
-function requiredHoursForCandleSize(candleMin: number): number {
-  return Math.ceil((candleMin * TARGET_VISIBLE_CANDLES) / 60);
 }
 
 /**

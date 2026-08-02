@@ -111,15 +111,6 @@ export function getNetPremiumPercent(offer: Offer, sel: ScenarioSelector = false
   return scenarioKind(sel) === 'capped' ? offer.net_premium_percent_capped ?? null : offer.net_premium_percent ?? null;
 }
 
-export function getTradeCostPercent(offer: Offer, sel: ScenarioSelector = false): number | null {
-  if (offer.analysis) {
-    const scenario = pickScenario(offer, sel);
-    return scenario?.premium.trade_cost_percent ?? scenario?.premium.avg_trade_cost_percent ?? null;
-  }
-  if (scenarioKind(sel) === 'min') return null;
-  return scenarioKind(sel) === 'capped' ? offer.trade_cost_percent_capped ?? null : offer.trade_cost_percent ?? null;
-}
-
 export function getEstimatedProfitBtc(offer: Offer, sel: ScenarioSelector = false): number | null {
   if (offer.analysis) {
     const scenario = pickScenario(offer, sel);

@@ -8,7 +8,7 @@ import {
   type TelegramConfig,
 	 type TelegramPairing,
   type TelegramService,
-} from '../utils/api';
+} from '../api/communication';
 import { LocalQrCode } from './LocalQrCode';
 
 type Status = 'idle' | 'saving' | 'ok' | 'error';

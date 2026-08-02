@@ -1,21 +1,35 @@
 import { createContext, useContext } from 'react';
 
-export type CEXPermissionStatus = 'granted' | 'unknown' | 'denied' | 'unsupported';
+export interface CEXCapabilityBlocker {
+  code: string;
+  permissions?: string[];
+  message: string;
+}
 
 export interface CEXAvailability {
+  supported: boolean;
+  policy_enabled: boolean;
   available: boolean;
+  effective_enabled: boolean;
   blocking_permissions: string[];
-  reason?: string;
+  blockers: CEXCapabilityBlocker[];
+}
+
+export interface CEXPolicy {
+  spot_enabled: boolean;
+  hedge_enabled: boolean;
+  updated_at?: string;
 }
 
 export interface CEXPermissionExchange {
   account_id: number;
   provider: string;
   exchange: string;
-  optimizer_supported: boolean;
+  cost_supported: boolean;
+  execution_supported: boolean;
   active_key_count: number;
-  permissions_checked_at: string | null;
-  permissions: Record<string, CEXPermissionStatus>;
+  permissions_checked_at?: string | null;
+  policy: CEXPolicy;
   spot: CEXAvailability;
   hedge: CEXAvailability;
 }
@@ -25,8 +39,9 @@ export interface CEXPermissionsContextValue {
   loading: boolean;
   ready: boolean;
   error: string | null;
-  lockedSpotCEXes: string[];
-  lockedHedgeCEXes: string[];
+  revision: number;
+  updating: string | null;
+  updatePolicy: (exchange: string, policy: CEXPolicy) => Promise<void>;
   reload: () => void;
 }
 

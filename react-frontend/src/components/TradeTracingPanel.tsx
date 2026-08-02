@@ -3,7 +3,7 @@ import type { Offer, CexSpotBuyResult, CexHedgeOpenResult, CexTradeflowResult, H
 import { ExchangeTag } from './ExchangeTag';
 import { stripTrailingZeros } from '../utils/numberFormat';
 import { premiumClass } from '../utils/formatters';
-import { cexTradeflow, cexPreTradeCheck } from '../utils/api';
+import { cexTradeflow, cexPreTradeCheck, fetchMMTransaction } from '../api/execution';
 import { useFilters } from '../hooks/useFilters';
 import { useHedgeStream } from '../hooks/useHedgeStream';
 import { useWithdrawalTrack } from '../hooks/useWithdrawalTrack';
@@ -37,6 +37,7 @@ interface SubmitState {
 interface HedgeState {
   phase: 'idle' | 'submitting' | 'done' | 'error';
   result?: CexHedgeOpenResult;
+  funding?: CexTradeflowResult['dex_funding'];
   error?: string;
 }
 
@@ -44,6 +45,7 @@ interface WalletState {
   phase: 'idle' | 'submitting' | 'done' | 'error';
   result?: CexTradeflowResult['withdrawal'];
   transactionId?: number;
+  poolRefill?: CexTradeflowResult['pool_refill'];
   error?: string;
 }
 
@@ -399,6 +401,38 @@ export function TradeTracingPanel({
     ?? checks.report?.lnd_withdraw_address
     ?? null;
 
+  // The execution response only proves that the replacement withdrawal was
+  // submitted. Pool restoration is a separate backend lifecycle, so poll the
+  // persisted transaction until it reaches either terminal state. A transient
+  // read error is safe to retry because this endpoint has no side effects.
+  useEffect(() => {
+    const transactionId = walletSubmit.transactionId;
+    if (!isHedgeless || !transactionId || walletSubmit.phase !== 'done') return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const tx = await fetchMMTransaction(transactionId);
+        if (cancelled) return;
+        setWalletSubmit(previous => ({
+          ...previous,
+          poolRefill: previous.poolRefill
+            ? { ...previous.poolRefill, target_btc: tx.btc_pool_target_btc ?? previous.poolRefill.target_btc, status: tx.btc_pool_refill_status ?? previous.poolRefill.status }
+            : undefined,
+        }));
+        if (tx.btc_pool_refill_status === 'restored' || tx.btc_pool_refill_status === 'needs_review') return;
+      } catch {
+        // The live withdrawal card still reports progress; retry transient transaction fetch failures.
+      }
+      if (!cancelled) timer = setTimeout(poll, 5000);
+    };
+    void poll();
+    return () => {
+      cancelled = true;
+      if (timer) clearTimeout(timer);
+    };
+  }, [isHedgeless, walletSubmit.phase, walletSubmit.transactionId]);
+
   // Canonical BTC amount derived from the current input + unit.
   const amountBtc = useMemo(() => {
     const parsed = parseFloat(draft.replace(',', '.'));
@@ -536,11 +570,7 @@ export function TradeTracingPanel({
   ]);
 
   async function runTrade() {
-    if (isHedgeless) {
-      setSubmit({ phase: 'error', error: 'Hedgeless Double Collateral execution is not wired yet; pre-trade checks only.' });
-      return;
-    }
-    if (!hedgeVenue) return;
+    if (!isHedgeless && !hedgeVenue) return;
 
     setConfirmOpen(false);
     setChecks({ phase: 'idle' });
@@ -553,6 +583,11 @@ export function TradeTracingPanel({
     const leverage = bd?.hedge?.position?.leverage_used ?? 1.0;
     const side = bd?.hedge?.side ?? (isAsk ? 'long' : 'short');
     const btcNotional = clampedBtc * hedgeRatio;
+    // Hedgeless spends both the position amount and seller security deposit
+    // from LND. Keep that BTC requirement separate from the fiat collateral
+    // used for the replacement spot buy.
+    const requiredBtcLiquidity = tradeCapital?.btc_liquidity_btc
+      ?? ((tradeCapital?.btc_amount ?? 0) + (tradeCapital?.security_deposit_btc ?? 0));
 
     const fiatAmount = estFiat ?? (refPrice != null ? refPrice * clampedBtc : 0);
     // Pay with the method the pre-trade checks validated: the explicit choice
@@ -565,11 +600,15 @@ export function TradeTracingPanel({
         market_side: 'bid',
         btc_amount: clampedBtc,
         fiat_currency: fiatCurrency,
-        required_capital: tradeCapital?.total_fiat ?? 0,
-        hedge_venue: hedgeVenue,
-        hedge_side: side,
-        hedge_notional_btc: btcNotional,
-        leverage,
+        required_capital: isHedgeless
+          ? (tradeCapital?.fiat_collateral ?? tradeCapital?.spot_notional ?? 0)
+          : (tradeCapital?.total_fiat ?? 0),
+        required_btc_liquidity: isHedgeless ? requiredBtcLiquidity : undefined,
+        security_deposit_btc: isHedgeless ? tradeCapital?.security_deposit_btc : undefined,
+        hedge_venue: isHedgeless ? undefined : hedgeVenue,
+        hedge_side: isHedgeless ? undefined : side,
+        hedge_notional_btc: isHedgeless ? undefined : btcNotional,
+        leverage: isHedgeless ? undefined : leverage,
         offer_id: offer.offer_id ?? undefined,
         dex: offer.exchange,
         fiat_amount: fiatAmount > 0 ? fiatAmount : undefined,
@@ -586,11 +625,12 @@ export function TradeTracingPanel({
         },
       });
       setSubmit({ phase: 'done', result: result.spot_buy });
-      setHedgeSubmit({ phase: 'done', result: result.hedge });
+      setHedgeSubmit({ phase: 'done', result: result.hedge, funding: result.dex_funding });
       setWalletSubmit({
         phase: 'done',
         result: result.withdrawal,
         transactionId: result.transaction_id,
+        poolRefill: result.pool_refill,
       });
       setActiveTab('spot');
     } catch (err) {
@@ -616,9 +656,9 @@ export function TradeTracingPanel({
         <div className="flex items-center gap-0 border-b border-border shrink-0">
           {([
             { id: 'preview' as Tab, label: 'Preview', dot: 'idle' as const },
-            { id: 'spot'    as Tab, label: 'Spot',    dot: submit.phase },
-            { id: 'hedge'   as Tab, label: 'Hedge',   dot: hedgeSubmit.phase },
-            { id: 'wallet'  as Tab, label: 'Wallet',  dot: walletSubmit.phase },
+            { id: 'spot'    as Tab, label: isHedgeless ? 'Refill' : 'Spot', dot: submit.phase },
+            { id: 'hedge'   as Tab, label: isHedgeless ? 'DEX funding' : 'Hedge', dot: hedgeSubmit.phase },
+            { id: 'wallet'  as Tab, label: isHedgeless ? 'Pool' : 'Wallet', dot: walletSubmit.phase },
           ] satisfies { id: Tab; label: string; dot: string }[]).map(({ id, label, dot }) => (
             <button
               key={id}
@@ -728,7 +768,7 @@ export function TradeTracingPanel({
           {activeTab === 'spot' && (
             <>
               {submit.phase === 'idle' && <span className="text-muted">Submit a trade to begin.</span>}
-              {submit.phase === 'submitting' && <span className="text-accent">Placing market buy on {cexLabel}…</span>}
+              {submit.phase === 'submitting' && <span className="text-accent">{isHedgeless ? `Funding DEX, then buying replacement BTC on ${cexLabel}…` : `Placing market buy on ${cexLabel}…`}</span>}
               {submit.phase === 'error' && <span className="text-red wrap-break-word">{submit.error}</span>}
               {submit.phase === 'done' && submit.result && (
                 <div className="flex flex-col gap-1.5 text-text">
@@ -757,6 +797,21 @@ export function TradeTracingPanel({
           )}
           {activeTab === 'hedge' && (
             <>
+              {isHedgeless && hedgeSubmit.phase === 'idle' && <span className="text-muted">Awaiting LND-funded DEX execution.</span>}
+              {isHedgeless && hedgeSubmit.phase === 'submitting' && <span className="text-accent">Taking and funding the offer from the LND pool…</span>}
+              {isHedgeless && hedgeSubmit.phase === 'done' && hedgeSubmit.funding && (
+                <div className="flex flex-col gap-1.5 text-text">
+                  <div className="flex justify-between gap-2"><span className="text-muted">Status</span><span className="text-green font-medium">{hedgeSubmit.funding.status}</span></div>
+                  <div className="flex justify-between gap-2"><span className="text-muted">DEX</span><span className="mono-nums">{hedgeSubmit.funding.exchange}</span></div>
+                  <div className="flex justify-between gap-2"><span className="text-muted">Method</span><span className="mono-nums">{hedgeSubmit.funding.method}</span></div>
+                  <div className="flex justify-between gap-2"><span className="text-muted">BTC committed</span><span className="mono-nums">{fmtBtc(hedgeSubmit.funding.amount_btc)}</span></div>
+                  {(hedgeSubmit.funding.txid || hedgeSubmit.funding.payment_hash) && (
+                    <div className="flex justify-between gap-2"><span className="text-muted">Receipt</span><span className="mono-nums truncate max-w-40" title={hedgeSubmit.funding.txid ?? hedgeSubmit.funding.payment_hash}>{hedgeSubmit.funding.txid ?? hedgeSubmit.funding.payment_hash}</span></div>
+                  )}
+                </div>
+              )}
+              {!isHedgeless && (
+                <>
               {hedgeSubmit.phase === 'idle' && submit.phase === 'idle' && <span className="text-muted">Awaiting spot trade.</span>}
               {hedgeSubmit.phase === 'idle' && submit.phase !== 'idle' && !bd?.hedge?.venue && <span className="text-muted">No hedge venue in offer breakdown.</span>}
               {hedgeSubmit.phase === 'idle' && submit.phase === 'done' && !!bd?.hedge?.venue && <span className="text-muted">Hedge not triggered.</span>}
@@ -777,6 +832,9 @@ export function TradeTracingPanel({
               {liveHedgeVenue && (
                 <LiveHedgePosition position={livePosition} socketConnected={liveSocketConnected} />
               )}
+                </>
+              )}
+              {isHedgeless && hedgeSubmit.phase === 'error' && <span className="text-red wrap-break-word">{hedgeSubmit.error}</span>}
             </>
           )}
           {activeTab === 'wallet' && (
@@ -817,8 +875,8 @@ export function TradeTracingPanel({
                   )}
                   {walletSubmit.transactionId != null && walletSubmit.transactionId > 0 && (
                     <div className="flex justify-between gap-2">
-                      <span className="text-muted">DEX relay</span>
-                      <span className="text-muted text-[0.68rem]">Pending ≥1 conf, then auto-relay</span>
+                      <span className="text-muted">{isHedgeless ? 'Pool target' : 'DEX relay'}</span>
+                      <span className="text-muted text-[0.68rem]">{isHedgeless && walletSubmit.poolRefill ? `${fmtBtc(walletSubmit.poolRefill.target_btc)} BTC · ${cexStatusLabel(walletSubmit.poolRefill.status)}` : 'Pending ≥1 conf, then auto-relay'}</span>
                     </div>
                   )}
                   {receivingAddress && (
@@ -858,9 +916,11 @@ export function TradeTracingPanel({
             aria-labelledby="trade-confirm-title"
           >
             <div className="shrink-0 flex flex-col gap-1.5">
-              <h3 id="trade-confirm-title" className="text-[0.85rem] font-semibold text-text tracking-tight">Confirm market buy</h3>
+              <h3 id="trade-confirm-title" className="text-[0.85rem] font-semibold text-text tracking-tight">{isHedgeless ? 'Confirm hedgeless trade' : 'Confirm market buy'}</h3>
               <p className="text-[0.72rem] text-muted leading-relaxed">
-                This places a real market <span className="text-green font-medium">BUY</span> order. Funds will be spent immediately.
+                {isHedgeless
+                  ? <>This takes the DEX offer and spends BTC from LND immediately. A replacement market <span className="text-green font-medium">BUY</span> and withdrawal will follow automatically.</>
+                  : <>This places a real market <span className="text-green font-medium">BUY</span> order. Funds will be spent immediately.</>}
               </p>
             </div>
 
@@ -913,7 +973,7 @@ export function TradeTracingPanel({
                 title={checksPassed ? undefined : 'All pre-trade checks must pass first'}
                 className={`text-[0.72rem] px-3 py-1.5 rounded-md border font-semibold transition-colors ${checksPassed ? 'border-green/50 bg-green/15 text-green hover:bg-green/25' : 'border-border bg-surface text-muted cursor-not-allowed'}`}
               >
-                {checks.phase === 'running' ? 'Checking…' : 'Confirm buy'}
+                {checks.phase === 'running' ? 'Checking…' : isHedgeless ? 'Take and refill' : 'Confirm buy'}
               </button>
             </div>
           </div>

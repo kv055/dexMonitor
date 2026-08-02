@@ -479,21 +479,6 @@ export const MOCK_SNAPSHOT_LOG_DETAIL: Record<number, (typeof MOCK_SNAPSHOT_LOG_
   },
 };
 
-// ── Stats ─────────────────────────────────────────────────────────────────────
-
-export const MOCK_STATS = {
-  offer_counts: [
-    { exchange: 'bisq', offer_count: 5 },
-    { exchange: 'hodlhodl', offer_count: 4 },
-    { exchange: 'robosats', offer_count: 4 },
-  ],
-  price_stats: [
-    { exchange: 'bisq', avg_price: 83548, min_price: 81180, max_price: 85280 },
-    { exchange: 'hodlhodl', avg_price: 84705, min_price: 80360, max_price: 88150 },
-    { exchange: 'robosats', avg_price: 84665, min_price: 81590, max_price: 87330 },
-  ],
-};
-
 export const MOCK_PAST_ORDER_STATS = {
   fiat_currency: 'EUR',
   excluded_payment_methods: [],
@@ -599,59 +584,63 @@ export const MOCK_TRADE_COST_CONFIG = {
 };
 
 export const MOCK_CEX_PERMISSIONS = {
+  max_age_seconds: 1800,
   exchanges: [
     {
       account_id: 33,
       provider: 'Kraken',
       exchange: 'kraken',
-      optimizer_supported: true,
+      cost_supported: true,
+      execution_supported: true,
       active_key_count: 1,
       permissions_checked_at: ts(1),
-      permissions: {
-        fetch_deposit_address: 'granted',
-        spot_trading: 'granted',
-        read_balances: 'granted',
-        withdraw: 'granted',
-        hedge_positions: 'unsupported',
+      policy: { spot_enabled: true, hedge_enabled: true },
+      spot: { supported: true, policy_enabled: true, available: true, effective_enabled: true, blocking_permissions: [], blockers: [] },
+      hedge: {
+        supported: true,
+        policy_enabled: true,
+        available: false,
+        effective_enabled: false,
+        blocking_permissions: ['hedge_positions'],
+        blockers: [{ code: 'missing_permission', permissions: ['hedge_positions'], message: 'Required API-key permissions were not granted.' }],
       },
-      spot: { available: true, blocking_permissions: [] },
-      hedge: { available: false, blocking_permissions: ['hedge_positions'] },
     },
     {
       account_id: 34,
       provider: 'Coinbase',
       exchange: 'coinbase',
-      optimizer_supported: true,
+      cost_supported: true,
+      execution_supported: true,
       active_key_count: 0,
       permissions_checked_at: null,
-      permissions: {
-        fetch_deposit_address: 'unknown',
-        spot_trading: 'unknown',
-        read_balances: 'unknown',
-        withdraw: 'unknown',
-        hedge_positions: 'unknown',
-      },
+      policy: { spot_enabled: true, hedge_enabled: true },
       spot: {
+        supported: true,
+        policy_enabled: true,
         available: false,
+        effective_enabled: false,
         blocking_permissions: ['fetch_deposit_address', 'spot_trading', 'read_balances', 'withdraw'],
-        reason: 'No active API keys are configured.',
+        blockers: [{ code: 'no_active_keys', message: 'No active API keys are configured.' }],
       },
       hedge: {
+        supported: true,
+        policy_enabled: true,
         available: false,
+        effective_enabled: false,
         blocking_permissions: ['hedge_positions'],
-        reason: 'No active API keys are configured.',
+        blockers: [{ code: 'no_active_keys', message: 'No active API keys are configured.' }],
       },
     },
     {
-      account_id: 35,
+      account_id: 0,
       provider: 'Bitstamp',
       exchange: 'bitstamp',
-      optimizer_supported: false,
-      active_key_count: 1,
-      permissions_checked_at: ts(1),
-      permissions: {},
-      spot: { available: true, blocking_permissions: [] },
-      hedge: { available: true, blocking_permissions: [] },
+      cost_supported: true,
+      execution_supported: false,
+      active_key_count: 0,
+      policy: { spot_enabled: true, hedge_enabled: true },
+      spot: { supported: false, policy_enabled: true, available: false, effective_enabled: false, blocking_permissions: [], blockers: [{ code: 'unsupported', message: 'MM execution does not support this provider capability.' }] },
+      hedge: { supported: false, policy_enabled: true, available: false, effective_enabled: false, blocking_permissions: [], blockers: [{ code: 'unsupported', message: 'MM execution does not support this provider capability.' }] },
     },
   ],
 };

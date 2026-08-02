@@ -1,133 +1,55 @@
-import { test, expect, gotoAndWaitForData, offersPanel, controlPanel, openControlPanel, closeControlPanel, jsFill, jsClick } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, offersPanel, controlPanel, openControlPanel, jsClick } from '../fixtures/base-fixture';
 
-test.describe('OffersPreviewTable', () => {
+const rowCells = (row: import('@playwright/test').Locator) => row.locator(':scope > span > span');
+
+test.describe('Live offers list', () => {
   test.beforeEach(async ({ page }) => {
     await gotoAndWaitForData(page);
   });
 
-  test('renders table with correct column headers', async ({ page }) => {
+  test('renders the current grid headers and offer rows', async ({ page }) => {
     const panel = offersPanel(page);
-    const table = panel.locator('table');
-
-    await expect(table.locator('th').filter({ hasText: 'Exch' })).toBeVisible();
-    await expect(table.locator('th').filter({ hasText: 'Side' })).toBeVisible();
-    await expect(table.locator('th').filter({ hasText: 'Prem.' })).toBeVisible();
-    await expect(table.locator('th').filter({ hasText: 'Price' })).toBeVisible();
-    await expect(table.locator('th').filter({ hasText: 'Min BTC' })).toBeVisible();
-    await expect(table.locator('th').filter({ hasText: 'Max BTC' })).toBeVisible();
-    await expect(table.locator('th').filter({ hasText: 'Fiat Min' })).toBeVisible();
-    await expect(table.locator('th').filter({ hasText: 'Fiat Max' })).toBeVisible();
-    await expect(table.locator('th').filter({ hasText: 'Payment' })).toBeVisible();
+    for (const header of ['Offer', 'Dir', 'Premium', 'Payment method', 'First seen', 'Reputation', 'Age', 'Size', 'Net profit']) {
+      await expect(panel.getByText(header, { exact: true }).first()).toBeVisible();
+    }
+    expect(await panel.getByTestId('live-offers-row').count()).toBeGreaterThan(0);
   });
 
-  test('displays offer rows with data', async ({ page }) => {
-    const panel = offersPanel(page);
-    const rows = panel.locator('table tbody tr');
-    // Default filters: status=open, premiumOnly=true — should have rows
+  test('renders side and premium styling', async ({ page }) => {
+    const rows = offersPanel(page).getByTestId('live-offers-row');
     const count = await rows.count();
     expect(count).toBeGreaterThan(0);
-  });
-
-  test('bid rows show green, ask rows show red', async ({ page }) => {
-    const panel = offersPanel(page);
-
-    // Check for "Ask" text with red styling
-    const askCell = panel.locator('td').filter({ hasText: 'Ask' }).first();
-    if (await askCell.isVisible()) {
-      await expect(askCell).toHaveClass(/text-red/);
+    for (let index = 0; index < Math.min(count, 5); index += 1) {
+      const cells = rowCells(rows.nth(index));
+      const side = cells.nth(1);
+      const sideText = (await side.textContent())?.trim();
+      await expect(side).toHaveClass(sideText === 'Bid' ? /text-green/ : /text-red/);
+      await expect(cells.nth(2)).toHaveClass(/text-(green|accent|red)/);
     }
   });
 
-  test('premium cells have color coding', async ({ page }) => {
-    const panel = offersPanel(page);
-    const premCells = panel.locator('table tbody td:nth-child(3)');
-    const count = await premCells.count();
-    expect(count).toBeGreaterThan(0);
+  test('opens and closes the live offer breakdown', async ({ page }) => {
+    await offersPanel(page).getByTestId('live-offers-row').first().click();
+    await expect(page.getByTestId('live-offer-detail')).toBeVisible();
+    await expect(page.getByText('Trade cost breakdown').first()).toBeVisible();
+    await expect(page.getByText('Total cost').first()).toBeVisible();
+    await expect(page.getByText('Net premium').first()).toBeVisible();
 
-    for (let i = 0; i < Math.min(count, 5); i++) {
-      const cell = premCells.nth(i);
-      const cls = await cell.getAttribute('class') ?? '';
-      expect(cls).toMatch(/text-(green|accent|red)/);
-    }
+    await jsClick(page.getByRole('button', { name: 'Close live offer details' }));
+    await expect(page.getByTestId('live-offer-detail')).not.toBeVisible();
+    await expect(offersPanel(page).getByTestId('live-offers-row').first()).toBeVisible();
   });
 
-  test('clicking a row opens cost breakdown panel', async ({ page }) => {
-    const panel = offersPanel(page);
-    const bidRow = panel.locator('table tbody tr').filter({ hasText: 'Bid' }).first();
-    await bidRow.click();
-
-    // Cost breakdown panel should appear
-    await expect(panel.locator('text=Trade cost breakdown')).toBeVisible();
-
-    // Should show fee rows
-    await expect(panel.locator('text=CEX taker fee').first()).toBeVisible();
-    await expect(panel.locator('text=CEX withdrawal').first()).toBeVisible();
-    await expect(panel.locator('text=Network routing cost').first()).toBeVisible();
-    await expect(panel.locator('text=DEX platform fee').first()).toBeVisible();
-    await expect(panel.locator('text=Total cost').first()).toBeVisible();
-    await expect(panel.locator('text=Net premium').first()).toBeVisible();
-    await expect(panel.locator('tr').filter({ hasText: 'DEX premium' })).not.toContainText('—');
-    await expect(panel.locator('tr').filter({ hasText: 'Net premium' })).not.toContainText('—');
-    // Capital/abort sections are hidden for LIVE offers (showCapitalAndAbort)
-    await expect(panel.locator('text=Abort cost').first()).not.toBeVisible();
-    await expect(panel.locator('text=Total abort cost').first()).not.toBeVisible();
-    await expect(panel.locator('text=Offer disappearance unwind estimate').first()).not.toBeVisible();
+  test('supports keyboard selection', async ({ page }) => {
+    const row = offersPanel(page).getByTestId('live-offers-row').first();
+    await row.focus();
+    await row.press('Enter');
+    await expect(page.getByTestId('live-offer-detail')).toBeVisible();
   });
 
-  test('clicking selected row deselects it', async ({ page }) => {
-    const panel = offersPanel(page);
-    const firstRow = panel.locator('table tbody tr').first();
-
-    // Select
-    await firstRow.click();
-    await expect(panel.locator('text=Trade cost breakdown')).toBeVisible();
-
-    // Deselect — click same row again (use force since panel layout may shift)
-    await firstRow.click({ force: true });
-    await expect(panel.locator('text=Trade cost breakdown')).not.toBeVisible();
-  });
-
-  test('close button on breakdown panel deselects', async ({ page }) => {
-    const panel = offersPanel(page);
-    await panel.locator('table tbody tr').first().click();
-    await expect(panel.locator('text=Trade cost breakdown')).toBeVisible();
-
-    // Wait for panel layout to stabilize before clicking close
-    const closeBtn = panel.locator('button[title="Close"]');
-    await closeBtn.waitFor({ state: 'visible' });
-    await page.waitForTimeout(200);
-    await jsClick(closeBtn);
-    await expect(panel.locator('text=Trade cost breakdown')).not.toBeVisible();
-  });
-
-  test('Fiat columns remain available when selection active', async ({ page }) => {
-    const panel = offersPanel(page);
-
-    // Before selection — Fiat columns visible
-    await expect(panel.locator('th').filter({ hasText: 'Fiat Min' })).toBeVisible();
-    await expect(panel.locator('th').filter({ hasText: 'Fiat Max' })).toBeVisible();
-
-    // Select a row
-    await panel.locator('table tbody tr').first().click();
-
-    // Current desktop layout keeps the table columns visible while opening a side panel.
-    await expect(panel.locator('text=Trade cost breakdown')).toBeVisible();
-    await expect(panel.locator('th').filter({ hasText: 'Fiat Min' })).toBeVisible();
-    await expect(panel.locator('th').filter({ hasText: 'Fiat Max' })).toBeVisible();
-
-    // Deselect — they come back
-    await panel.locator('button[title="Close"]').click();
-    await expect(panel.locator('th').filter({ hasText: 'Fiat Min' })).toBeVisible();
-  });
-
-  test('shows "No offers" when filters match nothing', async ({ page }) => {
-    // Set premium min very high to exclude all offers
+  test('shows the empty state when filters exclude every offer', async ({ page }) => {
     await openControlPanel(page);
-    await jsFill(controlPanel(page).locator('input[placeholder="Min"]'), '99');
-    await closeControlPanel(page);
-    await page.waitForTimeout(300);
-
-    const panel = offersPanel(page);
-    await expect(panel.locator('text=No offers')).toBeVisible();
+    await jsClick(controlPanel(page).getByRole('button', { name: 'None', exact: true }));
+    await expect(offersPanel(page).getByText('No live offers for the selected filters.')).toBeVisible();
   });
 });

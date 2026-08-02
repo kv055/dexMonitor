@@ -1,8 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
-import { useStatistics, type StatisticsLoadParams } from '../hooks/useStatistics';
-import { useFilters } from '../hooks/useFilters';
-import { usePreferences } from '../hooks/usePreferences';
-import { useCEXPermissions } from '../hooks/useCEXPermissions';
+import { useEffect, useState } from 'react';
+import { useStatistics } from '../hooks/useStatistics';
+import { useMarketRequestParams } from '../hooks/useMarketRequestParams';
 import { LoadingSpinner } from './LoadingSpinner';
 import { OfferLifecyclePremiumChart } from './OfferLifecyclePremiumChart';
 import {
@@ -40,28 +38,14 @@ function formatBuiltAt(value: string | null): string | null {
 type StatisticsMode = 'live' | 'past' | 'shared';
 
 export function StatisticsView() {
-  const { filters } = useFilters();
-  const { excludedMethods, excludedSpotCEXes: preferredExcludedSpotCEXes, excludedHedgeCEXes: preferredExcludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit } = usePreferences();
-  const { ready: cexPermissionsReady, lockedSpotCEXes, lockedHedgeCEXes } = useCEXPermissions();
-  const excludedSpotCEXes = useMemo(() => [...new Set([...preferredExcludedSpotCEXes, ...lockedSpotCEXes])], [preferredExcludedSpotCEXes, lockedSpotCEXes]);
-  const excludedHedgeCEXes = useMemo(() => [...new Set([...preferredExcludedHedgeCEXes, ...lockedHedgeCEXes])], [preferredExcludedHedgeCEXes, lockedHedgeCEXes]);
+  const { params, ready } = useMarketRequestParams();
   const { data, loading, error, cacheState, builtAt, load } = useStatistics();
   const [mode, setMode] = useState<StatisticsMode>('live');
 
   useEffect(() => {
-    if (!cexPermissionsReady) return;
-    const params: StatisticsLoadParams = {
-      hours: filters.hours,
-      cex: filters.cex,
-      excludedPaymentMethods: excludedMethods,
-      excludedSpotCEXes,
-      excludedHedgeCEXes,
-      feeTier,
-      coupledHedge,
-      maxFiatLimit,
-    };
+    if (!ready) return;
     load(params);
-  }, [filters.hours, filters.cex, excludedMethods, excludedSpotCEXes, excludedHedgeCEXes, feeTier, coupledHedge, maxFiatLimit, load, cexPermissionsReady]);
+  }, [params, load, ready]);
 
   if (loading && !data) {
     return (
@@ -92,11 +76,9 @@ export function StatisticsView() {
   const { live, past, shared } = data;
   const builtAtLabel = formatBuiltAt(builtAt);
   const activeFilters = [
-    filters.cex.toUpperCase(),
+    params.cex.toUpperCase(),
     `${shared.hours}h window`,
-    excludedMethods.length > 0 ? `${excludedMethods.length} methods hidden` : null,
-    excludedSpotCEXes.length > 0 ? `${excludedSpotCEXes.length} spot CEX excluded` : null,
-    excludedHedgeCEXes.length > 0 ? `${excludedHedgeCEXes.length} hedge CEX excluded` : null,
+    params.excludedPaymentMethods.length > 0 ? `${params.excludedPaymentMethods.length} methods hidden` : null,
   ].filter(Boolean).join(' · ');
   const metaLabel = cacheState === 'stale'
     ? `Refreshed ${builtAtLabel ?? 'recently'} · refreshing in background`

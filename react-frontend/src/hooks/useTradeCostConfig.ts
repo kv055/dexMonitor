@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { apiFetch } from '../utils/api';
+import { apiFetch } from '../api/client';
 import type { TradeCostConfig } from '../types';
 
 const defaultConfig: TradeCostConfig = {

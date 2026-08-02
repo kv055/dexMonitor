@@ -1,4 +1,4 @@
-import { useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
+import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ManualRouteOptions, Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCompact, PremiumFilterMode, TakerOpportunityMode, TradeMode } from '../types';
 import { usePreferences } from '../hooks/usePreferences';
@@ -41,8 +41,9 @@ import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
 import { DualRangeFilter, LiveOfferFilters, PastOfferFilters, SharedOfferFilters } from './ControlPanel';
 import { DepthChart } from './DepthChart';
-import { TradeTracingPanel } from './TradeTracingPanel';
 import { SellerRatingBadge } from './SellerRatingBadge';
+
+const TradeTracingPanel = lazy(() => import('./TradeTracingPanel').then(module => ({ default: module.TradeTracingPanel })));
 
 interface Props {
   stats: PastOrderStats | null;
@@ -1285,7 +1286,7 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
 
   const headerClass = 'truncate text-[0.65rem] font-semibold uppercase tracking-wide text-muted';
   return (
-    <div className="min-h-0 flex-1 overflow-y-auto overflow-x-auto">
+    <div data-testid="live-offers-list" className="min-h-0 flex-1 overflow-y-auto overflow-x-auto">
       <div className={`${LIVE_OFFERS_GRID_COLS} sticky top-0 z-20 border-b border-border bg-surface/95 px-3 py-1.5`}>
         <SortHeaderButton label="Offer" column="exchange" sort={sort} onSort={handleSort} />
         <SortHeaderButton label="Dir" column="direction" sort={sort} onSort={handleSort} />
@@ -1484,7 +1485,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   }, []);
 
   // Selecting a live offer swaps the depth panel for the Trade Tracing
-  // workflow, mirroring the Monitor tab (same key scheme as OffersPreviewTable).
+  // workflow, using the same key scheme as the live-offers list.
   const selectedLiveOffer = useMemo(() => {
     if (selectedOfferKey == null || viewMode !== 'live') return null;
     const keys = buildOfferKeys(filteredOffers);
@@ -2193,6 +2194,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                       : 'shrink-0 lg:w-80 xl:w-96'
                   }`}
                 >
+                  <Suspense fallback={<div className="relative min-h-40"><LoadingSpinner label="Loading trade execution" /></div>}>
                   <TradeTracingPanel
                     offer={selectedLiveOffer}
                     tradeMode={liveTradeMode}
@@ -2200,6 +2202,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                     sizeMode={liveScenarioMode}
                     onSizeModeChange={setLiveScenarioMode}
                   />
+                  </Suspense>
                 </section>
               ) : depthCollapsed ? (
                 <button
@@ -2257,7 +2260,9 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
               offers={filteredOffers.filter(isOfferLive)}
               fiat={liveFilters.fiat}
               timezone={timezone}
-              loading={loading}
+              // A background core-data request must not replace a deliberately
+              // empty filtered result with an unrelated loading spinner.
+              loading={loading && !contextOffers.some(isOfferLive)}
               chartEnabled={chart != null}
               isChartOfferVisible={isChartOfferVisible}
               toggleChartOfferKey={toggleChartOfferKey}

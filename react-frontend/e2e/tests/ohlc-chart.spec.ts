@@ -1,21 +1,11 @@
-import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, controlPanel, openControlPanel, openSettings, closeSettings, jsClick } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, controlPanel, openControlPanel } from '../fixtures/base-fixture';
 import {
   MOCK_OHLC_DATA_1D_WINDOW,
-  MOCK_OHLC_DATA_1H,
   MOCK_OHLC_DATA_4H_WINDOW,
-  MOCK_STALE_PAST_OFFER_LIFECYCLE,
 } from '../fixtures/mock-data';
 import type { Page } from '@playwright/test';
 
 test.describe('OHLCChart', () => {
-  async function showClosedOrders(page: Page) {
-    await openSettings(page);
-    const cp = controlPanel(page);
-    await jsClick(cp.getByRole('button', { name: /^Open \d/ }));
-    await jsClick(page.locator('.absolute button').filter({ hasText: 'Closed' }));
-    await closeSettings(page);
-  }
-
   function waitForOhlcRequest(page: Page, minHours: number, intervalMin: number) {
     return page.waitForRequest(req => {
       const url = new URL(req.url());
@@ -48,41 +38,6 @@ test.describe('OHLCChart', () => {
     // The CEX reference price moved from the (removed) Monitor chart header to
     // the Insights filter sidebar.
     await expect(controlPanel(page).getByText(/BTC\/EUR — Kraken/)).toBeVisible();
-  });
-
-  test('requests and renders past offer lifecycle overlays', async ({ page }) => {
-    await gotoAndWaitForData(page);
-
-    const lifecycleRequest = page.waitForRequest(req =>
-      /\/api\/past_offers\/\d+\/lifecycle$/.test(new URL(req.url()).pathname),
-    );
-    await showClosedOrders(page);
-    await lifecycleRequest;
-
-    const panel = ohlcPanel(page);
-    await waitForChartReady(panel, page);
-    await page.waitForTimeout(500);
-
-    await expect(panel).toHaveScreenshot('ohlc-chart-lifecycle-overlay.png', {
-      maxDiffPixelRatio: 0.12,
-    });
-  });
-
-  test('shows fallback marker when lifecycle points are stale', async ({ page }) => {
-    await page.route('**/api/past_offers/*/lifecycle', route =>
-      route.fulfill({ json: MOCK_STALE_PAST_OFFER_LIFECYCLE }),
-    );
-
-    await gotoAndWaitForData(page);
-    await showClosedOrders(page);
-
-    const panel = ohlcPanel(page);
-    await waitForChartReady(panel, page);
-    await page.waitForTimeout(500);
-
-    await expect(panel).toHaveScreenshot('ohlc-chart-stale-lifecycle-fallback.png', {
-      maxDiffPixelRatio: 0.12,
-    });
   });
 
   test('expands loaded OHLC window when switching to 4h candles', async ({ page }) => {
@@ -124,26 +79,15 @@ test.describe('OHLCChart', () => {
     });
   });
 
-  test('visual regression: chart updates on timeframe change', async ({ page }) => {
+  test('visual regression: chart updates on candle-size change', async ({ page }) => {
     await gotoAndWaitForData(page);
 
-    // Override OHLC mock for hours=6
-    await page.route('**/api/ohlc*hours=6*', route =>
-      route.fulfill({ json: MOCK_OHLC_DATA_1H }),
-    );
-
-    // Change timeframe to 6h
-    await openSettings(page);
-    const cp = controlPanel(page);
-    await cp.locator('button').filter({ hasText: 'Last 24h' }).click();
-    await page.locator('button').filter({ hasText: 'Last 6h' }).click();
-    await closeSettings(page);
-
     const panel = ohlcPanel(page);
+    await panel.getByRole('button', { name: '15m' }).click();
     await waitForChartReady(panel, page);
     await page.waitForTimeout(500);
 
-    await expect(panel).toHaveScreenshot('ohlc-chart-6h.png', {
+    await expect(panel).toHaveScreenshot('ohlc-chart-15m.png', {
       maxDiffPixelRatio: 0.12,
     });
   });

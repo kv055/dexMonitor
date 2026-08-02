@@ -1,17 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
-import { apiPostWithHeaders } from '../utils/api';
+import { apiPostWithHeaders } from '../api/client';
+import { buildAnalyticsBody, marketRequestKey, type MarketRequestParams } from '../shared/marketParams';
 import type { StatisticsResponse } from '../types';
-
-export interface StatisticsLoadParams {
-  hours: string;
-  cex: string;
-  excludedPaymentMethods: string[];
-  excludedSpotCEXes: string[];
-  excludedHedgeCEXes: string[];
-  feeTier: string;
-  coupledHedge: boolean;
-  maxFiatLimit: number | null;
-}
 
 interface StatisticsState {
   data: StatisticsResponse | null;
@@ -60,30 +50,12 @@ function reducer(state: StatisticsState, action: StatisticsAction): StatisticsSt
   }
 }
 
-function paramsKey(p: StatisticsLoadParams): string {
-  return JSON.stringify(p);
-}
-
-function buildBody(p: StatisticsLoadParams) {
-  return {
-    hours: Number(p.hours),
-    cex: p.cex,
-    exclude_payment_methods: p.excludedPaymentMethods,
-    exclude_spot_cexes: p.excludedSpotCEXes,
-    exclude_hedge_cexes: p.excludedHedgeCEXes,
-    fee_tier: p.feeTier,
-    coupled_hedge: p.coupledHedge,
-    max_fiat_limit: p.maxFiatLimit ?? 0,
-    fiat: 'EUR',
-  };
-}
-
 export function useStatistics() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const inFlightRef = useRef<{ key: string; controller: AbortController; promise: Promise<void> } | null>(null);
 
-  const load = useCallback(async (params: StatisticsLoadParams) => {
-    const key = paramsKey(params);
+  const load = useCallback(async (params: MarketRequestParams) => {
+    const key = marketRequestKey(params);
     const cached = statisticsClientCache.get(key);
     const inFlight = inFlightRef.current;
     // An aborted request never dispatches, so deduping onto it would leave the
@@ -109,7 +81,7 @@ export function useStatistics() {
 
     const promise = (async () => {
       try {
-        const { data, headers } = await apiPostWithHeaders<StatisticsResponse>('/api/statistics', buildBody(params), { signal });
+        const { data, headers } = await apiPostWithHeaders<StatisticsResponse>('/api/statistics', buildAnalyticsBody(params), { signal });
         if (signal.aborted) return;
         const rawCacheState = headers.get('X-Stats-Cache');
         const cacheState =

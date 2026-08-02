@@ -79,11 +79,18 @@ export function applyManualRouteSelection(
 
 /** Client-side hedgeless derivation for manual route what-if (mirrors server DeriveHedgelessDoubleCollateral). */
 export function deriveHedgelessBreakdown(bd: CostBreakdown): CostBreakdown {
-  const hedgeFeeBTC = bd.hedge.fee_sum_btc;
-  const hedgeFeePct = bd.hedge.fee_sum_pct;
-  const totalCostBTC = Math.max(0, bd.total_cost_btc - hedgeFeeBTC);
+  const hedgeFeeBTC = bd.hedge?.fee_sum_btc ?? 0;
+  const hedgeFeePct = bd.hedge?.fee_sum_pct ?? 0;
+  // A hedgefull Bisq bid can withdraw spot BTC straight from the CEX to Bisq.
+  // Hedgeless must instead spend LND->Bisq and later withdraw CEX->LND, turning
+  // that single network leg into two. Other DEX routes already use the hub.
+  const bisqExtraLeg = bd.route_dex?.toLowerCase() === 'bisq' && bd.trade_direction === 'bid' && bd.num_network_txs === 1;
+  const networkFeeBTC = bisqExtraLeg ? bd.network_fee_btc * 2 : bd.network_fee_btc;
+  const extraNetworkBTC = networkFeeBTC - bd.network_fee_btc;
+  const totalCostBTC = Math.max(0, bd.total_cost_btc - hedgeFeeBTC + extraNetworkBTC);
   const totalCostPct = bd.btc_amount > 0 ? (totalCostBTC / bd.btc_amount) * 100 : 0;
-  const estimatedProfitPct = bd.estimated_profit_pct + hedgeFeePct;
+  const extraNetworkPct = bd.btc_amount > 0 ? (extraNetworkBTC / bd.btc_amount) * 100 : 0;
+  const estimatedProfitPct = bd.estimated_profit_pct + hedgeFeePct - extraNetworkPct;
   const capital = bd.capital
     ? (() => {
         const btcLiquidity = bd.capital.btc_amount + bd.capital.security_deposit_btc;
@@ -101,6 +108,10 @@ export function deriveHedgelessBreakdown(bd: CostBreakdown): CostBreakdown {
     : null;
   return {
     ...bd,
+    route_method: bisqExtraLeg ? 'onchain_hub' : bd.route_method,
+    num_network_txs: bisqExtraLeg ? 2 : bd.num_network_txs,
+    network_fee_btc: networkFeeBTC,
+    network_fee_pct: bd.btc_amount > 0 ? (networkFeeBTC / bd.btc_amount) * 100 : 0,
     hedge: EMPTY_HEDGE,
     total_cost_btc: totalCostBTC,
     total_cost_pct: totalCostPct,
@@ -140,14 +151,27 @@ export function resolveTradeBreakdown(
     if (tradeMode !== 'hedgeless_double_collateral') {
       breakdown = hedgefullBreakdown;
     } else if (manualIsAuto && hedgelessVariant) {
+      // Auto-routing uses the backend's authoritative hedgeless scenario. A
+      // manual CEX choice has no matching server variant, so it falls through
+      // to a local derivation from the selected hedgefull route instead.
+      // Start with a complete client-side derivation so payloads from an older
+      // backend (which lack route/network metadata) remain safe during rolling
+      // upgrades. Newer server fields override those fallbacks when present.
+      const derived = deriveHedgelessBreakdown(hedgefullBreakdown);
       breakdown = {
-        ...hedgefullBreakdown,
-        hedge: hedgelessVariant.costs.hedge,
-        total_cost_btc: hedgelessVariant.costs.total.btc ?? 0,
-        total_cost_pct: hedgelessVariant.costs.total.pct ?? 0,
-        estimated_profit_pct: hedgelessVariant.premium.net_percent ?? 0,
-        estimated_profit_btc: hedgelessVariant.profit.btc ?? 0,
-        capital: hedgelessVariant.capital ?? null,
+        ...derived,
+        route_cex: hedgelessVariant.route?.cex || derived.route_cex,
+        route_method: hedgelessVariant.route?.settlement || derived.route_method,
+        num_network_txs: hedgelessVariant.num_network_txs ?? derived.num_network_txs,
+        network_fee_method: hedgelessVariant.network_fee_method || derived.network_fee_method,
+        network_fee_btc: hedgelessVariant.costs?.network?.btc ?? derived.network_fee_btc,
+        network_fee_pct: hedgelessVariant.costs?.network?.pct ?? derived.network_fee_pct,
+        hedge: hedgelessVariant.costs?.hedge ?? derived.hedge,
+        total_cost_btc: hedgelessVariant.costs?.total?.btc ?? derived.total_cost_btc,
+        total_cost_pct: hedgelessVariant.costs?.total?.pct ?? derived.total_cost_pct,
+        estimated_profit_pct: hedgelessVariant.premium?.net_percent ?? derived.estimated_profit_pct,
+        estimated_profit_btc: hedgelessVariant.profit?.btc ?? derived.estimated_profit_btc,
+        capital: hedgelessVariant.capital ?? derived.capital,
       };
     } else {
       breakdown = deriveHedgelessBreakdown(hedgefullBreakdown);

@@ -1,4 +1,4 @@
-import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, offersPanel, controlPanel, openControlPanel, closeControlPanel, revealChartOffers, jsClick, jsFill } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, offersPanel, controlPanel, openControlPanel, closeControlPanel, revealChartOffers, jsClick } from '../fixtures/base-fixture';
 import { MOCK_LIVE_OFFER_LIFECYCLES, MOCK_OHLC_DATA_4H_WINDOW } from '../fixtures/mock-data';
 import type { Page } from '@playwright/test';
 
@@ -55,8 +55,8 @@ test.describe('OHLC live offer price paths', () => {
     expect(offer1.live).toBe(true);
     // All mocked history points plus the "now" tip at the current offer price.
     expect(offer1.points).toBe(MOCK_LIVE_OFFER_LIFECYCLES[1].length + 1);
-    // The mocked net premium flips sign once → exactly two color segments.
-    expect(offer1.segments).toBe(2);
+    // A continuous lifecycle uses the exchange color as one solid segment.
+    expect(offer1.segments).toBe(1);
 
     const offer6 = (await pathForOffer(page, 6))!;
     expect(offer6.mode).toBe('lifecycle');
@@ -107,9 +107,7 @@ test.describe('OHLC live offer price paths', () => {
       .poll(async () => (await pathForOffer(page, 1))?.points, { timeout: 10_000 })
       .toBe(4);
     const offer1 = (await pathForOffer(page, 1))!;
-    // Bucketing keeps the sign flip: last point of the first bucket is still a
-    // discount, later buckets are premium → exactly two color segments.
-    expect(offer1.segments).toBe(2);
+    expect(offer1.segments).toBe(1);
 
     // Offer 6's three points (spanning 2h) collapse into one bucket + tip.
     const offer6 = (await pathForOffer(page, 6))!;
@@ -128,14 +126,15 @@ test.describe('OHLC live offer price paths', () => {
     const cp = controlPanel(page);
     await jsClick(cp.locator('button').filter({ hasText: 'Net Premium Full' }));
     await page.locator('.absolute button').filter({ hasText: 'Incl. non premium offers' }).click();
-    await jsFill(cp.locator('input[placeholder="Min"]'), '-10');
+    await jsClick(cp.getByRole('button', { name: '%', exact: true }));
+    await expect(cp.getByRole('slider', { name: 'Premium % minimum' })).toBeVisible();
     await closeControlPanel(page);
     await revealChartOffers(page);
 
     // The table must now show ALL live offers, including non-premium ones
     // (mock offers 8, 9 and 13 have a negative net premium).
     await expect
-      .poll(async () => offersPanel(page).locator('table tbody tr').count())
+      .poll(async () => offersPanel(page).getByTestId('live-offers-row').count())
       .toBe(13);
 
     // …but the chart must only plot the ones with a positive premium.

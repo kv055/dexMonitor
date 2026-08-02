@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useTimezone } from '../hooks/useTimezone';
-import { apiFetch } from '../utils/api';
+import { apiFetch } from '../api/client';
 import { formatDateTimeParts } from '../utils/formatters';
 
 interface ExchangeData {

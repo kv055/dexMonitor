@@ -242,6 +242,12 @@ export interface ManualRouteOptions {
 
 /** Alternate trade-mode economics on the same spot route (hedgeless double collateral). */
 export interface LiveOfferModeVariant {
+  // Optional for compatibility with live-offer payloads produced before the
+  // hedgeless route/network metadata was added. The UI derives fallbacks from
+  // the hedgefull breakdown during rolling upgrades.
+  route?: LiveOfferRoute;
+  num_network_txs?: number;
+  network_fee_method?: string;
   premium: LiveOfferPremium;
   profit: LiveOfferProfit;
   costs: LiveOfferScenarioCosts;
@@ -331,23 +337,6 @@ export type SellerRatingConfidence =
   | 'reputation_bonded'
   | 'account_signing'
   | 'unavailable';
-
-export interface ExchangeStat {
-  exchange: string;
-  offer_count: number;
-}
-
-export interface PriceStat {
-  exchange: string;
-  avg_price: number;
-  min_price: number;
-  max_price: number;
-}
-
-export interface Stats {
-  offer_counts: ExchangeStat[];
-  price_stats: PriceStat[];
-}
 
 export interface OHLCCandle {
   time: string;
@@ -660,14 +649,6 @@ export interface PastPremiumTimeframeStats {
   };
 }
 
-export interface GeneralStatsOverviewData {
-  total_offers: number;
-  active_offers: number;
-  exchanges_live: number;
-  offers_by_exchange: NamedCount[];
-  payment_method_counts: NamedCount[];
-}
-
 export interface PremiumLifetimeStats {
   avg_offer_lifetime_ms: number | null;
   avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[];
@@ -677,22 +658,6 @@ export interface PremiumLifetimeModes {
   raw: PremiumLifetimeStats;
   net_full: PremiumLifetimeStats;
   net_capped: PremiumLifetimeStats;
-}
-
-export interface GeneralStatsData {
-  total_offers: number;
-  active_offers: number;
-  exchanges_live: number;
-  offers_by_exchange: NamedCount[];
-  best_ask_premium_pct: number | null;
-  avg_ask_premium_pct: number | null;
-  best_bid_premium_pct: number | null;
-  avg_bid_premium_pct: number | null;
-  premium_lifetimes?: PremiumLifetimeModes;
-  avg_offer_lifetime_ms: number | null;
-  avg_offer_lifetime_ms_by_exchange: { name: string; ms: number }[];
-  payment_method_counts: NamedCount[];
-  past_premiums?: PastPremiumTimeframeStats[];
 }
 
 // PaymentMethodRow is one payment_methods catalog row as served by
@@ -948,10 +913,12 @@ export interface CexTradeflowRequest {
   btc_amount: number;
   fiat_currency: string;
   required_capital: number;
-  hedge_venue: string;
-  hedge_side: string;
-  hedge_notional_btc: number;
-  leverage: number;
+  required_btc_liquidity?: number;
+  security_deposit_btc?: number;
+  hedge_venue?: string;
+  hedge_side?: string;
+  hedge_notional_btc?: number;
+  leverage?: number;
   offer_id?: string;
   dex?: string;
   fiat_amount?: number;
@@ -963,9 +930,10 @@ export interface CexTradeflowRequest {
 }
 
 export interface CexTradeflowResult {
-  spot_buy: CexSpotBuyResult;
-  hedge: CexHedgeOpenResult;
-  withdrawal: {
+  trade_mode: TradeMode | string;
+  spot_buy?: CexSpotBuyResult;
+  hedge?: CexHedgeOpenResult;
+  withdrawal?: {
     provider: string;
     withdrawal_id: string;
     client_request_id?: string;
@@ -973,7 +941,36 @@ export interface CexTradeflowResult {
     amount_btc: number;
     cex_status?: string;
   };
+  // Present for hedgeless mode in place of a hedge result. It records the
+  // immediate LND commitment used to open/fund the DEX offer.
+  dex_funding?: {
+    exchange: string;
+    method: string;
+    amount_btc: number;
+    txid?: string;
+    payment_hash?: string;
+    destination?: string;
+    status: string;
+  };
+  // This is a snapshot at request completion. The transaction endpoint is the
+  // source of truth while the asynchronous refill continues.
+  pool_refill?: {
+    target_btc: number;
+    current_btc?: number;
+    status: string;
+    attempt: number;
+  };
   transaction_id?: number;
+}
+
+/** Minimal transaction projection used to poll the independent pool-refill lifecycle. */
+export interface MMTransactionStatus {
+  id: number;
+  status: string;
+  trade_mode?: TradeMode | string;
+  btc_pool_target_btc?: number;
+  btc_required_liquidity?: number;
+  btc_pool_refill_status?: 'pending' | 'spot_buy_pending' | 'spot_bought' | 'withdrawal_initiated' | 'restored' | 'needs_review' | string;
 }
 
 export interface MempoolTxStatus {

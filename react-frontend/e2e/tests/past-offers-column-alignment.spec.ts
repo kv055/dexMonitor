@@ -183,5 +183,5 @@ test('Net Min uses the precomputed minimum-volume scenario', async ({ page }) =>
   await expect(detail).toContainText('1.200,00 € – 60.000,00 €');
   await jsClick(detail.getByRole('button', { name: 'BTC', exact: true }).first());
   await expect(detail).toContainText('0,0200 BTC – 1,0000 BTC');
-  await expect(detail.getByRole('button', { name: 'BTC', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(detail.getByRole('button', { name: 'BTC', exact: true }).first()).toHaveAttribute('aria-pressed', 'true');
 });

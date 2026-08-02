@@ -3,11 +3,6 @@ export function formatBtc(n: number | null | undefined): string {
   return Number(n).toLocaleString('de-DE', { minimumFractionDigits: 2, maximumFractionDigits: 5 });
 }
 
-export function formatNum(n: number | null | undefined): string {
-  if (n == null) return '—';
-  return Number(n).toLocaleString('de-DE', { maximumFractionDigits: 0 });
-}
-
 const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
 export function parseUtcTimestamp(ts: string | null | undefined): Date | null {

@@ -6,7 +6,7 @@ import {
   authMe,
   authRegister,
   authRegistrationAvailable,
-} from '../utils/api';
+} from '../api/auth';
 
 interface Props {
   children: ReactNode;

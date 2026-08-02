@@ -178,10 +178,6 @@ export function SettingsOverlay({
     excludedMethods,
     toggleMethod,
     toggleGroup,
-    excludedSpotCEXes,
-    excludedHedgeCEXes,
-    toggleSpotCEX,
-    toggleHedgeCEX,
     feeTier,
     setFeeTier,
     coupledHedge,
@@ -193,10 +189,15 @@ export function SettingsOverlay({
   } = usePreferences();
   const { zeroTrustHiddenCount, paymentMethodCounts, filters } = useFilters();
   const { config: tradeCostConfig } = useTradeCostConfig(open);
-  const { exchanges, loading: cexPermissionsLoading, error: cexPermissionsError, reload: reloadCEXPermissions } = useCEXPermissions();
+  const {
+    exchanges,
+    loading: cexPermissionsLoading,
+    error: cexPermissionsError,
+    updating: cexPolicyUpdating,
+    updatePolicy,
+    reload: reloadCEXPermissions,
+  } = useCEXPermissions();
   const excludedSet = new Set(excludedMethods);
-  const excludedSpotCEXSet = new Set(excludedSpotCEXes);
-  const excludedHedgeCEXSet = new Set(excludedHedgeCEXes);
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
   const [expandedCEXes, setExpandedCEXes] = useState<Set<string>>(() => new Set());
 
@@ -218,12 +219,13 @@ export function SettingsOverlay({
 
   useEffect(() => {
     if (!open) return;
+    reloadCEXPermissions();
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose]);
+  }, [open, onClose, reloadCEXPermissions]);
 
   if (!open) return null;
 
@@ -409,32 +411,33 @@ export function SettingsOverlay({
               </div>
             ) : (
               <div className="flex flex-col gap-1">
-                {exchanges.filter(cex => cex.optimizer_supported).map(cex => {
-                  const spotExcluded = excludedSpotCEXSet.has(cex.exchange);
-                  const hedgeExcluded = excludedHedgeCEXSet.has(cex.exchange);
-                  const spotLocked = !cex.spot.available;
-                  const hedgeLocked = !cex.hedge.available;
-                  const spotDisabled = spotLocked || spotExcluded;
-                  const hedgeDisabled = hedgeLocked || hedgeExcluded;
+                {exchanges.filter(cex => cex.cost_supported).map(cex => {
+                  const spotEnabled = cex.policy.spot_enabled;
+                  const hedgeEnabled = cex.policy.hedge_enabled;
+                  const spotLocked = !cex.spot.supported || !cex.spot.available;
+                  const hedgeLocked = !cex.hedge.supported || !cex.hedge.available;
+                  const spotDisabled = !cex.spot.effective_enabled;
+                  const hedgeDisabled = !cex.hedge.effective_enabled;
                   const allDisabled = spotDisabled && hedgeDisabled;
+                  const policyAllDisabled = !spotEnabled && !hedgeEnabled;
                   const someDisabled = spotDisabled || hedgeDisabled;
                   const collapsed = !expandedCEXes.has(cex.exchange);
                   const reason = (kind: 'spot' | 'hedge') => {
                     const availability = cex[kind];
-                    const permissions = availability.blocking_permissions.join(', ');
-                    return `Missing Permissions: ${permissions || 'unknown'}`;
+                    return availability.blockers.map(blocker => blocker.message).join(' ') || 'Capability unavailable.';
+                  };
+                  const savePolicy = (spot: boolean, hedge: boolean) => {
+                    void updatePolicy(cex.exchange, { spot_enabled: spot, hedge_enabled: hedge });
                   };
                   const toggleWholeCEX = () => {
-                    if (allDisabled) {
-                      if (!spotLocked && spotExcluded) toggleSpotCEX(cex.exchange);
-                      if (!hedgeLocked && hedgeExcluded) toggleHedgeCEX(cex.exchange);
-                      return;
-                    }
-                    if (!spotLocked && !spotExcluded) toggleSpotCEX(cex.exchange);
-                    if (!hedgeLocked && !hedgeExcluded) toggleHedgeCEX(cex.exchange);
+                    const enable = !spotEnabled && !hedgeEnabled;
+                    savePolicy(
+                      cex.spot.supported ? enable : spotEnabled,
+                      cex.hedge.supported ? enable : hedgeEnabled,
+                    );
                   };
                   return (
-                    <div key={cex.account_id} className="rounded-md border border-border overflow-hidden">
+                    <div key={cex.exchange} className="rounded-md border border-border overflow-hidden">
                       <div className={`flex items-center gap-1.5 px-2.5 py-1.5 ${allDisabled ? 'bg-bg/80' : 'bg-bg/30'}`}>
                         <button
                           type="button"
@@ -450,41 +453,41 @@ export function SettingsOverlay({
                         <button
                           type="button"
                           onClick={toggleWholeCEX}
-                          disabled={spotLocked && hedgeLocked}
+                          disabled={cexPolicyUpdating === cex.exchange || (!cex.spot.supported && !cex.hedge.supported)}
                           className={`shrink-0 text-[0.65rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
-                            spotLocked && hedgeLocked
+                            !cex.spot.supported && !cex.hedge.supported
                               ? 'cursor-not-allowed border-border text-muted opacity-45'
-                              : allDisabled
+                              : policyAllDisabled
                                 ? 'border-green/50 text-green hover:bg-green/10'
                                 : 'border-red/50 text-red hover:bg-red/10'
                           }`}
                         >
-                          {spotLocked && hedgeLocked ? 'Locked' : allDisabled ? 'Enable CEX' : 'Disable CEX'}
+                          {!cex.spot.supported && !cex.hedge.supported ? 'Unsupported' : !spotEnabled && !hedgeEnabled ? 'Enable CEX' : 'Disable CEX'}
                         </button>
                       </div>
 
                       {!collapsed && (
                       <div className="divide-y divide-border/50">
                         {([
-                          ['Spot', spotExcluded, spotLocked, () => toggleSpotCEX(cex.exchange), reason('spot')],
-                          ['Hedge (Futures)', hedgeExcluded, hedgeLocked, () => toggleHedgeCEX(cex.exchange), reason('hedge')],
-                        ] as const).map(([label, excluded, locked, toggle, lockedReason]) => (
+                          ['Spot', spotEnabled, spotLocked, () => savePolicy(!spotEnabled, hedgeEnabled), reason('spot')],
+                          ['Hedge (Futures)', hedgeEnabled, hedgeLocked, () => savePolicy(spotEnabled, !hedgeEnabled), reason('hedge')],
+                        ] as const).map(([label, enabled, locked, toggle, lockedReason]) => (
                           <div key={label} className="px-2.5 py-1 pl-4">
                             <div className="flex items-center justify-between gap-1">
                               <span className={`text-[0.6rem] font-medium ${locked ? 'opacity-45' : ''}`}>{label}</span>
                               <button
                                 type="button"
-                                disabled={locked}
+                                disabled={locked || cexPolicyUpdating === cex.exchange}
                                 onClick={toggle}
                                 className={`text-[0.55rem] px-1.5 py-0.5 rounded border font-medium ${locked ? 'opacity-45 ' : ''}${
                                   locked
                                     ? 'cursor-not-allowed border-border text-muted'
-                                    : excluded
+                                    : !enabled
                                       ? 'border-green/40 text-green hover:bg-green/10'
                                       : 'border-accent/40 text-accent hover:bg-accent/10'
                                 }`}
                               >
-                                {locked ? 'Locked' : excluded ? 'Enable' : 'Enabled'}
+                                {locked ? 'Locked' : enabled ? 'Enabled' : 'Enable'}
                               </button>
                             </div>
                             {locked && <p className="mt-1 text-[0.55rem] leading-tight text-muted">{lockedReason}</p>}

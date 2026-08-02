@@ -22,7 +22,7 @@ test.describe('TradingAccounts', () => {
   test('shows the payment accounts desktop state', async ({ page }) => {
     await gotoAndWaitForData(page);
     const panel = await openTradingAccounts(page);
-    const detailPane = panel.getByTestId('account-detail-pane').first();
+    const detailPane = panel.getByTestId('account-detail-pane').filter({ visible: true });
 
     await expect(detailPane).toContainText('Revolut');
     await expect(panel).toHaveScreenshot('trading-accounts-payment-desktop.png');
@@ -31,7 +31,7 @@ test.describe('TradingAccounts', () => {
   test('switches subtabs, auto-selects, updates detail, and mounts communication settings', async ({ page }) => {
     await gotoAndWaitForData(page);
     const panel = await openTradingAccounts(page);
-    const detailPane = panel.getByTestId('account-detail-pane').first();
+    const detailPane = panel.getByTestId('account-detail-pane').filter({ visible: true });
 
     await panel.getByRole('button', { name: /^Trading/ }).click();
     await expect(detailPane).toContainText('Bisq');
@@ -40,12 +40,12 @@ test.describe('TradingAccounts', () => {
 
     await panel.getByTestId('account-summary-card-33').click();
     await expect(detailPane).toContainText('Kraken');
-    await expect(detailPane.getByRole('switch', { name: /Deactivate Kraken/ })).toBeVisible();
+    await expect(detailPane.getByRole('switch', { name: /Activate Kraken/ })).toBeVisible();
     await expect(detailPane).toContainText('BTC 0.245');
     await expect(panel).toHaveScreenshot('trading-accounts-trading-desktop.png');
 
     await panel.getByRole('button', { name: /^Communication/ }).click();
-    await expect(panel.getByText('Telegram Bot', { exact: true })).toBeVisible();
+    await expect(panel.getByRole('heading', { name: 'Telegram bot', exact: true })).toBeVisible();
   });
 
   test('keeps provider names visible on mobile', async ({ page }) => {
