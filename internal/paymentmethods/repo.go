@@ -148,8 +148,8 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 	if links > 1 {
 		return ValidationError{fmt.Errorf("a payment method can link to at most one payment solution")}
 	}
-	if p.BankAccountID != nil && category != "Bank Transfer" {
-		return ValidationError{fmt.Errorf("only Bank Transfer methods can link to a bank account")}
+	if p.BankAccountID != nil && category != "Bank" {
+		return ValidationError{fmt.Errorf("only Bank methods can link to a bank account")}
 	}
 	if p.AccountID != nil && category != "Fiat Transmitter" {
 		return ValidationError{fmt.Errorf("only Fiat Transmitter methods can link to an account")}

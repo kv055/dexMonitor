@@ -22,12 +22,12 @@ import {
 
 // The six catalog categories — must match the payment_methods.category CHECK
 // constraint and commons/paymentmethods byte-for-byte.
-const CATEGORIES = ['Cash', 'Bank Transfer', 'Fiat Transmitter', 'Gift Cards', 'Crypto', 'Others'] as const;
+const CATEGORIES = ['Cash', 'Bank', 'Fiat Transmitter', 'Gift Cards', 'Crypto', 'Others'] as const;
 
 // Which categories link to which payment solution. Cash, Gift Cards and
 // Others are structurally unlinkable (DB CHECK).
 const LINKABLE: Record<string, 'bank' | 'account' | 'wallet' | null> = {
-  'Bank Transfer': 'bank',
+  'Bank': 'bank',
   'Fiat Transmitter': 'account',
   Crypto: 'wallet',
   Cash: null,
