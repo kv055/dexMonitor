@@ -40,6 +40,21 @@ const LINKABLE: Record<string, 'bank' | 'account' | 'wallet' | null> = {
 const CHAT_EXCHANGES = ['RoboSats', 'Bisq2'] as const;
 type ChatExchange = typeof CHAT_EXCHANGES[number];
 
+// DEX offer slugs for payment_methods.sources — must match offers.exchange /
+// payment_methods_sources_allowed_check.
+const DEX_SOURCES = ['bisq', 'bisq2', 'hodlhodl', 'robosats', 'peachbitcoin'] as const;
+
+// Enabled fiat codes for payment_methods.currencies — mirrors commons/fiat.Enabled.
+const FIAT_CURRENCIES = ['EUR', 'USD', 'GBP', 'AUD', 'CHF', 'SEK', 'NOK', 'CAD'] as const;
+
+const SOURCE_LABELS: Record<(typeof DEX_SOURCES)[number], string> = {
+  bisq: 'Bisq',
+  bisq2: 'Bisq 2',
+  hodlhodl: 'HodlHodl',
+  robosats: 'RoboSats',
+  peachbitcoin: 'Peach',
+};
+
 const compactInputCls =
   'w-full rounded-md border border-border bg-bg px-2 py-1.5 text-xs text-text outline-none focus:border-accent';
 const compactButtonCls =
@@ -51,6 +66,8 @@ interface Draft {
   category: string;
   merge_regex: string;
   alias_list: string[];
+  sources: string[];
+  currencies: string[];
   link_id: number | null;
 }
 
@@ -87,6 +104,8 @@ function draftFromRow(row: PaymentMethodRow): Draft {
     category: row.category,
     merge_regex: row.merge_regex ?? '',
     alias_list: row.alias_list ?? [],
+    sources: row.sources ?? [],
+    currencies: row.currencies ?? [],
     link_id: row.bank_account_id ?? row.account_id ?? row.wallet_address_id,
   };
 }
@@ -98,6 +117,8 @@ function payloadFromDraft(draft: Draft, priority: number): PaymentMethodUpdatePa
     alias_list: draft.alias_list
       .map(alias => alias.trim())
       .filter(alias => alias.length > 0),
+    sources: [...draft.sources],
+    currencies: [...draft.currencies],
     category: draft.category,
     bank_account_id: link === 'bank' ? draft.link_id : null,
     account_id: link === 'account' ? draft.link_id : null,
@@ -106,13 +127,29 @@ function payloadFromDraft(draft: Draft, priority: number): PaymentMethodUpdatePa
   };
 }
 
+function sameStringSet(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  const sortedA = [...a].sort();
+  const sortedB = [...b].sort();
+  return sortedA.every((value, index) => value === sortedB[index]);
+}
+
 function draftHasChanges(draft: Draft, row: PaymentMethodRow) {
   const initial = draftFromRow(row);
   return draft.category !== initial.category
     || draft.merge_regex !== initial.merge_regex
     || draft.link_id !== initial.link_id
     || draft.alias_list.length !== initial.alias_list.length
-    || draft.alias_list.some((alias, index) => alias !== initial.alias_list[index]);
+    || draft.alias_list.some((alias, index) => alias !== initial.alias_list[index])
+    || !sameStringSet(draft.sources, initial.sources)
+    || !sameStringSet(draft.currencies, initial.currencies);
+}
+
+function toggleListValue(list: string[], value: string, checked: boolean): string[] {
+  if (checked) {
+    return list.includes(value) ? list : [...list, value];
+  }
+  return list.filter(item => item !== value);
 }
 
 function bankAccountLabel(ba: TradingBankAccount, owner: TradingAccount | undefined) {
@@ -144,6 +181,9 @@ export function PaymentMethodsPanel() {
   );
   const [chatTemplateLoading, setChatTemplateLoading] = useState(false);
   const [chatTemplateError, setChatTemplateError] = useState<string | null>(null);
+  // Empty string = no filter; "__unset__" = methods with an empty array for that column.
+  const [sourceFilter, setSourceFilter] = useState('');
+  const [currencyFilter, setCurrencyFilter] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -201,15 +241,33 @@ export function PaymentMethodsPanel() {
     return out;
   }, [accounts]);
 
+  const filteredRows = useMemo(() => {
+    return rows.filter(row => {
+      if (sourceFilter === '__unset__') {
+        if ((row.sources?.length ?? 0) > 0) return false;
+      } else if (sourceFilter !== '' && !(row.sources ?? []).includes(sourceFilter)) {
+        return false;
+      }
+      if (currencyFilter === '__unset__') {
+        if ((row.currencies?.length ?? 0) > 0) return false;
+      } else if (currencyFilter !== '' && !(row.currencies ?? []).includes(currencyFilter)) {
+        return false;
+      }
+      return true;
+    });
+  }, [rows, sourceFilter, currencyFilter]);
+
+  const filtersActive = sourceFilter !== '' || currencyFilter !== '';
+
   const grouped = useMemo(() => {
     const byCategory = new Map<string, PaymentMethodRow[]>();
-    for (const row of rows) {
+    for (const row of filteredRows) {
       const list = byCategory.get(row.category) ?? [];
       list.push(row);
       byCategory.set(row.category, list);
     }
     return CATEGORIES.map(cat => ({ category: cat, rows: byCategory.get(cat) ?? [] }));
-  }, [rows]);
+  }, [filteredRows]);
 
   const aliasProvidersByCategory = useMemo(
     () => CATEGORIES
@@ -530,7 +588,58 @@ export function PaymentMethodsPanel() {
             Categorize payment methods and link them to your saved payment solutions. Offer-method priority now lives
             in the Payments tab account list. New methods from offers land in Others as inactive.
           </p>
+          <div className="flex flex-wrap items-end gap-2 rounded-md border border-border bg-bg px-2.5 py-2">
+            <label className="flex min-w-[8rem] flex-1 flex-col gap-1 text-[0.68rem] text-muted">
+              Source
+              <select
+                className={compactInputCls}
+                value={sourceFilter}
+                onChange={e => setSourceFilter(e.target.value)}
+                aria-label="Filter by source"
+              >
+                <option value="">All sources</option>
+                <option value="__unset__">Unset</option>
+                {DEX_SOURCES.map(source => (
+                  <option key={source} value={source}>{SOURCE_LABELS[source]}</option>
+                ))}
+              </select>
+            </label>
+            <label className="flex min-w-[8rem] flex-1 flex-col gap-1 text-[0.68rem] text-muted">
+              Currency
+              <select
+                className={compactInputCls}
+                value={currencyFilter}
+                onChange={e => setCurrencyFilter(e.target.value)}
+                aria-label="Filter by currency"
+              >
+                <option value="">All currencies</option>
+                <option value="__unset__">Unset</option>
+                {FIAT_CURRENCIES.map(currency => (
+                  <option key={currency} value={currency}>{currency}</option>
+                ))}
+              </select>
+            </label>
+            {filtersActive && (
+              <button
+                type="button"
+                className={compactButtonCls}
+                onClick={() => {
+                  setSourceFilter('');
+                  setCurrencyFilter('');
+                }}
+              >
+                Clear filters
+              </button>
+            )}
+            <span className="ml-auto text-[0.62rem] text-muted">
+              {filteredRows.length}/{rows.length} methods
+            </span>
+          </div>
+          {filtersActive && filteredRows.length === 0 && (
+            <p className="text-[0.68rem] text-muted">No payment methods match the selected filters.</p>
+          )}
           {grouped.map(({ category, rows: catRows }) => (
+            filtersActive && catRows.length === 0 ? null : (
             <div key={category} className="rounded-md border border-border bg-bg">
               <button
                 type="button"
@@ -567,6 +676,16 @@ export function PaymentMethodsPanel() {
                           {(row.alias_list?.length ?? 0) > 0 && (
                             <span className="text-[0.62rem] text-muted">
                               {row.alias_list.length} {row.alias_list.length === 1 ? 'alias' : 'aliases'}
+                            </span>
+                          )}
+                          {(row.sources?.length ?? 0) > 0 && (
+                            <span className="text-[0.62rem] text-muted" title={row.sources.join(', ')}>
+                              {row.sources.length} {row.sources.length === 1 ? 'source' : 'sources'}
+                            </span>
+                          )}
+                          {(row.currencies?.length ?? 0) > 0 && (
+                            <span className="text-[0.62rem] text-muted" title={row.currencies.join(', ')}>
+                              {row.currencies.join(', ')}
                             </span>
                           )}
                         </div>
@@ -675,6 +794,50 @@ export function PaymentMethodsPanel() {
                             />
                           </label>
                           <div className="flex flex-col gap-1 text-[0.68rem] text-muted">
+                            <span>Sources (DEXes)</span>
+                            <p className="text-[0.62rem] text-muted">
+                              Venues where this payment method is available.
+                            </p>
+                            <div className="flex flex-wrap gap-x-3 gap-y-1.5 rounded-md border border-border bg-bg px-2 py-2">
+                              {DEX_SOURCES.map(source => (
+                                <label key={source} className="inline-flex items-center gap-1.5 text-[0.68rem] text-text">
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.sources.includes(source)}
+                                    onChange={e => setDraft({
+                                      ...draft,
+                                      sources: toggleListValue(draft.sources, source, e.target.checked),
+                                    })}
+                                    disabled={saving}
+                                  />
+                                  {SOURCE_LABELS[source]}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-1 text-[0.68rem] text-muted">
+                            <span>Currencies</span>
+                            <p className="text-[0.62rem] text-muted">
+                              Fiat currencies this payment method supports.
+                            </p>
+                            <div className="flex flex-wrap gap-x-3 gap-y-1.5 rounded-md border border-border bg-bg px-2 py-2">
+                              {FIAT_CURRENCIES.map(currency => (
+                                <label key={currency} className="inline-flex items-center gap-1.5 text-[0.68rem] text-text">
+                                  <input
+                                    type="checkbox"
+                                    checked={draft.currencies.includes(currency)}
+                                    onChange={e => setDraft({
+                                      ...draft,
+                                      currencies: toggleListValue(draft.currencies, currency, e.target.checked),
+                                    })}
+                                    disabled={saving}
+                                  />
+                                  {currency}
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="flex flex-col gap-1 text-[0.68rem] text-muted">
                             <span>Aliases</span>
                             <p className="text-[0.62rem] text-muted">
                               Exact offer labels that should be treated as “{row.name}”. Save changes before making an alias a payment method.
@@ -766,7 +929,7 @@ export function PaymentMethodsPanel() {
                 </ul>
               )}
             </div>
-          ))}
+          )))}
         </div>
       )}
     </div>

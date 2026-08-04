@@ -26,6 +26,8 @@ type AdminRow struct {
 	Name            string   `json:"name"`
 	MergeRegex      *string  `json:"merge_regex"`
 	AliasList       []string `json:"alias_list"`
+	Sources         []string `json:"sources"`
+	Currencies      []string `json:"currencies"`
 	Category        string   `json:"category"`
 	BankAccountID   *int64   `json:"bank_account_id"`
 	AccountID       *int64   `json:"account_id"`
@@ -47,6 +49,8 @@ type AdminRow struct {
 type UpdatePayload struct {
 	MergeRegex      *string  `json:"merge_regex"`
 	AliasList       []string `json:"alias_list"`
+	Sources         []string `json:"sources"`
+	Currencies      []string `json:"currencies"`
 	Category        string   `json:"category"`
 	BankAccountID   *int64   `json:"bank_account_id"`
 	AccountID       *int64   `json:"account_id"`
@@ -72,7 +76,8 @@ type Repo struct {
 // account provider, wallet address label).
 func (r *Repo) List(ctx context.Context) ([]AdminRow, error) {
 	rows, err := r.DB.QueryContext(ctx, `
-		SELECT pm.id, pm.name, pm.merge_regex, pm.alias_list, pm.category,
+		SELECT pm.id, pm.name, pm.merge_regex, pm.alias_list, pm.sources, pm.currencies,
+		       pm.category,
 		       pm.bank_account_id, pm.account_id, pm.wallet_address_id,
 		       pm.is_active, pm.is_linked, pm.priority, pm.match_order,
 		       CASE
@@ -96,14 +101,17 @@ func (r *Repo) List(ctx context.Context) ([]AdminRow, error) {
 	out := make([]AdminRow, 0)
 	for rows.Next() {
 		var row AdminRow
-		var aliases commonpm.TextArray
-		if err := rows.Scan(&row.ID, &row.Name, &row.MergeRegex, &aliases, &row.Category,
+		var aliases, sources, currencies commonpm.TextArray
+		if err := rows.Scan(&row.ID, &row.Name, &row.MergeRegex, &aliases, &sources, &currencies,
+			&row.Category,
 			&row.BankAccountID, &row.AccountID, &row.WalletAddressID,
 			&row.IsActive, &row.IsLinked, &row.Priority, &row.MatchOrder,
 			&row.LinkLabel, &row.CreatedAt, &row.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan payment method: %w", err)
 		}
-		row.AliasList = []string(aliases)
+		row.AliasList = nonNilStrings(aliases)
+		row.Sources = nonNilStrings(sources)
+		row.Currencies = nonNilStrings(currencies)
 		out = append(out, row)
 	}
 	return out, rows.Err()
@@ -138,6 +146,14 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 		}
 	}
 	aliasList := cleanAliasList(p.AliasList)
+	sources, err := commonpm.NormalizeSources(p.Sources)
+	if err != nil {
+		return ValidationError{err}
+	}
+	currencies, err := commonpm.NormalizeCurrencies(p.Currencies)
+	if err != nil {
+		return ValidationError{err}
+	}
 
 	links := 0
 	for _, l := range []*int64{p.BankAccountID, p.AccountID, p.WalletAddressID} {
@@ -177,10 +193,13 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 			is_active = $6,
 			priority = $7,
 			alias_list = $8,
+			sources = $9,
+			currencies = $10,
 			updated_at = CURRENT_TIMESTAMP
-		WHERE id = $9`,
+		WHERE id = $11`,
 		p.MergeRegex, category, p.BankAccountID, p.AccountID, p.WalletAddressID,
-		isActive, p.Priority, commonpm.TextArray(aliasList), id)
+		isActive, p.Priority, commonpm.TextArray(aliasList),
+		commonpm.TextArray(sources), commonpm.TextArray(currencies), id)
 	if err != nil {
 		return fmt.Errorf("update payment method %d: %w", id, err)
 	}
@@ -225,6 +244,13 @@ func cleanAliasList(in []string) []string {
 		out = append(out, trimmed)
 	}
 	return out
+}
+
+func nonNilStrings(in []string) []string {
+	if in == nil {
+		return []string{}
+	}
+	return in
 }
 
 func normalizeAlias(s string) string {
