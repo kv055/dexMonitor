@@ -1,28 +1,19 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import type {
-  PaymentMethodChatTemplate,
   PaymentMethodRow,
   PaymentMethodUpdatePayload,
 } from '../types';
 import {
   degradePaymentMethodToAlias,
   deletePaymentMethod,
-  deletePaymentMethodChatTemplate,
-  fetchPaymentMethodChatTemplates,
   fetchPaymentMethods,
   promotePaymentMethodAlias,
   updatePaymentMethod,
-  updatePaymentMethodChatTemplate,
 } from '../utils/api';
 
 // The six catalog categories — must match the payment_methods.category CHECK
 // constraint and commons/paymentmethods byte-for-byte.
 const CATEGORIES = ['Cash', 'Bank', 'Fiat Transmitter', 'Gift Cards', 'Crypto', 'Others'] as const;
-
-// Chat-style DEX venues that exchange payment details through trade chat.
-// These values must match payment_method_chat_templates.exchange.
-const CHAT_EXCHANGES = ['RoboSats', 'Bisq2'] as const;
-type ChatExchange = typeof CHAT_EXCHANGES[number];
 
 // DEX offer slugs for payment_methods.sources — must match offers.exchange /
 // payment_methods_sources_allowed_check.
@@ -50,36 +41,6 @@ interface Draft {
   category: string;
   merge_regex: string;
   alias_list: string[];
-  sources: string[];
-  currencies: string[];
-}
-
-interface ChatTemplateDraft {
-  template: string;
-  isActive: boolean;
-  saved: boolean;
-}
-
-function emptyChatTemplateDrafts(): Record<ChatExchange, ChatTemplateDraft> {
-  return {
-    RoboSats: { template: '', isActive: true, saved: false },
-    Bisq2: { template: '', isActive: true, saved: false },
-  };
-}
-
-function chatTemplateDraftsFromRows(rows: PaymentMethodChatTemplate[]): Record<ChatExchange, ChatTemplateDraft> {
-  const drafts = emptyChatTemplateDrafts();
-  for (const exchange of CHAT_EXCHANGES) {
-    const row = rows.find(candidate => candidate.exchange === exchange);
-    if (row) {
-      drafts[exchange] = {
-        template: row.template,
-        isActive: row.is_active,
-        saved: true,
-      };
-    }
-  }
-  return drafts;
 }
 
 function draftFromRow(row: PaymentMethodRow): Draft {
@@ -87,14 +48,13 @@ function draftFromRow(row: PaymentMethodRow): Draft {
     category: row.category,
     merge_regex: row.merge_regex ?? '',
     alias_list: row.alias_list ?? [],
-    sources: row.sources ?? [],
-    currencies: row.currencies ?? [],
   };
 }
 
 // Linking is edited on the Accounts Management payment tab. Categorization
 // edits preserve existing FKs, and clear them only when the category changes
-// (a Bank FK is invalid on a Fiat Transmitter row, etc.).
+// (a Bank FK is invalid on a Fiat Transmitter row, etc.). Observed sources and
+// currencies are owned by the snapshot service — always pass through the row.
 function payloadFromDraft(draft: Draft, row: PaymentMethodRow): PaymentMethodUpdatePayload {
   const categoryChanged = draft.category !== row.category;
   return {
@@ -102,19 +62,12 @@ function payloadFromDraft(draft: Draft, row: PaymentMethodRow): PaymentMethodUpd
     alias_list: draft.alias_list
       .map(alias => alias.trim())
       .filter(alias => alias.length > 0),
-    sources: [...draft.sources],
-    currencies: [...draft.currencies],
+    sources: row.sources ?? [],
+    currencies: row.currencies ?? [],
     category: draft.category,
     account_id: categoryChanged ? null : row.account_id,
     priority: row.priority,
   };
-}
-
-function sameStringSet(a: string[], b: string[]) {
-  if (a.length !== b.length) return false;
-  const sortedA = [...a].sort();
-  const sortedB = [...b].sort();
-  return sortedA.every((value, index) => value === sortedB[index]);
 }
 
 function draftHasChanges(draft: Draft, row: PaymentMethodRow) {
@@ -122,16 +75,11 @@ function draftHasChanges(draft: Draft, row: PaymentMethodRow) {
   return draft.category !== initial.category
     || draft.merge_regex !== initial.merge_regex
     || draft.alias_list.length !== initial.alias_list.length
-    || draft.alias_list.some((alias, index) => alias !== initial.alias_list[index])
-    || !sameStringSet(draft.sources, initial.sources)
-    || !sameStringSet(draft.currencies, initial.currencies);
+    || draft.alias_list.some((alias, index) => alias !== initial.alias_list[index]);
 }
 
-function toggleListValue(list: string[], value: string, checked: boolean): string[] {
-  if (checked) {
-    return list.includes(value) ? list : [...list, value];
-  }
-  return list.filter(item => item !== value);
+function sourceLabel(source: string): string {
+  return SOURCE_LABELS[source as keyof typeof SOURCE_LABELS] ?? source;
 }
 
 export function PaymentMethodsPanel() {
@@ -149,11 +97,6 @@ export function PaymentMethodsPanel() {
   const [aliasPickerId, setAliasPickerId] = useState<number | null>(null);
   const [aliasPickerError, setAliasPickerError] = useState<string | null>(null);
   const [aliasInput, setAliasInput] = useState('');
-  const [chatTemplateDrafts, setChatTemplateDrafts] = useState<Record<ChatExchange, ChatTemplateDraft>>(
-    emptyChatTemplateDrafts,
-  );
-  const [chatTemplateLoading, setChatTemplateLoading] = useState(false);
-  const [chatTemplateError, setChatTemplateError] = useState<string | null>(null);
   // Empty string = no filter; "__unset__" = methods with an empty array for that column.
   const [sourceFilter, setSourceFilter] = useState('');
   const [currencyFilter, setCurrencyFilter] = useState('');
@@ -174,20 +117,6 @@ export function PaymentMethodsPanel() {
   useEffect(() => {
     if (open) void load();
   }, [open, load]);
-
-  const loadChatTemplates = useCallback(async (id: number) => {
-    setChatTemplateLoading(true);
-    setChatTemplateError(null);
-    setChatTemplateDrafts(emptyChatTemplateDrafts());
-    try {
-      const response = await fetchPaymentMethodChatTemplates(id);
-      setChatTemplateDrafts(chatTemplateDraftsFromRows(response.chat_templates));
-    } catch (err) {
-      setChatTemplateError(err instanceof Error ? err.message : 'Failed to load chat templates');
-    } finally {
-      setChatTemplateLoading(false);
-    }
-  }, []);
 
   const filteredRows = useMemo(() => {
     return rows.filter(row => {
@@ -235,8 +164,6 @@ export function PaymentMethodsPanel() {
     setDraft(draftFromRow(row));
     setAliasInput('');
     setRowError(null);
-    setChatTemplateError(null);
-    void loadChatTemplates(row.id);
   }
 
   async function saveDraft(id: number) {
@@ -269,53 +196,6 @@ export function PaymentMethodsPanel() {
       setRowError(err instanceof Error ? err.message : 'Delete failed');
     } finally {
       setSaving(false);
-    }
-  }
-
-  async function saveChatTemplate(id: number, exchange: ChatExchange) {
-    const chatDraft = chatTemplateDrafts[exchange];
-    const template = chatDraft.template.trim();
-    setChatTemplateLoading(true);
-    setChatTemplateError(null);
-    try {
-      if (template === '') {
-        if (chatDraft.saved) {
-          await deletePaymentMethodChatTemplate(id, exchange);
-        }
-        setChatTemplateDrafts(current => ({
-          ...current,
-          [exchange]: { template: '', isActive: true, saved: false },
-        }));
-      } else {
-        const response = await updatePaymentMethodChatTemplate(id, exchange, {
-          template,
-          is_active: chatDraft.isActive,
-        });
-        setChatTemplateDrafts(chatTemplateDraftsFromRows(response.chat_templates));
-      }
-    } catch (err) {
-      setChatTemplateError(err instanceof Error ? err.message : 'Failed to save chat template');
-    } finally {
-      setChatTemplateLoading(false);
-    }
-  }
-
-  async function resetChatTemplateToDefault(id: number, exchange: ChatExchange) {
-    const chatDraft = chatTemplateDrafts[exchange];
-    setChatTemplateLoading(true);
-    setChatTemplateError(null);
-    try {
-      if (chatDraft.saved) {
-        await deletePaymentMethodChatTemplate(id, exchange);
-      }
-      setChatTemplateDrafts(current => ({
-        ...current,
-        [exchange]: { template: '', isActive: true, saved: false },
-      }));
-    } catch (err) {
-      setChatTemplateError(err instanceof Error ? err.message : 'Failed to reset chat template');
-    } finally {
-      setChatTemplateLoading(false);
     }
   }
 
@@ -394,90 +274,6 @@ export function PaymentMethodsPanel() {
     setDraft({ ...draft, alias_list: draft.alias_list.filter(candidate => candidate !== alias) });
   }
 
-  function renderChatTemplates(id: number) {
-    return (
-      <div className="flex flex-col gap-2 rounded-md border border-border bg-bg p-2">
-        <div>
-          <p className="text-[0.68rem] font-medium text-text">DEX chat request templates</p>
-          <p className="mt-0.5 text-[0.62rem] text-muted">
-            Messages sent to the counterparty when requesting payment details. Use{' '}
-            <code className="text-accent">{'{{amount}}'}</code> and{' '}
-            <code className="text-accent">{'{{currency}}'}</code> as placeholders. An empty value uses the controller default.
-          </p>
-        </div>
-        {chatTemplateError && <p className="text-[0.68rem] text-red">{chatTemplateError}</p>}
-        {chatTemplateLoading && (
-          <p className="text-[0.62rem] text-muted">Loading templates…</p>
-        )}
-        {CHAT_EXCHANGES.map(exchange => {
-          const chatDraft = chatTemplateDrafts[exchange];
-          return (
-            <div
-              key={exchange}
-              data-testid={`chat-template-${exchange.toLowerCase()}`}
-              className="flex flex-col gap-1 rounded-md border border-border bg-surface p-2"
-            >
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-[0.68rem] font-medium text-text">{exchange}</span>
-                <span className={`text-[0.62rem] ${chatDraft.saved ? 'text-green' : 'text-muted'}`}>
-                  {chatDraft.saved ? (chatDraft.isActive ? 'template active' : 'template inactive') : 'controller default'}
-                </span>
-              </div>
-              <label className="flex flex-col gap-1 text-[0.62rem] text-muted">
-                <span className="sr-only">{exchange} template</span>
-                <textarea
-                  className={`${compactInputCls} min-h-20 resize-y font-mono`}
-                  aria-label={`${exchange} template`}
-                  value={chatDraft.template}
-                  onChange={event => setChatTemplateDrafts(current => ({
-                    ...current,
-                    [exchange]: { ...current[exchange], template: event.target.value },
-                  }))}
-                  placeholder={`Controller default for ${exchange}`}
-                  disabled={chatTemplateLoading}
-                />
-              </label>
-              <div className="flex flex-wrap items-center justify-between gap-2">
-                <label className="inline-flex items-center gap-1.5 text-[0.62rem] text-muted">
-                  <input
-                    type="checkbox"
-                    checked={chatDraft.isActive}
-                    onChange={event => setChatTemplateDrafts(current => ({
-                      ...current,
-                      [exchange]: { ...current[exchange], isActive: event.target.checked },
-                    }))}
-                    disabled={chatTemplateLoading}
-                  />
-                  Use this template
-                </label>
-                <div className="flex items-center gap-1.5">
-                  {chatDraft.saved && (
-                    <button
-                      type="button"
-                      className={compactButtonCls}
-                      onClick={() => void resetChatTemplateToDefault(id, exchange)}
-                      disabled={chatTemplateLoading}
-                    >
-                      Use default
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    className={compactPrimaryButtonCls}
-                    onClick={() => void saveChatTemplate(id, exchange)}
-                    disabled={chatTemplateLoading || chatDraft.template.trim() === ''}
-                  >
-                    Save template
-                  </button>
-                </div>
-              </div>
-            </div>
-          );
-        })}
-      </div>
-    );
-  }
-
   return (
     <div className="rounded-lg border border-border bg-surface p-3 flex flex-col gap-2">
       <div className="flex items-center justify-between gap-3">
@@ -498,9 +294,10 @@ export function PaymentMethodsPanel() {
         <div className="max-h-[50vh] overflow-y-auto flex flex-col gap-2 pr-1">
           {error && <p className="text-xs text-red">{error}</p>}
           <p className="text-[0.68rem] text-muted">
-            Categorize payment methods, aliases, sources, and currencies. Link catalog methods to
-            payment solutions under Accounts Management → payment accounts. Offer-method priority
-            lives in the Payments tab account list. New methods from offers land in Others as inactive.
+            Categorize payment methods and aliases. Observed DEX sources and currencies are filled
+            by the snapshot service. Link catalog methods to payment solutions under Accounts
+            Management → payment accounts. Offer-method priority lives in the Payments tab account
+            list. New methods from offers land in Others as inactive.
           </p>
           <div className="flex flex-wrap items-end gap-2 rounded-md border border-border bg-bg px-2.5 py-2">
             <label className="flex min-w-[8rem] flex-1 flex-col gap-1 text-[0.68rem] text-muted">
@@ -619,18 +416,16 @@ export function PaymentMethodsPanel() {
                           >
                             Change category
                           </button>
-                          {!row.is_linked && (
-                            <button
-                              type="button"
-                              className={compactButtonCls}
-                              onClick={() => {
-                                setAliasPickerError(null);
-                                setAliasPickerId(prev => (prev === row.id ? null : row.id));
-                              }}
-                            >
-                              Degrade to alias
-                            </button>
-                          )}
+                          <button
+                            type="button"
+                            className={compactButtonCls}
+                            onClick={() => {
+                              setAliasPickerError(null);
+                              setAliasPickerId(prev => (prev === row.id ? null : row.id));
+                            }}
+                          >
+                            Degrade to alias
+                          </button>
                           <button
                             type="button"
                             className={compactButtonCls}
@@ -660,7 +455,7 @@ export function PaymentMethodsPanel() {
                         </div>
                       )}
 
-                      {aliasPickerId === row.id && !row.is_linked && (
+                      {aliasPickerId === row.id && (
                         <div className="mt-2 flex items-end gap-1.5">
                           <label className="flex flex-1 flex-col gap-1 text-[0.68rem] text-muted">
                             Add to provider
@@ -715,45 +510,43 @@ export function PaymentMethodsPanel() {
                           <div className="flex flex-col gap-1 text-[0.68rem] text-muted">
                             <span>Sources (DEXes)</span>
                             <p className="text-[0.62rem] text-muted">
-                              Venues where this payment method is available.
+                              DEX venues where this payment method has been observed so far.
+                              Updated by the snapshot service — not editable here.
                             </p>
-                            <div className="flex flex-wrap gap-x-3 gap-y-1.5 rounded-md border border-border bg-bg px-2 py-2">
-                              {DEX_SOURCES.map(source => (
-                                <label key={source} className="inline-flex items-center gap-1.5 text-[0.68rem] text-text">
-                                  <input
-                                    type="checkbox"
-                                    checked={draft.sources.includes(source)}
-                                    onChange={e => setDraft({
-                                      ...draft,
-                                      sources: toggleListValue(draft.sources, source, e.target.checked),
-                                    })}
-                                    disabled={saving}
-                                  />
-                                  {SOURCE_LABELS[source]}
-                                </label>
-                              ))}
+                            <div className="flex flex-wrap gap-1.5 rounded-md border border-border bg-bg px-2 py-2">
+                              {(row.sources?.length ?? 0) > 0 ? (
+                                row.sources.map(source => (
+                                  <span
+                                    key={source}
+                                    className="rounded border border-border bg-surface px-1.5 py-0.5 text-[0.68rem] text-text"
+                                  >
+                                    {sourceLabel(source)}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-[0.68rem] text-muted">None observed yet</span>
+                              )}
                             </div>
                           </div>
                           <div className="flex flex-col gap-1 text-[0.68rem] text-muted">
                             <span>Currencies</span>
                             <p className="text-[0.62rem] text-muted">
-                              Fiat currencies this payment method supports.
+                              Fiat currencies where this payment method has been observed so far.
+                              Updated by the snapshot service — not editable here.
                             </p>
-                            <div className="flex flex-wrap gap-x-3 gap-y-1.5 rounded-md border border-border bg-bg px-2 py-2">
-                              {FIAT_CURRENCIES.map(currency => (
-                                <label key={currency} className="inline-flex items-center gap-1.5 text-[0.68rem] text-text">
-                                  <input
-                                    type="checkbox"
-                                    checked={draft.currencies.includes(currency)}
-                                    onChange={e => setDraft({
-                                      ...draft,
-                                      currencies: toggleListValue(draft.currencies, currency, e.target.checked),
-                                    })}
-                                    disabled={saving}
-                                  />
-                                  {currency}
-                                </label>
-                              ))}
+                            <div className="flex flex-wrap gap-1.5 rounded-md border border-border bg-bg px-2 py-2">
+                              {(row.currencies?.length ?? 0) > 0 ? (
+                                row.currencies.map(currency => (
+                                  <span
+                                    key={currency}
+                                    className="rounded border border-border bg-surface px-1.5 py-0.5 text-[0.68rem] text-text"
+                                  >
+                                    {currency}
+                                  </span>
+                                ))
+                              ) : (
+                                <span className="text-[0.68rem] text-muted">None observed yet</span>
+                              )}
                             </div>
                           </div>
                           <div className="flex flex-col gap-1 text-[0.68rem] text-muted">
@@ -818,7 +611,6 @@ export function PaymentMethodsPanel() {
                               </p>
                             )}
                           </div>
-                          {renderChatTemplates(row.id)}
                           {rowError && <p className="text-[0.68rem] text-red">{rowError}</p>}
                           {!row.is_linked && (
                             <p className="text-[0.62rem] text-muted">

@@ -41,13 +41,17 @@ type AdminRow struct {
 }
 
 // UpdatePayload is the editable subset of a payment_methods row. Name,
-// match_order, is_linked and is_active are deliberately not editable:
-// renaming a method would orphan the names already stored in offers.payment_methods,
-// match_order is seeded matching data, is_linked is generated, and a payment
-// method becomes active only when it is linked to a saved payment account.
+// match_order, is_linked, is_active, sources, and currencies are deliberately
+// not editable: renaming a method would orphan the names already stored in
+// offers.payment_methods, match_order is seeded matching data, is_linked is
+// generated, a payment method becomes active only when it is linked to a saved
+// payment account, and sources/currencies are observed fields owned by the
+// snapshot service.
 type UpdatePayload struct {
 	MergeRegex *string  `json:"merge_regex"`
 	AliasList  []string `json:"alias_list"`
+	// Sources and Currencies are accepted for API compatibility with older
+	// clients but ignored on write — the snapshot service owns those columns.
 	Sources    []string `json:"sources"`
 	Currencies []string `json:"currencies"`
 	Category   string   `json:"category"`
@@ -135,14 +139,6 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 		}
 	}
 	aliasList := cleanAliasList(p.AliasList)
-	sources, err := commonpm.NormalizeSources(p.Sources)
-	if err != nil {
-		return ValidationError{err}
-	}
-	currencies, err := commonpm.NormalizeCurrencies(p.Currencies)
-	if err != nil {
-		return ValidationError{err}
-	}
 
 	if p.AccountID != nil && category != "Bank" && category != "Fiat Transmitter" {
 		return ValidationError{fmt.Errorf("only Bank and Fiat Transmitter methods can link to an account")}
@@ -165,13 +161,10 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 			is_active = $4,
 			priority = $5,
 			alias_list = $6,
-			sources = $7,
-			currencies = $8,
 			updated_at = CURRENT_TIMESTAMP
-		WHERE id = $9`,
+		WHERE id = $7`,
 		p.MergeRegex, category, p.AccountID,
-		isActive, p.Priority, commonpm.TextArray(aliasList),
-		commonpm.TextArray(sources), commonpm.TextArray(currencies), id)
+		isActive, p.Priority, commonpm.TextArray(aliasList), id)
 	if err != nil {
 		return fmt.Errorf("update payment method %d: %w", id, err)
 	}
