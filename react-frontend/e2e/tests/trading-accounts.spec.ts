@@ -64,6 +64,21 @@ test.describe('TradingAccounts', () => {
     await expect(panel.getByTestId('account-summary-card-11').getByLabel('Priority 1')).toBeVisible();
   });
 
+  test('shows Unlinked instead of priority when a payment account has no catalog link', async ({ page }) => {
+    await gotoAndWaitForData(page);
+    const panel = await openTradingAccounts(page);
+    const card = panel.getByTestId('account-summary-card-12');
+    await expect(card.getByText('Unlinked', { exact: true })).toBeVisible();
+    await expect(card.getByLabel(/Priority/)).toHaveCount(0);
+    await expect(card.getByText(/Created|Updated/)).toHaveCount(0);
+
+    await card.click();
+    const detail = panel.getByTestId('account-detail-pane').filter({ visible: true });
+    await expect(detail.getByText('Unlinked', { exact: true })).toBeVisible();
+    await expect(detail.getByText('Inactive', { exact: true })).toBeVisible();
+    await expect(detail.getByRole('switch', { name: /Activate WISE/ })).toBeDisabled();
+  });
+
   test('renders supported and unavailable Bisq methods and mutates only after confirmation', async ({ page }) => {
     let createRequests = 0;
     let createdPayload: { payment_method_id?: string; fields?: Record<string, string> } | null = null;

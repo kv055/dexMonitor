@@ -22,23 +22,22 @@ func (e ValidationError) Unwrap() error { return e.err }
 // AdminRow is one payment_methods catalog row as served to the categorization
 // panel, including a human-readable label for whatever the row links to.
 type AdminRow struct {
-	ID              int64    `json:"id"`
-	Name            string   `json:"name"`
-	MergeRegex      *string  `json:"merge_regex"`
-	AliasList       []string `json:"alias_list"`
-	Sources         []string `json:"sources"`
-	Currencies      []string `json:"currencies"`
-	Category        string   `json:"category"`
-	BankAccountID   *int64   `json:"bank_account_id"`
-	AccountID       *int64   `json:"account_id"`
-	WalletAddressID *int64   `json:"wallet_address_id"`
-	IsActive        bool     `json:"is_active"`
-	IsLinked        bool     `json:"is_linked"`
-	Priority        int      `json:"priority"`
-	MatchOrder      int      `json:"match_order"`
-	LinkLabel       *string  `json:"link_label"`
-	CreatedAt       string   `json:"created_at"`
-	UpdatedAt       string   `json:"updated_at"`
+	ID         int64    `json:"id"`
+	Name       string   `json:"name"`
+	MergeRegex *string  `json:"merge_regex"`
+	AliasList  []string `json:"alias_list"`
+	Sources    []string `json:"sources"`
+	Currencies []string `json:"currencies"`
+	Category   string   `json:"category"`
+	AccountID  *int64   `json:"account_id"`
+	IsActive   bool     `json:"is_active"`
+	IsLinked   bool     `json:"is_linked"`
+	Priority   int      `json:"priority"`
+	MatchOrder int      `json:"match_order"`
+	Popularity int      `json:"popularity"`
+	LinkLabel  *string  `json:"link_label"`
+	CreatedAt  string   `json:"created_at"`
+	UpdatedAt  string   `json:"updated_at"`
 }
 
 // UpdatePayload is the editable subset of a payment_methods row. Name,
@@ -47,18 +46,16 @@ type AdminRow struct {
 // match_order is seeded matching data, is_linked is generated, and a payment
 // method becomes active only when it is linked to a saved payment account.
 type UpdatePayload struct {
-	MergeRegex      *string  `json:"merge_regex"`
-	AliasList       []string `json:"alias_list"`
-	Sources         []string `json:"sources"`
-	Currencies      []string `json:"currencies"`
-	Category        string   `json:"category"`
-	BankAccountID   *int64   `json:"bank_account_id"`
-	AccountID       *int64   `json:"account_id"`
-	WalletAddressID *int64   `json:"wallet_address_id"`
-	Priority        int      `json:"priority"`
+	MergeRegex *string  `json:"merge_regex"`
+	AliasList  []string `json:"alias_list"`
+	Sources    []string `json:"sources"`
+	Currencies []string `json:"currencies"`
+	Category   string   `json:"category"`
+	AccountID  *int64   `json:"account_id"`
+	Priority   int      `json:"priority"`
 }
 
-// WalletAddressRow is a wallet_addresses row for the Crypto link dropdown.
+// WalletAddressRow is a wallet_addresses row (CEX/hop deposit addresses).
 // dexMonitor only reads this table; writes stay with dexMmController.
 type WalletAddressRow struct {
 	ID      int64  `json:"id"`
@@ -72,26 +69,18 @@ type Repo struct {
 }
 
 // List returns every catalog row ordered for panel display, with the linked
-// entity's label resolved (bank account nickname / owner + IBAN tail,
-// account provider, wallet address label).
+// account's provider as the human-readable link label.
 func (r *Repo) List(ctx context.Context) ([]AdminRow, error) {
 	rows, err := r.DB.QueryContext(ctx, `
 		SELECT pm.id, pm.name, pm.merge_regex, pm.alias_list, pm.sources, pm.currencies,
 		       pm.category,
-		       pm.bank_account_id, pm.account_id, pm.wallet_address_id,
-		       pm.is_active, pm.is_linked, pm.priority, pm.match_order,
-		       CASE
-		           WHEN pm.bank_account_id IS NOT NULL THEN
-		               COALESCE(NULLIF(ba.label, ''), 'Bank account #' || ba.id)
-		           WHEN pm.account_id IS NOT NULL THEN a.provider
-		           WHEN pm.wallet_address_id IS NOT NULL THEN wa.label
-		       END AS link_label,
+		       pm.account_id,
+		       pm.is_active, pm.is_linked, pm.priority, pm.match_order, pm.popularity,
+		       a.provider AS link_label,
 		       to_char(pm.created_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS'),
 		       to_char(pm.updated_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI:SS')
 		FROM payment_methods pm
-		LEFT JOIN bank_accounts ba ON ba.id = pm.bank_account_id
 		LEFT JOIN accounts a ON a.id = pm.account_id
-		LEFT JOIN wallet_addresses wa ON wa.id = pm.wallet_address_id
 		ORDER BY pm.category, pm.priority DESC, pm.name`)
 	if err != nil {
 		return nil, fmt.Errorf("list payment methods: %w", err)
@@ -104,8 +93,8 @@ func (r *Repo) List(ctx context.Context) ([]AdminRow, error) {
 		var aliases, sources, currencies commonpm.TextArray
 		if err := rows.Scan(&row.ID, &row.Name, &row.MergeRegex, &aliases, &sources, &currencies,
 			&row.Category,
-			&row.BankAccountID, &row.AccountID, &row.WalletAddressID,
-			&row.IsActive, &row.IsLinked, &row.Priority, &row.MatchOrder,
+			&row.AccountID,
+			&row.IsActive, &row.IsLinked, &row.Priority, &row.MatchOrder, &row.Popularity,
 			&row.LinkLabel, &row.CreatedAt, &row.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan payment method: %w", err)
 		}
@@ -155,27 +144,12 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 		return ValidationError{err}
 	}
 
-	links := 0
-	for _, l := range []*int64{p.BankAccountID, p.AccountID, p.WalletAddressID} {
-		if l != nil {
-			links++
-		}
-	}
-	if links > 1 {
-		return ValidationError{fmt.Errorf("a payment method can link to at most one payment solution")}
-	}
-	if p.BankAccountID != nil && category != "Bank" {
-		return ValidationError{fmt.Errorf("only Bank methods can link to a bank account")}
-	}
-	if p.AccountID != nil && category != "Fiat Transmitter" {
-		return ValidationError{fmt.Errorf("only Fiat Transmitter methods can link to an account")}
-	}
-	if p.WalletAddressID != nil && category != "Crypto" {
-		return ValidationError{fmt.Errorf("only Crypto methods can link to a wallet address")}
+	if p.AccountID != nil && category != "Bank" && category != "Fiat Transmitter" {
+		return ValidationError{fmt.Errorf("only Bank and Fiat Transmitter methods can link to an account")}
 	}
 	// A method is usable only after a payment account has been assigned. Keep
 	// this derived server-side so clients cannot activate a method directly.
-	isActive := links == 1
+	isActive := p.AccountID != nil
 
 	tx, err := r.DB.BeginTx(ctx, nil)
 	if err != nil {
@@ -187,17 +161,15 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 		UPDATE payment_methods SET
 			merge_regex = $1,
 			category = $2,
-			bank_account_id = $3,
-			account_id = $4,
-			wallet_address_id = $5,
-			is_active = $6,
-			priority = $7,
-			alias_list = $8,
-			sources = $9,
-			currencies = $10,
+			account_id = $3,
+			is_active = $4,
+			priority = $5,
+			alias_list = $6,
+			sources = $7,
+			currencies = $8,
 			updated_at = CURRENT_TIMESTAMP
-		WHERE id = $11`,
-		p.MergeRegex, category, p.BankAccountID, p.AccountID, p.WalletAddressID,
+		WHERE id = $9`,
+		p.MergeRegex, category, p.AccountID,
 		isActive, p.Priority, commonpm.TextArray(aliasList),
 		commonpm.TextArray(sources), commonpm.TextArray(currencies), id)
 	if err != nil {
@@ -222,8 +194,31 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 		return fmt.Errorf("remove payment methods promoted to aliases of %d: %w", id, err)
 	}
 
+	// Payment accounts may only be active while linked to at least one catalog
+	// method. Clear active when this update (or alias cleanup) leaves none.
+	if err := deactivateOrphanedPaymentAccounts(ctx, tx); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit update payment method %d: %w", id, err)
+	}
+	return nil
+}
+
+// deactivateOrphanedPaymentAccounts clears is_active on payment accounts that
+// no longer have any payment_methods.account_id links.
+func deactivateOrphanedPaymentAccounts(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, `
+		UPDATE accounts
+		SET is_active = FALSE, updated_at = CURRENT_TIMESTAMP
+		WHERE category IN ('Fiat Transmitter', 'Bank', 'Wallet addresses')
+		  AND is_active = TRUE
+		  AND NOT EXISTS (
+			SELECT 1 FROM payment_methods WHERE account_id = accounts.id
+		  )`)
+	if err != nil {
+		return fmt.Errorf("deactivate unlinked payment accounts: %w", err)
 	}
 	return nil
 }
@@ -329,6 +324,10 @@ func (r *Repo) DegradeToAlias(ctx context.Context, aliasID, providerID int64) er
 		return ValidationError{fmt.Errorf("payment method %d could not be deleted after alias degradation", aliasID)}
 	}
 
+	if err := deactivateOrphanedPaymentAccounts(ctx, tx); err != nil {
+		return err
+	}
+
 	if err := tx.Commit(); err != nil {
 		return fmt.Errorf("commit alias degradation for payment method %d: %w", aliasID, err)
 	}
@@ -410,7 +409,7 @@ func (r *Repo) PromoteAlias(ctx context.Context, providerID int64, alias string)
 	return nil
 }
 
-// ListWalletAddresses returns wallet_addresses for the Crypto link dropdown.
+// ListWalletAddresses returns wallet_addresses rows for the trading UI.
 func (r *Repo) ListWalletAddresses(ctx context.Context) ([]WalletAddressRow, error) {
 	rows, err := r.DB.QueryContext(ctx, `SELECT id, label, address FROM wallet_addresses ORDER BY id`)
 	if err != nil {

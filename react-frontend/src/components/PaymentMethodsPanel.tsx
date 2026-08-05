@@ -3,9 +3,6 @@ import type {
   PaymentMethodChatTemplate,
   PaymentMethodRow,
   PaymentMethodUpdatePayload,
-  TradingAccount,
-  TradingBankAccount,
-  TradingWalletAddress,
 } from '../types';
 import {
   degradePaymentMethodToAlias,
@@ -13,8 +10,6 @@ import {
   deletePaymentMethodChatTemplate,
   fetchPaymentMethodChatTemplates,
   fetchPaymentMethods,
-  fetchTradingAccounts,
-  fetchTradingWalletAddresses,
   promotePaymentMethodAlias,
   updatePaymentMethod,
   updatePaymentMethodChatTemplate,
@@ -23,17 +18,6 @@ import {
 // The six catalog categories — must match the payment_methods.category CHECK
 // constraint and commons/paymentmethods byte-for-byte.
 const CATEGORIES = ['Cash', 'Bank', 'Fiat Transmitter', 'Gift Cards', 'Crypto', 'Others'] as const;
-
-// Which categories link to which payment solution. Cash, Gift Cards and
-// Others are structurally unlinkable (DB CHECK).
-const LINKABLE: Record<string, 'bank' | 'account' | 'wallet' | null> = {
-  'Bank': 'bank',
-  'Fiat Transmitter': 'account',
-  Crypto: 'wallet',
-  Cash: null,
-  'Gift Cards': null,
-  Others: null,
-};
 
 // Chat-style DEX venues that exchange payment details through trade chat.
 // These values must match payment_method_chat_templates.exchange.
@@ -68,7 +52,6 @@ interface Draft {
   alias_list: string[];
   sources: string[];
   currencies: string[];
-  link_id: number | null;
 }
 
 interface ChatTemplateDraft {
@@ -106,12 +89,14 @@ function draftFromRow(row: PaymentMethodRow): Draft {
     alias_list: row.alias_list ?? [],
     sources: row.sources ?? [],
     currencies: row.currencies ?? [],
-    link_id: row.bank_account_id ?? row.account_id ?? row.wallet_address_id,
   };
 }
 
-function payloadFromDraft(draft: Draft, priority: number): PaymentMethodUpdatePayload {
-  const link = LINKABLE[draft.category] ?? null;
+// Linking is edited on the Accounts Management payment tab. Categorization
+// edits preserve existing FKs, and clear them only when the category changes
+// (a Bank FK is invalid on a Fiat Transmitter row, etc.).
+function payloadFromDraft(draft: Draft, row: PaymentMethodRow): PaymentMethodUpdatePayload {
+  const categoryChanged = draft.category !== row.category;
   return {
     merge_regex: draft.merge_regex.trim() === '' ? null : draft.merge_regex.trim(),
     alias_list: draft.alias_list
@@ -120,10 +105,8 @@ function payloadFromDraft(draft: Draft, priority: number): PaymentMethodUpdatePa
     sources: [...draft.sources],
     currencies: [...draft.currencies],
     category: draft.category,
-    bank_account_id: link === 'bank' ? draft.link_id : null,
-    account_id: link === 'account' ? draft.link_id : null,
-    wallet_address_id: link === 'wallet' ? draft.link_id : null,
-    priority,
+    account_id: categoryChanged ? null : row.account_id,
+    priority: row.priority,
   };
 }
 
@@ -138,7 +121,6 @@ function draftHasChanges(draft: Draft, row: PaymentMethodRow) {
   const initial = draftFromRow(row);
   return draft.category !== initial.category
     || draft.merge_regex !== initial.merge_regex
-    || draft.link_id !== initial.link_id
     || draft.alias_list.length !== initial.alias_list.length
     || draft.alias_list.some((alias, index) => alias !== initial.alias_list[index])
     || !sameStringSet(draft.sources, initial.sources)
@@ -152,18 +134,9 @@ function toggleListValue(list: string[], value: string, checked: boolean): strin
   return list.filter(item => item !== value);
 }
 
-function bankAccountLabel(ba: TradingBankAccount, owner: TradingAccount | undefined) {
-  const iban = ba.details?.iban ?? '';
-  const tail = iban.length > 4 ? ` …${iban.slice(-4)}` : '';
-  const base = ba.label?.trim() || `${ba.owner_name}${tail}`;
-  return owner ? `${base} (${owner.provider})` : base;
-}
-
 export function PaymentMethodsPanel() {
   const [open, setOpen] = useState(false);
   const [rows, setRows] = useState<PaymentMethodRow[]>([]);
-  const [accounts, setAccounts] = useState<TradingAccount[]>([]);
-  const [walletAddresses, setWalletAddresses] = useState<TradingWalletAddress[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set());
@@ -189,19 +162,8 @@ export function PaymentMethodsPanel() {
     setLoading(true);
     setError(null);
     try {
-      const [pm, accts, wallets] = await Promise.allSettled([
-        fetchPaymentMethods(),
-        fetchTradingAccounts(),
-        fetchTradingWalletAddresses(),
-      ]);
-
-      if (pm.status !== 'fulfilled') {
-        throw pm.reason;
-      }
-
-      setRows(pm.value.payment_methods);
-      setAccounts(accts.status === 'fulfilled' ? accts.value : []);
-      setWalletAddresses(wallets.status === 'fulfilled' ? wallets.value.wallet_addresses : []);
+      const pm = await fetchPaymentMethods();
+      setRows(pm.payment_methods);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load payment methods');
     } finally {
@@ -226,20 +188,6 @@ export function PaymentMethodsPanel() {
       setChatTemplateLoading(false);
     }
   }, []);
-
-  const fiatAccounts = useMemo(
-    () => accounts.filter(a => a.category === 'Fiat Transmitter'),
-    [accounts],
-  );
-  const bankAccounts = useMemo(() => {
-    const out: { ba: TradingBankAccount; owner: TradingAccount }[] = [];
-    for (const a of accounts) {
-      for (const ba of a.bank_accounts ?? []) {
-        out.push({ ba, owner: a });
-      }
-    }
-    return out;
-  }, [accounts]);
 
   const filteredRows = useMemo(() => {
     return rows.filter(row => {
@@ -298,7 +246,7 @@ export function PaymentMethodsPanel() {
     setSaving(true);
     setRowError(null);
     try {
-      const res = await updatePaymentMethod(id, payloadFromDraft(draft, row.priority));
+      const res = await updatePaymentMethod(id, payloadFromDraft(draft, row));
       setRows(res.payment_methods);
       setEditingId(null);
       setDraft(null);
@@ -381,7 +329,7 @@ export function PaymentMethodsPanel() {
     setCategoryPickerError(null);
     try {
       const draft = draftFromRow(row);
-      const res = await updatePaymentMethod(row.id, payloadFromDraft({ ...draft, category, link_id: null }, row.priority));
+      const res = await updatePaymentMethod(row.id, payloadFromDraft({ ...draft, category }, row));
       setRows(res.payment_methods);
       setCategoryPickerId(null);
       if (editingId === row.id) {
@@ -444,41 +392,6 @@ export function PaymentMethodsPanel() {
   function removeAlias(alias: string) {
     if (!draft) return;
     setDraft({ ...draft, alias_list: draft.alias_list.filter(candidate => candidate !== alias) });
-  }
-
-  function renderLinkSelect(d: Draft) {
-    const link = LINKABLE[d.category] ?? null;
-    if (link === null) {
-      return <p className="text-[0.68rem] text-muted">{d.category} methods cannot be linked to a payment solution.</p>;
-    }
-    let options: { id: number; label: string }[] = [];
-    if (link === 'bank') {
-      options = bankAccounts.map(({ ba, owner }) => ({ id: ba.id, label: bankAccountLabel(ba, owner) }));
-    } else if (link === 'account') {
-      options = fiatAccounts.map(a => ({ id: a.id, label: a.provider }));
-    } else {
-      options = walletAddresses.map(w => ({ id: w.id, label: `${w.label} (${w.address.slice(0, 12)}…)` }));
-    }
-    const emptyHint =
-      link === 'bank' ? 'no bank accounts — add one under Accounts Management'
-      : link === 'account' ? 'no Fiat Transmitter accounts — add one under Accounts Management'
-      : 'no wallet addresses — create one in the LND wallet section';
-    return (
-      <label className="flex flex-col gap-1 text-[0.68rem] text-muted">
-        Linked payment solution
-        <select
-          className={compactInputCls}
-          value={d.link_id ?? ''}
-          onChange={e => setDraft({ ...d, link_id: e.target.value === '' ? null : Number(e.target.value) })}
-        >
-          <option value="">— not linked —</option>
-          {options.map(o => (
-            <option key={o.id} value={o.id}>{o.label}</option>
-          ))}
-        </select>
-        {options.length === 0 && <span className="text-amber-400">{emptyHint}</span>}
-      </label>
-    );
   }
 
   function renderChatTemplates(id: number) {
@@ -585,8 +498,9 @@ export function PaymentMethodsPanel() {
         <div className="max-h-[50vh] overflow-y-auto flex flex-col gap-2 pr-1">
           {error && <p className="text-xs text-red">{error}</p>}
           <p className="text-[0.68rem] text-muted">
-            Categorize payment methods and link them to your saved payment solutions. Offer-method priority now lives
-            in the Payments tab account list. New methods from offers land in Others as inactive.
+            Categorize payment methods, aliases, sources, and currencies. Link catalog methods to
+            payment solutions under Accounts Management → payment accounts. Offer-method priority
+            lives in the Payments tab account list. New methods from offers land in Others as inactive.
           </p>
           <div className="flex flex-wrap items-end gap-2 rounded-md border border-border bg-bg px-2.5 py-2">
             <label className="flex min-w-[8rem] flex-1 flex-col gap-1 text-[0.68rem] text-muted">
@@ -688,6 +602,11 @@ export function PaymentMethodsPanel() {
                               {row.currencies.join(', ')}
                             </span>
                           )}
+                          {row.popularity > 0 && (
+                            <span className="text-[0.62rem] text-muted" title="New-offer sightings">
+                              pop {row.popularity}
+                            </span>
+                          )}
                         </div>
                         <div className="flex items-center gap-1.5">
                           <button
@@ -777,7 +696,7 @@ export function PaymentMethodsPanel() {
                             <select
                               className={compactInputCls}
                               value={draft.category}
-                              onChange={e => setDraft({ ...draft, category: e.target.value, link_id: null })}
+                              onChange={e => setDraft({ ...draft, category: e.target.value })}
                             >
                               {CATEGORIES.map(c => (
                                 <option key={c} value={c}>{c}</option>
@@ -899,9 +818,13 @@ export function PaymentMethodsPanel() {
                               </p>
                             )}
                           </div>
-                          {renderLinkSelect(draft)}
                           {renderChatTemplates(row.id)}
                           {rowError && <p className="text-[0.68rem] text-red">{rowError}</p>}
+                          {!row.is_linked && (
+                            <p className="text-[0.62rem] text-muted">
+                              Not linked — assign a payment solution under Accounts Management → payment accounts.
+                            </p>
+                          )}
                           <div className="flex items-center gap-1.5">
                             <button
                               type="button"

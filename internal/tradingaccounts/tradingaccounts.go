@@ -968,6 +968,18 @@ func (r Repository) Update(ctx context.Context, id int64, payload AccountPayload
 	leavingPayment := wasPayment && !willBePayment
 	enteringPayment := !wasPayment && willBePayment
 
+	if active && payload.IsActive != nil && *payload.IsActive && willBePayment {
+		var linked bool
+		if err := tx.QueryRowContext(ctx, `
+			SELECT EXISTS(SELECT 1 FROM payment_methods WHERE account_id = $1)
+		`, id).Scan(&linked); err != nil {
+			return err
+		}
+		if !linked {
+			return ValidationError{fmt.Errorf("cannot activate an unlinked payment account")}
+		}
+	}
+
 	var nextPriority any
 	if enteringPayment {
 		var n int
@@ -1571,6 +1583,13 @@ func (r Repository) CreateBankAccount(ctx context.Context, accountID int64, payl
 	if err := validateIBAN(payload.Details); err != nil {
 		return 0, err
 	}
+	currency := strings.ToUpper(strings.TrimSpace(payload.Currency))
+	if currency == "" {
+		return 0, ValidationError{fmt.Errorf("currency is required")}
+	}
+	if err := r.ensureUniqueBankCurrency(ctx, accountID, currency, 0); err != nil {
+		return 0, err
+	}
 	detailsJSON, err := json.Marshal(payload.Details)
 	if err != nil {
 		return 0, err
@@ -1589,7 +1608,7 @@ func (r Repository) CreateBankAccount(ctx context.Context, accountID int64, payl
 		VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), $6, '{}'::jsonb, $7, $8)
 		RETURNING id
 	`, accountID, strings.TrimSpace(payload.Label), ownerName,
-		strings.ToUpper(strings.TrimSpace(payload.Currency)), strings.ToUpper(strings.TrimSpace(payload.Country)),
+		currency, strings.ToUpper(strings.TrimSpace(payload.Country)),
 		strings.TrimSpace(payload.Scheme), encryptedDetails, payload.IsActive).Scan(&id)
 	return id, err
 }
@@ -1601,6 +1620,20 @@ func (r Repository) UpdateBankAccount(ctx context.Context, id int64, payload Ban
 		return err
 	}
 	if err := validateIBAN(details); err != nil {
+		return err
+	}
+	currency := strings.ToUpper(strings.TrimSpace(payload.Currency))
+	if currency == "" {
+		return ValidationError{fmt.Errorf("currency is required")}
+	}
+	var accountID int64
+	if err := r.DB.QueryRowContext(ctx, `SELECT account_id FROM bank_accounts WHERE id = $1`, id).Scan(&accountID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return ValidationError{fmt.Errorf("bank account %d does not exist", id)}
+		}
+		return err
+	}
+	if err := r.ensureUniqueBankCurrency(ctx, accountID, currency, id); err != nil {
 		return err
 	}
 	detailsJSON, err := json.Marshal(details)
@@ -1631,9 +1664,27 @@ func (r Repository) UpdateBankAccount(ctx context.Context, id int64, payload Ban
 		    updated_at = CURRENT_TIMESTAMP
 		WHERE id = $1
 	`, id, strings.TrimSpace(payload.Label), ownerName,
-		strings.ToUpper(strings.TrimSpace(payload.Currency)), strings.ToUpper(strings.TrimSpace(payload.Country)),
+		currency, strings.ToUpper(strings.TrimSpace(payload.Country)),
 		strings.TrimSpace(payload.Scheme), encryptedDetails, payload.IsActive)
 	return err
+}
+
+// ensureUniqueBankCurrency rejects a second bank_accounts row for the same
+// parent account and currency (excluding excludeID on updates).
+func (r Repository) ensureUniqueBankCurrency(ctx context.Context, accountID int64, currency string, excludeID int64) error {
+	var exists bool
+	err := r.DB.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM bank_accounts
+			WHERE account_id = $1 AND upper(currency) = $2 AND id <> $3
+		)`, accountID, currency, excludeID).Scan(&exists)
+	if err != nil {
+		return fmt.Errorf("check bank account currency uniqueness: %w", err)
+	}
+	if exists {
+		return ValidationError{fmt.Errorf("this account already has a bank account for currency %s", currency)}
+	}
+	return nil
 }
 
 // resolveBankDetails merges masked fields from an edit round-trip with the

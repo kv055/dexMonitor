@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"testing"
 
 	_ "modernc.org/sqlite"
@@ -189,3 +190,64 @@ func TestCompactPaymentPrioritiesHealsExistingGaps(t *testing.T) {
 		t.Fatalf("id3 priority = %#v, want 2 after heal", got)
 	}
 }
+
+func TestUpdateRejectsActivatingUnlinkedPaymentAccount(t *testing.T) {
+	db, repo := openPaymentPriorityTestDB(t)
+	ctx := context.Background()
+
+	if _, err := db.Exec(`
+		CREATE TABLE payment_methods (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			account_id INTEGER
+		);
+	`); err != nil {
+		t.Fatal(err)
+	}
+
+	id, err := repo.Create(ctx, AccountPayload{Provider: "Revolut", Category: "Fiat Transmitter", Password: "secret"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Update(ctx, id, AccountPayload{
+		Provider:   "Revolut",
+		Category:   "Fiat Transmitter",
+		Password:   MaskedSecret,
+		Email:      MaskedSecret,
+		Phone:      MaskedSecret,
+		PaymentTag: MaskedSecret,
+		IsActive:   boolPtr(false),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	err = repo.Update(ctx, id, AccountPayload{
+		Provider:   "Revolut",
+		Category:   "Fiat Transmitter",
+		Password:   MaskedSecret,
+		Email:      MaskedSecret,
+		Phone:      MaskedSecret,
+		PaymentTag: MaskedSecret,
+		IsActive:   boolPtr(true),
+	})
+	var verr ValidationError
+	if err == nil || !errors.As(err, &verr) {
+		t.Fatalf("activate unlinked = %v, want ValidationError", err)
+	}
+
+	if _, err := db.Exec(`INSERT INTO payment_methods (account_id) VALUES ($1)`, id); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Update(ctx, id, AccountPayload{
+		Provider:   "Revolut",
+		Category:   "Fiat Transmitter",
+		Password:   MaskedSecret,
+		Email:      MaskedSecret,
+		Phone:      MaskedSecret,
+		PaymentTag: MaskedSecret,
+		IsActive:   boolPtr(true),
+	}); err != nil {
+		t.Fatalf("activate linked: %v", err)
+	}
+}
+
+func boolPtr(v bool) *bool { return &v }

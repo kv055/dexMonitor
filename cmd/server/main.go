@@ -2155,8 +2155,8 @@ func handlePaymentMethodGroups(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(map[string]any{"groups": pmService.GetGroups()})
 }
 
-// handleTradingPaymentMethods serves the payment-method categorization panel's
-// catalog list.
+// handleTradingPaymentMethods serves the payment-methods catalog list used by
+// the categorization panel and Accounts Management payment-account linking.
 func handleTradingPaymentMethods(w http.ResponseWriter, r *http.Request) {
 	rows, err := pmRepo.List(r.Context())
 	if err != nil {
@@ -2321,8 +2321,8 @@ func handleTradingPaymentMethodChatTemplateByExchange(w http.ResponseWriter, r *
 	}
 }
 
-// handleTradingWalletAddresses serves the wallet_addresses list for the
-// panel's Crypto link dropdown (read-only; dexMmController owns writes).
+// handleTradingWalletAddresses serves the wallet_addresses list
+// (read-only; dexMmController owns writes).
 func handleTradingWalletAddresses(w http.ResponseWriter, r *http.Request) {
 	rows, err := pmRepo.ListWalletAddresses(r.Context())
 	if err != nil {

@@ -42,6 +42,7 @@ import {
   updateAccount,
   updateAPIKey,
   updateBankAccount,
+  updatePaymentMethod,
   updatePaymentMethodChatTemplate,
   reorderPaymentAccounts,
   updatePasskey,
@@ -68,6 +69,7 @@ import type {
   BisqPaymentAccountForm,
   PaymentMethodRow,
   PaymentMethodChatTemplate,
+  PaymentMethodUpdatePayload,
 } from '../types';
 import { useFilters } from '../hooks/useFilters';
 import {
@@ -691,12 +693,132 @@ type AccountSectionKey =
   | 'apiKeys'
   | 'bisqPaymentMethods'
   | 'chatPaymentMethods'
+  | 'catalogMethods'
   | 'lndBackup'
   | 'lightningManagement'
   | 'walletAddresses'
   | 'cexHedging'
   | 'cexSpotTrades'
   | 'cexWithdrawalAddresses';
+
+function payloadForCatalogLink(
+  row: PaymentMethodRow,
+  accountId: number | null,
+): PaymentMethodUpdatePayload {
+  return {
+    merge_regex: row.merge_regex,
+    alias_list: row.alias_list ?? [],
+    sources: row.sources ?? [],
+    currencies: row.currencies ?? [],
+    category: row.category,
+    account_id: accountId,
+    priority: row.priority,
+  };
+}
+
+function CatalogMethodLinks({
+  category,
+  targetId,
+  accountIsActive,
+  catalogRows,
+  onCatalogUpdated,
+  onDeactivateAccount,
+  compact = false,
+}: {
+  category: string;
+  targetId: number;
+  accountIsActive: boolean;
+  catalogRows: PaymentMethodRow[];
+  onCatalogUpdated: (rows: PaymentMethodRow[]) => void;
+  onDeactivateAccount: () => Promise<void>;
+  compact?: boolean;
+}) {
+  const eligible = useMemo(
+    () => catalogRows.filter(row => row.category === category).sort((a, b) => a.name.localeCompare(b.name)),
+    [catalogRows, category],
+  );
+  const [busyId, setBusyId] = useState<number | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function setMethodLink(row: PaymentMethodRow, accountId: number | null) {
+    if (busyId != null) return;
+    setBusyId(row.id);
+    setError(null);
+    try {
+      const res = await updatePaymentMethod(row.id, payloadForCatalogLink(row, accountId));
+      onCatalogUpdated(res.payment_methods);
+      const stillLinked = res.payment_methods.some(candidate => candidate.account_id === targetId);
+      if (!stillLinked && accountIsActive) {
+        await onDeactivateAccount();
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to update catalog link');
+    } finally {
+      setBusyId(null);
+    }
+  }
+
+  if (eligible.length === 0) {
+    return (
+      <p className={`text-[0.65rem] text-muted ${compact ? '' : 'px-1'}`}>
+        No {category} catalog methods yet.
+      </p>
+    );
+  }
+
+  return (
+    <div className={`grid gap-1.5 ${compact ? '' : 'px-1'}`}>
+      <p className="text-[0.65rem] text-muted leading-relaxed">
+        Only catalog methods in the {category} category are listed. Each method can be linked to one payment account.
+      </p>
+      <div className="grid gap-1">
+        {eligible.map(row => {
+          const otherId = row.account_id;
+          const linkedElsewhere = otherId != null && otherId !== targetId;
+          const linkedHere = otherId === targetId;
+          const busy = busyId === row.id;
+          return (
+            <div
+              key={row.id}
+              className={`flex items-center gap-2 text-xs ${linkedElsewhere ? 'text-muted' : 'text-text'}`}
+            >
+              <span className="min-w-0 flex-1 truncate">{row.name}</span>
+              {linkedElsewhere ? (
+                <span className="shrink-0 text-[0.62rem] text-muted">linked elsewhere</span>
+              ) : linkedHere ? (
+                <>
+                  {row.is_active ? (
+                    <span className="shrink-0 text-[0.62rem] text-green">linked</span>
+                  ) : (
+                    <span className="shrink-0 text-[0.62rem] text-muted">linked</span>
+                  )}
+                  <button
+                    type="button"
+                    className={compactButtonCls}
+                    disabled={busyId != null}
+                    onClick={() => void setMethodLink(row, null)}
+                  >
+                    {busy ? '…' : 'Unlink'}
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className={compactPrimaryButtonCls}
+                  disabled={busyId != null}
+                  onClick={() => void setMethodLink(row, targetId)}
+                >
+                  {busy ? '…' : 'Link'}
+                </button>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {error ? <p className="text-[0.65rem] text-red">{error}</p> : null}
+    </div>
+  );
+}
 
 type ChatTemplateDraft = {
   template: string;
@@ -1296,13 +1418,19 @@ type AccountSummaryViewModel = {
   createdLabel: string;
   updatedLabel: string;
   capabilityBadges: string[];
+  /** True when at least one payment_methods row links to this account. */
+  catalogLinked: boolean;
 };
 
-function buildAccountSummaryViewModel(account: TradingAccount): AccountSummaryViewModel {
+function buildAccountSummaryViewModel(
+  account: TradingAccount,
+  catalogRows: PaymentMethodRow[] = [],
+): AccountSummaryViewModel {
   const capabilityBadges: string[] = [];
   const localWallet = isLocalWalletProvider(account.provider);
   const dexIdentity = showDexIdentitySections(account.provider);
   const backupItems = Number(Boolean(account.password)) + Number(Boolean(account.seeds[0])) + Number(Boolean(account.lnd_channel_backup));
+  const catalogLinked = catalogRows.some(row => row.account_id === account.id);
 
   if (dexIdentity && account.totp_secrets.length > 0) {
     capabilityBadges.push(`${account.totp_secrets.length} TOTP`);
@@ -1332,6 +1460,7 @@ function buildAccountSummaryViewModel(account: TradingAccount): AccountSummaryVi
     createdLabel: formatAccountHeaderDate(account.created_at),
     updatedLabel: formatAccountHeaderDate(account.updated_at),
     capabilityBadges,
+    catalogLinked,
   };
 }
 
@@ -1477,49 +1606,78 @@ function AccountSummaryCard({
   onDragStart?: (event: DragEvent<HTMLButtonElement>) => void;
   onDrop?: (event: DragEvent<HTMLButtonElement>) => void;
 }) {
+  const isPaymentAccount = isPaymentCategory(account.category || 'Uncategorized');
+  // Unlinked payment accounts cannot be active; show Unlinked where the priority pill sits.
+  const showUnlinkedPill = isPaymentAccount && !viewModel.catalogLinked;
+  const showPriorityPill = paymentPriority != null && !showUnlinkedPill;
+  const canReorder = showPriorityPill;
+  const effectivelyActive = isPaymentAccount
+    ? Boolean(account.is_active && viewModel.catalogLinked)
+    : Boolean(account.is_active);
+
   return (
     <button
       type="button"
       data-testid={`account-summary-card-${account.id}`}
-      draggable={paymentPriority != null}
-      title={paymentPriority != null ? 'Drag to reorder payment account' : undefined}
+      draggable={canReorder}
+      title={canReorder ? 'Drag to reorder payment account' : undefined}
       className={`w-full rounded-lg border p-3 text-left transition ${
-        selected
-          ? 'border-accent bg-accent/5 shadow-sm'
-          : 'border-border bg-bg hover:border-accent/40 hover:bg-surface'
+        !effectivelyActive
+          ? selected
+            ? 'border-border bg-surface text-muted shadow-sm'
+            : 'border-border/70 bg-surface/50 text-muted hover:border-border hover:bg-surface/70'
+          : selected
+            ? 'border-accent bg-accent/5 shadow-sm'
+            : 'border-border bg-bg hover:border-accent/40 hover:bg-surface'
       }`}
       onClick={onSelect}
       onDragStart={onDragStart}
-      onDragOver={paymentPriority != null ? event => event.preventDefault() : undefined}
+      onDragOver={canReorder ? event => event.preventDefault() : undefined}
       onDrop={onDrop}
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <div className="truncate text-sm font-semibold text-text">{viewModel.providerName}</div>
+          <div className={`truncate text-sm font-semibold ${effectivelyActive ? 'text-text' : 'text-muted'}`}>
+            {viewModel.providerName}
+          </div>
           <div className="mt-1 text-[0.68rem] text-muted">{viewModel.category}</div>
           {selected && serviceVersion ? <div className="mt-1 truncate font-mono text-[0.65rem] text-muted">{serviceVersion}</div> : null}
         </div>
         <div className="shrink-0">
           <div className="flex items-center gap-1.5">
-            {paymentPriority != null ? (
+            {showUnlinkedPill ? (
+              <span className="rounded-full border border-red/40 bg-red/10 px-1.5 py-0.5 text-[0.65rem] font-semibold text-red">
+                Unlinked
+              </span>
+            ) : showPriorityPill ? (
               <span className="rounded-full border border-accent/40 bg-accent/10 px-1.5 py-0.5 text-[0.65rem] font-semibold text-accent" aria-label={`Priority ${paymentPriority}`}>
                 {paymentPriority}
               </span>
             ) : null}
-            {!isPaymentCategory(account.category || 'Uncategorized') ? <HealthBadge account={account} compact /> : null}
+            {!isPaymentAccount ? <HealthBadge account={account} compact /> : null}
           </div>
         </div>
       </div>
       <div className="mt-2 flex flex-wrap gap-1">
+        <span
+          className={`rounded-full border px-1.5 py-0.5 text-[0.65rem] font-medium ${
+            effectivelyActive
+              ? 'border-green/40 bg-green/10 text-green'
+              : 'border-border bg-surface text-muted'
+          }`}
+        >
+          {effectivelyActive ? 'Active' : 'Inactive'}
+        </span>
+        {viewModel.catalogLinked ? (
+          <span className="rounded-full border border-green/40 bg-green/10 px-1.5 py-0.5 text-[0.65rem] font-medium text-green">
+            Linked
+          </span>
+        ) : null}
         {viewModel.capabilityBadges.map(badge => (
           <span key={badge} className="rounded-full border border-border px-1.5 py-0.5 text-[0.65rem] text-muted">
             {badge}
           </span>
         ))}
-      </div>
-      <div className="mt-2 flex flex-wrap gap-x-3 gap-y-1 text-[0.65rem] text-muted">
-        <span>Created {viewModel.createdLabel}</span>
-        <span>Updated {viewModel.updatedLabel}</span>
       </div>
     </button>
   );
@@ -1532,6 +1690,7 @@ function AccountsList({
   onReorderPaymentAccounts,
   serviceVersions,
   showCategoryDividers = true,
+  paymentCatalogRows = [],
 }: {
   groups: AccountGroup[];
   selectedAccountId: number | null;
@@ -1539,6 +1698,7 @@ function AccountsList({
   onReorderPaymentAccounts?: (fromAccountId: number, toAccountId: number) => void;
   serviceVersions?: ServiceVersions | null;
   showCategoryDividers?: boolean;
+  paymentCatalogRows?: PaymentMethodRow[];
 }) {
   return (
     <div data-testid="accounts-list" className="grid content-start gap-3">
@@ -1555,7 +1715,7 @@ function AccountsList({
               <AccountSummaryCard
                 key={account.id}
                 account={account}
-                viewModel={buildAccountSummaryViewModel(account)}
+                viewModel={buildAccountSummaryViewModel(account, paymentCatalogRows)}
                 selected={selectedAccountId === account.id}
                 onSelect={() => onSelectAccount(account.id)}
                 serviceVersion={serviceVersionForAccount(account, serviceVersions ?? null)}
@@ -1601,6 +1761,10 @@ function AccountDetailPane({
 }) {
   const isPaymentAccount = isPaymentCategory(account.category || 'Uncategorized');
   const healthMessageHealthy = healthMessage?.healthy === true;
+  // Only linked payment accounts may be active; unlinked ones display as inactive.
+  const canBeActive = !isPaymentAccount || summaryView.catalogLinked;
+  const effectivelyActive = Boolean(account.is_active && canBeActive);
+  const canToggleActive = canBeActive || account.is_active;
 
   return (
     <div data-testid="account-detail-pane" className="rounded-lg border border-border bg-bg p-3">
@@ -1624,15 +1788,20 @@ function AccountDetailPane({
                 <button
                   type="button"
                   role="switch"
-                  aria-checked={account.is_active}
-                  aria-label={`${account.is_active ? 'Deactivate' : 'Activate'} ${summaryView.providerName}`}
-                  title={`${account.is_active ? 'Deactivate' : 'Activate'} ${isCexAccount(account) ? 'trading account' : 'payment method'}`}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full border transition ${account.is_active ? 'border-green/50 bg-green/20' : 'border-border bg-border/50'}`}
+                  aria-checked={effectivelyActive}
+                  aria-label={`${effectivelyActive ? 'Deactivate' : 'Activate'} ${summaryView.providerName}`}
+                  title={
+                    isPaymentAccount && !summaryView.catalogLinked
+                      ? 'Link a catalog method before activating this payment account'
+                      : `${effectivelyActive ? 'Deactivate' : 'Activate'} ${isCexAccount(account) ? 'trading account' : 'payment method'}`
+                  }
+                  disabled={!canToggleActive}
+                  className={`relative inline-flex h-6 w-11 items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${effectivelyActive ? 'border-green/50 bg-green/20' : 'border-border bg-border/50'}`}
                   onClick={onToggleActive}
                 >
-                  <span className={`inline-block h-4 w-4 rounded-full bg-text transition-transform ${account.is_active ? 'translate-x-6' : 'translate-x-1'}`} />
+                  <span className={`inline-block h-4 w-4 rounded-full bg-text transition-transform ${effectivelyActive ? 'translate-x-6' : 'translate-x-1'}`} />
                 </button>
-                <span className={`text-xs ${account.is_active ? 'text-green' : 'text-muted'}`}>{account.is_active ? 'Active' : 'Inactive'}</span>
+                <span className={`text-xs ${effectivelyActive ? 'text-green' : 'text-muted'}`}>{effectivelyActive ? 'Active' : 'Inactive'}</span>
               </>
             ) : null}
             {actions}
@@ -1705,6 +1874,7 @@ export function TradingAccountsPanel() {
   const [bisqPmAccounts, setBisqPmAccounts] = useState<BisqPaymentAccount[]>([]);
   const [bisqSupportedMethods, setBisqSupportedMethods] = useState<BisqPaymentMethod[]>([]);
   const [bisqCatalogRows, setBisqCatalogRows] = useState<PaymentMethodRow[]>([]);
+  const [paymentCatalogRows, setPaymentCatalogRows] = useState<PaymentMethodRow[]>([]);
   const [bisqSelectedMethodID, setBisqSelectedMethodID] = useState('');
   const [bisqAccountForm, setBisqAccountForm] = useState<BisqPaymentAccountForm | null>(null);
   const [bisqFormValues, setBisqFormValues] = useState<Record<string, string>>({});
@@ -1980,12 +2150,28 @@ export function TradingAccountsPanel() {
     [groupedAccounts],
   );
 
+  const applyPaymentCatalogRows = useCallback((rows: PaymentMethodRow[]) => {
+    setPaymentCatalogRows(rows);
+    setBisqCatalogRows(rows);
+    setChatPaymentMethods(rows);
+  }, []);
+
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const next = withInfrastructureAccounts(await fetchTradingAccounts());
+      const [accountsResult, catalogResult] = await Promise.allSettled([
+        fetchTradingAccounts(),
+        fetchPaymentMethods(),
+      ]);
+      if (accountsResult.status !== 'fulfilled') {
+        throw accountsResult.reason;
+      }
+      const next = withInfrastructureAccounts(accountsResult.value);
       setAccounts(next);
+      if (catalogResult.status === 'fulfilled') {
+        applyPaymentCatalogRows(catalogResult.value.payment_methods);
+      }
       setExpandedId(current => current != null && !next.some(account => account.id === current) ? null : current);
       dispatchUi({
         type: 'UPDATE',
@@ -2002,7 +2188,7 @@ export function TradingAccountsPanel() {
     } finally {
       setLoading(false);
     }
-  }, [setExpandedId]);
+  }, [applyPaymentCatalogRows, setExpandedId]);
 
   useEffect(() => {
     void load();
@@ -2310,11 +2496,14 @@ export function TradingAccountsPanel() {
       // prefills and must never prevent manual entry.
       setBisqFormValues({ ...values });
       const catalogRow = catalogRowForBisqMethod(methodID, bisqCatalogRows);
-      const bank = catalogRow?.bank_account_id == null
+      const linkedAccount = catalogRow?.account_id == null
         ? undefined
-        : accounts.flatMap(candidate => candidate.bank_accounts)
-          .find(candidate => candidate.id === catalogRow.bank_account_id);
-      const bankOwner = bank ? accounts.find(candidate => candidate.id === bank.account_id) : undefined;
+        : accounts.find(candidate => candidate.id === catalogRow.account_id);
+      const selectedFiat = filters.fiat.toUpperCase();
+      const bank = linkedAccount?.bank_accounts.find(candidate =>
+        !candidate.currency || candidate.currency.toUpperCase() === selectedFiat,
+      ) ?? linkedAccount?.bank_accounts[0];
+      const bankOwner = linkedAccount;
       let revealedBank = bank;
       if (bankOwner && bank) {
         try {
@@ -2327,10 +2516,6 @@ export function TradingAccountsPanel() {
           // Keep the blank editable form when local secrets cannot be revealed.
         }
       }
-
-      const linkedAccount = catalogRow?.account_id == null
-        ? undefined
-        : accounts.find(candidate => candidate.id === catalogRow.account_id);
       let credentials = linkedAccount ? revealedCredentialsByAccount[linkedAccount.id] : undefined;
       if (linkedAccount && !credentials) {
         try {
@@ -3578,17 +3763,17 @@ export function TradingAccountsPanel() {
 
   const renderSavedPaymentMethodsSection = (account: TradingAccount) => {
     const open = !!openSectionsByAccount[account.id]?.bisqPaymentMethods;
-    const bankAccounts = accounts
-      .flatMap(acc => acc.bank_accounts)
-      .sort((a, b) => a.owner_name.localeCompare(b.owner_name) || a.id - b.id);
     const selectedFiat = filters.fiat.toUpperCase();
     const supportedMethods = bisqSupportedMethods
       .filter((method, index, all) => method.id && all.findIndex(candidate => candidate.id === method.id) === index)
       .filter(method => {
         const row = catalogRowForBisqMethod(method.id, bisqCatalogRows);
-        const bank = row?.bank_account_id == null
+        const linked = row?.account_id == null
           ? undefined
-          : bankAccounts.find(candidate => candidate.id === row.bank_account_id);
+          : accounts.find(candidate => candidate.id === row.account_id);
+        const bank = linked?.bank_accounts.find(candidate =>
+          !candidate.currency || candidate.currency.toUpperCase() === selectedFiat,
+        ) ?? linked?.bank_accounts[0];
         // A linked bank account's currency is reliable metadata. Methods without reliable
         // currency metadata remain visible rather than being guessed away.
         return !bank?.currency || bank.currency.toUpperCase() === selectedFiat;
@@ -3756,6 +3941,46 @@ export function TradingAccountsPanel() {
         {bisqPmLoaded && bisqPmAccounts.length === 0 ? (
           <div className="text-[0.65rem] text-muted px-1">No payment accounts saved in Bisq 1 yet.</div>
         ) : null}
+      </CollapsibleSection>
+    );
+  };
+
+  const renderCatalogMethodsSection = (account: TradingAccount) => {
+    const category = account.category === 'Bank' || account.category === 'Fiat Transmitter'
+      ? account.category
+      : null;
+    if (!category) return null;
+    const linkedCount = paymentCatalogRows.filter(
+      row => row.category === category && row.account_id === account.id,
+    ).length;
+    const open = openSectionsByAccount[account.id]?.catalogMethods ?? true;
+    return (
+      <CollapsibleSection
+        title="Catalog methods"
+        count={linkedCount}
+        open={open}
+        onToggle={() => toggleSection(account.id, 'catalogMethods')}
+      >
+        <CatalogMethodLinks
+          category={category}
+          targetId={account.id}
+          accountIsActive={account.is_active}
+          catalogRows={paymentCatalogRows}
+          onCatalogUpdated={applyPaymentCatalogRows}
+          onDeactivateAccount={async () => {
+            await withReload(async () => {
+              await updateAccount(account.id, {
+                provider: account.provider,
+                category: account.category,
+                email: '***',
+                password: '***',
+                phone: '***',
+                payment_tag: '***',
+                is_active: false,
+              });
+            });
+          }}
+        />
       </CollapsibleSection>
     );
   };
@@ -4223,7 +4448,7 @@ export function TradingAccountsPanel() {
     const cexMainnetDeposit = pickMainnetDepositAddress(cexDepositSlice?.data ?? []);
     const cexDepositField = cexMainnetDeposit ? `cex-deposit:${cexMainnetDeposit.address}` : '';
     const cexBalanceSummary = formatCexBalanceSummary(cexBalancesSlice?.data);
-    const summaryView = buildAccountSummaryViewModel(account);
+    const summaryView = buildAccountSummaryViewModel(account, paymentCatalogRows);
     const revealedCredentials = revealedCredentialsByAccount[account.id];
     const visibleCredentialFields = visibleCredentialFieldsByAccount[account.id] ?? {};
     const credentialsRevealing = revealingCredentialsByAccount[account.id] === true;
@@ -4235,6 +4460,12 @@ export function TradingAccountsPanel() {
         healthMessage={isPaymentCategory(account.category || 'Uncategorized') ? undefined : accountHealthMessage}
         onDismissHealthMessage={isPaymentCategory(account.category || 'Uncategorized') ? undefined : () => dismissHealthMessage(account.id)}
         onToggleActive={() => withReload(async () => {
+          const isPaymentAccount = isPaymentCategory(account.category || 'Uncategorized');
+          const catalogLinked = paymentCatalogRows.some(row => row.account_id === account.id);
+          const nextActive = !account.is_active;
+          if (isPaymentAccount && nextActive && !catalogLinked) {
+            throw new Error('Link a catalog method before activating this payment account');
+          }
           await updateAccount(account.id, {
             provider: account.provider,
             category: account.category,
@@ -4244,7 +4475,7 @@ export function TradingAccountsPanel() {
             password: '***',
             phone: '***',
             payment_tag: '***',
-            is_active: !account.is_active,
+            is_active: nextActive,
           });
         })}
         actions={
@@ -4299,8 +4530,17 @@ export function TradingAccountsPanel() {
             />
           ) : (
             <div className="grid gap-3">
-              {summaryView.capabilityBadges.length > 0 ? (
+              {isPaymentCategory(account.category || 'Uncategorized') || summaryView.catalogLinked || summaryView.capabilityBadges.length > 0 ? (
                 <div className="flex flex-wrap gap-1.5">
+                  {summaryView.catalogLinked ? (
+                    <span className="rounded-full border border-green/40 bg-green/10 px-2 py-0.5 text-[0.68rem] font-medium text-green">
+                      Linked
+                    </span>
+                  ) : isPaymentCategory(account.category || 'Uncategorized') ? (
+                    <span className="rounded-full border border-red/40 bg-red/10 px-2 py-0.5 text-[0.68rem] font-medium text-red">
+                      Unlinked
+                    </span>
+                  ) : null}
                   {summaryView.capabilityBadges.map(badge => (
                     <span key={badge} className="rounded-full border border-border px-2 py-0.5 text-[0.68rem] text-muted">
                       {badge}
@@ -4418,6 +4658,7 @@ export function TradingAccountsPanel() {
         {isCexAccount(account) ? renderCexWithdrawalAddressesSection(account) : null}
         {isCexAccount(account) ? renderCexHedgingSection(account) : null}
         {isCexAccount(account) ? renderCexSpotTradesSection(account) : null}
+        {renderCatalogMethodsSection(account)}
         {renderBankAccountsSection(account)}
         {!isLocalWallet && !isBankAccount(account) && account.category !== 'Fiat Transmitter' ? renderAPIKeysSection(account) : null}
       </AccountDetailPane>
@@ -4559,6 +4800,7 @@ export function TradingAccountsPanel() {
                     onReorderPaymentAccounts={activeTab === 'payment' ? reorderPaymentAccountList : undefined}
                     serviceVersions={serviceVersions}
                     showCategoryDividers={activeTab !== 'payment'}
+                    paymentCatalogRows={paymentCatalogRows}
                   />
                   {selectedAccount ? (
                     <div className="xl:hidden">

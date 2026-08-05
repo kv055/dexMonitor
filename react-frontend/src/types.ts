@@ -661,7 +661,7 @@ export interface PremiumLifetimeModes {
 }
 
 // PaymentMethodRow is one payment_methods catalog row as served by
-// GET /api/trading/payment_methods for the categorization panel.
+// GET /api/trading/payment_methods (categorization panel + payment-account linking).
 export interface PaymentMethodRow {
   id: number;
   name: string;
@@ -670,13 +670,12 @@ export interface PaymentMethodRow {
   sources: string[];
   currencies: string[];
   category: string;
-  bank_account_id: number | null;
   account_id: number | null;
-  wallet_address_id: number | null;
   is_active: boolean;
   is_linked: boolean;
   priority: number;
   match_order: number;
+  popularity: number;
   link_label: string | null;
   created_at: string;
   updated_at: string;
@@ -723,9 +722,7 @@ export interface PaymentMethodUpdatePayload {
   sources: string[];
   currencies: string[];
   category: string;
-  bank_account_id: number | null;
   account_id: number | null;
-  wallet_address_id: number | null;
   priority: number;
 }
 
@@ -740,7 +737,7 @@ export interface PaymentMethodChatTemplate {
   updated_at: string;
 }
 
-// TradingWalletAddress is a wallet_addresses row (Crypto link dropdown).
+// TradingWalletAddress is a wallet_addresses row (CEX/hop deposit addresses).
 export interface TradingWalletAddress {
   id: number;
   label: string;
