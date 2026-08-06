@@ -15,13 +15,18 @@ RUN npm run build
 
 # Stage 2: Build Go binary
 FROM golang:1.25-alpine AS builder
-ARG GOPROXY=https://goproxy.io,https://proxy.golang.org,direct
+# proxy.golang.org is unreachable from Docker on this host; goproxy.io is flaky
+# so retry with a module cache mount instead of falling back to the dead proxy.
+ARG GOPROXY=https://goproxy.io,direct
 ENV GOPROXY=${GOPROXY}
+RUN apk add --no-cache git
 
 WORKDIR /build/dexMonitor
 COPY commons/ ../commons/
 COPY dexMonitor/go.mod dexMonitor/go.sum ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    sh -ec 'for attempt in 1 2 3 4 5; do go mod download && exit 0; echo "go mod download attempt $attempt failed, retrying..."; sleep $((attempt * 10)); done; exit 1'
 COPY dexMonitor/cmd/server/ ./cmd/server/
 COPY dexMonitor/internal/ ./internal/
 RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o server ./cmd/server
