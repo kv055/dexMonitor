@@ -36,6 +36,11 @@ import {
   resolveTradeBreakdown,
   type ManualRouteSelection,
 } from '../utils/manualRoute';
+import {
+  explainMissingTradeRoute,
+  shouldExplainMissingRoute,
+} from '../utils/routeAvailability';
+import { useCEXPermissions } from '../hooks/useCEXPermissions';
 import { CostBreakdownPanel, SizeToggle, type SizeMode } from './OfferBreakdownPanel';
 import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
@@ -1118,6 +1123,7 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
   onManualSelectionChange: (selection: ManualRouteSelection) => void;
 }) {
   const [amountUnit, setAmountUnit] = useState<SizeUnit>('fiat');
+  const { exchanges } = useCEXPermissions();
   const { breakdown: displayedBreakdown, abortCost: displayedAbortCost, effectiveMode } = resolveTradeBreakdown(
     offer,
     scenarioMode,
@@ -1131,6 +1137,9 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
   const displayedNetPremium: number | null = displayedBreakdown
     ? displayedBreakdown.estimated_profit_pct
     : getNetPremiumPercent(offer, effectiveMode);
+  const routeUnavailable = shouldExplainMissingRoute(rawPremium, displayedBreakdown)
+    ? explainMissingTradeRoute(exchanges)
+    : null;
 
   return (
     <div data-testid="live-offer-detail" className="flex flex-col gap-3">
@@ -1151,6 +1160,16 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
             onChange={onTradeModeChange}
             hasHedgeless={!!hedgelessVariant}
           />
+          {routeUnavailable && (
+            <div
+              role="status"
+              data-testid="route-unavailable-notice"
+              className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2"
+            >
+              <p className="text-[0.7rem] font-semibold text-amber-600">{routeUnavailable.title}</p>
+              <p className="mt-0.5 text-[0.65rem] leading-snug text-muted">{routeUnavailable.detail}</p>
+            </div>
+          )}
           <CostBreakdownPanel
             bd={displayedBreakdown}
             abortCost={displayedAbortCost}
@@ -1158,6 +1177,8 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
             netPremiumPct={displayedNetPremium}
             refPrice={getRefPrice(offer)}
             offerPrice={getOfferPrice(offer)}
+            costsUnavailable={!!routeUnavailable}
+            showCapitalAndAbort={!routeUnavailable}
             basicInformation={
               <LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} onAmountUnitChange={setAmountUnit}>
                 {options ? (

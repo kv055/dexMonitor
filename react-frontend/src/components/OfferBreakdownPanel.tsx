@@ -471,7 +471,7 @@ export function CapitalRequiredSection({ capital, flat = false }: { capital: Cap
   );
 }
 
-export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct, refPrice, offerPrice, basicInformation, showCapitalAndAbort = true, wideLayout = false, amountUnit: controlledAmountUnit }: {
+export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct, refPrice, offerPrice, basicInformation, showCapitalAndAbort = true, wideLayout = false, amountUnit: controlledAmountUnit, costsUnavailable = false }: {
   bd: CostBreakdown;
   abortCost: AbortCostBreakdown | null;
   priceDiffPct: number | null;
@@ -488,6 +488,8 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
   wideLayout?: boolean;
   amountUnit?: 'btc' | 'fiat';
   onAmountUnitChange?: (unit: 'btc' | 'fiat') => void;
+  /** When no CEX route could be priced, hide misleading 0% net/profit figures. */
+  costsUnavailable?: boolean;
 }) {
 	const { filters } = useFilters();
 	type BreakdownRow = { label: string; btc: number; pct: number; expandable?: 'network' | 'hedge' };
@@ -535,12 +537,15 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
   };
   const rawMethod = bd.route_method || bd.network_fee_method || '';
   const routeMethod = routeMethodLabels[rawMethod] || rawMethod || '—';
-  const profitPct = bd.estimated_profit_pct ?? netPremiumPct;
-  const profitBtc = bd.estimated_profit_btc ?? (profitPct != null ? bd.btc_amount * (profitPct / 100) : null);
+  const profitPct = costsUnavailable ? null : (bd.estimated_profit_pct ?? netPremiumPct);
+  const profitBtc = costsUnavailable
+    ? null
+    : (bd.estimated_profit_btc ?? (profitPct != null ? bd.btc_amount * (profitPct / 100) : null));
+  const displayNetPremiumPct = costsUnavailable ? null : netPremiumPct;
   const grossPremiumBtc = priceDiffPct != null ? bd.btc_amount * (priceDiffPct / 100) : null;
   const profitCls = profitPct != null && profitPct < 0 ? 'text-red' : profitPct != null && profitPct > 0 ? 'text-green' : 'text-muted';
-  const netCls = netPremiumPct != null
-    ? netPremiumPct <= 0 ? 'text-red' : netPremiumPct <= 2 ? 'text-green' : 'text-accent'
+  const netCls = displayNetPremiumPct != null
+    ? displayNetPremiumPct <= 0 ? 'text-red' : displayNetPremiumPct <= 2 ? 'text-green' : 'text-accent'
     : 'text-muted';
   const fiatValue = (btc: number | null | undefined) => (btc != null && refPrice != null ? btc * refPrice : null);
   const tableValue = (btc: number | null | undefined, pct: number | null | undefined, signed = false) => {
@@ -656,7 +661,9 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
           })}
           <tr className="border-t border-border">
             <td className="pr-3 pt-2.5 pb-1 font-semibold text-text">Total cost</td>
-            <td className="pt-2.5 pb-1 text-right font-semibold text-red mono-nums">{tableValue(bd.total_cost_btc, bd.total_cost_pct)}</td>
+            <td className="pt-2.5 pb-1 text-right font-semibold text-red mono-nums">
+              {costsUnavailable ? '—' : tableValue(bd.total_cost_btc, bd.total_cost_pct)}
+            </td>
           </tr>
           <tr>
             <td className="pr-3 py-1 text-muted">DEX premium</td>
@@ -667,7 +674,7 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
           <tr className="border-t border-border">
             <td className="pr-3 pt-2.5 font-bold text-text text-[0.75rem]">Net premium</td>
             <td className={`pt-2.5 text-right font-bold text-[0.82rem] mono-nums rounded-r ${netCls}`}>
-              {tableValue(profitBtc, netPremiumPct, true)}
+              {costsUnavailable ? '—' : tableValue(profitBtc, displayNetPremiumPct, true)}
             </td>
           </tr>
         </tbody>
@@ -696,7 +703,7 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
             {profitPct != null ? fmtPct(profitPct) : '—'}
           </span>
         </div>
-        {offerPrice != null && (
+        {offerPrice != null && !costsUnavailable && (
           <div className="mt-2 pt-2 border-t border-border/60 text-[0.64rem] text-muted mono-nums flex flex-col gap-0.5">
             <div>
 			  {fmt8(bd.btc_amount)} BTC @ {formatFiat(offerPrice, filters.fiat)} = {formatFiat(bd.btc_amount * offerPrice, filters.fiat)}
