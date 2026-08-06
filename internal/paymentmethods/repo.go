@@ -174,7 +174,7 @@ func (r *Repo) Update(ctx context.Context, id int64, p UpdatePayload) error {
 
 	// An alias is the canonical replacement for a provider name. Remove any
 	// catalog rows whose names are now represented by this provider's aliases,
-	// including linked rows such as the seeded PayPal F&F method.
+	// including linked rows the operator folded into this provider's aliases.
 	if _, err := tx.ExecContext(ctx, `
 		DELETE FROM payment_methods candidate
 		WHERE candidate.id <> $1
@@ -307,13 +307,30 @@ func (r *Repo) DegradeToAlias(ctx context.Context, aliasID, providerID int64) er
 		return fmt.Errorf("add payment method %d as alias to provider %d: %w", aliasID, providerID, err)
 	}
 
-	res, err := tx.ExecContext(ctx, `
-		DELETE FROM payment_methods
-		WHERE id = $1`, aliasID)
-	if err != nil {
+	// Drop the degraded row and any other catalog rows whose names are now
+	// covered by this provider's aliases (including leftover rows from older
+	// edits that only stored the alias text).
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM payment_methods candidate
+		WHERE candidate.id = $1
+		   OR (
+			candidate.id <> $2
+			AND EXISTS (
+				SELECT 1
+				FROM unnest($3::text[]) AS alias_name
+				WHERE lower(trim(replace(candidate.name, '_', ' '))) =
+				      lower(trim(replace(alias_name, '_', ' ')))
+			)
+		   )`, aliasID, providerID, aliases); err != nil {
 		return fmt.Errorf("delete degraded payment method %d: %w", aliasID, err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
+
+	var stillExists bool
+	if err := tx.QueryRowContext(ctx, `
+		SELECT EXISTS(SELECT 1 FROM payment_methods WHERE id = $1)`, aliasID).Scan(&stillExists); err != nil {
+		return fmt.Errorf("verify degraded payment method %d deleted: %w", aliasID, err)
+	}
+	if stillExists {
 		return ValidationError{fmt.Errorf("payment method %d could not be deleted after alias degradation", aliasID)}
 	}
 

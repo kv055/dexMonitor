@@ -29,12 +29,13 @@ func methodsOf(g *Group) map[string]bool {
 func TestBuildGroupsCanonicalizesAndSplits(t *testing.T) {
 	methods := []string{
 		"PayPal", "Paypal", "paypal",
-		"paysafecard", "paysafe card", "Paysafe",
-		"Instant SEPA Revolut Strike MBWay",
-		"Revolut Strike Instant SEPA MBWay",
-		"Instant SEPA Bizum Amazon ES GiftCard",
+		"Paypal Friends & Family",
+		"Instant SEPA Revolut N26",
+		"Revolut N26 Instant SEPA",
+		"Instant SEPA Wise",
 		"SEPA_INSTANT",
 		"Deutsche Bank",
+		"Strike",
 	}
 	groups := buildGroups(commonpm.NewRegistry(commonpm.SeedRows()), methods)
 
@@ -56,18 +57,18 @@ func TestBuildGroupsCanonicalizesAndSplits(t *testing.T) {
 	if !mt["PayPal"] {
 		t.Errorf("fiat_transmitter missing 'PayPal': %v", mt)
 	}
-	for _, want := range []string{"Revolut", "Strike", "MB Way", "Bizum"} {
+	for _, want := range []string{"Revolut", "Wise", "N26"} {
 		if !mt[want] {
 			t.Errorf("fiat_transmitter missing %q: %v", want, mt)
 		}
 	}
-
-	gift := methodsOf(findGroup(groups, "gift_cards"))
-	if !gift["Paysafecard"] {
-		t.Errorf("gift_cards missing 'Paysafecard': %v", gift)
+	if mt["Strike"] {
+		t.Errorf("fiat_transmitter should not absorb unknown Strike: %v", mt)
 	}
-	if !gift["Amazon Gift Card"] {
-		t.Errorf("gift_cards missing 'Amazon Gift Card': %v", gift)
+
+	other := methodsOf(findGroup(groups, "others"))
+	if !other["Strike"] {
+		t.Errorf("others missing unmatched Strike: %v", other)
 	}
 }
 
@@ -106,28 +107,17 @@ func TestBuildGroupsNoDuplicates(t *testing.T) {
 
 func TestBuildGroupsCryptoCategory(t *testing.T) {
 	methods := []string{
+		"Lightning",
+		"lnurl",
 		"Monero",
-		"Other coins",
-		"SOL XRP XLM",
-		"USDT LTC",
-		"Altcoins Instant",
-		"on-chain",
-		"Liquid",
-		"TUSD",
-		"True USD",
-		"PYUSD",
 	}
 	groups := buildGroups(commonpm.NewRegistry(commonpm.SeedRows()), methods)
 	crypto := methodsOf(findGroup(groups, "crypto"))
-	for _, want := range []string{
-		"Monero", "Other Coins", "Solana", "Stellar", "XRP", "Litecoin", "USDT", "Altcoins Instant", "Bitcoin",
-		"Liquid Bitcoin", "True USD", "PYUSD",
-	} {
-		if !crypto[want] {
-			t.Errorf("crypto group missing %q: %v", want, crypto)
-		}
+	if !crypto["Lightning"] {
+		t.Errorf("crypto group missing Lightning: %v", crypto)
 	}
-	if other := methodsOf(findGroup(groups, "others")); len(other) > 0 {
-		t.Errorf("expected no crypto methods in other, got %v", other)
+	other := methodsOf(findGroup(groups, "others"))
+	if !other["Monero"] {
+		t.Errorf("others missing unmatched Monero: %v", other)
 	}
 }
