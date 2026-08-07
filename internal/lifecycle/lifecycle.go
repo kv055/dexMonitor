@@ -10,6 +10,21 @@ import (
 	"commons/tradecost"
 )
 
+func routingProfileForPersist(bd tradecost.CostBreakdown) any {
+	profile := strings.TrimSpace(bd.RoutingProfile)
+	if profile == "" {
+		profile = tradecost.ProfileForMethod(bd.RouteMethod)
+	}
+	if strings.TrimSpace(profile) == "" {
+		return nil
+	}
+	return profile
+}
+
+func routingFeeDetailForPersist(bd tradecost.CostBreakdown) (any, error) {
+	return tradecost.MarshalRoutingFeeDetail(tradecost.BuildRoutingFeeDetail(bd))
+}
+
 // Point represents a point.
 type Point struct {
 	// Time records the relevant time for the point.
@@ -240,7 +255,7 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 	updStmt, err := r.DB.PrepareContext(ctx, rebind(`
 		UPDATE offers SET
 			best_route_cex = ?,
-			best_route_method = ?,
+			routing_profile = ?,
 			hedge_open_fee_btc = ?,
 			hedge_close_fee_btc = ?,
 			hedge_funding_fee_btc = ?,
@@ -250,7 +265,8 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 			hedge_transfer_minutes = ?,
 			cex_taker_fee_btc = ?,
 			cex_withdraw_fee_btc = ?,
-			network_fee_btc = ?,
+			routing_fee_sum = ?,
+			routing_fee_detail = ?,
 			dex_fee_btc = ?,
 			abort_cost_btc = ?,
 			abort_cost_pct = ?
@@ -305,10 +321,16 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 		}
 		inserted++
 		if bd.RouteCEX != "" {
+			detailJSON, err := routingFeeDetailForPersist(bd)
+			if err != nil {
+				updateErrs++
+				fmt.Printf("[Lifecycle] marshal routing_fee_detail error offer_db_id=%d: %v\n", o.ID, err)
+				continue
+			}
 			abort := tradecost.AbortCostFromBreakdown(bd)
 			if _, err := updStmt.ExecContext(ctx,
 				bd.RouteCEX,
-				bd.RouteMethod,
+				routingProfileForPersist(bd),
 				tradecost.Round8(bd.Hedge.OpenFeeBTC),
 				tradecost.Round8(bd.Hedge.CloseFeeBTC),
 				tradecost.Round8(bd.Hedge.FundingFeeBTC),
@@ -318,7 +340,8 @@ func (r Repository) PersistSnapshot(ctx context.Context, offers []Record) error 
 				nullIfZeroInt(bd.Hedge.TransferMinutes),
 				tradecost.Round8(bd.CexTakerFeeBTC),
 				cexWithdrawFee,
-				tradecost.Round8(bd.NetworkFeeBTC),
+				tradecost.RoutingFeeSumBTC(bd),
+				detailJSON,
 				tradecost.Round8(bd.DexFeeBTC),
 				tradecost.Round8(abort.Total.BTC),
 				tradecost.Round4(abort.Total.Pct),

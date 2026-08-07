@@ -142,7 +142,7 @@ SELECT
 	avg_trade_cost_btc,
 	cex_taker_fee_btc,
 	cex_withdraw_fee_btc,
-	network_fee_btc,
+	routing_fee_sum,
 	hedge_open_fee_btc,
 	hedge_close_fee_btc,
 	hedge_funding_fee_btc,
@@ -155,7 +155,8 @@ SELECT
 	avg_estimated_profit_fiat,
 	avg_btc_amount,
 	best_route_cex,
-	best_route_method
+	routing_profile,
+	routing_fee_detail
 FROM offers
 WHERE last_seen >= ?
 ORDER BY last_seen DESC

@@ -3,6 +3,7 @@ import type { CEXPermissionExchange } from '../hooks/useCEXPermissions';
 import type { CostBreakdown } from '../types';
 import {
   explainMissingTradeRoute,
+  hasEffectiveHedgeVenue,
   hasPricedTradeRoute,
   shouldExplainMissingRoute,
 } from './routeAvailability';
@@ -75,7 +76,7 @@ describe('routeAvailability', () => {
   });
 
   it('explains missing hedge when spot remains available', () => {
-    const message = explainMissingTradeRoute([
+    const exchanges = [
       exchange({
         exchange: 'kraken',
         hedge: leg({
@@ -84,9 +85,11 @@ describe('routeAvailability', () => {
           blockers: [{ code: 'missing_permission', message: 'Required API-key permissions were not granted.' }],
         }),
       }),
-    ]);
-    expect(message.title).toMatch(/No hedge venue/i);
-    expect(message.detail).toMatch(/hedge/i);
+    ];
+    expect(hasEffectiveHedgeVenue(exchanges)).toBe(false);
+    const message = explainMissingTradeRoute(exchanges);
+    expect(message.title).toMatch(/Hedgefull routing unavailable/i);
+    expect(message.detail).toMatch(/Hedgeless/i);
   });
 
   it('explains all hedge venues disabled by policy', () => {
@@ -97,6 +100,7 @@ describe('routeAvailability', () => {
         hedge: leg({ policy_enabled: false, effective_enabled: false }),
       }),
     ]);
-    expect(message.title).toMatch(/hedge venues are disabled/i);
+    expect(message.title).toMatch(/Hedgefull routing unavailable/i);
+    expect(message.detail).toMatch(/Hedgeless/i);
   });
 });

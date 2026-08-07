@@ -15,7 +15,7 @@ const testSchema = `
 CREATE TABLE offers (
 	id INTEGER PRIMARY KEY AUTOINCREMENT,
 	best_route_cex TEXT,
-	best_route_method TEXT,
+	routing_profile TEXT,
 	hedge_open_fee_btc REAL,
 	hedge_close_fee_btc REAL,
 	hedge_funding_fee_btc REAL,
@@ -25,7 +25,8 @@ CREATE TABLE offers (
 	hedge_transfer_minutes INTEGER,
 	cex_taker_fee_btc REAL,
 	cex_withdraw_fee_btc REAL,
-	network_fee_btc REAL,
+	routing_fee_sum REAL,
+	routing_fee_detail TEXT,
 	dex_fee_btc REAL,
 	abort_cost_btc REAL,
 	abort_cost_pct REAL
@@ -125,7 +126,7 @@ func TestPersistSnapshotStoresStaticCostsOnOfferOnly(t *testing.T) {
 
 	var taker, withdrawal, network, dexFee, abortBTC, abortPct float64
 	if err := db.QueryRow(`
-		SELECT cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc,
+		SELECT cex_taker_fee_btc, cex_withdraw_fee_btc, routing_fee_sum,
 		       dex_fee_btc, abort_cost_btc, abort_cost_pct
 		FROM offers WHERE id = ?
 	`, offerID).Scan(&taker, &withdrawal, &network, &dexFee, &abortBTC, &abortPct); err != nil {

@@ -26,6 +26,16 @@ function costSupported(exchanges: readonly CEXPermissionExchange[]): CEXPermissi
   return exchanges.filter(exchange => exchange.cost_supported);
 }
 
+/** True when at least one cost-supported CEX has an effectively enabled hedge leg. */
+export function hasEffectiveHedgeVenue(exchanges: readonly CEXPermissionExchange[]): boolean {
+  return costSupported(exchanges).some(exchange => exchange.hedge.effective_enabled);
+}
+
+/** True when at least one cost-supported CEX has an effectively enabled spot leg. */
+export function hasEffectiveSpotVenue(exchanges: readonly CEXPermissionExchange[]): boolean {
+  return costSupported(exchanges).some(exchange => exchange.spot.effective_enabled);
+}
+
 function legLockedByCapability(exchange: CEXPermissionExchange, leg: 'spot' | 'hedge'): boolean {
   const state = exchange[leg];
   return state.supported && !state.available;
@@ -79,23 +89,23 @@ export function explainMissingTradeRoute(
     const allHedgePolicyOff = hedgeSupported.every(exchange => !exchange.policy.hedge_enabled);
     if (allHedgePolicyOff) {
       return {
-        title: 'All hedge venues are disabled',
+        title: 'Hedgefull routing unavailable',
         detail:
-          'Net premium needs a usable hedge (futures) route. Re-enable at least one hedge leg under Settings → CEX Exchanges.',
+          'All hedge (futures) venues are disabled. Switch to Hedgeless trade mode to price this offer with spot only, or re-enable a hedge leg under Settings → CEX Exchanges.',
       };
     }
     const capabilityLocked = hedgeSupported.some(exchange => legLockedByCapability(exchange, 'hedge'));
     if (capabilityLocked) {
       return {
-        title: 'No hedge venue is available for routing',
+        title: 'Hedgefull routing unavailable',
         detail:
-          'Spot venues are available, but hedge (futures) permissions are missing, stale, or incomplete. Update API keys in Trading Accounts or review Settings → CEX Exchanges.',
+          'No hedge (futures) API-key permissions are available. Switch to Hedgeless trade mode to price this offer with spot only, or update keys in Trading Accounts.',
       };
     }
     return {
-      title: 'No hedge venue is available for routing',
+      title: 'Hedgefull routing unavailable',
       detail:
-        'Trade cost routing needs a usable hedge leg. Open Settings → CEX Exchanges to enable a futures venue.',
+        'No hedge (futures) venue is available. Switch to Hedgeless trade mode to price this offer with spot only.',
     };
   }
 

@@ -518,8 +518,8 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
 
   const conversionBTC = bd.conversion?.fee_sum_btc ?? 0;
   const conversionPct = bd.conversion?.fee_sum_pct ?? 0;
-  const routingTotalBTC = bd.network_fee_btc + conversionBTC;
-  const routingTotalPct = bd.network_fee_pct + conversionPct;
+  const routingTotalBTC = bd.routing_fee_sum_btc ?? (bd.network_fee_btc + conversionBTC);
+  const routingTotalPct = bd.routing_fee_sum_pct ?? (bd.network_fee_pct + conversionPct);
 
   const rows: BreakdownRow[] = [
     { label: 'CEX taker fee', btc: bd.cex_taker_fee_btc, pct: bd.cex_taker_fee_pct },
@@ -534,8 +534,11 @@ export function CostBreakdownPanel({ bd, abortCost, priceDiffPct, netPremiumPct,
     onchain_direct: 'direct on-chain',
     onchain_hub: 'on-chain via hub wallet',
     onchain_swap: 'submarine swap',
+    Direct_main2main: 'direct main→main',
+    Hub_main2main: 'hub main→main',
+    Swap_main2lightning: 'swap main→lightning',
   };
-  const rawMethod = bd.route_method || bd.network_fee_method || '';
+  const rawMethod = bd.routing_profile || bd.route_method || bd.network_fee_method || '';
   const routeMethod = routeMethodLabels[rawMethod] || rawMethod || '—';
   const profitPct = costsUnavailable ? null : (bd.estimated_profit_pct ?? netPremiumPct);
   const profitBtc = costsUnavailable

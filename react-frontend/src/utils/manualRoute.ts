@@ -71,6 +71,8 @@ export function applyManualRouteSelection(
   }
   const conversionBTC = next.conversion?.fee_sum_btc ?? 0;
   next.total_cost_btc = next.cex_taker_fee_btc + next.withdrawal_fee_btc + next.network_fee_btc + conversionBTC + next.hedge.fee_sum_btc + next.dex_fee_btc;
+  next.routing_fee_sum_btc = next.network_fee_btc + conversionBTC;
+  next.routing_fee_sum_pct = next.btc_amount > 0 ? (next.routing_fee_sum_btc / next.btc_amount) * 100 : 0;
   next.total_cost_pct = next.btc_amount > 0 ? (next.total_cost_btc / next.btc_amount) * 100 : 0;
   next.estimated_profit_pct = (premiumPct ?? 0) - next.total_cost_pct;
   next.estimated_profit_btc = next.btc_amount * (next.estimated_profit_pct / 100);
@@ -112,6 +114,11 @@ export function deriveHedgelessBreakdown(bd: CostBreakdown): CostBreakdown {
     num_network_txs: bisqExtraLeg ? 2 : bd.num_network_txs,
     network_fee_btc: networkFeeBTC,
     network_fee_pct: bd.btc_amount > 0 ? (networkFeeBTC / bd.btc_amount) * 100 : 0,
+    routing_profile: bisqExtraLeg ? 'Hub_main2main' : (bd.routing_profile || bd.route_method),
+    routing_fee_sum_btc: networkFeeBTC + (bd.conversion?.fee_sum_btc ?? 0),
+    routing_fee_sum_pct: bd.btc_amount > 0
+      ? ((networkFeeBTC + (bd.conversion?.fee_sum_btc ?? 0)) / bd.btc_amount) * 100
+      : 0,
     hedge: EMPTY_HEDGE,
     total_cost_btc: totalCostBTC,
     total_cost_pct: totalCostPct,

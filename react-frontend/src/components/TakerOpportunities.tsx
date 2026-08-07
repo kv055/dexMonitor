@@ -38,6 +38,7 @@ import {
 } from '../utils/manualRoute';
 import {
   explainMissingTradeRoute,
+  hasEffectiveHedgeVenue,
   shouldExplainMissingRoute,
 } from '../utils/routeAvailability';
 import { useCEXPermissions } from '../hooks/useCEXPermissions';
@@ -1049,18 +1050,28 @@ function LiveOfferOverview({ offer, fiat, amountUnit, onAmountUnitChange, childr
   </>);
 }
 
-function TradeModeToggle({ mode, onChange, hasHedgeless }: {
+function TradeModeToggle({ mode, onChange, hasHedgeless, hedgefullAvailable = true }: {
   mode: TradeMode;
   onChange: (mode: TradeMode) => void;
   hasHedgeless: boolean;
+  /** When false, hedgefull stays visible but disabled so operators see why Hedgeless is selected. */
+  hedgefullAvailable?: boolean;
 }) {
   if (!hasHedgeless) return null;
-  const btn = (value: TradeMode, label: string) => (
+  const btn = (value: TradeMode, label: string, disabled = false) => (
     <button
       type="button"
       aria-pressed={mode === value}
+      disabled={disabled}
+      title={disabled ? 'No hedge (futures) venue is available' : undefined}
       onClick={() => onChange(value)}
-      className={`rounded-sm px-2 py-1 text-[0.62rem] transition-colors ${mode === value ? 'bg-accent/15 text-accent font-semibold' : 'text-muted hover:text-text'}`}
+      className={`rounded-sm px-2 py-1 text-[0.62rem] transition-colors ${
+        disabled
+          ? 'cursor-not-allowed text-muted/50'
+          : mode === value
+            ? 'bg-accent/15 text-accent font-semibold'
+            : 'text-muted hover:text-text'
+      }`}
     >
       {label}
     </button>
@@ -1069,7 +1080,7 @@ function TradeModeToggle({ mode, onChange, hasHedgeless }: {
     <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-bg px-2.5 py-2">
       <span className="text-muted shrink-0 text-[0.62rem] uppercase tracking-wide">Trade mode</span>
       <span className="inline-flex items-center rounded border border-border bg-surface/70 p-0.5">
-        {btn('hedgefull_single_collateral', 'Hedgefull')}
+        {btn('hedgefull_single_collateral', 'Hedgefull', !hedgefullAvailable)}
         {btn('hedgeless_double_collateral', 'Hedgeless')}
       </span>
     </div>
@@ -1124,6 +1135,7 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
 }) {
   const [amountUnit, setAmountUnit] = useState<SizeUnit>('fiat');
   const { exchanges } = useCEXPermissions();
+  const hedgeAvailable = hasEffectiveHedgeVenue(exchanges);
   const { breakdown: displayedBreakdown, abortCost: displayedAbortCost, effectiveMode } = resolveTradeBreakdown(
     offer,
     scenarioMode,
@@ -1140,6 +1152,7 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
   const routeUnavailable = shouldExplainMissingRoute(rawPremium, displayedBreakdown)
     ? explainMissingTradeRoute(exchanges)
     : null;
+  const showTradeModeToggle = !!hedgelessVariant || !hedgeAvailable;
 
   return (
     <div data-testid="live-offer-detail" className="flex flex-col gap-3">
@@ -1158,7 +1171,8 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
           <TradeModeToggle
             mode={tradeMode}
             onChange={onTradeModeChange}
-            hasHedgeless={!!hedgelessVariant}
+            hasHedgeless={showTradeModeToggle}
+            hedgefullAvailable={hedgeAvailable}
           />
           {routeUnavailable && (
             <div
@@ -1245,7 +1259,15 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
         case 'first_seen': return parseUtcTimestamp(getFirstSeen(offer))?.getTime() ?? 0;
         case 'age': return age(offer);
         case 'size': return getTradeSizeBtc(offer, scenarioMode) ?? 0;
-        case 'net_profit': return netProfitUnit === 'btc' ? getEstimatedProfitBtc(offer, scenarioMode) ?? 0 : getEstimatedProfitFiat(offer, scenarioMode) ?? 0;
+        case 'net_profit': {
+          const priced = resolveTradeBreakdown(offer, scenarioMode, tradeMode, manualSelection).breakdown;
+          if (priced) {
+            return netProfitUnit === 'btc'
+              ? priced.estimated_profit_btc
+              : (getRefPrice(offer) != null ? priced.estimated_profit_btc * (getRefPrice(offer) as number) : 0);
+          }
+          return netProfitUnit === 'btc' ? getEstimatedProfitBtc(offer, scenarioMode) ?? 0 : getEstimatedProfitFiat(offer, scenarioMode) ?? 0;
+        }
       }
     };
     const sign = sort.dir === 'desc' ? -1 : 1;
@@ -1254,7 +1276,7 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
       const bv = value(b);
       return typeof av === 'string' && typeof bv === 'string' ? sign * av.localeCompare(bv, 'de') : sign * (Number(av) - Number(bv));
     });
-  }, [offers, sort, scenarioMode, netProfitUnit, sortReferenceNow]);
+  }, [offers, sort, scenarioMode, tradeMode, manualSelection, netProfitUnit, sortReferenceNow]);
   const stableKeys = useMemo(() => sortedOffers.map(buildStableOfferKey), [sortedOffers]);
   const expandedIndex = expandedKey == null ? -1 : stableKeys.indexOf(expandedKey);
   const expandedOffer = expandedIndex >= 0 ? sortedOffers[expandedIndex] : null;
@@ -1339,8 +1361,12 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
         const stableKey = stableKeys[index];
         const premium = getRawPremiumPercent(offer);
         const tradeSize = getTradeSizeBtc(offer, scenarioMode);
-        const netProfitBtc = getEstimatedProfitBtc(offer, scenarioMode);
-        const netProfitFiat = getEstimatedProfitFiat(offer, scenarioMode);
+        const priced = resolveTradeBreakdown(offer, scenarioMode, tradeMode, manualSelection).breakdown;
+        const netProfitBtc = priced?.estimated_profit_btc ?? getEstimatedProfitBtc(offer, scenarioMode);
+        const refPrice = getRefPrice(offer);
+        const netProfitFiat = priced != null && refPrice != null
+          ? priced.estimated_profit_btc * refPrice
+          : getEstimatedProfitFiat(offer, scenarioMode);
         return (
           <div key={stableKey} className="border-b border-border last:border-0">
             <div
@@ -1432,7 +1458,12 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const [profitFiatRangeCents, setProfitFiatRangeCents] = useState<[number, number] | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedScenarioMode, setExpandedScenarioMode] = useState<SizeMode>('full');
-  const [liveTradeMode, setLiveTradeMode] = useState<TradeMode>('hedgefull_single_collateral');
+  const { exchanges: cexExchanges } = useCEXPermissions();
+  const hedgeVenueAvailable = hasEffectiveHedgeVenue(cexExchanges);
+  const defaultLiveTradeMode: TradeMode = hedgeVenueAvailable
+    ? 'hedgefull_single_collateral'
+    : 'hedgeless_double_collateral';
+  const [liveTradeMode, setLiveTradeMode] = useState<TradeMode>(defaultLiveTradeMode);
   const [liveScenarioMode, setLiveScenarioMode] = useState<SizeMode>('full');
   const [manualRouteSelection, setManualRouteSelection] = useState<ManualRouteSelection>(DEFAULT_MANUAL_ROUTE_SELECTION);
   const [filtersCollapsed, setFiltersCollapsed] = useState(false);
@@ -1517,10 +1548,16 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   }, [selectedOfferKey, filteredOffers, viewMode]);
 
   useEffect(() => {
-    setLiveTradeMode('hedgefull_single_collateral');
+    if (!hedgeVenueAvailable && liveTradeMode !== 'hedgeless_double_collateral') {
+      setLiveTradeMode('hedgeless_double_collateral');
+    }
+  }, [hedgeVenueAvailable, liveTradeMode]);
+
+  useEffect(() => {
+    setLiveTradeMode(hedgeVenueAvailable ? 'hedgefull_single_collateral' : 'hedgeless_double_collateral');
     setLiveScenarioMode('full');
     setManualRouteSelection(DEFAULT_MANUAL_ROUTE_SELECTION);
-  }, [selectedOfferKey]);
+  }, [selectedOfferKey, hedgeVenueAvailable]);
 
   // The sidebar's Direction/Exchanges controls are shared between Live and Past
   // mode: push the persisted selection into the global FiltersContext once so

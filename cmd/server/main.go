@@ -82,13 +82,13 @@ SELECT
 	payment_methods, offer_id,
 	first_seen, last_seen, is_live, duration, historical_analysis_status,
 	avg_ref_price, avg_premium_pct, avg_trade_cost_pct, avg_trade_cost_btc,
-	avg_hedge_fee_sum_btc, cex_taker_fee_btc, cex_withdraw_fee_btc, network_fee_btc,
+	avg_hedge_fee_sum_btc, cex_taker_fee_btc, cex_withdraw_fee_btc, routing_fee_sum,
 	hedge_open_fee_btc, hedge_close_fee_btc, hedge_funding_fee_btc, hedge_fee_sum_btc,
 	hedge_venue, hedge_instrument, hedge_transfer_minutes, dex_fee_btc,
 	avg_net_premium_pct, avg_estimated_profit_btc, avg_estimated_profit_fiat, avg_btc_amount,
 	avg_min_trade_cost_pct, avg_min_trade_cost_btc, avg_min_net_premium_pct,
 	avg_min_estimated_profit_btc, avg_min_estimated_profit_fiat, avg_min_btc_amount, min_volume_analyzed,
-	price_type, best_route_cex, best_route_method, security_deposit_pct
+	price_type, best_route_cex, routing_profile, routing_fee_detail, security_deposit_pct
 FROM offers
 WHERE last_seen >= ?
 ORDER BY last_seen DESC
@@ -1165,12 +1165,13 @@ type pastOfferHedgeCosts struct {
 }
 
 type pastOfferScenarioCosts struct {
-	CexTaker   pastOfferCostValue  `json:"cex_taker"`
-	Withdrawal pastOfferCostValue  `json:"withdrawal"`
-	DexFee     pastOfferCostValue  `json:"dex_fee"`
-	Network    pastOfferCostValue  `json:"network"`
-	Hedge      pastOfferHedgeCosts `json:"hedge"`
-	Total      pastOfferCostValue  `json:"total"`
+	CexTaker   pastOfferCostValue             `json:"cex_taker"`
+	Withdrawal pastOfferCostValue             `json:"withdrawal"`
+	DexFee     pastOfferCostValue             `json:"dex_fee"`
+	Network    pastOfferCostValue             `json:"network"`
+	Conversion tradecost.ConversionBreakdown  `json:"conversion"`
+	Hedge      pastOfferHedgeCosts            `json:"hedge"`
+	Total      pastOfferCostValue             `json:"total"`
 }
 
 type pastOfferScenario struct {
@@ -1372,7 +1373,7 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 		agg.AvgHedgeNotionalEUR, agg.AvgLeverageUsed, agg.AvgRecommendedCollateral)
 	fullCapital := pastOfferCapitalRequirement(o, fullTradeSizeBTC, avgRefPrice, fullRep.Hedge.Position)
 	if avgNetworkPct == 0 {
-		avgNetworkPct = tradecost.Round4(fullRep.NetworkFeePct)
+		avgNetworkPct = tradecost.Round4(routingFeeSumPct(fullRep))
 	}
 	fullTradeSizeFiat := tradecost.Round4(fullTradeSizeBTC * avgRefPrice)
 
@@ -1382,7 +1383,7 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 		TradeSizeFiat: fullTradeSizeFiat,
 		Route: pastOfferRoute{
 			CEX:        offerString(o, "best_route_cex"),
-			Settlement: offerString(o, "best_route_method"),
+			Settlement: offerRoutingSettlement(o),
 		},
 		Premium: pastOfferPremium{
 			AvgTradeCostPercent: avgTradeCostPct,
@@ -1412,7 +1413,7 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 			cappedAvgProfitBTC := tradecost.Round8(cappedRep.EstimatedProfitBTC)
 			cappedAvgProfitFiat := tradecost.Round4(cappedRep.EstimatedProfitBTC * avgRefPrice)
 			cappedAvgTradeCostBTC := tradecost.Round8(cappedRep.TotalCostBTC)
-			cappedAvgNetworkPct := tradecost.Round4(cappedRep.NetworkFeePct)
+			cappedAvgNetworkPct := tradecost.Round4(routingFeeSumPct(cappedRep))
 			capFiat := tradecost.Round4(maxFiatLimitEUR)
 			cappedScenario = &pastOfferScenario{
 				CapFiat:       &capFiat,
@@ -1422,7 +1423,7 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 				TradeSizeFiat: tradecost.Round4(cappedTradeSizeBTC * avgRefPrice),
 				Route: pastOfferRoute{
 					CEX:        offerString(o, "best_route_cex"),
-					Settlement: offerString(o, "best_route_method"),
+					Settlement: offerRoutingSettlement(o),
 				},
 				Premium: pastOfferPremium{
 					AvgTradeCostPercent: cappedAvgTradeCostPct,
@@ -1464,10 +1465,10 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 			Assumptions:   []string{"minimum executable offer volume", "historical route", "fixed historical transfer/network assumptions"},
 			TradeSizeBTC:  minTradeSizeBTC,
 			TradeSizeFiat: tradecost.Round4(minTradeSizeBTC * avgRefPrice),
-			Route:         pastOfferRoute{CEX: offerString(o, "best_route_cex"), Settlement: offerString(o, "best_route_method")},
+			Route:         pastOfferRoute{CEX: offerString(o, "best_route_cex"), Settlement: offerRoutingSettlement(o)},
 			Premium:       pastOfferPremium{AvgTradeCostPercent: minTradeCostPct, AvgNetPercent: minNetPct},
 			Profit:        pastOfferProfit{AvgBTC: minProfitBTC, AvgFiat: minProfitFiat},
-			Costs:         buildPastScenarioCosts(minRep, tradecost.Round4(minRep.NetworkFeePct), minTradeCostPct, minTradeCostBTC),
+			Costs:         buildPastScenarioCosts(minRep, tradecost.Round4(routingFeeSumPct(minRep)), minTradeCostPct, minTradeCostBTC),
 			Capital:       minCapital,
 		}
 	}
@@ -1741,27 +1742,36 @@ func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct,
 		tradeDir = "ask"
 		numNetworkTxs = 1
 	}
+	profile, method, onchainBTC, sumBTC, detailTxs, conversion, netDetail := pastRoutingFees(o)
+	if detailTxs > 0 {
+		numNetworkTxs = detailTxs
+	}
 	return tradecost.CostBreakdown{
-		BTCAmount:          tradecost.Round8(btcSize),
-		RouteCEX:           routeCEX,
-		RouteDEX:           offerString(o, "exchange"),
-		RouteMethod:        offerString(o, "best_route_method"),
-		TradeDirection:     tradeDir,
-		NumNetworkTxs:      numNetworkTxs,
-		EstimatedProfitPct: tradecost.Round4(netPremiumPct),
-		EstimatedProfitBTC: tradecost.Round8(profitBTC),
-		CexTakerFeeBTC:     tradecost.Round8(offerFloat(o, "cex_taker_fee_btc")),
-		CexTakerFeePct:     pct(offerFloat(o, "cex_taker_fee_btc")),
-		WithdrawalFeeBTC:   tradecost.Round8(withdrawalBTC),
-		WithdrawalFeePct:   pct(withdrawalBTC),
-		NetworkFeeBTC:      tradecost.Round8(offerFloat(o, "network_fee_btc")),
-		NetworkFeePct:      pct(offerFloat(o, "network_fee_btc")),
-		NetworkFeeMethod:   offerString(o, "best_route_method"),
-		Hedge:              hedge,
-		DexFeeBTC:          tradecost.Round8(offerFloat(o, "dex_fee_btc")),
-		DexFeePct:          pct(offerFloat(o, "dex_fee_btc")),
-		TotalCostPct:       tradecost.Round4(tradeCostPct),
-		TotalCostBTC:       tradecost.Round8(tradeCostBTC),
+		BTCAmount:            tradecost.Round8(btcSize),
+		RouteCEX:             routeCEX,
+		RouteDEX:             offerString(o, "exchange"),
+		RouteMethod:          method,
+		RoutingProfile:       profile,
+		TradeDirection:       tradeDir,
+		NumNetworkTxs:        numNetworkTxs,
+		EstimatedProfitPct:   tradecost.Round4(netPremiumPct),
+		EstimatedProfitBTC:   tradecost.Round8(profitBTC),
+		CexTakerFeeBTC:       tradecost.Round8(offerFloat(o, "cex_taker_fee_btc")),
+		CexTakerFeePct:       pct(offerFloat(o, "cex_taker_fee_btc")),
+		WithdrawalFeeBTC:     tradecost.Round8(withdrawalBTC),
+		WithdrawalFeePct:     pct(withdrawalBTC),
+		NetworkFeeBTC:        tradecost.Round8(onchainBTC),
+		NetworkFeePct:        pct(onchainBTC),
+		RoutingFeeSumBTC:     tradecost.Round8(sumBTC),
+		RoutingFeeSumPct:     pct(sumBTC),
+		NetworkFeeMethod:     method,
+		NetworkFeeDetail:     netDetail,
+		Conversion:           conversion,
+		Hedge:                hedge,
+		DexFeeBTC:            tradecost.Round8(offerFloat(o, "dex_fee_btc")),
+		DexFeePct:            pct(offerFloat(o, "dex_fee_btc")),
+		TotalCostPct:         tradecost.Round4(tradeCostPct),
+		TotalCostBTC:         tradecost.Round8(tradeCostBTC),
 	}
 }
 
@@ -1838,7 +1848,6 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 	}
 
 	withdrawalBTC := 0.0
-	networkBTC := offerFloat(o, "network_fee_btc")
 	tradeDir := "ask"
 	numNetworkTxs := 1
 	if !isAsk {
@@ -1846,7 +1855,12 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 		tradeDir = "bid"
 		numNetworkTxs = 2
 	}
-	totalBTC := takerBTC + withdrawalBTC + networkBTC + dexFeeBTC + hedge.FeeSumBTC
+	profile, method, onchainBTC, sumBTC, detailTxs, conversion, netDetail := pastRoutingFees(o)
+	if detailTxs > 0 {
+		numNetworkTxs = detailTxs
+	}
+	// Cap path keeps historical routing fees fixed (not size-proportional).
+	totalBTC := takerBTC + withdrawalBTC + sumBTC + dexFeeBTC + hedge.FeeSumBTC
 	totalPct := pct(totalBTC)
 	netPct := tradecost.Round4(premiumPct - totalPct)
 	profitBTC := tradecost.Round8(cappedBTCSize * netPct / 100)
@@ -1854,7 +1868,8 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 		BTCAmount:          tradecost.Round8(cappedBTCSize),
 		RouteCEX:           routeCEX,
 		RouteDEX:           dexExchange,
-		RouteMethod:        offerString(o, "best_route_method"),
+		RouteMethod:        method,
+		RoutingProfile:     profile,
 		TradeDirection:     tradeDir,
 		NumNetworkTxs:      numNetworkTxs,
 		EstimatedProfitPct: netPct,
@@ -1863,9 +1878,13 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 		CexTakerFeeBTC:     tradecost.Round8(takerBTC),
 		WithdrawalFeePct:   pct(withdrawalBTC),
 		WithdrawalFeeBTC:   tradecost.Round8(withdrawalBTC),
-		NetworkFeePct:      pct(networkBTC),
-		NetworkFeeBTC:      tradecost.Round8(networkBTC),
-		NetworkFeeMethod:   offerString(o, "best_route_method"),
+		NetworkFeePct:      pct(onchainBTC),
+		NetworkFeeBTC:      tradecost.Round8(onchainBTC),
+		RoutingFeeSumPct:   pct(sumBTC),
+		RoutingFeeSumBTC:   tradecost.Round8(sumBTC),
+		NetworkFeeMethod:   method,
+		NetworkFeeDetail:   netDetail,
+		Conversion:         conversion,
 		Hedge:              hedge,
 		DexFeePct:          pct(dexFeeBTC),
 		DexFeeBTC:          tradecost.Round8(dexFeeBTC),
@@ -1893,6 +1912,7 @@ func buildPastScenarioCosts(rep tradecost.CostBreakdown, avgNetworkPct, avgTrade
 			BTC:    rep.NetworkFeeBTC,
 			AvgPct: avgNetworkPct,
 		},
+		Conversion: rep.Conversion,
 		Hedge: pastOfferHedgeCosts{
 			OpenFeePct:      rep.Hedge.OpenFeePct,
 			OpenFeeBTC:      rep.Hedge.OpenFeeBTC,
@@ -3329,7 +3349,8 @@ func buildOfferTablePayload(o map[string]any) map[string]any {
 		"avg_hedge_fee_sum_btc":         offerFloatPtr(o, "avg_hedge_fee_sum_btc"),
 		"cex_taker_fee_btc":             offerFloatPtr(o, "cex_taker_fee_btc"),
 		"cex_withdraw_fee_btc":          offerFloatPtr(o, "cex_withdraw_fee_btc"),
-		"network_fee_btc":               offerFloatPtr(o, "network_fee_btc"),
+		"routing_fee_sum":               offerFloatPtr(o, "routing_fee_sum"),
+		"routing_fee_detail":            offerRawJSON(o, "routing_fee_detail"),
 		"hedge_open_fee_btc":            offerFloatPtr(o, "hedge_open_fee_btc"),
 		"hedge_close_fee_btc":           offerFloatPtr(o, "hedge_close_fee_btc"),
 		"hedge_funding_fee_btc":         offerFloatPtr(o, "hedge_funding_fee_btc"),
@@ -3351,7 +3372,7 @@ func buildOfferTablePayload(o map[string]any) map[string]any {
 		"min_volume_analyzed":           offerBool(o, "min_volume_analyzed"),
 		"price_type":                    nilIfEmpty(offerString(o, "price_type")),
 		"best_route_cex":                nilIfEmpty(offerString(o, "best_route_cex")),
-		"best_route_method":             nilIfEmpty(offerString(o, "best_route_method")),
+		"routing_profile":               nilIfEmpty(offerString(o, "routing_profile")),
 		"seller_rating_score":           offerFloatPtrPreserveZero(o, "seller_rating_score"),
 		"seller_rating_confidence":      nilIfEmpty(offerString(o, "seller_rating_confidence")),
 		"seller_rating_raw":             offerRawJSON(o, "seller_rating_raw"),
@@ -3664,6 +3685,73 @@ func offerHasExcludedPaymentMethod(o map[string]any, excluded []string) bool {
 		}
 	}
 	return false
+}
+
+func offerRoutingSettlement(o map[string]any) string {
+	return offerString(o, "routing_profile")
+}
+
+func offerJSONBytes(o map[string]any, key string) []byte {
+	switch v := o[key].(type) {
+	case nil:
+		return nil
+	case []byte:
+		return v
+	case string:
+		return []byte(v)
+	case json.RawMessage:
+		return []byte(v)
+	default:
+		b, err := json.Marshal(v)
+		if err != nil {
+			return nil
+		}
+		return b
+	}
+}
+
+// pastRoutingFees reads persisted routing_fee_sum / routing_fee_detail.
+// Without detail (historical rows), the sum is treated as on-chain-only.
+func pastRoutingFees(o map[string]any) (profile, method string, onchainBTC, sumBTC float64, numTxs int, conversion tradecost.ConversionBreakdown, detail *tradecost.BTCNetworkFeeDetail) {
+	profile = offerString(o, "routing_profile")
+	method = tradecost.MethodForProfile(profile)
+	sumBTC = offerFloat(o, "routing_fee_sum")
+	onchainBTC = sumBTC
+	d, err := tradecost.UnmarshalRoutingFeeDetail(offerJSONBytes(o, "routing_fee_detail"))
+	if err != nil {
+		return profile, method, onchainBTC, sumBTC, numTxs, conversion, detail
+	}
+	hasDetail := d.NumOnchainTxs > 0 || d.OnchainFeeBTC > 0 || d.ConversionFeeBTC > 0 || len(d.Legs) > 0 || d.Conversion != nil || d.Onchain != nil
+	if !hasDetail {
+		return profile, method, onchainBTC, sumBTC, numTxs, conversion, detail
+	}
+	onchainBTC = d.OnchainFeeBTC
+	numTxs = d.NumOnchainTxs
+	detail = d.Onchain
+	if d.Conversion != nil {
+		conversion = *d.Conversion
+	}
+	if sumBTC == 0 {
+		sumBTC = tradecost.Round8(d.OnchainFeeBTC + d.ConversionFeeBTC)
+	}
+	return profile, method, onchainBTC, sumBTC, numTxs, conversion, detail
+}
+
+func routingFeeSumBTC(rep tradecost.CostBreakdown) float64 {
+	if rep.RoutingFeeSumBTC > 0 {
+		return rep.RoutingFeeSumBTC
+	}
+	return tradecost.RoutingFeeSumBTC(rep)
+}
+
+func routingFeeSumPct(rep tradecost.CostBreakdown) float64 {
+	if rep.RoutingFeeSumPct > 0 {
+		return rep.RoutingFeeSumPct
+	}
+	if rep.BTCAmount <= 0 {
+		return 0
+	}
+	return tradecost.Round4(routingFeeSumBTC(rep) / rep.BTCAmount * 100)
 }
 
 func offerString(o map[string]any, key string) string {

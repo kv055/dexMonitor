@@ -55,6 +55,9 @@ export interface CostBreakdown {
   withdrawal_fee_btc: number;
   network_fee_pct: number;
   network_fee_btc: number;
+  routing_fee_sum_pct?: number;
+  routing_fee_sum_btc?: number;
+  routing_profile?: string; // Direct_main2main | Hub_main2main | Swap_main2lightning
   network_fee_method: string;    // "onchain_direct" | "onchain_hub" | "onchain_swap"
   network_fee_tier: string;
   network_fee_confidence: number;
