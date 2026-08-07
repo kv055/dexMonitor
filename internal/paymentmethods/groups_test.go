@@ -58,13 +58,19 @@ func TestBuildGroupsCanonicalizesAndSplits(t *testing.T) {
 	if !mt["PayPal"] {
 		t.Errorf("fiat_transmitter missing 'PayPal': %v", mt)
 	}
-	for _, want := range []string{"Revolut", "Wise", "N26", "Strike"} {
+	for _, want := range []string{"Revolut", "Wise", "N26"} {
 		if !mt[want] {
 			t.Errorf("fiat_transmitter missing %q: %v", want, mt)
 		}
 	}
+	if mt["Strike"] {
+		t.Errorf("fiat_transmitter should not absorb unseeded Strike: %v", mt)
+	}
 
 	other := methodsOf(findGroup(groups, "others"))
+	if !other["Strike"] {
+		t.Errorf("others missing unmatched Strike: %v", other)
+	}
 	if !other["Totally Unknown Rail"] {
 		t.Errorf("others missing unmatched rail: %v", other)
 	}
@@ -115,10 +121,13 @@ func TestBuildGroupsCryptoCategory(t *testing.T) {
 	if !crypto["Lightning"] {
 		t.Errorf("crypto group missing Lightning: %v", crypto)
 	}
-	if !crypto["Monero"] {
-		t.Errorf("crypto group missing Monero: %v", crypto)
+	if crypto["Monero"] {
+		t.Errorf("crypto group should not absorb unseeded Monero: %v", crypto)
 	}
 	other := methodsOf(findGroup(groups, "others"))
+	if !other["Monero"] {
+		t.Errorf("others missing unmatched Monero: %v", other)
+	}
 	if !other["Totally Unknown Coin"] {
 		t.Errorf("others missing unmatched coin: %v", other)
 	}
