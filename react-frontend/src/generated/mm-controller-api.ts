@@ -95,6 +95,7 @@ export interface components {
             market_side?: "bid" | "ask";
             trade_mode?: components["schemas"]["TradeMode"];
             hedge_venue?: string;
+            /** @description Position BTC plus security deposit. Required for hedgeless on-chain liquidity-pool checks and for Swap_main2lightning Lightning liquidity. */
             required_btc_liquidity?: number;
         };
         PreTradeCheckResult: {
