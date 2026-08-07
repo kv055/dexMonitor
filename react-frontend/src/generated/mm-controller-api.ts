@@ -91,6 +91,8 @@ export interface components {
             payment_method?: string;
             payment_methods?: string[];
             dex?: string;
+            /** @enum {string} */
+            market_side?: "bid" | "ask";
             trade_mode?: components["schemas"]["TradeMode"];
             hedge_venue?: string;
             required_btc_liquidity?: number;

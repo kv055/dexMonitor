@@ -81,23 +81,31 @@ function cexStatusLabel(status: string | undefined): string {
 
 /** Logical display groups for pre-trade checks — order matches backend Run(). */
 const PRE_TRADE_CHECK_GROUPS: { id: string; title: string; names: string[] }[] = [
-  { id: 'capital', title: 'Capital', names: ['capital', 'liquidity_pool'] },
+  { id: 'capital', title: 'Capital', names: ['capital', 'liquidity_pool', 'lightning_liquidity'] },
   { id: 'exchange', title: 'Exchange', names: ['permissions', 'lnd_wallet', 'whitelist'] },
   { id: 'payment', title: 'Payment', names: ['payment_setup', 'message_template'] },
   { id: 'ops', title: 'Operations', names: ['communication_gateway', 'fiat_controller_service', 'fiat_controller'] },
 ];
 
-function groupPreTradeChecks(checks: PreTradeCheckResult[], isHedgeless: boolean) {
+function groupPreTradeChecks(checks: PreTradeCheckResult[], isHedgeless: boolean, isLightningRoute: boolean) {
   const byName = new Map(checks.map(c => [c.name, c]));
 
-  // Hedgeless must always surface both capital legs — even if an older backend
-  // omitted the BTC pool check — so the operator never sees a single combined row.
-  if (isHedgeless && !byName.has('liquidity_pool')) {
+  // Hedgeless on-chain routes must surface the BTC pool check. Swap routes use
+  // lightning_liquidity instead (position + deposit against channel capacity).
+  if (isHedgeless && !isLightningRoute && !byName.has('liquidity_pool')) {
     byName.set('liquidity_pool', {
       name: 'liquidity_pool',
       label: 'BTC liquidity pool',
       passed: false,
       message: 'BTC liquidity pool check was not returned by the server; rebuild mm-controller.',
+    });
+  }
+  if (isLightningRoute && !byName.has('lightning_liquidity')) {
+    byName.set('lightning_liquidity', {
+      name: 'lightning_liquidity',
+      label: 'LND Lightning liquidity',
+      passed: false,
+      message: 'Lightning liquidity check was not returned by the server; rebuild mm-controller.',
     });
   }
   if (isHedgeless && byName.has('capital') && byName.get('capital')!.label === 'Sufficient capital') {
@@ -108,7 +116,11 @@ function groupPreTradeChecks(checks: PreTradeCheckResult[], isHedgeless: boolean
     .map(g => ({
       ...g,
       checks: g.names
-        .filter(n => !(n === 'liquidity_pool' && !isHedgeless && !byName.has(n)))
+        .filter(n => {
+          if (n === 'liquidity_pool' && (!isHedgeless || isLightningRoute) && !byName.has(n)) return false;
+          if (n === 'lightning_liquidity' && !isLightningRoute && !byName.has(n)) return false;
+          return true;
+        })
         .map(n => byName.get(n))
         .filter((c): c is PreTradeCheckResult => !!c),
     }))
@@ -126,18 +138,21 @@ function PreTradeChecksPanel({
   report,
   error,
   isHedgeless = false,
+  isLightningRoute = false,
 }: {
   phase: ChecksState['phase'];
   report?: PreTradeCheckReport;
   error?: string;
   isHedgeless?: boolean;
+  isLightningRoute?: boolean;
 }) {
-  const groups = report ? groupPreTradeChecks(report.checks, isHedgeless) : [];
+  const groups = report ? groupPreTradeChecks(report.checks, isHedgeless, isLightningRoute) : [];
   const flatChecks = groups.flatMap(g => g.checks);
   const passedCount = flatChecks.filter(c => c.passed).length;
   const totalCount = flatChecks.length;
   const allPassed = totalCount > 0 && passedCount === totalCount && !!report?.ok
-    && !(isHedgeless && !report.checks.some(c => c.name === 'liquidity_pool'));
+    && !(isHedgeless && !isLightningRoute && !report.checks.some(c => c.name === 'liquidity_pool'))
+    && !(isLightningRoute && !report.checks.some(c => c.name === 'lightning_liquidity'));
 
   return (
     <div className="rounded-lg border border-border bg-bg overflow-hidden min-h-0 flex flex-col">
@@ -347,6 +362,11 @@ export function TradeTracingPanel({
   const refPrice = getRefPrice(offer);
   const fiatCurrency = offer.pricing?.fiat_currency ?? 'EUR';
   const isAsk = offer.direction === 'sell';
+  const marketSide: 'bid' | 'ask' = isAsk ? 'ask' : 'bid';
+  const isLightningRoute = bd?.routing_profile === 'Swap_main2lightning'
+    || bd?.route_method === 'onchain_swap'
+    || offer.analysis?.full_volume?.route?.settlement === 'Swap_main2lightning'
+    || offer.exchange?.toLowerCase() === 'robosats';
   const routeCex = bd?.route_cex ?? '';
   const hedgeVenue = bd?.hedge?.venue ?? '';
   const cexLabel = routeCex ? routeCex.charAt(0).toUpperCase() + routeCex.slice(1) : '—';
@@ -493,7 +513,8 @@ export function TradeTracingPanel({
     && submit.phase !== 'submitting';
   const checksPassed = checks.phase === 'done'
     && !!checks.report?.ok
-    && (!isHedgeless || !!checks.report.checks.some(c => c.name === 'liquidity_pool' && c.passed));
+    && (!isHedgeless || isLightningRoute || !!checks.report.checks.some(c => c.name === 'liquidity_pool' && c.passed))
+    && (!isLightningRoute || !!checks.report.checks.some(c => c.name === 'lightning_liquidity' && c.passed));
 
   // Opening the confirm dialog immediately kicks off the (read-only) pre-trade checks
   // so their results are shown in the same card before the operator confirms.
@@ -520,10 +541,11 @@ export function TradeTracingPanel({
     try {
       // Hedgeless: exchange fiat check uses fiat collateral only; BTC pool is a
       // separate LND wallet check. Hedgefull: total_fiat covers spot+hedge+deposit.
+      // Swap_main2lightning also needs position+deposit for LN channel capacity.
       const requiredCapital = isHedgeless
         ? (tradeCapital?.fiat_collateral ?? tradeCapital?.spot_notional ?? 0)
         : (tradeCapital?.total_fiat ?? 0);
-      const requiredBtcLiquidity = isHedgeless
+      const requiredBtcLiquidity = (isHedgeless || isLightningRoute)
         ? (tradeCapital?.btc_liquidity_btc
           ?? ((tradeCapital?.btc_amount ?? 0) + (tradeCapital?.security_deposit_btc ?? 0)))
         : undefined;
@@ -534,6 +556,7 @@ export function TradeTracingPanel({
         payment_method: resolvedPaymentMethod || undefined,
         payment_methods: offer.payment_methods ?? undefined,
         dex: offer.exchange,
+        market_side: marketSide,
         trade_mode: tradeMode,
         hedge_venue: isHedgeless ? undefined : hedgeVenue || undefined,
         required_btc_liquidity: requiredBtcLiquidity,
@@ -558,6 +581,8 @@ export function TradeTracingPanel({
     hedgeVenue,
     tradeMode,
     isHedgeless,
+    isLightningRoute,
+    marketSide,
     tradeCapital?.total_fiat,
     tradeCapital?.fiat_collateral,
     tradeCapital?.spot_notional,
@@ -606,8 +631,8 @@ export function TradeTracingPanel({
         required_capital: isHedgeless
           ? (tradeCapital?.fiat_collateral ?? tradeCapital?.spot_notional ?? 0)
           : (tradeCapital?.total_fiat ?? 0),
-        required_btc_liquidity: isHedgeless ? requiredBtcLiquidity : undefined,
-        security_deposit_btc: isHedgeless ? tradeCapital?.security_deposit_btc : undefined,
+        required_btc_liquidity: (isHedgeless || isLightningRoute) ? requiredBtcLiquidity : undefined,
+        security_deposit_btc: (isHedgeless || isLightningRoute) ? tradeCapital?.security_deposit_btc : undefined,
         hedge_venue: isHedgeless ? undefined : hedgeVenue,
         hedge_side: isHedgeless ? undefined : side,
         hedge_notional_btc: isHedgeless ? undefined : btcNotional,
@@ -958,6 +983,7 @@ export function TradeTracingPanel({
                 report={checks.report}
                 error={checks.error}
                 isHedgeless={isHedgeless}
+                isLightningRoute={isLightningRoute}
               />
             </div>
 
