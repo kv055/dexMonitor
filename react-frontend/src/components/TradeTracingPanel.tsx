@@ -90,9 +90,9 @@ const PRE_TRADE_CHECK_GROUPS: { id: string; title: string; names: string[] }[] =
 function groupPreTradeChecks(checks: PreTradeCheckResult[], isHedgeless: boolean, isLightningRoute: boolean) {
   const byName = new Map(checks.map(c => [c.name, c]));
 
-  // Hedgeless on-chain routes must surface the BTC pool check. Swap routes use
-  // lightning_liquidity instead (position + deposit against channel capacity).
-  if (isHedgeless && !isLightningRoute && !byName.has('liquidity_pool')) {
+  // Hedgeless must surface the BTC pool check for every DEX (including Swap).
+  // Swap routes additionally require lightning_liquidity (channel capacity).
+  if (isHedgeless && !byName.has('liquidity_pool')) {
     byName.set('liquidity_pool', {
       name: 'liquidity_pool',
       label: 'BTC liquidity pool',
@@ -117,7 +117,7 @@ function groupPreTradeChecks(checks: PreTradeCheckResult[], isHedgeless: boolean
       ...g,
       checks: g.names
         .filter(n => {
-          if (n === 'liquidity_pool' && (!isHedgeless || isLightningRoute) && !byName.has(n)) return false;
+          if (n === 'liquidity_pool' && !isHedgeless && !byName.has(n)) return false;
           if (n === 'lightning_liquidity' && !isLightningRoute && !byName.has(n)) return false;
           return true;
         })
@@ -151,7 +151,7 @@ function PreTradeChecksPanel({
   const passedCount = flatChecks.filter(c => c.passed).length;
   const totalCount = flatChecks.length;
   const allPassed = totalCount > 0 && passedCount === totalCount && !!report?.ok
-    && !(isHedgeless && !isLightningRoute && !report.checks.some(c => c.name === 'liquidity_pool'))
+    && !(isHedgeless && !report.checks.some(c => c.name === 'liquidity_pool'))
     && !(isLightningRoute && !report.checks.some(c => c.name === 'lightning_liquidity'));
 
   return (
@@ -513,7 +513,7 @@ export function TradeTracingPanel({
     && submit.phase !== 'submitting';
   const checksPassed = checks.phase === 'done'
     && !!checks.report?.ok
-    && (!isHedgeless || isLightningRoute || !!checks.report.checks.some(c => c.name === 'liquidity_pool' && c.passed))
+    && (!isHedgeless || !!checks.report.checks.some(c => c.name === 'liquidity_pool' && c.passed))
     && (!isLightningRoute || !!checks.report.checks.some(c => c.name === 'lightning_liquidity' && c.passed));
 
   // Opening the confirm dialog immediately kicks off the (read-only) pre-trade checks
