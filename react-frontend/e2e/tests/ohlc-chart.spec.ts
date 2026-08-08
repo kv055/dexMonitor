@@ -1,17 +1,36 @@
 import { test, expect, gotoAndWaitForData, waitForChartReady, ohlcPanel, controlPanel, openControlPanel } from '../fixtures/base-fixture';
 import {
+  MOCK_OHLC_DATA,
   MOCK_OHLC_DATA_1D_WINDOW,
   MOCK_OHLC_DATA_4H_WINDOW,
 } from '../fixtures/mock-data';
 import type { Page } from '@playwright/test';
 
 test.describe('OHLCChart', () => {
-  function waitForOhlcRequest(page: Page, minHours: number, intervalMin: number) {
+  function isOhlcExtend(url: URL, minHours: number, intervalMin: number): boolean {
+    return url.pathname === '/api/ohlc' &&
+      Number(url.searchParams.get('hours')) >= minHours &&
+      Number(url.searchParams.get('interval_min')) === intervalMin;
+  }
+
+  function waitForOhlcExtend(page: Page, minHours: number, intervalMin: number) {
     return page.waitForRequest(req => {
-      const url = new URL(req.url());
-      return url.pathname === '/api/ohlc' &&
-        Number(url.searchParams.get('hours')) >= minHours &&
-        Number(url.searchParams.get('interval_min')) === intervalMin;
+      try {
+        return isOhlcExtend(new URL(req.url()), minHours, intervalMin);
+      } catch {
+        return false;
+      }
+    }, { timeout: 15_000 });
+  }
+
+  async function stubOhlcExtend(page: Page, minHours: number, intervalMin: number, body: unknown) {
+    // Regex route registered last so it wins over the fixture's **/api/ohlc* mock.
+    await page.route(/\/api\/ohlc(\?|$)/, async route => {
+      const url = new URL(route.request().url());
+      if (isOhlcExtend(url, minHours, intervalMin)) {
+        return route.fulfill({ json: body });
+      }
+      return route.fulfill({ json: MOCK_OHLC_DATA });
     });
   }
 
@@ -42,26 +61,24 @@ test.describe('OHLCChart', () => {
 
   test('expands loaded OHLC window when switching to 4h candles', async ({ page }) => {
     await gotoAndWaitForData(page);
-    await page.route('**/api/ohlc*hours=*', route =>
-      route.fulfill({ json: MOCK_OHLC_DATA_4H_WINDOW }),
-    );
-
-    const ohlcRequest = waitForOhlcRequest(page, 480, 240);
     const panel = ohlcPanel(page);
-    await panel.getByRole('button', { name: '4h' }).click();
+    await waitForChartReady(panel, page);
+    await stubOhlcExtend(page, 480, 240, MOCK_OHLC_DATA_4H_WINDOW);
+
+    const ohlcRequest = waitForOhlcExtend(page, 480, 240);
+    await panel.getByRole('button', { name: '4h', exact: true }).click();
     await ohlcRequest;
     await waitForChartReady(panel, page);
   });
 
   test('expands loaded OHLC window when switching to 1d candles', async ({ page }) => {
     await gotoAndWaitForData(page);
-    await page.route('**/api/ohlc*hours=*', route =>
-      route.fulfill({ json: MOCK_OHLC_DATA_1D_WINDOW }),
-    );
-
-    const ohlcRequest = waitForOhlcRequest(page, 2880, 1440);
     const panel = ohlcPanel(page);
-    await panel.getByRole('button', { name: '1d' }).click();
+    await waitForChartReady(panel, page);
+    await stubOhlcExtend(page, 2880, 1440, MOCK_OHLC_DATA_1D_WINDOW);
+
+    const ohlcRequest = waitForOhlcExtend(page, 2880, 1440);
+    await panel.getByRole('button', { name: '1d', exact: true }).click();
     await ohlcRequest;
     await waitForChartReady(panel, page);
   });
