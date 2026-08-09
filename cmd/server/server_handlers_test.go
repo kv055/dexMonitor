@@ -1779,9 +1779,9 @@ func TestPaymentMethodChatTemplatesCRUD(t *testing.T) {
 	// PUT creates a template.
 	putRec := httptest.NewRecorder()
 	putBody := `{"template":"Please send {{amount}} {{currency}} via Revolut.","is_active":true}`
-	putReq := httptest.NewRequest(http.MethodPut, "/api/trading/payment_methods/1001/chat_templates/RoboSats", strings.NewReader(putBody))
+	putReq := httptest.NewRequest(http.MethodPut, "/api/trading/payment_methods/1001/chat_templates/robosats", strings.NewReader(putBody))
 	putReq.SetPathValue("id", "1001")
-	putReq.SetPathValue("exchange", "RoboSats")
+	putReq.SetPathValue("exchange", "robosats")
 	handleTradingPaymentMethodChatTemplateByExchange(putRec, putReq)
 	if putRec.Code != http.StatusOK {
 		t.Fatalf("PUT chat_template status = %d, body = %s", putRec.Code, putRec.Body.String())
@@ -1795,7 +1795,7 @@ func TestPaymentMethodChatTemplatesCRUD(t *testing.T) {
 	if len(putResp.ChatTemplates) != 1 {
 		t.Fatalf("expected 1 chat template after PUT, got %d", len(putResp.ChatTemplates))
 	}
-	if putResp.ChatTemplates[0].Exchange != "RoboSats" || putResp.ChatTemplates[0].Template != "Please send {{amount}} {{currency}} via Revolut." {
+	if putResp.ChatTemplates[0].Exchange != "robosats" || putResp.ChatTemplates[0].Template != "Please send {{amount}} {{currency}} via Revolut." {
 		t.Fatalf("unexpected chat template: %+v", putResp.ChatTemplates[0])
 	}
 
@@ -1811,9 +1811,9 @@ func TestPaymentMethodChatTemplatesCRUD(t *testing.T) {
 
 	// DELETE removes the template.
 	delRec := httptest.NewRecorder()
-	delReq := httptest.NewRequest(http.MethodDelete, "/api/trading/payment_methods/1001/chat_templates/RoboSats", nil)
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/trading/payment_methods/1001/chat_templates/robosats", nil)
 	delReq.SetPathValue("id", "1001")
-	delReq.SetPathValue("exchange", "RoboSats")
+	delReq.SetPathValue("exchange", "robosats")
 	handleTradingPaymentMethodChatTemplateByExchange(delRec, delReq)
 	if delRec.Code != http.StatusOK {
 		t.Fatalf("DELETE chat_template status = %d", delRec.Code)

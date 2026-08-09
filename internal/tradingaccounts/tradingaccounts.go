@@ -663,32 +663,7 @@ func (r Repository) EncryptLegacySecrets(ctx context.Context) error {
 		}
 		rows.Close()
 	}
-	rows, err := r.DB.QueryContext(ctx, `SELECT id, details FROM bank_accounts WHERE details_encrypted IS NULL AND details <> '{}'::jsonb`)
-	if err != nil {
-		return fmt.Errorf("scan legacy bank details: %w", err)
-	}
-	for rows.Next() {
-		var id int64
-		var details []byte
-		if err := rows.Scan(&id, &details); err != nil {
-			rows.Close()
-			return err
-		}
-		encrypted, err := encryptSecret(string(details))
-		if err != nil {
-			rows.Close()
-			return err
-		}
-		if _, err := r.DB.ExecContext(ctx, `UPDATE bank_accounts SET details = '{}'::jsonb, details_encrypted = $1 WHERE id = $2`, encrypted, id); err != nil {
-			rows.Close()
-			return err
-		}
-	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	return rows.Close()
+	return nil
 }
 
 // List returns recent records, capped by the requested limit.
@@ -1604,8 +1579,8 @@ func (r Repository) CreateBankAccount(ctx context.Context, accountID int64, payl
 	}
 	var id int64
 	err = r.DB.QueryRowContext(ctx, `
-		INSERT INTO bank_accounts (account_id, label, owner_name, currency, country, scheme, details, details_encrypted, is_active)
-		VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), $6, '{}'::jsonb, $7, $8)
+		INSERT INTO bank_accounts (account_id, label, owner_name, currency, country, scheme, details_encrypted, is_active)
+		VALUES ($1, NULLIF($2, ''), $3, $4, NULLIF($5, ''), $6, $7, $8)
 		RETURNING id
 	`, accountID, strings.TrimSpace(payload.Label), ownerName,
 		currency, strings.ToUpper(strings.TrimSpace(payload.Country)),
@@ -1658,7 +1633,6 @@ func (r Repository) UpdateBankAccount(ctx context.Context, id int64, payload Ban
 		    currency   = $4,
 		    country    = NULLIF($5, ''),
 		    scheme     = $6,
-		    details    = '{}'::jsonb,
 		    details_encrypted = $7,
 		    is_active  = $8,
 		    updated_at = CURRENT_TIMESTAMP
@@ -1676,7 +1650,7 @@ func (r Repository) ensureUniqueBankCurrency(ctx context.Context, accountID int6
 	err := r.DB.QueryRowContext(ctx, `
 		SELECT EXISTS (
 			SELECT 1 FROM bank_accounts
-			WHERE account_id = $1 AND upper(currency) = $2 AND id <> $3
+			WHERE account_id = $1 AND upper(currency::text) = $2 AND id <> $3
 		)`, accountID, currency, excludeID).Scan(&exists)
 	if err != nil {
 		return fmt.Errorf("check bank account currency uniqueness: %w", err)
@@ -1700,11 +1674,11 @@ func (r Repository) resolveBankDetails(ctx context.Context, id int64, incoming m
 	if !needsStoredValue {
 		return incoming, nil
 	}
-	var legacy, encrypted []byte
-	if err := r.DB.QueryRowContext(ctx, `SELECT details, details_encrypted FROM bank_accounts WHERE id = $1`, id).Scan(&legacy, &encrypted); err != nil {
+	var encrypted []byte
+	if err := r.DB.QueryRowContext(ctx, `SELECT details_encrypted FROM bank_accounts WHERE id = $1`, id).Scan(&encrypted); err != nil {
 		return nil, err
 	}
-	stored, err := decryptBankDetails(encrypted, legacy)
+	stored, err := decryptBankDetails(encrypted)
 	if err != nil {
 		return nil, err
 	}
@@ -1729,14 +1703,14 @@ func (r Repository) DeleteBankAccount(ctx context.Context, id int64) error {
 func (r Repository) GetBankAccount(ctx context.Context, id int64) (*BankAccount, error) {
 	var item BankAccount
 	var label, country sql.NullString
-	var detailsJSON, encryptedDetails []byte
+	var encryptedDetails []byte
 	var createdAt, updatedAt time.Time
 	err := r.DB.QueryRowContext(ctx, `
-		SELECT id, account_id, label, owner_name, currency, country, scheme, details, details_encrypted, is_active, created_at, updated_at
+		SELECT id, account_id, label, owner_name, currency, country, scheme, details_encrypted, is_active, created_at, updated_at
 		FROM bank_accounts
 		WHERE id = $1
 	`, id).Scan(&item.ID, &item.AccountID, &label, &item.OwnerName, &item.Currency, &country,
-		&item.Scheme, &detailsJSON, &encryptedDetails, &item.IsActive, &createdAt, &updatedAt)
+		&item.Scheme, &encryptedDetails, &item.IsActive, &createdAt, &updatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -1746,7 +1720,7 @@ func (r Repository) GetBankAccount(ctx context.Context, id int64) (*BankAccount,
 	if err != nil {
 		return nil, fmt.Errorf("decrypt bank account owner name: %w", err)
 	}
-	item.Details, err = decryptBankDetails(encryptedDetails, detailsJSON)
+	item.Details, err = decryptBankDetails(encryptedDetails)
 	if err != nil {
 		return nil, err
 	}
@@ -1757,7 +1731,7 @@ func (r Repository) GetBankAccount(ctx context.Context, id int64) (*BankAccount,
 
 func (r Repository) appendBankAccounts(ctx context.Context, accs []Account, accountIndex map[int64]int, accountIDs []int64) error {
 	rows, err := r.DB.QueryContext(ctx, `
-		SELECT id, account_id, label, owner_name, currency, country, scheme, details, details_encrypted, is_active, created_at, updated_at
+		SELECT id, account_id, label, owner_name, currency, country, scheme, details_encrypted, is_active, created_at, updated_at
 		FROM bank_accounts
 		WHERE account_id = ANY($1)
 		ORDER BY created_at ASC, id ASC
@@ -1769,10 +1743,10 @@ func (r Repository) appendBankAccounts(ctx context.Context, accs []Account, acco
 	for rows.Next() {
 		var item BankAccount
 		var label, country sql.NullString
-		var detailsJSON, encryptedDetails []byte
+		var encryptedDetails []byte
 		var createdAt, updatedAt time.Time
 		if err := rows.Scan(&item.ID, &item.AccountID, &label, &item.OwnerName, &item.Currency, &country,
-			&item.Scheme, &detailsJSON, &encryptedDetails, &item.IsActive, &createdAt, &updatedAt); err != nil {
+			&item.Scheme, &encryptedDetails, &item.IsActive, &createdAt, &updatedAt); err != nil {
 			return err
 		}
 		item.Label = nullStringPtr(label)
@@ -1781,7 +1755,7 @@ func (r Repository) appendBankAccounts(ctx context.Context, accs []Account, acco
 		if err != nil {
 			return fmt.Errorf("decrypt bank account owner name: %w", err)
 		}
-		item.Details, err = decryptBankDetails(encryptedDetails, detailsJSON)
+		item.Details, err = decryptBankDetails(encryptedDetails)
 		if err != nil {
 			return err
 		}
@@ -1805,15 +1779,12 @@ func decodeBankDetailsJSON(raw []byte) map[string]string {
 	return m
 }
 
-func decryptBankDetails(encrypted, legacy []byte) (map[string]string, error) {
-	if len(encrypted) > 0 {
-		plain, err := decryptSecret(string(encrypted))
-		if err != nil {
-			return nil, fmt.Errorf("decrypt bank account details: %w", err)
-		}
-		return decodeBankDetailsJSON([]byte(plain)), nil
+func decryptBankDetails(encrypted []byte) (map[string]string, error) {
+	plain, err := decryptSecret(string(encrypted))
+	if err != nil {
+		return nil, fmt.Errorf("decrypt bank account details: %w", err)
 	}
-	return decodeBankDetailsJSON(legacy), nil
+	return decodeBankDetailsJSON([]byte(plain)), nil
 }
 
 // decodePermissionsJSON reads the stored permissions JSONB into the tri-state

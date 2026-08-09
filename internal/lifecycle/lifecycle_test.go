@@ -44,9 +44,9 @@ CREATE TABLE order_lifecycle (
 	net_premium_pct REAL,
 	net_premium_btc REAL,
 	btc_amount REAL,
-	hedge_notional_eur REAL,
+	hedge_notional_fiat REAL,
 	leverage_used REAL,
-	recommended_collateral_eur REAL
+	recommended_collateral_fiat REAL
 );
 `
 
@@ -221,7 +221,7 @@ func TestLoadPastAggregatesComputesHedgePositionAverages(t *testing.T) {
 	} {
 		if _, err := db.Exec(
 			`INSERT INTO order_lifecycle
-				(offer_db_id, price, ref_price, premium_pct, hedge_notional_eur, leverage_used, recommended_collateral_eur)
+				(offer_db_id, price, ref_price, premium_pct, hedge_notional_fiat, leverage_used, recommended_collateral_fiat)
 			 VALUES (?, 105, 100, 5, ?, ?, ?)`,
 			offerID, row.notional, row.leverage, row.collateral,
 		); err != nil {

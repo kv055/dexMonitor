@@ -457,8 +457,8 @@ type ChatTemplatePayload struct {
 
 // allowedChatExchanges lists the DEX venues that use the chat-based payment-details flow.
 var allowedChatExchanges = map[string]bool{
-	"RoboSats": true,
-	"Bisq2":    true,
+	"robosats": true,
+	"bisq2":    true,
 }
 
 // ListChatTemplates returns all chat templates for a single payment method.
@@ -489,7 +489,7 @@ func (r *Repo) ListChatTemplates(ctx context.Context, paymentMethodID int64) ([]
 func (r *Repo) UpsertChatTemplate(ctx context.Context, paymentMethodID int64, exchange string, p ChatTemplatePayload) error {
 	exchange = strings.TrimSpace(exchange)
 	if !allowedChatExchanges[exchange] {
-		return ValidationError{fmt.Errorf("exchange %q is not a chat-venue DEX (allowed: RoboSats, Bisq2)", exchange)}
+		return ValidationError{fmt.Errorf("exchange %q is not a chat-venue DEX (allowed: robosats, bisq2)", exchange)}
 	}
 	template := strings.TrimSpace(p.Template)
 	if template == "" {
@@ -521,7 +521,7 @@ func (r *Repo) UpsertChatTemplate(ctx context.Context, paymentMethodID int64, ex
 func (r *Repo) DeleteChatTemplate(ctx context.Context, paymentMethodID int64, exchange string) error {
 	exchange = strings.TrimSpace(exchange)
 	if !allowedChatExchanges[exchange] {
-		return ValidationError{fmt.Errorf("exchange %q is not a chat-venue DEX (allowed: RoboSats, Bisq2)", exchange)}
+		return ValidationError{fmt.Errorf("exchange %q is not a chat-venue DEX (allowed: robosats, bisq2)", exchange)}
 	}
 	res, err := r.DB.ExecContext(ctx, `
 		DELETE FROM payment_method_chat_templates

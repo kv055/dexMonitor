@@ -115,7 +115,6 @@ func TestUpdateKeepsMaskedSecrets(t *testing.T) {
 			currency TEXT NOT NULL,
 			country TEXT,
 			scheme TEXT NOT NULL,
-			details JSON NOT NULL,
 			details_encrypted TEXT,
 			is_active BOOLEAN NOT NULL DEFAULT TRUE,
 			created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -214,8 +213,8 @@ func TestUpdateKeepsMaskedSecrets(t *testing.T) {
 		t.Fatal(err)
 	}
 	result, err := db.Exec(`
-		INSERT INTO bank_accounts (account_id, owner_name, currency, country, scheme, details, details_encrypted, is_active)
-		VALUES (?, ?, 'EUR', 'DE', 'iban_bic', '{}', ?, TRUE)
+		INSERT INTO bank_accounts (account_id, owner_name, currency, country, scheme, details_encrypted, is_active)
+		VALUES (?, ?, 'EUR', 'DE', 'iban_bic', ?, TRUE)
 	`, id, encryptedOwner, encryptedDetails)
 	if err != nil {
 		t.Fatal(err)

@@ -164,9 +164,9 @@ func (r Repository) LoadPastAggregates(ctx context.Context, ids []int64) (map[in
 		        AVG(net_premium_btc) AS avg_profit_btc,
 		        AVG(net_premium_btc * ref_price) AS avg_profit_fiat,
 		        AVG(btc_amount) AS avg_btc_amount,
-		        AVG(hedge_notional_eur) AS avg_hedge_notional_eur,
+		        AVG(hedge_notional_fiat) AS avg_hedge_notional_fiat,
 		        AVG(leverage_used) AS avg_leverage_used,
-		        AVG(recommended_collateral_eur) AS avg_recommended_collateral
+		        AVG(recommended_collateral_fiat) AS avg_recommended_collateral
 		   FROM order_lifecycle
 		  WHERE offer_db_id IN (%s)
 		  GROUP BY offer_db_id`,
