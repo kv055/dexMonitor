@@ -350,6 +350,27 @@ paths:
           description: Successful response
         default:
           description: Error response
+  '/api/mm-controller/transactional-liquidity':
+    get:
+      operationId: getApiMmControllerTransactionalLiquidity
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/transactional-liquidity'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    put:
+      operationId: putApiMmControllerTransactionalLiquidity
+      tags: ['mm-controller']
+      summary: 'PUT /api/mm-controller/transactional-liquidity'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
   '/api/mm-controller/transactions':
     get:
       operationId: getApiMmControllerTransactions
