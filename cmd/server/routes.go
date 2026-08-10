@@ -62,6 +62,8 @@ func registerMMControllerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("DELETE /api/mm-controller/bisq/payment-accounts/{id}", handleMmControllerBisqPaymentAccountByID)
 	mux.HandleFunc("GET /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
 	mux.HandleFunc("PUT /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
+	mux.HandleFunc("GET /api/mm-controller/transactional-liquidity", handleMmControllerTransactionalLiquidity)
+	mux.HandleFunc("PUT /api/mm-controller/transactional-liquidity", handleMmControllerTransactionalLiquidity)
 	mux.HandleFunc("POST /api/mm-controller/telegram/pair", handleMmControllerTelegramPair)
 	mux.HandleFunc("POST /api/mm-controller/telegram/set-webhook", handleMmControllerTelegramSetWebhook)
 	mux.HandleFunc("POST /api/mm-controller/telegram/test", handleMmControllerTelegramTest)

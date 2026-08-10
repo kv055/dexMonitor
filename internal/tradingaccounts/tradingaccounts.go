@@ -671,7 +671,7 @@ func (r Repository) List(ctx context.Context) ([]Account, error) {
 	rows, err := r.DB.QueryContext(ctx, `
 		SELECT id,
 		       provider,
-		       COALESCE(category, 'Uncategorized') AS category,
+		       COALESCE(category::text, 'Uncategorized') AS category,
 		       COALESCE(payment_priority, 0) AS payment_priority,
 		       is_active,
 		       email,

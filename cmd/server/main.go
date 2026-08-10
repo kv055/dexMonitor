@@ -1165,13 +1165,13 @@ type pastOfferHedgeCosts struct {
 }
 
 type pastOfferScenarioCosts struct {
-	CexTaker   pastOfferCostValue             `json:"cex_taker"`
-	Withdrawal pastOfferCostValue             `json:"withdrawal"`
-	DexFee     pastOfferCostValue             `json:"dex_fee"`
-	Network    pastOfferCostValue             `json:"network"`
-	Conversion tradecost.ConversionBreakdown  `json:"conversion"`
-	Hedge      pastOfferHedgeCosts            `json:"hedge"`
-	Total      pastOfferCostValue             `json:"total"`
+	CexTaker   pastOfferCostValue            `json:"cex_taker"`
+	Withdrawal pastOfferCostValue            `json:"withdrawal"`
+	DexFee     pastOfferCostValue            `json:"dex_fee"`
+	Network    pastOfferCostValue            `json:"network"`
+	Conversion tradecost.ConversionBreakdown `json:"conversion"`
+	Hedge      pastOfferHedgeCosts           `json:"hedge"`
+	Total      pastOfferCostValue            `json:"total"`
 }
 
 type pastOfferScenario struct {
@@ -1747,31 +1747,31 @@ func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct,
 		numNetworkTxs = detailTxs
 	}
 	return tradecost.CostBreakdown{
-		BTCAmount:            tradecost.Round8(btcSize),
-		RouteCEX:             routeCEX,
-		RouteDEX:             offerString(o, "exchange"),
-		RouteMethod:          method,
-		RoutingProfile:       profile,
-		TradeDirection:       tradeDir,
-		NumNetworkTxs:        numNetworkTxs,
-		EstimatedProfitPct:   tradecost.Round4(netPremiumPct),
-		EstimatedProfitBTC:   tradecost.Round8(profitBTC),
-		CexTakerFeeBTC:       tradecost.Round8(offerFloat(o, "cex_taker_fee_btc")),
-		CexTakerFeePct:       pct(offerFloat(o, "cex_taker_fee_btc")),
-		WithdrawalFeeBTC:     tradecost.Round8(withdrawalBTC),
-		WithdrawalFeePct:     pct(withdrawalBTC),
-		NetworkFeeBTC:        tradecost.Round8(onchainBTC),
-		NetworkFeePct:        pct(onchainBTC),
-		RoutingFeeSumBTC:     tradecost.Round8(sumBTC),
-		RoutingFeeSumPct:     pct(sumBTC),
-		NetworkFeeMethod:     method,
-		NetworkFeeDetail:     netDetail,
-		Conversion:           conversion,
-		Hedge:                hedge,
-		DexFeeBTC:            tradecost.Round8(offerFloat(o, "dex_fee_btc")),
-		DexFeePct:            pct(offerFloat(o, "dex_fee_btc")),
-		TotalCostPct:         tradecost.Round4(tradeCostPct),
-		TotalCostBTC:         tradecost.Round8(tradeCostBTC),
+		BTCAmount:          tradecost.Round8(btcSize),
+		RouteCEX:           routeCEX,
+		RouteDEX:           offerString(o, "exchange"),
+		RouteMethod:        method,
+		RoutingProfile:     profile,
+		TradeDirection:     tradeDir,
+		NumNetworkTxs:      numNetworkTxs,
+		EstimatedProfitPct: tradecost.Round4(netPremiumPct),
+		EstimatedProfitBTC: tradecost.Round8(profitBTC),
+		CexTakerFeeBTC:     tradecost.Round8(offerFloat(o, "cex_taker_fee_btc")),
+		CexTakerFeePct:     pct(offerFloat(o, "cex_taker_fee_btc")),
+		WithdrawalFeeBTC:   tradecost.Round8(withdrawalBTC),
+		WithdrawalFeePct:   pct(withdrawalBTC),
+		NetworkFeeBTC:      tradecost.Round8(onchainBTC),
+		NetworkFeePct:      pct(onchainBTC),
+		RoutingFeeSumBTC:   tradecost.Round8(sumBTC),
+		RoutingFeeSumPct:   pct(sumBTC),
+		NetworkFeeMethod:   method,
+		NetworkFeeDetail:   netDetail,
+		Conversion:         conversion,
+		Hedge:              hedge,
+		DexFeeBTC:          tradecost.Round8(offerFloat(o, "dex_fee_btc")),
+		DexFeePct:          pct(offerFloat(o, "dex_fee_btc")),
+		TotalCostPct:       tradecost.Round4(tradeCostPct),
+		TotalCostBTC:       tradecost.Round8(tradeCostBTC),
 	}
 }
 
@@ -2463,6 +2463,10 @@ func handleMmControllerBisqPaymentAccountByID(w http.ResponseWriter, r *http.Req
 // configuration (token, chat_id, per-service webhook URLs) to dexMmController.
 func handleMmControllerTelegramConfig(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/telegram/config")
+}
+
+func handleMmControllerTransactionalLiquidity(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/transactional-liquidity")
 }
 
 // handleMmControllerTelegramSetWebhook proxies POST set-webhook?service=dexmm|pushpush.

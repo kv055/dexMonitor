@@ -73,6 +73,17 @@ export interface CostBreakdown {
 
 export type TradeMode = 'hedgefull_single_collateral' | 'hedgeless_double_collateral';
 
+export type TransactionalLiquidityAmountSource = 'custom' | 'capped_volume';
+
+export interface TransactionalLiquiditySettings {
+  fiat_currency: string;
+  amount_source: TransactionalLiquidityAmountSource;
+  custom_amount: number | null;
+  trade_mode: TradeMode;
+  config_version: number;
+  updated_at: string;
+}
+
 // CapitalRequirement is the capital that must be committed to execute the trade,
 // distinct from the fees consumed by it. Broken out into the spot leg (fiat to
 // buy BTC on the CEX), the perp hedge collateral, and the DEX security deposit,

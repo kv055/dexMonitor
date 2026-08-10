@@ -27,6 +27,7 @@ import type {
   BisqPaymentMethod,
   BisqPaymentAccountForm,
   BisqCreatePaymentAccountPayload,
+  TransactionalLiquiditySettings,
 } from '../types';
 import { fetchResponse, request } from '../api/client';
 export { apiFetch, apiPost, apiPostWithHeaders } from '../api/client';
@@ -183,6 +184,22 @@ export function deleteBankAccount(id: number) {
 
 export function fetchLNDWalletStatus() {
   return request<LNDWalletStatus>('/api/mm-controller/lnd/wallet');
+}
+
+export function fetchTransactionalLiquiditySettings() {
+  return request<TransactionalLiquiditySettings>('/api/mm-controller/transactional-liquidity');
+}
+
+export function updateTransactionalLiquiditySettings(payload: {
+  fiat_currency: string;
+  amount_source: 'custom' | 'capped_volume';
+  custom_amount: number | null;
+  trade_mode: 'hedgefull_single_collateral' | 'hedgeless_double_collateral';
+}) {
+  return request<TransactionalLiquiditySettings>('/api/mm-controller/transactional-liquidity', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
 }
 
 export function fetchLNDWalletState() {
