@@ -195,6 +195,7 @@ export function updateTransactionalLiquiditySettings(payload: {
   amount_source: 'custom' | 'capped_volume';
   custom_amount: number | null;
   trade_mode: 'hedgefull_single_collateral' | 'hedgeless_double_collateral';
+  target_direction: 'bid' | 'ask';
 }) {
   return request<TransactionalLiquiditySettings>('/api/mm-controller/transactional-liquidity', {
     method: 'PUT',

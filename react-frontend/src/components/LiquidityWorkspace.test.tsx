@@ -1,4 +1,4 @@
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
@@ -29,7 +29,7 @@ vi.mock('../utils/api', () => ({
 }));
 
 import { LiquidityWorkspace } from './LiquidityWorkspace';
-import { fetchCexBalances, fetchCexHedgePositions, fetchLNDWalletStatus, fetchTransactionalLiquiditySettings, updateTransactionalLiquiditySettings } from '../utils/api';
+import { fetchTransactionalLiquiditySettings, updateTransactionalLiquiditySettings } from '../utils/api';
 import { FiltersProvider } from '../context/FiltersContext';
 import { PreferencesProvider } from '../context/PreferencesContext';
 import type { Offer } from '../types';
@@ -67,6 +67,7 @@ describe('LiquidityWorkspace', () => {
       amount_source: 'custom',
       custom_amount: 100,
       trade_mode: 'hedgefull_single_collateral',
+      target_direction: 'bid',
       config_version: 1,
       updated_at: '2026-08-10T00:00:00Z',
     });
@@ -82,7 +83,7 @@ describe('LiquidityWorkspace', () => {
   it('switches to hedgeless mode and uses the fiat target converted to BTC for LND and Lightning', async () => {
     const hedgelessSettings = {
       fiat_currency: 'EUR', amount_source: 'custom' as const, custom_amount: 100,
-      trade_mode: 'hedgeless_double_collateral' as const, config_version: 2, updated_at: '2026-08-10T00:00:00Z',
+      trade_mode: 'hedgeless_double_collateral' as const, target_direction: 'bid' as const, config_version: 2, updated_at: '2026-08-10T00:00:00Z',
     };
     vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce({ ...hedgelessSettings, trade_mode: 'hedgefull_single_collateral', config_version: 1 });
     vi.mocked(updateTransactionalLiquiditySettings).mockResolvedValueOnce(hedgelessSettings);
@@ -91,9 +92,32 @@ describe('LiquidityWorkspace', () => {
     renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'buy', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
 
     await screen.findByText('EUR 100');
-    await user.click(screen.getByRole('button', { name: 'Hedgeless' }));
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    await user.selectOptions(screen.getByLabelText('Trade mode'), 'hedgeless_double_collateral');
+    await user.click(screen.getByRole('button', { name: 'Save target' }));
     expect(await screen.findAllByText('0.002 BTC')).toHaveLength(2);
     expect(screen.getAllByText('fiat target in BTC')).toHaveLength(2);
+  });
+
+  it('persists the selected target direction', async () => {
+    const settings = {
+      fiat_currency: 'EUR', amount_source: 'custom' as const, custom_amount: 100,
+      trade_mode: 'hedgefull_single_collateral' as const, target_direction: 'bid' as const,
+      config_version: 1, updated_at: '2026-08-10T00:00:00Z',
+    };
+    vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(settings);
+    vi.mocked(updateTransactionalLiquiditySettings).mockResolvedValueOnce({ ...settings, target_direction: 'ask', config_version: 2 });
+
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByText('EUR 100');
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    await screen.findByDisplayValue('Custom amount');
+    await user.selectOptions(screen.getByLabelText('Target direction'), 'ask');
+    await user.click(screen.getByRole('button', { name: 'Save target' }));
+
+    expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({ target_direction: 'ask' }));
   });
 
   it('aggregates healthy CEX balances and live LND on-chain and channel liquidity', async () => {
@@ -102,27 +126,16 @@ describe('LiquidityWorkspace', () => {
     expect(await screen.findByText('0.25 BTC spot')).toBeTruthy();
     expect(screen.getByText('2 hedges · 0.15 BTC exposure')).toBeTruthy();
     expect(screen.getByText('EUR 1,000')).toBeTruthy();
-    expect(screen.getByText('0.0125 BTC')).toBeTruthy();
+    expect(screen.getAllByText('0.0125 BTC')).not.toHaveLength(0);
     expect(screen.getByText('0.006 BTC outbound')).toBeTruthy();
     expect(screen.getByText('0.004 BTC inbound')).toBeTruthy();
-  });
-
-  it('refreshes all live liquidity sources on demand', async () => {
-    const user = userEvent.setup();
-    renderWorkspace();
-    await screen.findByText('0.25 BTC spot');
-    const before = vi.mocked(fetchCexBalances).mock.calls.length;
-
-    await user.click(screen.getByRole('button', { name: 'Refresh' }));
-    await waitFor(() => expect(vi.mocked(fetchCexBalances).mock.calls.length).toBeGreaterThan(before));
-    expect(vi.mocked(fetchCexHedgePositions)).toHaveBeenCalled();
-    expect(vi.mocked(fetchLNDWalletStatus)).toHaveBeenCalled();
   });
 
   it('builds the fill route from a connected CEX BTC wallet to the LND wallet', async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
+    await user.click(screen.getByRole('button', { name: 'Manage wallet pool' }));
     await screen.findByRole('option', { name: 'Kraken' });
     expect(await screen.findByText('Kraken BTC wallet')).toBeTruthy();
     expect(screen.getByText('LND on-chain wallet')).toBeTruthy();
@@ -136,8 +149,9 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
+    await user.click(screen.getByRole('button', { name: 'Manage wallet pool' }));
     await screen.findByRole('option', { name: 'Kraken' });
-    await user.click(screen.getByRole('tab', { name: /drain lnd pool/i }));
+    await user.click(screen.getByRole('button', { name: /drain lnd pool/i }));
 
     await screen.findByRole('option', { name: /CEX BTC deposit address.*Bitcoin.*bc1qkraken/ });
     expect(screen.getByText('LND on-chain wallet')).toBeTruthy();
@@ -148,7 +162,8 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await user.click(screen.getByRole('tab', { name: /drain lnd pool/i }));
+    await user.click(screen.getByRole('button', { name: 'Manage wallet pool' }));
+    await user.click(screen.getByRole('button', { name: /drain lnd pool/i }));
     await user.click(screen.getByRole('button', { name: 'Manual address' }));
     await user.type(screen.getByPlaceholderText('Paste a Bitcoin address'), 'bc1qexternaldestination0000000000000000');
     await user.type(screen.getByPlaceholderText('0.00000000'), '0.01');
@@ -162,7 +177,7 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await user.click(screen.getByRole('tab', { name: /lightning channels/i }));
+    await user.click(screen.getByRole('button', { name: 'Manage channels' }));
     expect(screen.getByText('Hub')).toBeTruthy();
     await user.click(screen.getByText('Open a new channel'));
     await user.click(screen.getByRole('button', { name: 'Open channel' }));

@@ -74,12 +74,14 @@ export interface CostBreakdown {
 export type TradeMode = 'hedgefull_single_collateral' | 'hedgeless_double_collateral';
 
 export type TransactionalLiquidityAmountSource = 'custom' | 'capped_volume';
+export type TransactionalLiquidityTargetDirection = 'bid' | 'ask';
 
 export interface TransactionalLiquiditySettings {
   fiat_currency: string;
   amount_source: TransactionalLiquidityAmountSource;
   custom_amount: number | null;
   trade_mode: TradeMode;
+  target_direction: TransactionalLiquidityTargetDirection;
   config_version: number;
   updated_at: string;
 }
