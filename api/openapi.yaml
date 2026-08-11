@@ -230,6 +230,17 @@ paths:
           description: Successful response
         default:
           description: Error response
+  '/api/mm-controller/lnd/channel-presets':
+    get:
+      operationId: getApiMmControllerLndChannelPresets
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/lnd/channel-presets'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
   '/api/mm-controller/lnd/channels/close':
     post:
       operationId: postApiMmControllerLndChannelsClose
@@ -246,6 +257,60 @@ paths:
       operationId: postApiMmControllerLndChannelsOpen
       tags: ['mm-controller']
       summary: 'POST /api/mm-controller/lnd/channels/open'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/lsp-channel':
+    get:
+      operationId: getApiMmControllerLndLspChannel
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/lnd/lsp-channel'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    put:
+      operationId: putApiMmControllerLndLspChannel
+      tags: ['mm-controller']
+      summary: 'PUT /api/mm-controller/lnd/lsp-channel'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/lsp-channel/candidates':
+    get:
+      operationId: getApiMmControllerLndLspChannelCandidates
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/lnd/lsp-channel/candidates'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/lsp-channel/status':
+    get:
+      operationId: getApiMmControllerLndLspChannelStatus
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/lnd/lsp-channel/status'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/submarine-swaps':
+    get:
+      operationId: getApiMmControllerLndSubmarineSwaps
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/lnd/submarine-swaps'
       x-contract-status: route-catalog
       responses:
         '200':

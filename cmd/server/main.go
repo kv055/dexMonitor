@@ -2420,12 +2420,33 @@ func handleMmControllerLNDCreateAddress(w http.ResponseWriter, r *http.Request) 
 	forwardMMControllerJSON(w, r, "/api/lnd/addresses")
 }
 
+func handleMmControllerLNDChannelPresets(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/lnd/channel-presets")
+}
+
 func handleMmControllerLNDOpenChannel(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/lnd/channels/open")
 }
 
 func handleMmControllerLNDCloseChannel(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/lnd/channels/close")
+}
+
+func handleMmControllerLSPChannel(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/lnd/lsp-channel")
+}
+func handleMmControllerLSPChannelStatus(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/lnd/lsp-channel/status")
+}
+func handleMmControllerLSPChannelCandidates(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/lnd/lsp-channel/candidates")
+}
+func handleMmControllerSubmarineSwaps(w http.ResponseWriter, r *http.Request) {
+	path := "/api/lnd/submarine-swaps"
+	if r.URL.RawQuery != "" {
+		path += "?" + r.URL.RawQuery
+	}
+	forwardMMControllerJSON(w, r, path)
 }
 
 func handleMmControllerCexPreTradeCheck(w http.ResponseWriter, r *http.Request) {

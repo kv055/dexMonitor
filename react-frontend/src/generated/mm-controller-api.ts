@@ -93,10 +93,13 @@ export interface components {
             dex?: string;
             /** @enum {string} */
             market_side?: "bid" | "ask";
+            /** @enum {string} */
+            settlement?: "onchain_direct" | "onchain_hub" | "onchain_swap";
             trade_mode?: components["schemas"]["TradeMode"];
             hedge_venue?: string;
             /** @description Position BTC plus security deposit. Required for hedgeless on-chain liquidity-pool checks and for Swap_main2lightning Lightning liquidity. */
             required_btc_liquidity?: number;
+            routing_fee_allowance_sat?: number;
         };
         PreTradeCheckResult: {
             name: string;
@@ -109,6 +112,43 @@ export interface components {
             checks: components["schemas"]["PreTradeCheckResult"][];
             lnd_withdraw_address?: string;
             resolved_payment_method?: string;
+            lsp_healthy?: boolean;
+            usable_inbound_sat?: number;
+            usable_outbound_sat?: number;
+            swap_required?: boolean;
+            required_lightning_sat?: number;
+            swap_shortfall_sat?: number;
+            expected_lockup_sat?: number;
+            estimated_funding_fee_sat?: number;
+            /** Format: date-time */
+            quote_expires_at?: string;
+            confirmed_onchain_sat?: number;
+            blocking_reason?: string;
+        };
+        ResolvedRoute: {
+            config_version: number;
+            trade_mode: components["schemas"]["TradeMode"];
+            target_direction: string;
+            /** @enum {string} */
+            market_side: "bid" | "ask";
+            provider: string;
+            hedge_venue?: string;
+            hedge_side?: string;
+            hedge_notional_btc?: number;
+            leverage?: number;
+            /** @enum {string} */
+            settlement: "onchain_direct" | "onchain_hub" | "onchain_swap";
+            needs_hub?: boolean;
+            needs_lightning?: boolean;
+            fiat_currency: string;
+            fiat_amount: number;
+            btc_amount: number;
+            required_capital: number;
+            required_btc_liquidity: number;
+            security_deposit_btc?: number;
+            routing_fee_allowance_sat?: number;
+            cex_withdrawal_fee_btc?: number;
+            swap_safety_headroom_btc?: number;
         };
         CexTradeflowRequest: {
             provider: string;
@@ -134,6 +174,10 @@ export interface components {
             payment_method?: string;
             payment_methods?: string[];
             trade_mode?: components["schemas"]["TradeMode"];
+            resolved_route?: components["schemas"]["ResolvedRoute"];
+            routing_fee_allowance_sat?: number;
+            cex_withdrawal_fee_btc?: number;
+            swap_safety_headroom_btc?: number;
         };
         CexTradeflowResult: {
             trade_mode: components["schemas"]["TradeMode"];

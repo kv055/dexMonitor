@@ -7,9 +7,13 @@ import type {
   LNDCloseChannelResult,
   LNDCreateAddressResult,
   LNDOpenChannelResult,
+  LNDChannelPresetsResponse,
   LNDWalletInitResult,
   LNDWalletState,
   LNDWalletStatus,
+  LSPChannelConfig,
+  LSPChannelStatus,
+  SubmarineSwapRecord,
   ServiceVersions,
   TradingAccount,
   TradingAccountCredentialReveal,
@@ -212,6 +216,10 @@ export function fetchLNDWalletState() {
   return request<LNDWalletState>('/api/mm-controller/lnd/wallet/state');
 }
 
+export function fetchLNDChannelPresets() {
+  return request<LNDChannelPresetsResponse>('/api/mm-controller/lnd/channel-presets');
+}
+
 export function fetchServiceVersions() {
   return request<ServiceVersions>('/api/mm-controller/service-versions');
 }
@@ -230,12 +238,15 @@ export function createLNDWalletAddress(label?: string) {
 }
 
 export function openLNDChannel(payload: {
-  node_pubkey: string;
+  preset_id?: string;
+  node_pubkey?: string;
   peer_host?: string;
   local_funding_amount_sat: number;
   push_sat?: number;
   sat_per_vbyte?: number;
+  target_conf?: number;
   private?: boolean;
+  allow_additional_channel?: boolean;
 }) {
   return request<LNDOpenChannelResult>('/api/mm-controller/lnd/channels/open', {
     method: 'POST',
@@ -253,6 +264,11 @@ export function closeLNDChannel(payload: {
     body: JSON.stringify(payload),
   });
 }
+
+export function fetchLSPChannel(){return request<LSPChannelConfig>('/api/mm-controller/lnd/lsp-channel')}
+export function updateLSPChannel(payload:LSPChannelConfig){return request<LSPChannelConfig>('/api/mm-controller/lnd/lsp-channel',{method:'PUT',body:JSON.stringify(payload)})}
+export function fetchLSPChannelStatus(){return request<LSPChannelStatus>('/api/mm-controller/lnd/lsp-channel/status')}
+export function fetchSubmarineSwaps(){return request<SubmarineSwapRecord[]>('/api/mm-controller/lnd/submarine-swaps?limit=20')}
 
 export function fetchCexDepositAddresses(accountId: number) {
   return request<CexDepositAddress[]>(`/api/trading/accounts/${accountId}/cex/deposit-addresses`);

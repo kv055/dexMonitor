@@ -23,7 +23,11 @@ import {
   fetchCexSpotTrades,
   fetchCexWithdrawalAddresses,
   fetchLNDWalletState,
+  fetchLNDChannelPresets,
   fetchLNDWalletStatus,
+  fetchLSPChannel,
+  fetchLSPChannelStatus,
+  fetchSubmarineSwaps,
   fetchServiceVersions,
   fetchTradingAccounts,
   revealTradingAccountCredentials,
@@ -48,6 +52,7 @@ import {
   updatePasskey,
   updateSeed,
   updateTOTPSecret,
+  updateLSPChannel,
 } from '../utils/api';
 import { emailFormatError, ibanFormatError } from '../utils/validators';
 import type {
@@ -59,6 +64,10 @@ import type {
   CexWithdrawalAddress,
   LNDWalletState,
   LNDWalletStatus,
+  LNDChannelPreset,
+  LSPChannelConfig,
+  LSPChannelStatus,
+  SubmarineSwapRecord,
   ServiceVersions,
   TradingAccount,
   TradingAccountCredentialReveal,
@@ -941,7 +950,9 @@ function emptyOpenChannelForm(): OpenChannelFormState {
     peerHost: '',
     localFundingAmountSat: '100000',
     pushSat: '0',
-    satPerVbyte: '2',
+    // Leaving the manual fee rate blank lets the backend request the default
+    // three-block confirmation target instead of pinning a stale fee rate.
+    satPerVbyte: '',
     private: false,
   };
 }
@@ -1866,8 +1877,14 @@ export function TradingAccountsPanel() {
   const [newAddressLabel, setNewAddressLabel] = useState('');
   const [creatingAddress, setCreatingAddress] = useState(false);
   const [openChannelForm, setOpenChannelForm] = useState<OpenChannelFormState>(emptyOpenChannelForm);
+  const [lndChannelPresets, setLndChannelPresets] = useState<LNDChannelPreset[]>([]);
+  const [selectedLndChannelPresetID, setSelectedLndChannelPresetID] = useState('');
   const [openingChannel, setOpeningChannel] = useState(false);
   const [closingChannelPoint, setClosingChannelPoint] = useState<string | null>(null);
+	const [lspConfig,setLspConfig]=useState<LSPChannelConfig>({channel_point:'',remote_pubkey:'',provider_label:'',enabled:false,headroom_sat:0,max_swap_fee_sat:0,max_swap_fee_ppm:0});
+	const [lspStatus,setLspStatus]=useState<LSPChannelStatus|null>(null);
+	const [submarineSwaps,setSubmarineSwaps]=useState<SubmarineSwapRecord[]>([]);
+	const [savingLsp,setSavingLsp]=useState(false);
   const [cexDataByAccount, setCexDataByAccount] = useState<Record<number, CexAccountSlice>>({});
   // Bisq1 "Saved payment methods" section state. Loaded lazily when the section is first
   // opened (it needs the DEX stack, which may be down independently of the panel).
@@ -2294,7 +2311,8 @@ export function TradingAccountsPanel() {
     setLndWalletError(null);
     setLndWalletNotice(null);
     try {
-      const status = await fetchLNDWalletStatus();
+      const [status,config,lsp,swaps] = await Promise.all([fetchLNDWalletStatus(),fetchLSPChannel(),fetchLSPChannelStatus(),fetchSubmarineSwaps()]);
+	  setLspConfig(config);setLspStatus(lsp);setSubmarineSwaps(swaps??[]);
       // The mm-controller API serializes empty Go slices as null, but the type
       // (and every render path below) assumes arrays. Normalize so a wallet with
       // no channels/peers/addresses doesn't crash the panel.
@@ -2317,6 +2335,8 @@ export function TradingAccountsPanel() {
     }
   }, []);
 
+	const saveLspChannel=useCallback(async()=>{setSavingLsp(true);setLndWalletError(null);try{const saved=await updateLSPChannel(lspConfig);setLspConfig(saved);setLspStatus(await fetchLSPChannelStatus());setLndWalletNotice('LSP channel monitoring configuration saved.')}catch(err){setLndWalletError(err instanceof Error?err.message:'Failed to save LSP channel')}finally{setSavingLsp(false)}},[lspConfig]);
+
   const loadLndWalletState = useCallback(async (): Promise<LNDWalletState | null> => {
     setLndWalletStateLoading(true);
     try {
@@ -2336,28 +2356,46 @@ export function TradingAccountsPanel() {
     void fetchServiceVersions().then(setServiceVersions).catch(() => setServiceVersions(null));
   }, [activeTab]);
 
-  const handleOpenChannel = useCallback(async () => {
+  const handleOpenChannel = useCallback(async (mode: 'preset' | 'manual') => {
     setOpeningChannel(true);
     setLndWalletError(null);
     setLndWalletNotice(null);
     try {
+      const preset = mode === 'preset'
+        ? lndChannelPresets.find(item => item.id === selectedLndChannelPresetID)
+        : undefined;
+      const hasExistingChannel = !!preset && [
+        ...(lndWalletStatus?.channels ?? []).map(channel => channel.remote_pubkey),
+        ...(lndWalletStatus?.pending_channels ?? []).map(channel => channel.remote_pubkey),
+      ].some(pubkey => pubkey.toLowerCase() === preset.node_pubkey.toLowerCase());
+      const confirmation = [
+        `Open ${openChannelForm.localFundingAmountSat} sats to ${preset?.name ?? 'the manual peer'}?`,
+        `Push amount: ${openChannelForm.pushSat || '0'} sats`,
+        `Fee: ${openChannelForm.satPerVbyte || 'LND 3-block target'} sat/vB`,
+        `Visibility: ${openChannelForm.private ? 'private' : 'public'}`,
+        'The channel will remain pending until its funding transaction confirms.',
+        hasExistingChannel ? 'An open or pending channel already exists for this peer.' : '',
+      ].filter(Boolean).join('\n');
+      if (!window.confirm(confirmation)) return;
       const result = await openLNDChannel({
-        node_pubkey: openChannelForm.nodePubkey.trim(),
-        peer_host: openChannelForm.peerHost.trim() || undefined,
+        preset_id: preset?.id,
+        node_pubkey: preset ? undefined : openChannelForm.nodePubkey.trim(),
+        peer_host: preset ? undefined : openChannelForm.peerHost.trim() || undefined,
         local_funding_amount_sat: Number(openChannelForm.localFundingAmountSat),
         push_sat: Number(openChannelForm.pushSat || 0),
-        sat_per_vbyte: Number(openChannelForm.satPerVbyte || 2),
+        sat_per_vbyte: openChannelForm.satPerVbyte.trim() ? Number(openChannelForm.satPerVbyte) : undefined,
+        target_conf: openChannelForm.satPerVbyte.trim() ? undefined : 3,
         private: openChannelForm.private,
+        allow_additional_channel: hasExistingChannel,
       });
-      setOpenChannelForm(emptyOpenChannelForm());
       await loadLndWalletStatus();
-      setLndWalletNotice(`Channel opening submitted. Funding tx: ${result.funding_txid || 'pending'}`);
+      setLndWalletNotice(`Channel opening submitted and is pending confirmation. Funding tx: ${result.funding_txid || 'pending'}`);
     } catch (err) {
       setLndWalletError(err instanceof Error ? err.message : 'Failed to open channel');
     } finally {
       setOpeningChannel(false);
     }
-  }, [loadLndWalletStatus, openChannelForm]);
+  }, [loadLndWalletStatus, lndChannelPresets, lndWalletStatus, openChannelForm, selectedLndChannelPresetID]);
 
   const handleCloseChannel = useCallback(async (channelPoint: string, force: boolean) => {
     const label = force ? 'Force-close this channel?' : 'Cooperatively close this channel?';
@@ -2389,7 +2427,12 @@ export function TradingAccountsPanel() {
     void (async () => {
       const state = await loadLndWalletState();
       if (state?.client_ready) {
-        await loadLndWalletStatus();
+        await Promise.all([
+          loadLndWalletStatus(),
+          fetchLNDChannelPresets()
+            .then(response => setLndChannelPresets(response.presets ?? []))
+            .catch(() => setLndChannelPresets([])),
+        ]);
       } else {
         setLndWalletStatus(null);
       }
@@ -3152,6 +3195,7 @@ export function TradingAccountsPanel() {
     const showLockedNotice = !!state && state.wallet_exists && !state.client_ready;
     const showUnreachable = !!state && !state.lnd_reachable && !state.wallet_exists && !state.can_create;
     const showManagement = state?.client_ready ?? false;
+    const selectedPreset = lndChannelPresets.find(preset => preset.id === selectedLndChannelPresetID);
     return (
       <CollapsibleSection
         title="Lightning management"
@@ -3235,18 +3279,111 @@ export function TradingAccountsPanel() {
         ) : null}
         {showManagement ? (
           <>
+        <SecretItem title="Long-lived LSP channel" summary="Select and monitor an inbound channel opened outside the application">
+          <div className="grid gap-2 text-xs">
+            <div className={`rounded border px-2 py-1.5 ${lspStatus?.lsp_healthy?'border-green text-green':'border-red text-red'}`}>
+              {lspStatus?.lsp_healthy?'Registered LSP channel is active':(lspStatus?.reason||'No LSP channel configured')}
+            </div>
+            <select className={compactInputCls} value={lspConfig.channel_point} onChange={event=>{const channel=lndWalletStatus?.channels.find(item=>item.channel_point===event.target.value);setLspConfig(previous=>({...previous,channel_point:channel?.channel_point||'',remote_pubkey:channel?.remote_pubkey||'',provider_label:channel?.remote_alias||'',enabled:Boolean(channel)}))}}>
+              <option value="">Choose a live LND channel…</option>
+              {(lndWalletStatus?.channels??[]).map(channel=><option key={channel.channel_point} value={channel.channel_point}>{channel.remote_alias||truncatePubkey(channel.remote_pubkey)} · {formatSats(channel.capacity_sat)} · {channel.active?'active':'inactive'}</option>)}
+            </select>
+            <div className="grid gap-1.5 sm:grid-cols-3">
+              <input className={compactInputCls} type="number" min="0" value={lspConfig.headroom_sat} onChange={event=>setLspConfig(previous=>({...previous,headroom_sat:Number(event.target.value)}))} placeholder="Headroom sats" />
+              <input className={compactInputCls} type="number" min="1" value={lspConfig.max_swap_fee_sat} onChange={event=>setLspConfig(previous=>({...previous,max_swap_fee_sat:Number(event.target.value)}))} placeholder="Max fee sats" />
+              <input className={compactInputCls} type="number" min="1" value={lspConfig.max_swap_fee_ppm} onChange={event=>setLspConfig(previous=>({...previous,max_swap_fee_ppm:Number(event.target.value)}))} placeholder="Max fee ppm" />
+            </div>
+            {lspStatus ? <div className="grid gap-1 text-muted sm:grid-cols-2"><div>Usable outbound: <span className="text-text">{formatSats(lspStatus.usable_outbound_sat)}</span></div><div>Usable inbound: <span className="text-text">{formatSats(lspStatus.usable_inbound_sat)}</span></div><div>LSP outbound: <span className="text-text">{formatSats(lspStatus.lsp_outbound_sat)}</span></div><div>LSP inbound: <span className="text-text">{formatSats(lspStatus.lsp_inbound_sat)}</span></div></div>:null}
+            <div className="flex justify-end"><button type="button" className={compactPrimaryButtonCls} disabled={savingLsp||!lspConfig.channel_point} onClick={()=>void saveLspChannel()}>{savingLsp?'Saving…':'Save LSP selection'}</button></div>
+            {submarineSwaps.some(item=>!['settled','refunded'].includes(item.state))?<div className="rounded border border-yellow px-2 py-1.5 text-yellow">{submarineSwaps.filter(item=>!['settled','refunded'].includes(item.state)).length} incomplete or refund-pending submarine swap(s) require attention.</div>:null}
+          </div>
+        </SecretItem>
+        <SecretItem title="Public nodes" summary="Choose a verified public peer, then confirm the channel opening">
+          <div className="grid gap-1.5">
+            <select
+              className={compactInputCls}
+              value={selectedLndChannelPresetID}
+              onChange={event => setSelectedLndChannelPresetID(event.target.value)}
+            >
+              <option value="">Choose a public node…</option>
+              {lndChannelPresets.map(preset => (
+                <option key={preset.id} value={preset.id}>{preset.name}</option>
+              ))}
+            </select>
+            {selectedPreset ? (
+              <div className="rounded border border-border bg-bg px-2 py-1.5 grid gap-1 text-xs text-muted">
+                <div><span className="text-text">Node:</span> {selectedPreset.name}</div>
+                <div><span className="text-text">Pubkey:</span> {truncatePubkey(selectedPreset.node_pubkey)}</div>
+                <div><span className="text-text">Host:</span> {selectedPreset.peer_host}</div>
+                <div><span className="text-text">Minimum funding:</span> {formatSats(selectedPreset.min_funding_amount_sat)}</div>
+                {selectedPreset.warning ? <div className="text-yellow">{selectedPreset.warning}</div> : null}
+                <div>
+                  <a className="text-accent underline" href={selectedPreset.source_url} target="_blank" rel="noreferrer">
+                    Source (verified {selectedPreset.verified_at})
+                  </a>
+                </div>
+              </div>
+            ) : (
+              <div className="text-[0.65rem] text-muted">Only peers with operator-published connection details are listed here.</div>
+            )}
+            <div className="grid gap-1.5 md:grid-cols-2">
+              <input
+                className={compactInputCls}
+                value={openChannelForm.localFundingAmountSat}
+                onChange={e => setOpenChannelForm(prev => ({ ...prev, localFundingAmountSat: e.target.value }))}
+                placeholder="Local funding (sats)"
+              />
+              <input
+                className={compactInputCls}
+                value={openChannelForm.pushSat}
+                onChange={e => setOpenChannelForm(prev => ({ ...prev, pushSat: e.target.value }))}
+                placeholder="Push amount (sats)"
+              />
+              <input
+                className={compactInputCls}
+                value={openChannelForm.satPerVbyte}
+                onChange={e => setOpenChannelForm(prev => ({ ...prev, satPerVbyte: e.target.value }))}
+                placeholder="Fee rate (sat/vB; blank uses 3-block target)"
+              />
+              <label className="flex items-center gap-2 text-xs text-muted">
+                <input
+                  type="checkbox"
+                  checked={openChannelForm.private}
+                  onChange={e => setOpenChannelForm(prev => ({ ...prev, private: e.target.checked }))}
+                />
+                Private channel
+              </label>
+            </div>
+            <div className="flex justify-end">
+              <button
+                type="button"
+                className={compactPrimaryButtonCls}
+                disabled={openingChannel || !selectedPreset || !openChannelForm.localFundingAmountSat.trim()}
+                onClick={() => void handleOpenChannel('preset')}
+              >
+                {openingChannel ? 'Submitting…' : 'Connect and open channel'}
+              </button>
+            </div>
+          </div>
+        </SecretItem>
         <SecretItem title="Open channel" summary="Expand to connect to a hub and fund a new channel">
           <div className="grid gap-1.5 md:grid-cols-2">
             <input
               className={compactInputCls}
               value={openChannelForm.nodePubkey}
-              onChange={e => setOpenChannelForm(prev => ({ ...prev, nodePubkey: e.target.value }))}
+              onChange={e => {
+                setSelectedLndChannelPresetID('');
+                setOpenChannelForm(prev => ({ ...prev, nodePubkey: e.target.value }));
+              }}
               placeholder="Hub node pubkey"
             />
             <input
               className={compactInputCls}
               value={openChannelForm.peerHost}
-              onChange={e => setOpenChannelForm(prev => ({ ...prev, peerHost: e.target.value }))}
+              onChange={e => {
+                setSelectedLndChannelPresetID('');
+                setOpenChannelForm(prev => ({ ...prev, peerHost: e.target.value }));
+              }}
               placeholder="Peer host (ip:9735)"
             />
             <input
@@ -3281,9 +3418,9 @@ export function TradingAccountsPanel() {
               type="button"
               className={compactPrimaryButtonCls}
               disabled={openingChannel || !openChannelForm.nodePubkey.trim()}
-              onClick={() => void handleOpenChannel()}
+              onClick={() => void handleOpenChannel('manual')}
             >
-              {openingChannel ? 'Opening…' : 'Open channel'}
+              {openingChannel ? 'Opening…' : 'Open manual channel'}
             </button>
           </div>
         </SecretItem>

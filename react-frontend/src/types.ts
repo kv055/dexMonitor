@@ -1,3 +1,5 @@
+import type { ResolvedRoute } from './api/mmControllerContract';
+
 export interface BTCNetworkFeeDetail {
   tx_vbytes: number;
   tx_type: string;
@@ -344,6 +346,7 @@ export interface Offer {
   premium?: number | null;
   time?: string;
   lifecycle?: LifecyclePoint[];
+  metadata?: { resolved_route?: ResolvedRoute } | null;
   // Normalized maker reputation (0-100), null when no signal is obtainable.
   // seller_rating_confidence records which methodology produced it (see
   // internal/sellerrating); seller_rating_raw holds the source inputs.
@@ -586,11 +589,34 @@ export interface LNDCreateAddressResult {
 
 export interface LNDOpenChannelResult {
   funding_txid: string;
+  channel_point: string;
+  status: 'pending' | string;
+}
+
+export interface LNDChannelPreset {
+  id: string;
+  name: string;
+  node_pubkey: string;
+  peer_host: string;
+  min_funding_amount_sat: number;
+  max_funding_amount_sat?: number;
+  warning?: string;
+  source_url: string;
+  verified_at: string;
+  enabled: boolean;
+}
+
+export interface LNDChannelPresetsResponse {
+  presets: LNDChannelPreset[];
 }
 
 export interface LNDCloseChannelResult {
   closing_txid: string;
 }
+
+export interface LSPChannelConfig { channel_point:string;remote_pubkey:string;provider_label:string;enabled:boolean;headroom_sat:number;max_swap_fee_sat:number;max_swap_fee_ppm:number;updated_at?:string }
+export interface LSPChannelStatus extends LSPChannelConfig { configured:boolean;lsp_healthy:boolean;reason?:string;lsp_inbound_sat:number;lsp_outbound_sat:number;usable_inbound_sat:number;usable_outbound_sat:number }
+export interface SubmarineSwapRecord { id:string;trade_id?:number;strategy:'submarine_swap';state:string;lightning_output_sat:number;lockup_amount_sat:number;lockup_txid?:string;invoice_hash?:string;service_fee_sat:number;miner_fee_sat:number;quote_expires_at?:string;created_at:string;updated_at:string }
 
 export interface PastOrderTimeframeStats {
   timeframe: string;
@@ -944,6 +970,7 @@ export type {
   MMTransactionStatus,
   PreTradeCheckReport,
   PreTradeCheckResult,
+  ResolvedRoute,
   WithdrawalTrackResult,
 } from './api/mmControllerContract';
 

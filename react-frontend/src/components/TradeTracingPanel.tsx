@@ -557,6 +557,8 @@ export function TradeTracingPanel({
         payment_methods: offer.payment_methods ?? undefined,
         dex: offer.exchange,
         market_side: marketSide,
+		settlement: offer.metadata?.resolved_route?.settlement,
+		routing_fee_allowance_sat: offer.metadata?.resolved_route?.routing_fee_allowance_sat,
         trade_mode: tradeMode,
         hedge_venue: isHedgeless ? undefined : hedgeVenue || undefined,
         required_btc_liquidity: requiredBtcLiquidity,
@@ -643,6 +645,10 @@ export function TradeTracingPanel({
         payment_method: tradePaymentMethod || undefined,
         payment_methods: tradePaymentMethod ? undefined : offer.payment_methods ?? undefined,
         trade_mode: tradeMode,
+		resolved_route: offer.metadata?.resolved_route,
+		routing_fee_allowance_sat: offer.metadata?.resolved_route?.routing_fee_allowance_sat,
+		cex_withdrawal_fee_btc: offer.metadata?.resolved_route?.cex_withdrawal_fee_btc,
+		swap_safety_headroom_btc: offer.metadata?.resolved_route?.swap_safety_headroom_btc,
         selected_offer: {
           offer_id: offer.offer_id,
           exchange: offer.exchange,
@@ -650,6 +656,7 @@ export function TradeTracingPanel({
           price: offer.price,
           btc_min: offer.btc_min,
           btc_max: offer.btc_max,
+		  metadata: offer.metadata,
         },
       });
       setSubmit({ phase: 'done', result: result.spot_buy });
