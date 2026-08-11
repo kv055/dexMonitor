@@ -2387,6 +2387,10 @@ func handleMmControllerTransactions(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/transactions")
 }
 
+func handleMmControllerDexPendingLiquidity(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/transactions/dex-pending-liquidity")
+}
+
 func handleMmControllerTransactionByID(w http.ResponseWriter, r *http.Request) {
 	id := r.PathValue("id")
 	if strings.TrimSpace(id) == "" {

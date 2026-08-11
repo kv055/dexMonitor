@@ -22,6 +22,7 @@ func TestRegisterBackendRoutes(t *testing.T) {
 		{http.MethodDelete, "/api/trading/payment_methods/7", "DELETE /api/trading/payment_methods/{id}"},
 		{http.MethodPost, "/api/trading/payment_methods/7/degrade-to-alias/9", "POST /api/trading/payment_methods/{id}/degrade-to-alias/{provider_id}"},
 		{http.MethodGet, "/api/mm-controller/transactions/5", "GET /api/mm-controller/transactions/{id}"},
+		{http.MethodGet, "/api/mm-controller/transactions/dex-pending-liquidity", "GET /api/mm-controller/transactions/dex-pending-liquidity"},
 		{http.MethodPost, "/api/mm-controller/cex/tradeflow", "POST /api/mm-controller/cex/tradeflow"},
 		{http.MethodGet, "/api/mm-controller/transactional-liquidity", "GET /api/mm-controller/transactional-liquidity"},
 		{http.MethodGet, "/ws/cex/hedge-stream", "GET /ws/cex/hedge-stream"},

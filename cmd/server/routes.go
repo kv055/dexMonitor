@@ -44,6 +44,7 @@ func registerPaymentMethodRoutes(mux *http.ServeMux) {
 
 func registerMMControllerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
+	mux.HandleFunc("GET /api/mm-controller/transactions/dex-pending-liquidity", handleMmControllerDexPendingLiquidity)
 	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
 	mux.HandleFunc("GET /api/mm-controller/lnd/wallet", handleMmControllerLNDWallet)
 	mux.HandleFunc("GET /api/mm-controller/lnd/wallet/state", handleMmControllerLNDWalletState)

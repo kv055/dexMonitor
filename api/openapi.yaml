@@ -382,6 +382,17 @@ paths:
           description: Successful response
         default:
           description: Error response
+  '/api/mm-controller/transactions/dex-pending-liquidity':
+    get:
+      operationId: getApiMmControllerTransactionsDexPendingLiquidity
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/transactions/dex-pending-liquidity'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
   '/api/mm-controller/transactions/{id}':
     get:
       operationId: getApiMmControllerTransactionsId

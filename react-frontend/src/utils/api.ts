@@ -28,6 +28,7 @@ import type {
   BisqPaymentAccountForm,
   BisqCreatePaymentAccountPayload,
   TransactionalLiquiditySettings,
+  DexPendingLiquidity,
 } from '../types';
 import { fetchResponse, request } from '../api/client';
 export { apiFetch, apiPost, apiPostWithHeaders } from '../api/client';
@@ -184,6 +185,10 @@ export function deleteBankAccount(id: number) {
 
 export function fetchLNDWalletStatus() {
   return request<LNDWalletStatus>('/api/mm-controller/lnd/wallet');
+}
+
+export function fetchDexPendingLiquidity() {
+  return request<DexPendingLiquidity>('/api/mm-controller/transactions/dex-pending-liquidity');
 }
 
 export function fetchTransactionalLiquiditySettings() {

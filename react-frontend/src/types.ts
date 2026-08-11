@@ -86,6 +86,12 @@ export interface TransactionalLiquiditySettings {
   updated_at: string;
 }
 
+export interface DexPendingLiquidity {
+  btc_value: number;
+  transaction_count: number;
+  statuses: string[];
+}
+
 // CapitalRequirement is the capital that must be committed to execute the trade,
 // distinct from the fees consumed by it. Broken out into the spot leg (fiat to
 // buy BTC on the CEX), the perp hedge collateral, and the DEX security deposit,

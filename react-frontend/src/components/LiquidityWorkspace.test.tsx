@@ -17,6 +17,7 @@ vi.mock('../utils/api', () => ({
     addresses: [{ address: 'bc1qlndwalletdestination000000000000000000', kind: 'onchain', label: 'Liquidity pool', balance_sat: 1250000 }],
     channels: [{ remote_pubkey: '03remote', remote_alias: 'Hub', capacity_sat: 1000000, local_balance_sat: 600000, remote_balance_sat: 400000, active: true, private: false, channel_point: 'txid:0' }],
   }),
+  fetchDexPendingLiquidity: vi.fn().mockResolvedValue({ btc_value: 0.0375, transaction_count: 2, statuses: ['DexPositionTaken', 'DexFiatHasArrived'] }),
   fetchCexBalances: vi.fn().mockResolvedValue({ bitcoin: { asset: 'BTC', available: 0.25, total: 0.3 }, fiat: [{ asset: 'EUR', available: 1000, total: 1000 }], source: 'Kraken' }),
   fetchCexHedgePositions: vi.fn().mockResolvedValue({ active: [{ size_btc: -0.1 }, { size_btc: 0.05 }], past: [] }),
   fetchCexDepositAddresses: vi.fn().mockResolvedValue([
@@ -29,7 +30,7 @@ vi.mock('../utils/api', () => ({
 }));
 
 import { LiquidityWorkspace } from './LiquidityWorkspace';
-import { fetchTransactionalLiquiditySettings, updateTransactionalLiquiditySettings } from '../utils/api';
+import { fetchDexPendingLiquidity, fetchTransactionalLiquiditySettings, updateTransactionalLiquiditySettings } from '../utils/api';
 import { FiltersProvider } from '../context/FiltersContext';
 import { PreferencesProvider } from '../context/PreferencesContext';
 import type { Offer } from '../types';
@@ -47,7 +48,7 @@ function renderWorkspace(offers: Offer[] = []) {
 afterEach(cleanup);
 
 describe('LiquidityWorkspace', () => {
-  it('shows every collateral location with current and target states', () => {
+  it('shows every collateral location with current and target states', async () => {
     renderWorkspace();
 
     expect(screen.getByText('CEX Spot & Hedge')).toBeTruthy();
@@ -57,8 +58,9 @@ describe('LiquidityWorkspace', () => {
     expect(screen.getAllByText('Current')).toHaveLength(4);
     expect(screen.getAllByText('Target')).toHaveLength(4);
     expect(screen.getAllByText('Not configured')).toHaveLength(3);
-    expect(screen.getByText('Not required')).toBeTruthy();
-    expect(screen.getAllByText('Not connected')).toHaveLength(1);
+    expect(screen.getAllByText('0 BTC')).toHaveLength(1);
+    expect(await screen.findByText('0.0375 BTC')).toBeTruthy();
+    expect(screen.getByText('2 pending contracts')).toBeTruthy();
   });
 
   it('uses zero BTC targets for LND and Lightning liquidity in hedgefull mode', async () => {
@@ -75,9 +77,9 @@ describe('LiquidityWorkspace', () => {
     renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'buy', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
 
     expect(await screen.findByText('EUR 100')).toBeTruthy();
-    expect(screen.getAllByText('0 BTC')).toHaveLength(2);
+    expect(screen.getAllByText('0 BTC')).toHaveLength(3);
     expect(screen.getAllByText('no LND pool required')).toHaveLength(2);
-    expect(screen.queryAllByText('Not required')).toHaveLength(1);
+    expect(screen.getAllByText('0 BTC')).toHaveLength(3);
   });
 
   it('switches to hedgeless mode and uses the fiat target converted to BTC for LND and Lightning', async () => {
@@ -129,6 +131,14 @@ describe('LiquidityWorkspace', () => {
     expect(screen.getAllByText('0.0125 BTC')).not.toHaveLength(0);
     expect(screen.getByText('0.006 BTC outbound')).toBeTruthy();
     expect(screen.getByText('0.004 BTC inbound')).toBeTruthy();
+  });
+
+  it('shows DEX pending liquidity errors as unavailable and keeps the zero target', async () => {
+    vi.mocked(fetchDexPendingLiquidity).mockRejectedValueOnce(new Error('pending liquidity unavailable'));
+    renderWorkspace();
+
+    expect(await screen.findByText('Unavailable')).toBeTruthy();
+    expect(screen.getAllByText('0 BTC')).toHaveLength(1);
   });
 
   it('builds the fill route from a connected CEX BTC wallet to the LND wallet', async () => {
