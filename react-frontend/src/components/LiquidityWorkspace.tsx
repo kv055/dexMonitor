@@ -3,6 +3,7 @@ import { closeLNDChannel, fetchCexBalances, fetchCexDepositAddresses, fetchCexHe
 import type { CexAssetBalance, CexDepositAddress, LNDWalletStatus, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquidityTargetDirection } from '../types';
 import { useFilters } from '../hooks/useFilters';
 import { usePreferences } from '../hooks/usePreferences';
+import { LocalQrCode } from './LocalQrCode';
 
 type PoolAction = 'fill' | 'drain';
 type TransferRoute = 'exchange' | 'manual';
@@ -514,6 +515,32 @@ export function LiquidityWorkspace() {
               </div>
             </fieldset>
 
+            {action === 'fill' && transferRoute === 'manual' ? (
+              <div className="pool-transfer__manual-deposit">
+                <span className="pool-transfer__step-label">2. Fund from</span>
+                <div className="pool-transfer__route-choice" role="group" aria-label="Transfer route">
+                  <button type="button" aria-pressed={false} onClick={() => selectRoute('exchange')}>Connected exchange</button>
+                  <button type="button" aria-pressed={true} onClick={() => selectRoute('manual')} className="is-selected">Manual address</button>
+                </div>
+                <span className="pool-transfer__step-label">LND deposit address</span>
+                {selectedDestination ? (
+                  <div className="pool-transfer__manual-deposit-content">
+                    <LocalQrCode
+                      value={`bitcoin:${selectedDestination}`}
+                      alt="QR code for the LND Bitcoin deposit address"
+                      size={164}
+                      fallback="Could not generate QR code."
+                    />
+                    <div className="pool-transfer__manual-deposit-address">
+                      <span className="pool-transfer__field-label">Send Bitcoin to this address</span>
+                      <code>{selectedDestination}</code>
+                    </div>
+                  </div>
+                ) : (
+                  <p className="pool-transfer__empty">No LND on-chain address available.</p>
+                )}
+              </div>
+            ) : (
             <div className="pool-transfer__details">
               <div className="pool-transfer__step">
                 <span className="pool-transfer__step-label">2. {action === 'fill' ? 'Fund from' : 'Send to'}</span>
@@ -555,11 +582,12 @@ export function LiquidityWorkspace() {
                 )}
               </div>
             </div>
+            )}
 
-            <div className="pool-transfer__review">
+            {!(action === 'fill' && transferRoute === 'manual') && <div className="pool-transfer__review">
               <div className="pool-transfer__route"><div><span>From</span><strong>{sourceLabel}</strong></div><i aria-hidden>→</i><div><span>To</span><strong>{destinationLabel}</strong></div></div>
               <div className="pool-transfer__submit"><p>Review creates a request only; transfers are not sent yet.</p><button type="submit">Create transfer request</button></div>
-            </div>
+            </div>}
           {loadError && <p className="sm:col-span-2 rounded-md border border-red/40 bg-error px-2 py-1.5 text-[0.72rem] text-red" role="alert">{loadError}</p>}
           {feedback && (
             <p className="sm:col-span-2 rounded-md border border-peach/40 bg-peach/10 px-2 py-1.5 text-[0.72rem] text-peach" role="status">{feedback}</p>

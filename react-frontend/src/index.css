@@ -487,6 +487,15 @@ body {
 .pool-transfer__amount-field span { color: var(--app-muted); font-family: 'JetBrains Mono', 'Fira Mono', 'Consolas', monospace; font-size: 0.65rem; pointer-events: none; position: absolute; right: 0.6rem; }
 .pool-transfer__destination { margin-top: 0.64rem; }
 
+.pool-transfer__manual-deposit { background: color-mix(in srgb, var(--app-bg) 45%, transparent); border: 1px solid var(--app-border); border-radius: 0.55rem; padding: 0.7rem; }
+.pool-transfer__manual-deposit-content { align-items: center; display: flex; gap: 1rem; margin-top: 0.55rem; }
+.pool-transfer__manual-deposit-content img,
+.pool-transfer__manual-deposit-content [role='status'],
+.pool-transfer__manual-deposit-content [role='alert'] { border-radius: 0.35rem; flex: 0 0 auto; }
+.pool-transfer__manual-deposit-address { min-width: 0; }
+.pool-transfer__manual-deposit-address code { background: var(--app-bg); border: 1px solid var(--app-border); border-radius: 0.4rem; color: var(--app-text); display: block; font-family: 'JetBrains Mono', 'Fira Mono', 'Consolas', monospace; font-size: 0.72rem; line-height: 1.45; margin-top: 0.35rem; overflow-wrap: anywhere; padding: 0.52rem 0.58rem; }
+.pool-transfer__empty { color: var(--app-muted); font-size: 0.68rem; margin: 0.55rem 0 0; }
+
 .pool-transfer__review { align-items: center; background: color-mix(in srgb, var(--app-bg) 45%, transparent); border: 1px solid var(--app-border); border-radius: 0.55rem; display: flex; gap: 0.7rem; justify-content: space-between; padding: 0.55rem 0.65rem; }
 .pool-transfer__route { align-items: center; display: grid; flex: 1; gap: 0.5rem; grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr); min-width: 0; }
 .pool-transfer__route div { min-width: 0; }
@@ -539,6 +548,7 @@ body {
   .pool-transfer__directions button { font-size: 0.62rem; padding-left: 0.3rem; padding-right: 0.3rem; }
   .pool-transfer__directions button span { display: none; }
   .pool-transfer__submit p { max-width: 12rem; }
+  .pool-transfer__manual-deposit-content { align-items: flex-start; flex-direction: column; }
 }
 
 @media (min-width: 48rem) {

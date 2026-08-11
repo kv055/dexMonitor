@@ -155,6 +155,25 @@ describe('LiquidityWorkspace', () => {
     expect(screen.getByRole('status').textContent).toContain('wallet-transfer API is not connected');
   });
 
+  it('shows only the LND address and QR code for a manual deposit', async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole('button', { name: 'Manage wallet pool' }));
+    await user.click(screen.getByRole('button', { name: /fill lnd pool/i }));
+    await user.click(screen.getByRole('button', { name: 'Manual address' }));
+
+    expect(screen.getByRole('button', { name: 'Connected exchange' })).toBeTruthy();
+    expect(await screen.findByText(/LND deposit address/)).toBeTruthy();
+    expect(screen.getByText('Send Bitcoin to this address')).toBeTruthy();
+    expect(screen.getByText('bc1qlndwalletdestination000000000000000000')).toBeTruthy();
+    expect(screen.queryByText('Source BTC address')).toBeNull();
+    expect(screen.queryByText('Amount to move')).toBeNull();
+    expect(screen.queryByPlaceholderText('0.00000000')).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Create transfer request' })).toBeNull();
+    expect(await screen.findByRole('img', { name: 'QR code for the LND Bitcoin deposit address' })).toBeTruthy();
+  });
+
   it('reverses the wallet route and loads the CEX BTC deposit address when draining', async () => {
     const user = userEvent.setup();
     renderWorkspace();
