@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -23,6 +24,11 @@ type dashboardAnalyticsParams struct {
 	Confirmations         int      `json:"confirmations"`
 	Fiat                  string   `json:"fiat"`
 	Sections              []string `json:"sections"`
+	PastStartDate         string   `json:"past_start_date"`
+	PastEndDate           string   `json:"past_end_date"`
+	Timezone              string   `json:"timezone"`
+	pastRangeStart        time.Time
+	pastRangeEnd          time.Time
 }
 
 type dashboardAnalyticsResponse struct {
@@ -61,6 +67,31 @@ func parseDashboardAnalyticsParams(r *http.Request) (dashboardAnalyticsParams, e
 	body.ExcludeSpotCEXes = mergeCEXLists(body.ExcludeSpotCEXes, policySpot)
 	body.ExcludeHedgeCEXes = mergeCEXLists(body.ExcludeHedgeCEXes, policyHedge)
 	body.Sections = normalizeAnalyticsSections(body.Sections)
+	startDate := strings.TrimSpace(body.PastStartDate)
+	endDate := strings.TrimSpace(body.PastEndDate)
+	timezone := strings.TrimSpace(body.Timezone)
+	if startDate != "" || endDate != "" || timezone != "" {
+		if startDate == "" || endDate == "" || timezone == "" {
+			return dashboardAnalyticsParams{}, fmt.Errorf("custom range requires start date, end date, and timezone")
+		}
+		location, err := time.LoadLocation(timezone)
+		if err != nil {
+			return dashboardAnalyticsParams{}, fmt.Errorf("invalid timezone")
+		}
+		start, err := time.ParseInLocation("2006-01-02", startDate, location)
+		if err != nil || start.Format("2006-01-02") != startDate {
+			return dashboardAnalyticsParams{}, fmt.Errorf("invalid past start date")
+		}
+		end, err := time.ParseInLocation("2006-01-02", endDate, location)
+		if err != nil || end.Format("2006-01-02") != endDate || end.Before(start) {
+			return dashboardAnalyticsParams{}, fmt.Errorf("invalid past end date")
+		}
+		body.PastStartDate = startDate
+		body.PastEndDate = endDate
+		body.Timezone = timezone
+		body.pastRangeStart = start.UTC()
+		body.pastRangeEnd = end.AddDate(0, 0, 1).UTC()
+	}
 	return body, nil
 }
 
@@ -119,6 +150,9 @@ func (p dashboardAnalyticsParams) cacheKey() string {
 		strconv.FormatFloat(p.MaxFiatLimitEUR, 'f', -1, 64),
 		strconv.Itoa(p.Confirmations),
 		p.Fiat,
+		p.PastStartDate,
+		p.PastEndDate,
+		p.Timezone,
 	}
 	return strings.Join(parts, "|")
 }
@@ -169,13 +203,20 @@ func loadGeneralStatsContextForParams(p dashboardAnalyticsParams) (generalStatsC
 }
 
 func loadGeneralStatsContextUncachedForParams(p dashboardAnalyticsParams) (generalStatsContext, error) {
-	historyHours := p.Hours
-	if historyHours < 168 {
-		historyHours = 168
+	query := analyticsOffersQuery
+	args := []any{}
+	if p.hasCustomPastRange() {
+		query = strings.Replace(query, "WHERE last_seen >= ?", "WHERE last_seen >= ? AND last_seen < ?", 1)
+		args = append(args, p.pastRangeStart.Format("2006-01-02 15:04:05"), p.pastRangeEnd.Format("2006-01-02 15:04:05"))
+	} else {
+		historyHours := p.Hours
+		if historyHours < 168 {
+			historyHours = 168
+		}
+		args = append(args, time.Now().Add(-time.Duration(historyHours)*time.Hour))
 	}
-	cutoff := time.Now().Add(-time.Duration(historyHours) * time.Hour)
 
-	rows, err := db.Query(rebind(analyticsOffersQuery), cutoff)
+	rows, err := db.Query(rebind(query), args...)
 	if err != nil {
 		return generalStatsContext{}, err
 	}
@@ -230,6 +271,10 @@ func loadGeneralStatsContextUncachedForParams(p dashboardAnalyticsParams) (gener
 		closedOfferIDs:         closedOfferIDs,
 		now:                    time.Now(),
 	}, nil
+}
+
+func (p dashboardAnalyticsParams) hasCustomPastRange() bool {
+	return !p.pastRangeStart.IsZero() && !p.pastRangeEnd.IsZero()
 }
 
 func loadClosedOffers168h() ([]map[string]any, error) {

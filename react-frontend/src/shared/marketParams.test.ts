@@ -41,4 +41,15 @@ describe('market request parameters', () => {
   it('propagates the selected fiat into analytics and statistics bodies', () => {
     expect(buildAnalyticsBody(params)).toMatchObject({ fiat: 'USD', hours: 48, cex: 'coinbase' });
   });
+
+  it('adds only an explicitly selected custom range to analytics requests', () => {
+    expect(buildAnalyticsBody(params, ['taker_orders_full'], {
+      startDate: '2026-01-01', endDate: '2026-01-31', timezone: 'Europe/Berlin',
+    })).toMatchObject({
+      past_start_date: '2026-01-01',
+      past_end_date: '2026-01-31',
+      timezone: 'Europe/Berlin',
+    });
+    expect(buildAnalyticsBody(params)).not.toHaveProperty('past_start_date');
+  });
 });

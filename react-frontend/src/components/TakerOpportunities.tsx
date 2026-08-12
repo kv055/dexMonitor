@@ -67,6 +67,8 @@ interface Props {
   /** Refreshes the live offers/core dataset (Live mode refresh button). */
   onRefreshLive: () => void;
   lastUpdatedAt: string;
+  customRangeLoading?: boolean;
+  onCustomRangeChange?: (range: { startDate: string; endDate: string } | null) => void;
   /**
    * Renders the OHLC chart panel; receives the filtered orders as chart
    * overlays plus whether the live (FiltersContext) offers should be plotted —
@@ -241,12 +243,15 @@ type NetProfitUnit = 'btc' | 'fiat';
 type SizeUnit = 'btc' | 'fiat';
 
 const INSIGHTS_FILTERS_STORAGE_KEY = 'dex-insights-filters';
+const CUSTOM_TIMEFRAME = 'custom';
 
 type InsightsViewMode = 'live' | 'past';
 
 interface PersistedInsightsFilters {
   viewMode: InsightsViewMode;
   selectedTimeframe: string;
+  customStartDate: string;
+  customEndDate: string;
   directionFilter: DirectionFilter;
   paymentFilter: PastPaymentFilter;
   disabledExchanges: string[];
@@ -265,6 +270,8 @@ interface PersistedInsightsFilters {
 const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
   viewMode: 'live',
   selectedTimeframe: '24h',
+  customStartDate: '',
+  customEndDate: '',
   directionFilter: 'both',
   paymentFilter: 'settings',
   disabledExchanges: [],
@@ -281,7 +288,7 @@ const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
 };
 
 const VALID_VIEW_MODES = new Set<InsightsViewMode>(['live', 'past']);
-const VALID_TIMEFRAMES = new Set(['1h', '6h', '24h', '48h', '7d']);
+const VALID_TIMEFRAMES = new Set(['1h', '6h', '24h', '48h', '7d', CUSTOM_TIMEFRAME]);
 const VALID_DIRECTIONS = new Set<DirectionFilter>(['both', 'buy', 'sell']);
 const VALID_PAST_PAYMENT_FILTERS = new Set<PastPaymentFilter>(['settings', 'all']);
 const VALID_MODES = new Set<TakerOpportunityMode>(['net_full', 'net_capped', 'net_min']);
@@ -342,6 +349,20 @@ function readNullableNumber(value: unknown, bounds: { min: number; max: number }
   return Math.min(bounds.max, Math.max(bounds.min, value));
 }
 
+function isDateInputValue(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const [year, month, day] = value.split('-').map(Number);
+  const date = new Date(year, month - 1, day);
+  return date.getFullYear() === year && date.getMonth() === month - 1 && date.getDate() === day;
+}
+
+function dateInputValue(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 function readPersistedInsightsFilters(): PersistedInsightsFilters {
   try {
     const raw = localStorage.getItem(INSIGHTS_FILTERS_STORAGE_KEY);
@@ -355,6 +376,8 @@ function readPersistedInsightsFilters(): PersistedInsightsFilters {
       selectedTimeframe: VALID_TIMEFRAMES.has(parsed.selectedTimeframe ?? '')
         ? parsed.selectedTimeframe!
         : DEFAULT_INSIGHTS_FILTERS.selectedTimeframe,
+      customStartDate: isDateInputValue(parsed.customStartDate) ? parsed.customStartDate : '',
+      customEndDate: isDateInputValue(parsed.customEndDate) ? parsed.customEndDate : '',
       directionFilter: VALID_DIRECTIONS.has(parsed.directionFilter as DirectionFilter)
         ? parsed.directionFilter as DirectionFilter
         : DEFAULT_INSIGHTS_FILTERS.directionFilter,
@@ -692,6 +715,44 @@ function SelectGroup({ label, description, options, selected, onChange }: Select
         ))}
       </select>
     </label>
+  );
+}
+
+function CustomDateRangeFilter({ startDate, endDate, maxDate, loading, onStartDateChange, onEndDateChange }: {
+  startDate: string;
+  endDate: string;
+  maxDate: string;
+  loading: boolean;
+  onStartDateChange: (value: string) => void;
+  onEndDateChange: (value: string) => void;
+}) {
+  return (
+    <fieldset className="flex flex-col gap-1" title="Show offers closed within an inclusive custom date range">
+      <legend className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">Custom date range{loading ? ' · Loading…' : ''}</legend>
+      <label className="flex flex-col gap-0.5 text-[0.65rem] text-muted">
+        Start date
+        <input
+          type="date"
+          aria-label="Start date"
+          value={startDate}
+          max={endDate || maxDate}
+          onChange={event => onStartDateChange(event.target.value)}
+          className="w-full rounded border border-border bg-bg/60 px-2 py-1 text-[0.75rem] text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
+        />
+      </label>
+      <label className="flex flex-col gap-0.5 text-[0.65rem] text-muted">
+        End date
+        <input
+          type="date"
+          aria-label="End date"
+          value={endDate}
+          min={startDate || undefined}
+          max={maxDate}
+          onChange={event => onEndDateChange(event.target.value)}
+          className="w-full rounded border border-border bg-bg/60 px-2 py-1 text-[0.75rem] text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
+        />
+      </label>
+    </fieldset>
   );
 }
 
@@ -1407,7 +1468,7 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
   );
 }
 
-export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrders, detailedOrders, ordersLoading, cappedLoading, maxFiatLimit, onRefreshLive, lastUpdatedAt, chart }: Props) {
+export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrders, detailedOrders, ordersLoading, cappedLoading, maxFiatLimit, onRefreshLive, lastUpdatedAt, customRangeLoading = false, onCustomRangeChange, chart }: Props) {
   const displayedOrders = detailedOrders.length > 0 ? detailedOrders : fastOrders;
   const deferredOrders = useDeferredValue(displayedOrders);
   const ordersPending = deferredOrders !== displayedOrders;
@@ -1442,6 +1503,8 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const [referenceNowMs] = useState(() => Date.now());
   const [viewMode, setViewMode] = useState<InsightsViewMode>(initialFilters.viewMode);
   const [selectedTimeframe, setSelectedTimeframe] = useState(initialFilters.selectedTimeframe);
+  const [customStartDate, setCustomStartDate] = useState(initialFilters.customStartDate);
+  const [customEndDate, setCustomEndDate] = useState(initialFilters.customEndDate);
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>(initialFilters.directionFilter);
   const [paymentFilter, setPaymentFilter] = useState<PastPaymentFilter>(initialFilters.paymentFilter);
   const [disabledExchanges, setDisabledExchanges] = useState<string[]>(initialFilters.disabledExchanges);
@@ -1469,6 +1532,14 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const [filtersCollapsed, setFiltersCollapsed] = useState(false);
   const [chartCollapsed, setChartCollapsed] = useState(false);
   const [depthCollapsed, setDepthCollapsed] = useState(false);
+
+  useEffect(() => {
+    if (selectedTimeframe !== CUSTOM_TIMEFRAME || !isDateInputValue(customStartDate) || !isDateInputValue(customEndDate)) {
+      onCustomRangeChange?.(null);
+      return;
+    }
+    onCustomRangeChange?.({ startDate: customStartDate, endDate: customEndDate });
+  }, [selectedTimeframe, customStartDate, customEndDate, onCustomRangeChange]);
   const persistedDurationRef = useRef({
     min: initialFilters.durationMin,
     max: initialFilters.durationMax,
@@ -1616,14 +1687,19 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   }, [mode]);
 
   const fiat = activeStats?.fiat_currency || liveFilters.fiat;
-  const selected = !activeStats
+  const selected = selectedTimeframe === CUSTOM_TIMEFRAME || !activeStats
     ? null
     : activeStats.timeframes.find(row => row.timeframe === selectedTimeframe)
       ?? activeStats.timeframes.find(row => row.timeframe === '24h')
       ?? activeStats.timeframes[0]
       ?? null;
   const activeTimeframe = selected?.timeframe ?? selectedTimeframe;
-  const cutoffMs = referenceNowMs - timeframeHours(activeTimeframe) * 60 * 60 * 1000;
+  const cutoffMs = selectedTimeframe === CUSTOM_TIMEFRAME
+    ? null
+    : referenceNowMs - timeframeHours(activeTimeframe) * 60 * 60 * 1000;
+  // Custom ranges are already bounded server-side; preset windows remain
+  // client-filtered against their existing relative cutoff.
+  const endMs: number | null = null;
 
   const disabledExchangeSet = useMemo(() => new Set(disabledExchanges), [disabledExchanges]);
 
@@ -1631,13 +1707,13 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     const counts: Record<string, number> = {};
     for (const order of activeOrders) {
       const lastSeen = parseUtcTimestamp(order.status.last_seen);
-      if (lastSeen == null || lastSeen.getTime() < cutoffMs) continue;
+      if (lastSeen == null || (cutoffMs != null && lastSeen.getTime() < cutoffMs) || (endMs != null && lastSeen.getTime() >= endMs)) continue;
       if (directionFilter !== 'both' && order.direction !== directionFilter) continue;
       counts[order.exchange] = (counts[order.exchange] ?? 0) + 1;
     }
     const exchanges = Object.keys(counts).sort((a, b) => a.localeCompare(b, 'de'));
     return { counts, exchanges };
-  }, [activeOrders, cutoffMs, directionFilter]);
+  }, [activeOrders, cutoffMs, endMs, directionFilter]);
 
   // Live mode counts exchanges over the live offer feed instead of closed orders.
   const liveExchangeFilterBase = useMemo(() => {
@@ -1656,12 +1732,12 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const ordersBeforeDurationFilter = useMemo(() => {
     return activeOrders.filter(order => {
       const lastSeen = parseUtcTimestamp(order.status.last_seen);
-      if (lastSeen == null || lastSeen.getTime() < cutoffMs) return false;
+      if (lastSeen == null || (cutoffMs != null && lastSeen.getTime() < cutoffMs) || (endMs != null && lastSeen.getTime() >= endMs)) return false;
       if (directionFilter !== 'both' && order.direction !== directionFilter) return false;
       if (disabledExchangeSet.has(order.exchange)) return false;
       return true;
     });
-  }, [activeOrders, cutoffMs, directionFilter, disabledExchangeSet]);
+  }, [activeOrders, cutoffMs, endMs, directionFilter, disabledExchangeSet]);
 
   const durationBounds = useMemo(() => {
     let min = Infinity;
@@ -1761,6 +1837,8 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     const payload: PersistedInsightsFilters = {
       viewMode,
       selectedTimeframe,
+      customStartDate,
+      customEndDate,
       directionFilter,
       paymentFilter,
       disabledExchanges,
@@ -1787,6 +1865,8 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   }, [
     viewMode,
     selectedTimeframe,
+    customStartDate,
+    customEndDate,
     directionFilter,
     paymentFilter,
     disabledExchanges,
@@ -1933,11 +2013,30 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     applyDisabledExchanges(next);
   }, [disabledExchanges, applyDisabledExchanges]);
 
+  const customDateMax = dateInputValue(new Date(referenceNowMs));
+  const changeTimeframe = useCallback((timeframe: string) => {
+    setSelectedTimeframe(timeframe);
+    if (timeframe !== CUSTOM_TIMEFRAME) return;
+    if (!isDateInputValue(customEndDate)) setCustomEndDate(customDateMax);
+    if (!isDateInputValue(customStartDate)) {
+      const defaultStart = new Date(referenceNowMs);
+      defaultStart.setDate(defaultStart.getDate() - 6);
+      setCustomStartDate(dateInputValue(defaultStart));
+    }
+  }, [customDateMax, customEndDate, customStartDate, referenceNowMs]);
+
+  const changeCustomStartDate = useCallback((value: string) => {
+    setCustomStartDate(value);
+    if (customEndDate && value > customEndDate) setCustomEndDate(value);
+  }, [customEndDate]);
+
   const resetFilters = useCallback(() => {
     // Also resets the shared live filters (direction, excluded exchanges,
     // payment, premium metric and range) in the global FiltersContext.
     resetLiveFilters();
     setSelectedTimeframe(DEFAULT_INSIGHTS_FILTERS.selectedTimeframe);
+    setCustomStartDate(DEFAULT_INSIGHTS_FILTERS.customStartDate);
+    setCustomEndDate(DEFAULT_INSIGHTS_FILTERS.customEndDate);
     setDirectionFilter(DEFAULT_INSIGHTS_FILTERS.directionFilter);
     setPaymentFilter(DEFAULT_INSIGHTS_FILTERS.paymentFilter);
     setDisabledExchanges([]);
@@ -2114,11 +2213,24 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
           <PastOfferFilters paymentFilter={paymentFilter} onPaymentFilterChange={setPaymentFilter} />
           <SelectGroup
             label="Timeframe"
-            description="Show stats for orders closed within this window"
-            options={((activeStats ?? stats)?.timeframes ?? []).map(r => ({ value: r.timeframe, label: labelForTimeframe(r.timeframe) }))}
-            selected={selected?.timeframe ?? selectedTimeframe}
-            onChange={setSelectedTimeframe}
+            description="Show offers closed within a preset window or a custom date range"
+            options={[
+              ...((activeStats ?? stats)?.timeframes ?? []).map(r => ({ value: r.timeframe, label: labelForTimeframe(r.timeframe) })),
+              { value: CUSTOM_TIMEFRAME, label: 'Custom date range' },
+            ]}
+            selected={selectedTimeframe}
+            onChange={changeTimeframe}
           />
+          {selectedTimeframe === CUSTOM_TIMEFRAME && (
+            <CustomDateRangeFilter
+              startDate={customStartDate}
+              endDate={customEndDate}
+              maxDate={customDateMax}
+              loading={customRangeLoading}
+              onStartDateChange={changeCustomStartDate}
+              onEndDateChange={setCustomEndDate}
+            />
+          )}
           <DualRangeFilter
             label="Duration"
             description="Filter profitable trades by how long the offer was live"

@@ -18,6 +18,15 @@ export interface AnalyticsRequestBody {
   coupled_hedge: boolean;
   max_fiat_limit: number;
   sections?: string[];
+  past_start_date?: string;
+  past_end_date?: string;
+  timezone?: string;
+}
+
+export interface AnalyticsPastRange {
+  startDate: string;
+  endDate: string;
+  timezone: string;
 }
 
 function sorted(values: readonly string[]): string[] {
@@ -59,7 +68,7 @@ export function buildPastOffersSearch(params: MarketRequestParams): string {
   return appendTradeCostParams(search, params).toString();
 }
 
-export function buildAnalyticsBody(params: MarketRequestParams, sections?: string[]): AnalyticsRequestBody {
+export function buildAnalyticsBody(params: MarketRequestParams, sections?: string[], pastRange?: AnalyticsPastRange | null): AnalyticsRequestBody {
   return {
     hours: Number(params.hours),
     cex: params.cex,
@@ -69,5 +78,10 @@ export function buildAnalyticsBody(params: MarketRequestParams, sections?: strin
     coupled_hedge: params.coupledHedge,
     max_fiat_limit: params.maxFiatLimit ?? 0,
     ...(sections ? { sections } : {}),
+    ...(pastRange ? {
+      past_start_date: pastRange.startDate,
+      past_end_date: pastRange.endDate,
+      timezone: pastRange.timezone,
+    } : {}),
   };
 }

@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from 'react';
 import { useDashboard } from './hooks/useDashboard';
 import { useLiveOffers } from './hooks/useLiveOffers';
 import { usePaymentMethodGroups } from './hooks/usePaymentMethodGroups';
@@ -11,7 +11,7 @@ import { useFilters } from './hooks/useFilters';
 import { usePreferences } from './hooks/usePreferences';
 import { useAuth } from './hooks/useAuth';
 import { useMarketRequestParams } from './hooks/useMarketRequestParams';
-import type { MarketRequestParams } from './shared/marketParams';
+import type { AnalyticsPastRange, MarketRequestParams } from './shared/marketParams';
 import { LoginPage } from './components/LoginPage';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { Header } from './components/Header';
@@ -73,11 +73,17 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
 }) {
   const { filters } = useFilters();
   const { params, ready } = useMarketRequestParams();
+  const { preferredTimezone } = usePreferences();
+  const [pastRange, setPastRange] = useState<AnalyticsPastRange | null>(null);
+
+  const handleCustomRangeChange = useCallback((range: { startDate: string; endDate: string } | null) => {
+    setPastRange(range ? { ...range, timezone: preferredTimezone } : null);
+  }, [preferredTimezone]);
 
   useEffect(() => {
     if (!ready) return;
-    loadAnalytics(params);
-  }, [params, loadAnalytics, ready]);
+    loadAnalytics(params, pastRange);
+  }, [params, pastRange, loadAnalytics, ready]);
 
   // Same core-data refresh cycle as the Monitor tab: reload live offers and
   // the offers/OHLC dataset when the CEX or cost preferences change, and keep
@@ -114,6 +120,8 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           maxFiatLimit={params.maxFiatLimit}
           onRefreshLive={() => loadCore(params)}
           lastUpdatedAt={lastUpdatedAt}
+          customRangeLoading={pastRange != null && (analyticsOverviewLoading || analyticsOrdersLoading || analyticsCappedLoading)}
+          onCustomRangeChange={handleCustomRangeChange}
           chart={(extraOffers, includeLiveOffers) => (
             <Suspense fallback={<FeatureFallback label="Loading market chart" />}>
             <OHLCChart

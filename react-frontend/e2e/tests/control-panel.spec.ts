@@ -49,6 +49,46 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await expect(label('Timeframe')).toHaveCount(0);
   });
 
+  test('past offers support an inclusive custom date range', async ({ page }) => {
+    const cp = controlPanel(page);
+    await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
+
+    const timeframe = cp.getByRole('combobox', { name: 'Timeframe' });
+    const initialCustomRequest = page.waitForRequest(request => {
+      if (new URL(request.url()).pathname !== '/api/dashboard/analytics') return false;
+      const body = request.postDataJSON() as Record<string, unknown>;
+      return body.past_start_date === '2026-03-26'
+        && body.past_end_date === '2026-04-01'
+        && typeof body.timezone === 'string';
+    });
+    await timeframe.selectOption('custom');
+    const startDate = cp.getByRole('textbox', { name: 'Start date' });
+    const endDate = cp.getByRole('textbox', { name: 'End date' });
+    await expect(startDate).toHaveValue('2026-03-26');
+    await expect(endDate).toHaveValue('2026-04-01');
+    await initialCustomRequest;
+
+    const changedCustomRequest = page.waitForRequest(request => {
+      if (new URL(request.url()).pathname !== '/api/dashboard/analytics') return false;
+      const body = request.postDataJSON() as Record<string, unknown>;
+      return body.past_start_date === '2026-03-30'
+        && body.past_end_date === '2026-03-31';
+    });
+    await startDate.fill('2026-03-30');
+    await endDate.fill('2026-03-31');
+    await expect(startDate).toHaveValue('2026-03-30');
+    await expect(endDate).toHaveValue('2026-03-31');
+    await changedCustomRequest;
+
+    const presetRequest = page.waitForRequest(request => {
+      if (new URL(request.url()).pathname !== '/api/dashboard/analytics') return false;
+      const body = request.postDataJSON() as Record<string, unknown>;
+      return !('past_start_date' in body) && !('past_end_date' in body) && !('timezone' in body);
+    });
+    await timeframe.selectOption('24h');
+    await presetRequest;
+  });
+
   test('live offers use the full-panel detail view', async ({ page }) => {
     let row = page.getByTestId('live-offers-row').first();
     await expect(row).toBeVisible();

@@ -1102,6 +1102,67 @@ func TestDashboardAnalyticsRESTBundlesPayload(t *testing.T) {
 	}
 }
 
+func TestDashboardAnalyticsCustomRangeLoadsRetainedHistoryAtDayBoundaries(t *testing.T) {
+	withTempOrdersDB(t)
+
+	if _, err := db.Exec(`
+		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, avg_premium_pct, avg_net_premium_pct, historical_analysis_status, first_seen, last_seen, is_live)
+		VALUES
+			('bisq', 'buy', 110, .1, .1, 'SEPA', 'custom-before', 100, 12, 10, 'analyzed', '2025-12-31 23:00:00', '2025-12-31 23:59:59', 0),
+			('bisq', 'buy', 110, .1, .1, 'SEPA', 'custom-start', 100, 12, 10, 'analyzed', '2026-01-01 00:00:00', '2026-01-01 00:00:00', 0),
+			('bisq', 'buy', 110, .1, .1, 'SEPA', 'custom-end', 100, 12, 10, 'analyzed', '2026-01-02 23:59:59', '2026-01-02 23:59:59', 0),
+			('bisq', 'buy', 110, .1, .1, 'SEPA', 'custom-after', 100, 12, 10, 'analyzed', '2026-01-03 00:00:00', '2026-01-03 00:00:00', 0)
+	`); err != nil {
+		t.Fatalf("insert retained offers: %v", err)
+	}
+
+	body := `{"hours":24,"cex":"kraken","fiat":"EUR","past_start_date":"2026-01-01","past_end_date":"2026-01-02","timezone":"UTC","sections":["taker_orders_full"]}`
+	req := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(body))
+	rec := httptest.NewRecorder()
+	handleDashboardAnalytics(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+	var resp dashboardAnalyticsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.PastProfitableOrdersCompact) != 2 {
+		t.Fatalf("custom-range orders = %d, want 2", len(resp.PastProfitableOrdersCompact))
+	}
+	if resp.PastProfitableOrdersCompact[0].Status.LastSeen < "2026-01-01" || resp.PastProfitableOrdersCompact[1].Status.LastSeen > "2026-01-02T23:59:59Z" {
+		t.Fatalf("orders outside inclusive custom range: %#v", resp.PastProfitableOrdersCompact)
+	}
+}
+
+func TestDashboardAnalyticsRejectsInvalidCustomRanges(t *testing.T) {
+	withTempOrdersDB(t)
+	for _, body := range []string{
+		`{"past_start_date":"2026-01-02","past_end_date":"2026-01-01","timezone":"UTC"}`,
+		`{"past_start_date":"not-a-date","past_end_date":"2026-01-01","timezone":"UTC"}`,
+		`{"past_start_date":"2026-01-01","past_end_date":"2026-01-01","timezone":"Not/AZone"}`,
+		`{"past_start_date":"2026-01-01","past_end_date":"2026-01-01"}`,
+	} {
+		req := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		handleDashboardAnalytics(rec, req)
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("body %s: status = %d, want %d", body, rec.Code, http.StatusBadRequest)
+		}
+	}
+}
+
+func TestDashboardAnalyticsCustomRangeCacheKeysDiffer(t *testing.T) {
+	base := dashboardAnalyticsParams{Hours: 24, Cex: "kraken", Fiat: "EUR"}
+	first := base
+	first.PastStartDate, first.PastEndDate, first.Timezone = "2026-01-01", "2026-01-02", "UTC"
+	second := first
+	second.PastEndDate = "2026-01-03"
+	if first.cacheKey() == second.cacheKey() || first.analyticsResultCacheKey() == second.analyticsResultCacheKey() {
+		t.Fatal("custom ranges must use different cache keys")
+	}
+}
+
 func TestDashboardAnalyticsSectionsFiltersPayload(t *testing.T) {
 	withTempOrdersDB(t)
 

@@ -34,7 +34,7 @@ RUN CGO_ENABLED=0 go build -ldflags="-s -w" -o server ./cmd/server
 # Stage 3: Minimal runtime
 FROM alpine:3.21
 
-RUN apk add --no-cache curl
+RUN apk add --no-cache curl tzdata
 
 WORKDIR /app
 

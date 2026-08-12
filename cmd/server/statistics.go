@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"math"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -256,13 +257,20 @@ func buildOfferLifecyclePremiumPoints(
 }
 
 func loadStatisticsContextForParams(p dashboardAnalyticsParams) (statisticsContext, error) {
-	historyHours := p.Hours
-	if historyHours < 168 {
-		historyHours = 168
+	query := statisticsOffersQuery
+	args := []any{}
+	if p.hasCustomPastRange() {
+		query = strings.Replace(query, "WHERE last_seen >= ?", "WHERE last_seen >= ? AND last_seen < ?", 1)
+		args = append(args, p.pastRangeStart.Format("2006-01-02 15:04:05"), p.pastRangeEnd.Format("2006-01-02 15:04:05"))
+	} else {
+		historyHours := p.Hours
+		if historyHours < 168 {
+			historyHours = 168
+		}
+		args = append(args, time.Now().Add(-time.Duration(historyHours)*time.Hour))
 	}
-	cutoff := time.Now().Add(-time.Duration(historyHours) * time.Hour)
 
-	rows, err := db.Query(rebind(statisticsOffersQuery), cutoff)
+	rows, err := db.Query(rebind(query), args...)
 	if err != nil {
 		return statisticsContext{}, err
 	}

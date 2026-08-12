@@ -256,13 +256,13 @@ func cloneOfferMap(o map[string]any) map[string]any {
 	return clone
 }
 
-// filterClosedAnalyzedOffers derives the 168h closed/analyzed offer set from
+// filterClosedAnalyzedOffers derives the closed/analyzed offer set from
 // an already-loaded, cached offer list instead of issuing a second "SELECT *
 // FROM offers" query — generalCtx.offers already covers at least 168h and is
 // ordered by last_seen DESC (see loadGeneralStatsContextUncachedForParams).
 // Each returned offer is a private clone (see cloneOfferMap) since callers
 // mutate it.
-func filterClosedAnalyzedOffers(offers []map[string]any) []map[string]any {
+func filterClosedAnalyzedOffers(offers []map[string]any, p dashboardAnalyticsParams) []map[string]any {
 	cutoff := time.Now().Add(-168 * time.Hour)
 	result := make([]map[string]any, 0, len(offers))
 	for _, o := range offers {
@@ -272,7 +272,9 @@ func filterClosedAnalyzedOffers(offers []map[string]any) []map[string]any {
 		if offerString(o, "historical_analysis_status") != "analyzed" {
 			continue
 		}
-		if parseDBTime(offerString(o, "last_seen")).Before(cutoff) {
+		lastSeen := parseDBTime(offerString(o, "last_seen"))
+		if (!p.hasCustomPastRange() && lastSeen.Before(cutoff)) ||
+			(p.hasCustomPastRange() && (lastSeen.Before(p.pastRangeStart) || !lastSeen.Before(p.pastRangeEnd))) {
 			continue
 		}
 		result = append(result, cloneOfferMap(o))
@@ -286,7 +288,7 @@ func loadAnalyticsBuildContext(p dashboardAnalyticsParams) (*analyticsBuildConte
 		return nil, err
 	}
 
-	closedOffers := filterClosedAnalyzedOffers(generalCtx.offers)
+	closedOffers := filterClosedAnalyzedOffers(generalCtx.offers, p)
 
 	closedIDs := make([]int64, 0, len(closedOffers))
 	for _, o := range closedOffers {

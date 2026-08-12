@@ -4,6 +4,7 @@ import {
   buildAnalyticsBody,
   buildPastOffersSearch,
   marketRequestKey,
+  type AnalyticsPastRange,
   type MarketRequestParams,
 } from '../shared/marketParams';
 import type {
@@ -205,8 +206,8 @@ export function useDashboard() {
     return promise;
   }, []);
 
-  const loadAnalytics = useCallback(async (params: MarketRequestParams) => {
-    const key = marketRequestKey(params);
+  const loadAnalytics = useCallback(async (params: MarketRequestParams, pastRange: AnalyticsPastRange | null = null) => {
+    const key = JSON.stringify({ params: marketRequestKey(params), pastRange });
 
     const inFlight = analyticsLoadRef.current;
     if (inFlight?.key === key && !inFlight.controller.signal.aborted) {
@@ -229,7 +230,7 @@ export function useDashboard() {
         let cappedArrived = false;
         const statsFull = apiPost<AnalyticsOverviewResponse>(
           '/api/dashboard/analytics',
-          buildAnalyticsBody(params, ['taker_stats_full']),
+          buildAnalyticsBody(params, ['taker_stats_full'], pastRange),
           { signal },
         ).then((res) => {
           if (signal.aborted) return;
@@ -251,7 +252,7 @@ export function useDashboard() {
 
         const fastOrders = apiPost<AnalyticsOrdersResponse>(
           '/api/dashboard/analytics',
-          buildAnalyticsBody(params, ['taker_orders_full']),
+          buildAnalyticsBody(params, ['taker_orders_full'], pastRange),
           { signal },
         ).then((res) => {
           if (signal.aborted || cappedArrived) return;
@@ -266,7 +267,7 @@ export function useDashboard() {
 
         const cappedAnalytics = apiPost<AnalyticsOverviewResponse & AnalyticsOrdersResponse>(
           '/api/dashboard/analytics',
-          buildAnalyticsBody(params, ['taker_stats', 'taker_orders']),
+          buildAnalyticsBody(params, ['taker_stats', 'taker_orders'], pastRange),
           { signal },
         ).then((res) => {
           if (signal.aborted) return;
