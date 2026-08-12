@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { closeLNDChannel, fetchCexBalances, fetchCexDepositAddresses, fetchCexHedgePositions, fetchDexPendingLiquidity, fetchLNDWalletStatus, fetchTradingAccounts, fetchTransactionalLiquiditySettings, openLNDChannel, updateTransactionalLiquiditySettings } from '../utils/api';
-import type { CexAssetBalance, CexDepositAddress, LNDWalletStatus, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquidityTargetDirection } from '../types';
+import { closeLNDChannel, fetchCexBalances, fetchCexDepositAddresses, fetchCexHedgePositions, fetchDexPendingLiquidity, fetchLNDChannelPresets, fetchLNDWalletStatus, fetchTradingAccounts, fetchTransactionalLiquiditySettings, openLNDChannel, updateTransactionalLiquiditySettings } from '../utils/api';
+import type { CexAssetBalance, CexDepositAddress, LNDChannelPreset, LNDWalletStatus, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquidityTargetDirection } from '../types';
 import { useFilters } from '../hooks/useFilters';
+import { useCEXPermissions } from '../hooks/useCEXPermissions';
 import { usePreferences } from '../hooks/usePreferences';
 import { LocalQrCode } from './LocalQrCode';
 
@@ -50,16 +51,10 @@ function formatBTC(value: number) {
   return `${value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })} BTC`;
 }
 
-function isConnectedCex(account: TradingAccount) {
-  return account.category === 'CEX'
-    && account.is_active
-    && account.is_healthy
-    && account.api_keys.some(key => key.is_active);
-}
-
 export function LiquidityWorkspace() {
   const { filters, refPrice } = useFilters();
   const { maxFiatLimit } = usePreferences();
+  const { exchanges: cexPolicies, ready: cexPoliciesReady } = useCEXPermissions();
   const [action, setAction] = useState<PoolAction>('fill');
   const [poolExpanded, setPoolExpanded] = useState(false);
   const [channelsExpanded, setChannelsExpanded] = useState(false);
@@ -82,6 +77,8 @@ export function LiquidityWorkspace() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [channelForm, setChannelForm] = useState({ nodePubkey: '', peerHost: '', fundingSats: '', pushSats: '', feeRate: '2', private: false });
+  const [channelPresets, setChannelPresets] = useState<LNDChannelPreset[]>([]);
+  const [selectedChannelPresetID, setSelectedChannelPresetID] = useState('');
   const [channelNotice, setChannelNotice] = useState<string | null>(null);
   const [channelError, setChannelError] = useState<string | null>(null);
   const [openingChannel, setOpeningChannel] = useState(false);
@@ -94,10 +91,22 @@ export function LiquidityWorkspace() {
   const [transactionalNotice, setTransactionalNotice] = useState<string | null>(null);
   const [transactionalError, setTransactionalError] = useState<string | null>(null);
 
-  const connectedExchanges = useMemo(() => accounts.filter(isConnectedCex), [accounts]);
+  // The CEX policy table is authoritative: an effective spot capability means
+  // the account has verified spot-trading and withdrawal permissions and the
+  // operator has enabled it. Account-health alone is intentionally not used.
+  const connectedExchanges = useMemo(() => {
+    if (!cexPoliciesReady) return [];
+    const eligibleAccountIDs = new Set(
+      cexPolicies
+        .filter(policy => policy.execution_supported && policy.spot.effective_enabled)
+        .map(policy => policy.account_id),
+    );
+    return accounts.filter(account => account.category === 'CEX' && eligibleAccountIDs.has(account.id));
+  }, [accounts, cexPolicies, cexPoliciesReady]);
   const lndAddresses = useMemo(() => lndWallet?.addresses.filter(address => address.kind === 'onchain') ?? [], [lndWallet]);
   const selectedExchange = connectedExchanges.find(account => String(account.id) === selectedExchangeID) ?? null;
   const channels = lndWallet?.channels ?? [];
+  const selectedChannelPreset = channelPresets.find(preset => preset.id === selectedChannelPresetID);
   const lndOnChainSats = lndAddresses.reduce((sum, address) => sum + (address.balance_sat ?? 0), 0);
   const lightningLocalSats = channels.reduce((sum, channel) => sum + channel.local_balance_sat, 0);
   const lightningRemoteSats = channels.reduce((sum, channel) => sum + channel.remote_balance_sat, 0);
@@ -153,6 +162,14 @@ export function LiquidityWorkspace() {
       })
       .catch(error => { if (active) { setTransactionalError(error instanceof Error ? error.message : 'Could not load transactional liquidity settings.'); setTransactionalEditing(true); } })
       .finally(() => { if (active) setTransactionalLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    void fetchLNDChannelPresets()
+      .then(response => { if (active) setChannelPresets(response.presets ?? []); })
+      .catch(() => { if (active) setChannelPresets([]); });
     return () => { active = false; };
   }, []);
 
@@ -217,7 +234,9 @@ export function LiquidityWorkspace() {
 
       if (accountsResult.status === 'fulfilled') {
         const nextAccounts = accountsResult.value;
-        const nextCexAccounts = nextAccounts.filter(isConnectedCex);
+        // Fetch balances for all active CEX accounts. The exchange selector is
+        // separately restricted by the authoritative capability policy above.
+        const nextCexAccounts = nextAccounts.filter(account => account.category === 'CEX' && account.is_active && account.api_keys.some(key => key.is_active));
         setAccounts(nextAccounts);
         const snapshots = await Promise.all(nextCexAccounts.map(async account => {
           const [balances, hedges] = await Promise.allSettled([fetchCexBalances(account.id), fetchCexHedgePositions(account.id)]);
@@ -352,27 +371,43 @@ export function LiquidityWorkspace() {
     const fundingSats = Number(channelForm.fundingSats);
     const pushSats = Number(channelForm.pushSats || 0);
     const feeRate = Number(channelForm.feeRate || 2);
-    if (!channelForm.nodePubkey.trim() || !Number.isFinite(fundingSats) || fundingSats <= 0 || !Number.isFinite(pushSats) || pushSats < 0 || !Number.isFinite(feeRate) || feeRate <= 0) {
-      setChannelError('Enter a node pubkey, a positive local funding amount, and valid optional amounts.');
+    if ((!selectedChannelPreset && !channelForm.nodePubkey.trim()) || !Number.isFinite(fundingSats) || fundingSats <= 0 || !Number.isFinite(pushSats) || pushSats < 0 || pushSats >= fundingSats || !Number.isFinite(feeRate) || feeRate <= 0) {
+      setChannelError('Enter a node pubkey or choose a public node, then provide valid funding, push, and fee amounts.');
       return;
     }
-    if (!window.confirm(`Open a channel with ${formatSats(fundingSats)} of local funding?`)) return;
+    const hasExistingChannel = !!selectedChannelPreset && [
+      ...channels.map(channel => channel.remote_pubkey),
+      ...(lndWallet?.pending_channels ?? []).map(channel => channel.remote_pubkey),
+    ].some(pubkey => pubkey.toLowerCase() === selectedChannelPreset.node_pubkey.toLowerCase());
+    const peerLabel = selectedChannelPreset?.name ?? channelForm.nodePubkey.trim();
+    const confirmation = [
+      `Open a channel with ${peerLabel}?`,
+      `Local funding: ${formatSats(fundingSats)}`,
+      `Push amount: ${formatSats(pushSats)}`,
+      `Fee: ${feeRate} sat/vB · ${channelForm.private ? 'Private' : 'Public'} channel`,
+      'The channel will remain pending until its funding transaction confirms.',
+      hasExistingChannel ? 'An open or pending channel already exists for this peer.' : '',
+    ].filter(Boolean).join('\n');
+    if (!window.confirm(confirmation)) return;
 
     setOpeningChannel(true);
     setChannelError(null);
     setChannelNotice(null);
     try {
       const result = await openLNDChannel({
-        node_pubkey: channelForm.nodePubkey.trim(),
-        peer_host: channelForm.peerHost.trim() || undefined,
+        preset_id: selectedChannelPreset?.id,
+        node_pubkey: selectedChannelPreset ? undefined : channelForm.nodePubkey.trim(),
+        peer_host: selectedChannelPreset ? undefined : channelForm.peerHost.trim() || undefined,
         local_funding_amount_sat: fundingSats,
         push_sat: pushSats,
         sat_per_vbyte: feeRate,
         private: channelForm.private,
+        allow_additional_channel: hasExistingChannel,
       });
       setChannelForm({ nodePubkey: '', peerHost: '', fundingSats: '', pushSats: '', feeRate: '2', private: false });
+      setSelectedChannelPresetID('');
       await refreshLndWallet();
-      setChannelNotice(`Channel opening submitted. Funding transaction: ${result.funding_txid || 'pending'}.`);
+      setChannelNotice(`Channel opening submitted and is pending confirmation. Funding transaction: ${result.funding_txid || 'pending'}.`);
     } catch (error) {
       setChannelError(error instanceof Error ? error.message : 'Failed to open the channel.');
     } finally {
@@ -605,8 +640,10 @@ export function LiquidityWorkspace() {
           <details className="group rounded-md border border-border bg-surface/40 mb-2">
             <summary className="cursor-pointer list-none px-2 py-1.5 text-[0.72rem] font-medium text-text flex items-center justify-between">Open a new channel <span className="text-muted transition-transform group-open:rotate-180">⌄</span></summary>
           <form onSubmit={event => void submitOpenChannel(event)} className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 border-t border-border px-2 pb-2 pt-1.5" noValidate>
-            <label className="block"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Node pubkey</span><input value={channelForm.nodePubkey} onChange={event => setChannelForm(current => ({ ...current, nodePubkey: event.target.value }))} placeholder="Remote node public key" className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" /></label>
-            <label className="block"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Peer host <span className="normal-case tracking-normal">(optional)</span></span><input value={channelForm.peerHost} onChange={event => setChannelForm(current => ({ ...current, peerHost: event.target.value }))} placeholder="node.example:9735" className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" /></label>
+            <label className="block sm:col-span-2"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Public node <span className="normal-case tracking-normal">(optional)</span></span><select value={selectedChannelPresetID} onChange={event => setSelectedChannelPresetID(event.target.value)} className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent"><option value="">Manual connection details</option>{channelPresets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
+            {selectedChannelPreset && <div className="sm:col-span-2 rounded-md border border-border bg-bg px-2 py-1.5 text-[0.7rem] text-muted"><div><span className="text-text">{selectedChannelPreset.name}</span> · {selectedChannelPreset.peer_host}</div><div>Minimum funding: {formatSats(selectedChannelPreset.min_funding_amount_sat)}</div>{selectedChannelPreset.warning && <div className="mt-1 text-peach">{selectedChannelPreset.warning}</div>}<a className="mt-1 inline-block text-accent underline" href={selectedChannelPreset.source_url} target="_blank" rel="noreferrer">Source · verified {selectedChannelPreset.verified_at}</a></div>}
+            <label className="block"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Node pubkey</span><input disabled={!!selectedChannelPreset} value={channelForm.nodePubkey} onChange={event => setChannelForm(current => ({ ...current, nodePubkey: event.target.value }))} placeholder="Remote node public key" className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent disabled:opacity-50" /></label>
+            <label className="block"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Peer host <span className="normal-case tracking-normal">(optional)</span></span><input disabled={!!selectedChannelPreset} value={channelForm.peerHost} onChange={event => setChannelForm(current => ({ ...current, peerHost: event.target.value }))} placeholder="node.example:9735" className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent disabled:opacity-50" /></label>
             <label className="block"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Local funding (sats)</span><input type="number" min="1" step="1" value={channelForm.fundingSats} onChange={event => setChannelForm(current => ({ ...current, fundingSats: event.target.value }))} placeholder="1000000" className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" /></label>
             <div className="grid grid-cols-2 gap-2">
               <label className="block"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Push sats</span><input type="number" min="0" step="1" value={channelForm.pushSats} onChange={event => setChannelForm(current => ({ ...current, pushSats: event.target.value }))} placeholder="0" className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" /></label>

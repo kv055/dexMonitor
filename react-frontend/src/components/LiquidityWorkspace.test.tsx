@@ -17,6 +17,9 @@ vi.mock('../utils/api', () => ({
     addresses: [{ address: 'bc1qlndwalletdestination000000000000000000', kind: 'onchain', label: 'Liquidity pool', balance_sat: 1250000 }],
     channels: [{ remote_pubkey: '03remote', remote_alias: 'Hub', capacity_sat: 1000000, local_balance_sat: 600000, remote_balance_sat: 400000, active: true, private: false, channel_point: 'txid:0' }],
   }),
+  fetchLNDChannelPresets: vi.fn().mockResolvedValue({
+    presets: [{ id: 'kraken', name: 'Kraken', node_pubkey: '02f1', peer_host: '52.13.118.208:9735', min_funding_amount_sat: 1000000, source_url: 'https://example.test/kraken', verified_at: '2026-08-11', enabled: true }],
+  }),
   fetchDexPendingLiquidity: vi.fn().mockResolvedValue({ btc_value: 0.0375, transaction_count: 2, statuses: ['DexPositionTaken', 'DexFiatHasArrived'] }),
   fetchCexBalances: vi.fn().mockResolvedValue({ bitcoin: { asset: 'BTC', available: 0.25, total: 0.3 }, fiat: [{ asset: 'EUR', available: 1000, total: 1000 }], source: 'Kraken' }),
   fetchCexHedgePositions: vi.fn().mockResolvedValue({ active: [{ size_btc: -0.1 }, { size_btc: 0.05 }], past: [] }),
@@ -33,15 +36,28 @@ import { LiquidityWorkspace } from './LiquidityWorkspace';
 import { fetchDexPendingLiquidity, fetchTransactionalLiquiditySettings, updateTransactionalLiquiditySettings } from '../utils/api';
 import { FiltersProvider } from '../context/FiltersContext';
 import { PreferencesProvider } from '../context/PreferencesContext';
+import { CEXPermissionsContext, type CEXPermissionsContextValue } from '../hooks/useCEXPermissions';
 import type { Offer } from '../types';
 
 function renderWorkspace(offers: Offer[] = []) {
+  const cexPermissions: CEXPermissionsContextValue = {
+    exchanges: [{
+      account_id: 7, provider: 'Kraken', exchange: 'kraken', cost_supported: true, execution_supported: true, active_key_count: 1, permissions_checked_at: null,
+      policy: { spot_enabled: true, hedge_enabled: true },
+      spot: { supported: true, policy_enabled: true, available: true, effective_enabled: true, blocking_permissions: [], blockers: [] },
+      hedge: { supported: true, policy_enabled: true, available: true, effective_enabled: true, blocking_permissions: [], blockers: [] },
+    }],
+    loading: false, ready: true, error: null, revision: 0, updating: null,
+    updatePolicy: vi.fn(), reload: vi.fn(),
+  };
   return render(
-    <PreferencesProvider>
-      <FiltersProvider offers={offers} loading={false} groups={[]} excludedMethods={[]} hideZeroTrustScore={false}>
-        <LiquidityWorkspace />
-      </FiltersProvider>
-    </PreferencesProvider>,
+    <CEXPermissionsContext.Provider value={cexPermissions}>
+      <PreferencesProvider>
+        <FiltersProvider offers={offers} loading={false} groups={[]} excludedMethods={[]} hideZeroTrustScore={false}>
+          <LiquidityWorkspace />
+        </FiltersProvider>
+      </PreferencesProvider>
+    </CEXPermissionsContext.Provider>,
   );
 }
 
