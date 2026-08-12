@@ -129,11 +129,12 @@ CREATE TABLE payment_method_chat_templates (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     exchange TEXT NOT NULL,
     payment_method_id INTEGER NOT NULL,
+    trade_direction TEXT NOT NULL DEFAULT 'bid',
     template TEXT NOT NULL,
     is_active BOOLEAN NOT NULL DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(exchange, payment_method_id)
+    UNIQUE(exchange, payment_method_id, trade_direction)
 );
 
 CREATE TABLE snapshot_log (
@@ -1860,6 +1861,26 @@ func TestPaymentMethodChatTemplatesCRUD(t *testing.T) {
 		t.Fatalf("unexpected chat template: %+v", putResp.ChatTemplates[0])
 	}
 
+	// A separate ask template is stored alongside the bid template.
+	askRec := httptest.NewRecorder()
+	askBody := `{"trade_direction":"ask","template":"Ask for {{amount}} {{currency}} via Revolut.","is_active":true}`
+	askReq := httptest.NewRequest(http.MethodPut, "/api/trading/payment_methods/1001/chat_templates/robosats", strings.NewReader(askBody))
+	askReq.SetPathValue("id", "1001")
+	askReq.SetPathValue("exchange", "robosats")
+	handleTradingPaymentMethodChatTemplateByExchange(askRec, askReq)
+	if askRec.Code != http.StatusOK {
+		t.Fatalf("PUT ask chat_template status = %d, body = %s", askRec.Code, askRec.Body.String())
+	}
+	var askResp struct {
+		ChatTemplates []paymentmethods.ChatTemplateRow `json:"chat_templates"`
+	}
+	if err := json.Unmarshal(askRec.Body.Bytes(), &askResp); err != nil {
+		t.Fatalf("decode ask PUT response: %v", err)
+	}
+	if len(askResp.ChatTemplates) != 2 {
+		t.Fatalf("expected bid and ask templates, got %d", len(askResp.ChatTemplates))
+	}
+
 	// Reject an invalid exchange.
 	badRec := httptest.NewRecorder()
 	badReq := httptest.NewRequest(http.MethodPut, "/api/trading/payment_methods/1001/chat_templates/Bisq", strings.NewReader(putBody))
@@ -1872,7 +1893,7 @@ func TestPaymentMethodChatTemplatesCRUD(t *testing.T) {
 
 	// DELETE removes the template.
 	delRec := httptest.NewRecorder()
-	delReq := httptest.NewRequest(http.MethodDelete, "/api/trading/payment_methods/1001/chat_templates/robosats", nil)
+	delReq := httptest.NewRequest(http.MethodDelete, "/api/trading/payment_methods/1001/chat_templates/robosats?trade_direction=ask", nil)
 	delReq.SetPathValue("id", "1001")
 	delReq.SetPathValue("exchange", "robosats")
 	handleTradingPaymentMethodChatTemplateByExchange(delRec, delReq)

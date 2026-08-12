@@ -1857,6 +1857,8 @@ export function TradingAccountsPanel() {
   const [revealingCredentialsByAccount, setRevealingCredentialsByAccount] = useState<Record<number, boolean>>({});
   const [revealedAccountSecretsByAccount, setRevealedAccountSecretsByAccount] = useState<Record<number, TradingAccount>>({});
   const [visibleAccountSecretsByAccount, setVisibleAccountSecretsByAccount] = useState<Record<number, Record<string, boolean>>>({});
+  const [visibleChatTemplateVariables, setVisibleChatTemplateVariables] = useState<Record<string, boolean>>({});
+  const [revealingChatTemplateVariablesByAccount, setRevealingChatTemplateVariablesByAccount] = useState<Record<number, boolean>>({});
   const [lndWalletStatus, setLndWalletStatus] = useState<LNDWalletStatus | null>(null);
   const [lndWalletLoading, setLndWalletLoading] = useState(false);
   const [lndWalletError, setLndWalletError] = useState<string | null>(null);
@@ -1895,11 +1897,14 @@ export function TradingAccountsPanel() {
   const [bisqAccountFileError, setBisqAccountFileError] = useState<string | null>(null);
   const [chatPaymentMethods, setChatPaymentMethods] = useState<PaymentMethodRow[]>([]);
   const [chatTemplatesByMethod, setChatTemplatesByMethod] = useState<Record<number, PaymentMethodChatTemplate[]>>({});
-  const [chatTemplateDrafts, setChatTemplateDrafts] = useState<Record<number, ChatTemplateDraft>>({});
+  const [chatTemplateDrafts, setChatTemplateDrafts] = useState<Record<string, ChatTemplateDraft>>({});
+  const [expandedChatTemplateMethodID, setExpandedChatTemplateMethodID] = useState<number | null>(null);
   const [chatTemplateEditingMethods, setChatTemplateEditingMethods] = useState<Record<number, boolean>>({});
+  const [chatTemplateDirectionByMethod, setChatTemplateDirectionByMethod] = useState<Record<number, 'bid' | 'ask'>>({});
   const [chatPaymentMethodsLoading, setChatPaymentMethodsLoading] = useState(false);
   const [chatPaymentMethodsError, setChatPaymentMethodsError] = useState<string | null>(null);
-  const [chatTemplateSavingMethodID, setChatTemplateSavingMethodID] = useState<number | null>(null);
+  const [chatTemplateSavingMethodID, setChatTemplateSavingMethodID] = useState<string | null>(null);
+  const chatTemplateTextareas = useRef<Record<string, HTMLTextAreaElement | null>>({});
   const [uiState, dispatchUi] = useReducer(tradingPanelUiReducer, undefined, () => ({
     expandedId: null,
     showNewAccountForm: false,
@@ -2753,6 +2758,28 @@ export function TradingAccountsPanel() {
       }
     }
     setVisibleAccountSecretsByAccount(prev => ({ ...prev, [account.id]: { ...prev[account.id], [field]: true } }));
+  };
+
+  const toggleChatTemplateVariableReveal = async (visibilityKey: string, account: TradingAccount | undefined) => {
+    if (!account) return;
+    if (visibleChatTemplateVariables[visibilityKey]) {
+      setVisibleChatTemplateVariables(prev => ({ ...prev, [visibilityKey]: false }));
+      return;
+    }
+    if (!revealedAccountSecretsByAccount[account.id]) {
+      setRevealingChatTemplateVariablesByAccount(prev => ({ ...prev, [account.id]: true }));
+      setError(null);
+      try {
+        const revealed = await revealTradingAccountSecrets(account.id);
+        setRevealedAccountSecretsByAccount(prev => ({ ...prev, [account.id]: revealed }));
+      } catch (err) {
+        setError(err instanceof Error ? err.message : 'Failed to reveal account details');
+        return;
+      } finally {
+        setRevealingChatTemplateVariablesByAccount(prev => ({ ...prev, [account.id]: false }));
+      }
+    }
+    setVisibleChatTemplateVariables(prev => ({ ...prev, [visibilityKey]: true }));
   };
 
   const startBankAccountEdit = async (account: TradingAccount, bankAccount: TradingBankAccount) => {
@@ -3758,33 +3785,89 @@ export function TradingAccountsPanel() {
             </p>
           ) : null}
           {methods.map(method => {
-            const template = chatTemplatesByMethod[method.id]?.find(candidate => candidate.exchange === exchange);
-            const draft = chatTemplateDrafts[method.id] ?? {
+            const tradeDirection = chatTemplateDirectionByMethod[method.id] ?? 'bid';
+            const templateKey = `${method.id}:${tradeDirection}`;
+            const template = chatTemplatesByMethod[method.id]?.find(candidate => candidate.exchange === exchange && (candidate.trade_direction ?? 'bid') === tradeDirection);
+            const draft = chatTemplateDrafts[templateKey] ?? {
               template: template?.template ?? '',
               is_active: template?.is_active ?? true,
             };
-            const editing = chatTemplateEditingMethods[method.id] === true;
-            const saving = chatTemplateSavingMethodID === method.id;
-            const openEditor = () => {
-              setChatTemplateDrafts(current => ({ ...current, [method.id]: draft }));
+            const expanded = expandedChatTemplateMethodID === method.id;
+            const editing = expanded && chatTemplateEditingMethods[method.id] === true;
+            const saving = chatTemplateSavingMethodID === templateKey;
+            const linkedAccount = method.account_id == null ? undefined : accounts.find(candidate => candidate.id === method.account_id);
+            const linkedBank = method.category === 'Bank'
+              ? [...(linkedAccount?.bank_accounts ?? [])].sort((a, b) => Number(b.is_active) - Number(a.is_active) || a.id - b.id)[0]
+              : undefined;
+            const revealedAccount = linkedAccount ? revealedAccountSecretsByAccount[linkedAccount.id] : undefined;
+            const revealedBank = linkedBank
+              ? revealedAccount?.bank_accounts.find(candidate => candidate.id === linkedBank.id)
+              : undefined;
+            const variables = [
+              { columnName: 'email', previewValue: revealedAccount?.email ?? '', hasSource: Boolean(linkedAccount), isNotSet: linkedAccount?.email == null },
+              { columnName: 'phone', previewValue: revealedAccount?.phone ?? '', hasSource: Boolean(linkedAccount), isNotSet: linkedAccount?.phone == null },
+              { columnName: 'payment_tag', previewValue: revealedAccount?.payment_tag ?? '', hasSource: Boolean(linkedAccount), isNotSet: linkedAccount?.payment_tag == null },
+              ...(method.category === 'Bank' ? [{
+                columnName: 'currency',
+                previewValue: linkedBank?.currency ?? '',
+                hasSource: Boolean(linkedBank),
+                isNotSet: !linkedBank || !linkedBank.currency,
+              }, {
+                columnName: 'owner_name',
+                previewValue: revealedBank?.owner_name ?? '',
+                hasSource: Boolean(linkedBank),
+                isNotSet: !linkedBank || !linkedBank.owner_name,
+              }, {
+                columnName: 'details_encrypted',
+                previewValue: revealedBank?.details ? JSON.stringify(revealedBank.details) : '',
+                hasSource: Boolean(linkedBank),
+                isNotSet: !linkedBank || Object.keys(linkedBank.details).length === 0,
+              }] : []),
+            ];
+            const insertVariable = (columnName: string) => {
+              const textarea = chatTemplateTextareas.current[templateKey];
+              const value = draft.template;
+              const start = textarea?.selectionStart ?? value.length;
+              const end = textarea?.selectionEnd ?? start;
+              const placeholder = `{{${columnName}}}`;
+              const nextValue = `${value.slice(0, start)}${placeholder}${value.slice(end)}`;
+              setChatTemplateDrafts(current => ({ ...current, [templateKey]: { ...draft, template: nextValue } }));
+              requestAnimationFrame(() => {
+                const currentTextarea = chatTemplateTextareas.current[templateKey];
+                currentTextarea?.focus();
+                currentTextarea?.setSelectionRange(start + placeholder.length, start + placeholder.length);
+              });
+            };
+            const openPanel = () => {
+              setExpandedChatTemplateMethodID(method.id);
+              setChatTemplateEditingMethods(current => ({ ...current, [method.id]: false }));
+            };
+            const closePanel = () => {
+              setExpandedChatTemplateMethodID(current => current === method.id ? null : current);
+              setChatTemplateEditingMethods(current => ({ ...current, [method.id]: false }));
+            };
+            const startEditing = () => {
+              setChatTemplateDrafts(current => ({ ...current, [templateKey]: draft }));
               setChatTemplateEditingMethods(current => ({ ...current, [method.id]: true }));
             };
             const closeEditor = () => {
               setChatTemplateEditingMethods(current => ({ ...current, [method.id]: false }));
               setChatTemplateDrafts(current => {
                 const next = { ...current };
-                delete next[method.id];
+                delete next[`${method.id}:bid`];
+                delete next[`${method.id}:ask`];
                 return next;
               });
             };
             const save = async () => {
               if (!draft.template.trim()) return;
-              setChatTemplateSavingMethodID(method.id);
+              setChatTemplateSavingMethodID(templateKey);
               setChatPaymentMethodsError(null);
               try {
                 const response = await updatePaymentMethodChatTemplate(method.id, exchange, {
                   template: draft.template.trim(),
                   is_active: draft.is_active,
+                  trade_direction: tradeDirection,
                 });
                 setChatTemplatesByMethod(current => ({ ...current, [method.id]: response.chat_templates }));
                 closeEditor();
@@ -3796,13 +3879,13 @@ export function TradingAccountsPanel() {
             };
             const remove = async () => {
               if (!template) return;
-              setChatTemplateSavingMethodID(method.id);
+              setChatTemplateSavingMethodID(templateKey);
               setChatPaymentMethodsError(null);
               try {
-                await deletePaymentMethodChatTemplate(method.id, exchange);
+                await deletePaymentMethodChatTemplate(method.id, exchange, tradeDirection);
                 setChatTemplatesByMethod(current => ({
                   ...current,
-                  [method.id]: (current[method.id] ?? []).filter(candidate => candidate.exchange !== exchange),
+                  [method.id]: (current[method.id] ?? []).filter(candidate => !(candidate.exchange === exchange && (candidate.trade_direction ?? 'bid') === tradeDirection)),
                 }));
                 closeEditor();
               } catch (err) {
@@ -3823,39 +3906,114 @@ export function TradingAccountsPanel() {
                       </span>
                     ) : <span className="ml-2 text-[0.62rem] text-muted">no template</span>}
                   </div>
-                  <button type="button" className={compactButtonCls} onClick={editing ? closeEditor : openEditor} disabled={saving}>
-                    {editing ? 'Close' : template ? 'Edit template' : 'Add template'}
+                  <button type="button" className={compactButtonCls} onClick={expanded ? closePanel : openPanel} disabled={saving}>
+                    {expanded ? 'Close' : 'Open'}
                   </button>
                 </div>
-                {editing ? (
-                  <div className="mt-2 grid gap-2">
-                    <textarea
-                      className={`${compactInputCls} min-h-20 resize-y`}
-                      value={draft.template}
-                      placeholder="Please send {{amount}} {{currency}} via this payment method."
-                      onChange={event => setChatTemplateDrafts(current => ({
-                        ...current,
-                        [method.id]: { ...draft, template: event.target.value },
-                      }))}
-                    />
-                    <label className="inline-flex items-center gap-2 text-[0.65rem] text-muted">
-                      <input
-                        type="checkbox"
-                        checked={draft.is_active}
+                {expanded ? (
+                  <>
+                    <div className="mt-2 flex gap-1 border-b border-border" role="tablist" aria-label={`${method.name} template direction`}>
+                      {(['bid', 'ask'] as const).map(direction => (
+                        <button
+                          key={direction}
+                          type="button"
+                          role="tab"
+                          aria-selected={tradeDirection === direction}
+                          className={`rounded-t px-2 py-1 text-[0.62rem] font-medium uppercase ${direction === 'bid' ? 'text-green' : 'text-red'} ${tradeDirection === direction ? 'bg-surface' : 'opacity-60 hover:bg-surface hover:opacity-100'}`}
+                          onClick={() => setChatTemplateDirectionByMethod(current => ({ ...current, [method.id]: direction }))}
+                        >
+                          {direction}
+                        </button>
+                      ))}
+                    </div>
+                    {editing ? (
+                    <div className="mt-2 grid gap-2 md:grid-cols-[minmax(10rem,0.8fr)_minmax(0,2fr)]">
+                    <div className="rounded border border-border bg-surface p-2">
+                      <div className="mb-1 text-[0.65rem] font-medium text-text">Variables</div>
+                      <div className="grid gap-1">
+                        {variables.map(({ columnName, previewValue, hasSource, isNotSet }) => {
+                          const referenced = draft.template.includes(`{{${columnName}}}`);
+                          const visibilityKey = `${templateKey}:${columnName}`;
+                          const visible = visibleChatTemplateVariables[visibilityKey] === true;
+                          const revealing = linkedAccount ? revealingChatTemplateVariablesByAccount[linkedAccount.id] === true : false;
+                          const displayValue = isNotSet ? 'not set' : visible ? previewValue || '—' : '••••••••';
+                          return (
+                            <div key={columnName} className={`flex min-w-0 items-start gap-1 rounded px-1 py-0.5 text-left text-[0.62rem] ${isNotSet ? 'text-muted opacity-60' : referenced ? 'text-green' : 'text-text'}`}>
+                              <button
+                                type="button"
+                                className="flex min-w-0 flex-1 items-start justify-between gap-2 text-left hover:text-text"
+                                onClick={() => insertVariable(columnName)}
+                                title={`Insert {{${columnName}}}`}
+                              >
+                                <span className="shrink-0 font-mono">{columnName}:</span>
+                                <span className="min-w-0 flex-1 whitespace-normal break-words" title={visible ? previewValue : undefined}>{displayValue}</span>
+                              </button>
+                              <button
+                                type="button"
+                                className="shrink-0 text-muted hover:text-text disabled:cursor-not-allowed disabled:opacity-50"
+                                aria-label={visible ? `Hide ${columnName}` : `Show ${columnName}`}
+                                onClick={() => void toggleChatTemplateVariableReveal(visibilityKey, linkedAccount)}
+                                disabled={!hasSource || isNotSet || revealing}
+                              >
+                                👁
+                              </button>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                    <div className="grid gap-2">
+                      <textarea
+                        ref={textarea => { chatTemplateTextareas.current[templateKey] = textarea; }}
+                        className={`${compactInputCls} min-h-20 resize-y`}
+                        value={draft.template}
+                        placeholder="Please send {{amount}} {{currency}} via this payment method."
+                        onSelect={event => { chatTemplateTextareas.current[templateKey] = event.currentTarget; }}
                         onChange={event => setChatTemplateDrafts(current => ({
                           ...current,
-                          [method.id]: { ...draft, is_active: event.target.checked },
+                          [templateKey]: { ...draft, template: event.target.value },
                         }))}
                       />
-                      Use this template for {exchange}
-                    </label>
-                    <div className="flex justify-end gap-1.5">
-                      {template ? <button type="button" className={`${compactButtonCls} text-red`} onClick={() => void remove()} disabled={saving}>Remove</button> : null}
-                      <button type="button" className={compactPrimaryButtonCls} onClick={() => void save()} disabled={saving || !draft.template.trim()}>
-                        {saving ? 'Saving…' : 'Save template'}
-                      </button>
+                      <label className="inline-flex items-center gap-2 text-[0.65rem] text-muted">
+                        <input
+                          type="checkbox"
+                          checked={draft.is_active}
+                          onChange={event => setChatTemplateDrafts(current => ({
+                            ...current,
+                            [templateKey]: { ...draft, is_active: event.target.checked },
+                          }))}
+                        />
+                        Use this template for {exchange}
+                      </label>
+                      <div className="flex justify-end gap-1.5">
+                        {template ? <button type="button" className={`${compactButtonCls} text-red`} onClick={() => void remove()} disabled={saving}>Remove</button> : null}
+                        <button type="button" className={compactPrimaryButtonCls} onClick={() => void save()} disabled={saving || !draft.template.trim()}>
+                          {saving ? 'Saving…' : 'Save template'}
+                        </button>
+                      </div>
                     </div>
-                  </div>
+                    </div>
+                    ) : (
+                      <div className="mt-2 grid gap-2">
+                        {template ? (
+                          <>
+                            <p className="whitespace-pre-wrap break-words rounded border border-border bg-surface p-2 text-xs text-text">
+                              {template.template}
+                            </p>
+                            <div className="flex justify-end">
+                              <button type="button" className={compactButtonCls} onClick={startEditing}>
+                                Edit {tradeDirection.toUpperCase()} template
+                              </button>
+                            </div>
+                          </>
+                        ) : (
+                          <button type="button" className={compactPrimaryButtonCls} onClick={startEditing}>
+                            Add new {tradeDirection.toUpperCase()} template
+                          </button>
+                        )}
+                      </div>
+                    )}
+                  </>
                 ) : null}
               </div>
             );

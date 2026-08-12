@@ -326,7 +326,7 @@ export function fetchPaymentMethodChatTemplates(id: number) {
 export function updatePaymentMethodChatTemplate(
   id: number,
   exchange: string,
-  payload: { template: string; is_active: boolean },
+  payload: { template: string; is_active: boolean; trade_direction: 'bid' | 'ask' },
 ) {
   return request<{ chat_templates: PaymentMethodChatTemplate[] }>(
     `/api/trading/payment_methods/${id}/chat_templates/${encodeURIComponent(exchange)}`,
@@ -337,9 +337,9 @@ export function updatePaymentMethodChatTemplate(
   );
 }
 
-export function deletePaymentMethodChatTemplate(id: number, exchange: string) {
+export function deletePaymentMethodChatTemplate(id: number, exchange: string, tradeDirection: 'bid' | 'ask') {
   return request<{ ok: boolean }>(
-    `/api/trading/payment_methods/${id}/chat_templates/${encodeURIComponent(exchange)}`,
+    `/api/trading/payment_methods/${id}/chat_templates/${encodeURIComponent(exchange)}?trade_direction=${tradeDirection}`,
     { method: 'DELETE' },
   );
 }

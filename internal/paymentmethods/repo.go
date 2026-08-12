@@ -438,10 +438,11 @@ func (r *Repo) ListWalletAddresses(ctx context.Context) ([]WalletAddressRow, err
 	return out, rows.Err()
 }
 
-// ChatTemplateRow is one chat-template row for a payment method / exchange pair.
+// ChatTemplateRow is one chat-template row for a payment method / exchange / direction.
 type ChatTemplateRow struct {
 	ID              int64  `json:"id"`
 	Exchange        string `json:"exchange"`
+	TradeDirection  string `json:"trade_direction"`
 	PaymentMethodID int64  `json:"payment_method_id"`
 	Template        string `json:"template"`
 	IsActive        bool   `json:"is_active"`
@@ -451,8 +452,23 @@ type ChatTemplateRow struct {
 
 // ChatTemplatePayload is the body used to create or update a chat template.
 type ChatTemplatePayload struct {
-	Template string `json:"template"`
-	IsActive bool   `json:"is_active"`
+	Template       string `json:"template"`
+	IsActive       bool   `json:"is_active"`
+	TradeDirection string `json:"trade_direction"`
+}
+
+func normalizeChatTradeDirection(direction string) (string, error) {
+	direction = strings.ToLower(strings.TrimSpace(direction))
+	if direction == "" || direction == "buy" {
+		return "bid", nil
+	}
+	if direction == "sell" {
+		return "ask", nil
+	}
+	if direction != "bid" && direction != "ask" {
+		return "", ValidationError{fmt.Errorf("trade_direction %q is invalid (allowed: bid, ask)", direction)}
+	}
+	return direction, nil
 }
 
 // allowedChatExchanges lists the DEX venues that use the chat-based payment-details flow.
@@ -464,10 +480,10 @@ var allowedChatExchanges = map[string]bool{
 // ListChatTemplates returns all chat templates for a single payment method.
 func (r *Repo) ListChatTemplates(ctx context.Context, paymentMethodID int64) ([]ChatTemplateRow, error) {
 	rows, err := r.DB.QueryContext(ctx, `
-		SELECT id, exchange, payment_method_id, template, is_active, created_at, updated_at
+		SELECT id, exchange, payment_method_id, trade_direction, template, is_active, created_at, updated_at
 		FROM payment_method_chat_templates
 		WHERE payment_method_id = $1
-		ORDER BY exchange`, paymentMethodID)
+		ORDER BY exchange, trade_direction`, paymentMethodID)
 	if err != nil {
 		return nil, fmt.Errorf("list chat templates for payment method %d: %w", paymentMethodID, err)
 	}
@@ -476,7 +492,7 @@ func (r *Repo) ListChatTemplates(ctx context.Context, paymentMethodID int64) ([]
 	out := make([]ChatTemplateRow, 0)
 	for rows.Next() {
 		var row ChatTemplateRow
-		if err := rows.Scan(&row.ID, &row.Exchange, &row.PaymentMethodID, &row.Template,
+		if err := rows.Scan(&row.ID, &row.Exchange, &row.PaymentMethodID, &row.TradeDirection, &row.Template,
 			&row.IsActive, &row.CreatedAt, &row.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan chat template: %w", err)
 		}
@@ -498,16 +514,20 @@ func (r *Repo) UpsertChatTemplate(ctx context.Context, paymentMethodID int64, ex
 	if err := r.validatePaymentMethodExists(ctx, paymentMethodID); err != nil {
 		return err
 	}
+	tradeDirection, err := normalizeChatTradeDirection(p.TradeDirection)
+	if err != nil {
+		return err
+	}
 
 	res, err := r.DB.ExecContext(ctx, `
-		INSERT INTO payment_method_chat_templates (exchange, payment_method_id, template, is_active)
-		VALUES ($1, $2, $3, $4)
-		ON CONFLICT (exchange, payment_method_id)
+		INSERT INTO payment_method_chat_templates (exchange, payment_method_id, trade_direction, template, is_active)
+		VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT (exchange, payment_method_id, trade_direction)
 		DO UPDATE SET
 			template = EXCLUDED.template,
 			is_active = EXCLUDED.is_active,
 			updated_at = CURRENT_TIMESTAMP`,
-		exchange, paymentMethodID, template, p.IsActive)
+		exchange, paymentMethodID, tradeDirection, template, p.IsActive)
 	if err != nil {
 		return fmt.Errorf("upsert chat template %s/%d: %w", exchange, paymentMethodID, err)
 	}
@@ -518,19 +538,23 @@ func (r *Repo) UpsertChatTemplate(ctx context.Context, paymentMethodID int64, ex
 }
 
 // DeleteChatTemplate removes the chat template for a payment method / exchange pair.
-func (r *Repo) DeleteChatTemplate(ctx context.Context, paymentMethodID int64, exchange string) error {
+func (r *Repo) DeleteChatTemplate(ctx context.Context, paymentMethodID int64, exchange, direction string) error {
 	exchange = strings.TrimSpace(exchange)
 	if !allowedChatExchanges[exchange] {
 		return ValidationError{fmt.Errorf("exchange %q is not a chat-venue DEX (allowed: robosats, bisq2)", exchange)}
 	}
+	tradeDirection, err := normalizeChatTradeDirection(direction)
+	if err != nil {
+		return err
+	}
 	res, err := r.DB.ExecContext(ctx, `
 		DELETE FROM payment_method_chat_templates
-		WHERE payment_method_id = $1 AND exchange = $2`, paymentMethodID, exchange)
+		WHERE payment_method_id = $1 AND exchange = $2 AND trade_direction = $3`, paymentMethodID, exchange, tradeDirection)
 	if err != nil {
 		return fmt.Errorf("delete chat template %s/%d: %w", exchange, paymentMethodID, err)
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		return ValidationError{fmt.Errorf("chat template for %s/%d does not exist", exchange, paymentMethodID)}
+		return ValidationError{fmt.Errorf("chat template for %s/%d/%s does not exist", exchange, paymentMethodID, tradeDirection)}
 	}
 	return nil
 }

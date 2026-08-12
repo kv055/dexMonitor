@@ -778,6 +778,7 @@ export interface PaymentMethodUpdatePayload {
 export interface PaymentMethodChatTemplate {
   id: number;
   exchange: string;
+  trade_direction: 'bid' | 'ask';
   payment_method_id: number;
   template: string;
   is_active: boolean;

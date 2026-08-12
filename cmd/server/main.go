@@ -2313,6 +2313,7 @@ func handleTradingPaymentMethodChatTemplateByExchange(w http.ResponseWriter, r *
 		return
 	}
 	exchange := r.PathValue("exchange")
+	direction := r.URL.Query().Get("trade_direction")
 	switch r.Method {
 	case http.MethodPut:
 		var payload paymentmethods.ChatTemplatePayload
@@ -2331,7 +2332,7 @@ func handleTradingPaymentMethodChatTemplateByExchange(w http.ResponseWriter, r *
 		}
 		writeJSON(w, map[string]any{"chat_templates": rows})
 	case http.MethodDelete:
-		if err := pmRepo.DeleteChatTemplate(r.Context(), int64(id), exchange); err != nil {
+		if err := pmRepo.DeleteChatTemplate(r.Context(), int64(id), exchange, direction); err != nil {
 			writeRepoError(w, err)
 			return
 		}
