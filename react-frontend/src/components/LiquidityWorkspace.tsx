@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { closeLNDChannel, fetchCexBalances, fetchCexDepositAddresses, fetchCexHedgePositions, fetchDexPendingLiquidity, fetchLNDChannelPresets, fetchLNDWalletStatus, fetchTradingAccounts, fetchTransactionalLiquiditySettings, openLNDChannel, updateTransactionalLiquiditySettings } from '../utils/api';
-import type { CexAssetBalance, CexDepositAddress, LNDChannelPreset, LNDWalletStatus, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquidityTargetDirection } from '../types';
+import { closeLNDChannel, fetchCexBalances, fetchCexDepositAddresses, fetchCexHedgePositions, fetchDexPendingLiquidity, fetchLNDChannelPresets, fetchLNDWalletStatus, fetchLSPChannel, fetchLSPChannelStatus, fetchSubmarineSwaps, fetchTradingAccounts, fetchTransactionalLiquiditySettings, openLNDChannel, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
+import type { CexAssetBalance, CexDepositAddress, LNDChannelPreset, LNDWalletStatus, LSPChannelConfig, LSPChannelStatus, SubmarineSwapRecord, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquidityTargetDirection } from '../types';
 import { useFilters } from '../hooks/useFilters';
 import { useCEXPermissions } from '../hooks/useCEXPermissions';
 import { usePreferences } from '../hooks/usePreferences';
@@ -30,6 +30,16 @@ const TRADE_MODE_OPTIONS: Array<{ value: TradeMode; label: string }> = [
   { value: 'hedgefull_single_collateral', label: 'Hedgefull · single collateral' },
   { value: 'hedgeless_double_collateral', label: 'Hedgeless · double collateral' },
 ];
+
+const emptyLSPConfig: LSPChannelConfig = {
+  channel_point: '',
+  remote_pubkey: '',
+  provider_label: '',
+  enabled: false,
+  headroom_sat: 0,
+  max_swap_fee_sat: 0,
+  max_swap_fee_ppm: 0,
+};
 
 function formatFiat(value: number, currency: string) {
   return `${currency} ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
@@ -83,6 +93,13 @@ export function LiquidityWorkspace() {
   const [channelError, setChannelError] = useState<string | null>(null);
   const [openingChannel, setOpeningChannel] = useState(false);
   const [closingChannelPoint, setClosingChannelPoint] = useState<string | null>(null);
+  const [lspConfig, setLspConfig] = useState<LSPChannelConfig>(emptyLSPConfig);
+  const [lspStatus, setLspStatus] = useState<LSPChannelStatus | null>(null);
+  const [submarineSwaps, setSubmarineSwaps] = useState<SubmarineSwapRecord[]>([]);
+  const [lspLoading, setLspLoading] = useState(true);
+  const [savingLsp, setSavingLsp] = useState(false);
+  const [lspNotice, setLspNotice] = useState<string | null>(null);
+  const [lspError, setLspError] = useState<string | null>(null);
   const [transactionalSettings, setTransactionalSettings] = useState<TransactionalLiquiditySettings | null>(null);
   const [transactionalForm, setTransactionalForm] = useState({ fiat_currency: 'EUR', amount_source: 'custom' as TransactionalLiquidityAmountSource, custom_amount: '', trade_mode: 'hedgefull_single_collateral' as TradeMode, target_direction: 'bid' as TransactionalLiquidityTargetDirection });
   const [transactionalLoading, setTransactionalLoading] = useState(true);
@@ -162,6 +179,30 @@ export function LiquidityWorkspace() {
       })
       .catch(error => { if (active) { setTransactionalError(error instanceof Error ? error.message : 'Could not load transactional liquidity settings.'); setTransactionalEditing(true); } })
       .finally(() => { if (active) setTransactionalLoading(false); });
+    return () => { active = false; };
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    const load = async () => {
+      const [configResult, statusResult, swapsResult] = await Promise.allSettled([
+        fetchLSPChannel(),
+        fetchLSPChannelStatus(),
+        fetchSubmarineSwaps(),
+      ]);
+      if (!active) return;
+
+      if (configResult.status === 'fulfilled') setLspConfig(configResult.value);
+      if (statusResult.status === 'fulfilled') setLspStatus(statusResult.value);
+      if (swapsResult.status === 'fulfilled') setSubmarineSwaps(swapsResult.value ?? []);
+
+      const failure = [configResult, statusResult, swapsResult].find(result => result.status === 'rejected');
+      setLspError(failure?.status === 'rejected'
+        ? (failure.reason instanceof Error ? failure.reason.message : 'Could not load LSP channel status.')
+        : null);
+      setLspLoading(false);
+    };
+    void load();
     return () => { active = false; };
   }, []);
 
@@ -364,6 +405,22 @@ export function LiquidityWorkspace() {
   const refreshLndWallet = async () => {
     const nextWallet = await fetchLNDWalletStatus();
     setLndWallet(nextWallet);
+  };
+
+  const saveLspChannel = async () => {
+    setSavingLsp(true);
+    setLspError(null);
+    setLspNotice(null);
+    try {
+      const saved = await updateLSPChannel(lspConfig);
+      setLspConfig(saved);
+      setLspStatus(await fetchLSPChannelStatus());
+      setLspNotice('LSP channel monitoring configuration saved.');
+    } catch (error) {
+      setLspError(error instanceof Error ? error.message : 'Failed to save the LSP channel.');
+    } finally {
+      setSavingLsp(false);
+    }
   };
 
   const submitOpenChannel = async (event: FormEvent<HTMLFormElement>) => {
@@ -632,11 +689,35 @@ export function LiquidityWorkspace() {
 
         <section aria-labelledby="lightning-management-heading" className="liquidity-action-card">
           <div className="liquidity-channel-disclosure">
-            <div><h4 id="lightning-management-heading">Lightning channels <span>{channels.length} open</span></h4><p>Open, inspect, or close channel capacity.</p></div>
+            <div><h4 id="lightning-management-heading">Lightning channels <span>{channels.length} open</span></h4><p>Open, inspect, close, or register LSP capacity.</p>{!lspLoading && <p className={lspStatus?.lsp_healthy ? 'text-green' : 'text-peach'}>{lspStatus?.lsp_healthy ? 'LSP channel active' : 'LSP channel needs attention'}</p>}</div>
             <button type="button" aria-expanded={channelsExpanded} aria-controls="lightning-channel-controls" onClick={() => setChannelsExpanded(current => !current)}>{channelsExpanded ? 'Hide controls' : 'Manage channels'}</button>
           </div>
 
           {channelsExpanded && <div id="lightning-channel-controls" className="liquidity-channel-controls">
+          <section aria-labelledby="lsp-channel-heading" className="mb-2 rounded-md border border-border bg-surface/40 p-2">
+            <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
+              <div><h5 id="lsp-channel-heading" className="text-[0.75rem] font-medium text-text">Long-lived LSP channel</h5><p className="text-[0.65rem] text-muted">Select and monitor inbound capacity opened outside the application.</p></div>
+              <span className={`rounded border px-2 py-1 text-[0.65rem] ${lspStatus?.lsp_healthy ? 'border-green/40 text-green' : 'border-peach/40 text-peach'}`}>
+                {lspLoading ? 'Loading LSP status…' : lspStatus?.lsp_healthy ? 'Active' : (lspStatus?.reason || 'Not configured')}
+              </span>
+            </div>
+            <div className="grid gap-2 text-[0.7rem]">
+              <label className="grid gap-1 text-muted"><span>LND channel</span><select className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" value={lspConfig.channel_point} onChange={event => { const channel = channels.find(item => item.channel_point === event.target.value); setLspConfig(previous => ({ ...previous, channel_point: channel?.channel_point || '', remote_pubkey: channel?.remote_pubkey || '', provider_label: channel?.remote_alias || '', enabled: Boolean(channel) })); }}>
+                <option value="">Choose a live LND channel…</option>
+                {channels.map(channel => <option key={channel.channel_point} value={channel.channel_point}>{channel.remote_alias || shortAddress(channel.remote_pubkey)} · {formatSats(channel.capacity_sat)} · {channel.active ? 'active' : 'inactive'}</option>)}
+              </select></label>
+              <div className="grid gap-1.5 sm:grid-cols-3">
+                <label className="grid gap-1 text-muted"><span>Headroom (sats)</span><input className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" type="number" min="0" value={lspConfig.headroom_sat} onChange={event => setLspConfig(previous => ({ ...previous, headroom_sat: Number(event.target.value) }))} /></label>
+                <label className="grid gap-1 text-muted"><span>Maximum fee (sats)</span><input className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" type="number" min="1" value={lspConfig.max_swap_fee_sat} onChange={event => setLspConfig(previous => ({ ...previous, max_swap_fee_sat: Number(event.target.value) }))} /></label>
+                <label className="grid gap-1 text-muted"><span>Maximum fee (ppm)</span><input className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" type="number" min="1" value={lspConfig.max_swap_fee_ppm} onChange={event => setLspConfig(previous => ({ ...previous, max_swap_fee_ppm: Number(event.target.value) }))} /></label>
+              </div>
+              {lspStatus && <div className="grid gap-1 text-muted sm:grid-cols-2"><div>Usable outbound: <span className="text-text">{formatSats(lspStatus.usable_outbound_sat)}</span></div><div>Usable inbound: <span className="text-text">{formatSats(lspStatus.usable_inbound_sat)}</span></div><div>LSP outbound: <span className="text-text">{formatSats(lspStatus.lsp_outbound_sat)}</span></div><div>LSP inbound: <span className="text-text">{formatSats(lspStatus.lsp_inbound_sat)}</span></div></div>}
+              {submarineSwaps.some(item => !['settled', 'refunded'].includes(item.state)) && <div className="rounded border border-yellow px-2 py-1.5 text-yellow">{submarineSwaps.filter(item => !['settled', 'refunded'].includes(item.state)).length} incomplete or refund-pending submarine swap(s) require attention.</div>}
+              {lspError && <p className="rounded-md border border-red/40 bg-error px-2 py-1.5 text-red" role="alert">{lspError}</p>}
+              {lspNotice && <p className="rounded-md border border-green/40 bg-green/8 px-2 py-1.5 text-green" role="status">{lspNotice}</p>}
+              <div className="flex justify-end"><button type="button" disabled={savingLsp || !lspConfig.channel_point} onClick={() => void saveLspChannel()} className="rounded-md border border-accent bg-accent/10 px-3 py-1.5 text-[0.75rem] font-semibold text-accent hover:bg-accent/20 disabled:opacity-60">{savingLsp ? 'Saving…' : 'Save LSP selection'}</button></div>
+            </div>
+          </section>
           <details className="group rounded-md border border-border bg-surface/40 mb-2">
             <summary className="cursor-pointer list-none px-2 py-1.5 text-[0.72rem] font-medium text-text flex items-center justify-between">Open a new channel <span className="text-muted transition-transform group-open:rotate-180">⌄</span></summary>
           <form onSubmit={event => void submitOpenChannel(event)} className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 border-t border-border px-2 pb-2 pt-1.5" noValidate>

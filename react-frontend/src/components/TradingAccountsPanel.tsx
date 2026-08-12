@@ -25,9 +25,6 @@ import {
   fetchLNDWalletState,
   fetchLNDChannelPresets,
   fetchLNDWalletStatus,
-  fetchLSPChannel,
-  fetchLSPChannelStatus,
-  fetchSubmarineSwaps,
   fetchServiceVersions,
   fetchTradingAccounts,
   revealTradingAccountCredentials,
@@ -52,7 +49,6 @@ import {
   updatePasskey,
   updateSeed,
   updateTOTPSecret,
-  updateLSPChannel,
 } from '../utils/api';
 import { emailFormatError, ibanFormatError } from '../utils/validators';
 import type {
@@ -65,9 +61,6 @@ import type {
   LNDWalletState,
   LNDWalletStatus,
   LNDChannelPreset,
-  LSPChannelConfig,
-  LSPChannelStatus,
-  SubmarineSwapRecord,
   ServiceVersions,
   TradingAccount,
   TradingAccountCredentialReveal,
@@ -1881,10 +1874,6 @@ export function TradingAccountsPanel() {
   const [selectedLndChannelPresetID, setSelectedLndChannelPresetID] = useState('');
   const [openingChannel, setOpeningChannel] = useState(false);
   const [closingChannelPoint, setClosingChannelPoint] = useState<string | null>(null);
-	const [lspConfig,setLspConfig]=useState<LSPChannelConfig>({channel_point:'',remote_pubkey:'',provider_label:'',enabled:false,headroom_sat:0,max_swap_fee_sat:0,max_swap_fee_ppm:0});
-	const [lspStatus,setLspStatus]=useState<LSPChannelStatus|null>(null);
-	const [submarineSwaps,setSubmarineSwaps]=useState<SubmarineSwapRecord[]>([]);
-	const [savingLsp,setSavingLsp]=useState(false);
   const [cexDataByAccount, setCexDataByAccount] = useState<Record<number, CexAccountSlice>>({});
   // Bisq1 "Saved payment methods" section state. Loaded lazily when the section is first
   // opened (it needs the DEX stack, which may be down independently of the panel).
@@ -2311,8 +2300,7 @@ export function TradingAccountsPanel() {
     setLndWalletError(null);
     setLndWalletNotice(null);
     try {
-      const [status,config,lsp,swaps] = await Promise.all([fetchLNDWalletStatus(),fetchLSPChannel(),fetchLSPChannelStatus(),fetchSubmarineSwaps()]);
-	  setLspConfig(config);setLspStatus(lsp);setSubmarineSwaps(swaps??[]);
+      const status = await fetchLNDWalletStatus();
       // The mm-controller API serializes empty Go slices as null, but the type
       // (and every render path below) assumes arrays. Normalize so a wallet with
       // no channels/peers/addresses doesn't crash the panel.
@@ -2334,8 +2322,6 @@ export function TradingAccountsPanel() {
       setLndWalletLoading(false);
     }
   }, []);
-
-	const saveLspChannel=useCallback(async()=>{setSavingLsp(true);setLndWalletError(null);try{const saved=await updateLSPChannel(lspConfig);setLspConfig(saved);setLspStatus(await fetchLSPChannelStatus());setLndWalletNotice('LSP channel monitoring configuration saved.')}catch(err){setLndWalletError(err instanceof Error?err.message:'Failed to save LSP channel')}finally{setSavingLsp(false)}},[lspConfig]);
 
   const loadLndWalletState = useCallback(async (): Promise<LNDWalletState | null> => {
     setLndWalletStateLoading(true);
@@ -3279,25 +3265,6 @@ export function TradingAccountsPanel() {
         ) : null}
         {showManagement ? (
           <>
-        <SecretItem title="Long-lived LSP channel" summary="Select and monitor an inbound channel opened outside the application">
-          <div className="grid gap-2 text-xs">
-            <div className={`rounded border px-2 py-1.5 ${lspStatus?.lsp_healthy?'border-green text-green':'border-red text-red'}`}>
-              {lspStatus?.lsp_healthy?'Registered LSP channel is active':(lspStatus?.reason||'No LSP channel configured')}
-            </div>
-            <select className={compactInputCls} value={lspConfig.channel_point} onChange={event=>{const channel=lndWalletStatus?.channels.find(item=>item.channel_point===event.target.value);setLspConfig(previous=>({...previous,channel_point:channel?.channel_point||'',remote_pubkey:channel?.remote_pubkey||'',provider_label:channel?.remote_alias||'',enabled:Boolean(channel)}))}}>
-              <option value="">Choose a live LND channel…</option>
-              {(lndWalletStatus?.channels??[]).map(channel=><option key={channel.channel_point} value={channel.channel_point}>{channel.remote_alias||truncatePubkey(channel.remote_pubkey)} · {formatSats(channel.capacity_sat)} · {channel.active?'active':'inactive'}</option>)}
-            </select>
-            <div className="grid gap-1.5 sm:grid-cols-3">
-              <input className={compactInputCls} type="number" min="0" value={lspConfig.headroom_sat} onChange={event=>setLspConfig(previous=>({...previous,headroom_sat:Number(event.target.value)}))} placeholder="Headroom sats" />
-              <input className={compactInputCls} type="number" min="1" value={lspConfig.max_swap_fee_sat} onChange={event=>setLspConfig(previous=>({...previous,max_swap_fee_sat:Number(event.target.value)}))} placeholder="Max fee sats" />
-              <input className={compactInputCls} type="number" min="1" value={lspConfig.max_swap_fee_ppm} onChange={event=>setLspConfig(previous=>({...previous,max_swap_fee_ppm:Number(event.target.value)}))} placeholder="Max fee ppm" />
-            </div>
-            {lspStatus ? <div className="grid gap-1 text-muted sm:grid-cols-2"><div>Usable outbound: <span className="text-text">{formatSats(lspStatus.usable_outbound_sat)}</span></div><div>Usable inbound: <span className="text-text">{formatSats(lspStatus.usable_inbound_sat)}</span></div><div>LSP outbound: <span className="text-text">{formatSats(lspStatus.lsp_outbound_sat)}</span></div><div>LSP inbound: <span className="text-text">{formatSats(lspStatus.lsp_inbound_sat)}</span></div></div>:null}
-            <div className="flex justify-end"><button type="button" className={compactPrimaryButtonCls} disabled={savingLsp||!lspConfig.channel_point} onClick={()=>void saveLspChannel()}>{savingLsp?'Saving…':'Save LSP selection'}</button></div>
-            {submarineSwaps.some(item=>!['settled','refunded'].includes(item.state))?<div className="rounded border border-yellow px-2 py-1.5 text-yellow">{submarineSwaps.filter(item=>!['settled','refunded'].includes(item.state)).length} incomplete or refund-pending submarine swap(s) require attention.</div>:null}
-          </div>
-        </SecretItem>
         <SecretItem title="Public nodes" summary="Choose a verified public peer, then confirm the channel opening">
           <div className="grid gap-1.5">
             <select

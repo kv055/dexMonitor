@@ -20,6 +20,9 @@ vi.mock('../utils/api', () => ({
   fetchLNDChannelPresets: vi.fn().mockResolvedValue({
     presets: [{ id: 'kraken', name: 'Kraken', node_pubkey: '02f1', peer_host: '52.13.118.208:9735', min_funding_amount_sat: 1000000, source_url: 'https://example.test/kraken', verified_at: '2026-08-11', enabled: true }],
   }),
+  fetchLSPChannel: vi.fn().mockResolvedValue({ channel_point: '', remote_pubkey: '', provider_label: '', enabled: false, headroom_sat: 0, max_swap_fee_sat: 0, max_swap_fee_ppm: 0 }),
+  fetchLSPChannelStatus: vi.fn().mockResolvedValue({ channel_point: '', remote_pubkey: '', provider_label: '', enabled: false, configured: false, lsp_healthy: false, reason: 'No LSP channel configured', headroom_sat: 0, max_swap_fee_sat: 0, max_swap_fee_ppm: 0, lsp_inbound_sat: 0, lsp_outbound_sat: 0, usable_inbound_sat: 0, usable_outbound_sat: 0 }),
+  fetchSubmarineSwaps: vi.fn().mockResolvedValue([]),
   fetchDexPendingLiquidity: vi.fn().mockResolvedValue({ btc_value: 0.0375, transaction_count: 2, statuses: ['DexPositionTaken', 'DexFiatHasArrived'] }),
   fetchCexBalances: vi.fn().mockResolvedValue({ bitcoin: { asset: 'BTC', available: 0.25, total: 0.3 }, fiat: [{ asset: 'EUR', available: 1000, total: 1000 }], source: 'Kraken' }),
   fetchCexHedgePositions: vi.fn().mockResolvedValue({ active: [{ size_btc: -0.1 }, { size_btc: 0.05 }], past: [] }),
@@ -28,12 +31,13 @@ vi.mock('../utils/api', () => ({
   ]),
   openLNDChannel: vi.fn(),
   closeLNDChannel: vi.fn(),
+  updateLSPChannel: vi.fn().mockImplementation(payload => Promise.resolve(payload)),
   fetchTransactionalLiquiditySettings: vi.fn().mockRejectedValue(new Error('settings unavailable in test')),
   updateTransactionalLiquiditySettings: vi.fn(),
 }));
 
 import { LiquidityWorkspace } from './LiquidityWorkspace';
-import { fetchDexPendingLiquidity, fetchTransactionalLiquiditySettings, updateTransactionalLiquiditySettings } from '../utils/api';
+import { fetchDexPendingLiquidity, fetchLSPChannelStatus, fetchTransactionalLiquiditySettings, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
 import { FiltersProvider } from '../context/FiltersContext';
 import { PreferencesProvider } from '../context/PreferencesContext';
 import { CEXPermissionsContext, type CEXPermissionsContextValue } from '../hooks/useCEXPermissions';
@@ -228,5 +232,28 @@ describe('LiquidityWorkspace', () => {
     await user.click(screen.getByRole('button', { name: 'Open channel' }));
 
     expect(screen.getByRole('alert').textContent).toContain('Enter a node pubkey');
+  });
+
+  it('shows and saves the LSP channel controls in liquidity management', async () => {
+    vi.mocked(fetchLSPChannelStatus).mockResolvedValueOnce({
+      channel_point: 'txid:0', remote_pubkey: '03remote', provider_label: 'Hub', enabled: true,
+      configured: true, lsp_healthy: true, headroom_sat: 10000, max_swap_fee_sat: 5000, max_swap_fee_ppm: 10000,
+      lsp_inbound_sat: 400000, lsp_outbound_sat: 600000, usable_inbound_sat: 390000, usable_outbound_sat: 590000,
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    expect(await screen.findByText('LSP channel active')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Manage channels' }));
+    expect(screen.getByRole('heading', { name: 'Long-lived LSP channel' })).toBeTruthy();
+    await user.selectOptions(screen.getByLabelText('LND channel'), 'txid:0');
+    await user.clear(screen.getByLabelText('Headroom (sats)'));
+    await user.type(screen.getByLabelText('Headroom (sats)'), '10000');
+    await user.click(screen.getByRole('button', { name: 'Save LSP selection' }));
+
+    expect(updateLSPChannel).toHaveBeenCalledWith(expect.objectContaining({
+      channel_point: 'txid:0', remote_pubkey: '03remote', provider_label: 'Hub', enabled: true, headroom_sat: 10000,
+    }));
+    expect(await screen.findByText('LSP channel monitoring configuration saved.')).toBeTruthy();
   });
 });
