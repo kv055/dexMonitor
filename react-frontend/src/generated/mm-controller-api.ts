@@ -94,7 +94,7 @@ export interface components {
             /** @enum {string} */
             market_side?: "bid" | "ask";
             /** @enum {string} */
-            settlement?: "onchain_direct" | "onchain_hub" | "onchain_swap";
+            settlement: "onchain_direct" | "onchain_hub" | "onchain_swap";
             trade_mode?: components["schemas"]["TradeMode"];
             hedge_venue?: string;
             /** @description Position BTC plus security deposit. Required for hedgeless on-chain liquidity-pool checks and for Swap_main2lightning Lightning liquidity. */

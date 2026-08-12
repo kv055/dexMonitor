@@ -369,6 +369,12 @@ export function TradeTracingPanel({
     || offer.exchange?.toLowerCase() === 'robosats';
   const routeCex = bd?.route_cex ?? '';
   const hedgeVenue = bd?.hedge?.venue ?? '';
+  // This immutable snapshot is the Unified API's execution decision. Display
+  // breakdowns (including manual what-if route choices) are deliberately not
+  // a source for settlement or execution fees.
+  const resolvedRoute = offer.metadata?.resolved_route;
+  const hasResolvedExecutionRoute = !!resolvedRoute?.settlement;
+  const routeUnavailableMessage = 'This offer has no resolved execution route. Refresh or recompute it in the Unified API before trading.';
   const cexLabel = routeCex ? routeCex.charAt(0).toUpperCase() + routeCex.slice(1) : '—';
   const netPremium = bd?.estimated_profit_pct ?? null;
   const btcMin = getBtcMin(offer);
@@ -510,6 +516,7 @@ export function TradeTracingPanel({
     && clampedBtc > 0
     && !!tradeCapital
     && (isHedgeless || !!hedgeVenue)
+    && hasResolvedExecutionRoute
     && submit.phase !== 'submitting';
   const checksPassed = checks.phase === 'done'
     && !!checks.report?.ok
@@ -519,6 +526,7 @@ export function TradeTracingPanel({
   // Opening the confirm dialog immediately kicks off the (read-only) pre-trade checks
   // so their results are shown in the same card before the operator confirms.
   function openConfirm() {
+    if (!hasResolvedExecutionRoute) return;
     setConfirmOpen(true);
   }
 
@@ -537,6 +545,10 @@ export function TradeTracingPanel({
   }, [confirmOpen]);
 
   async function runPreTradeChecks() {
+    if (!resolvedRoute?.settlement) {
+      setChecks({ phase: 'error', error: routeUnavailableMessage });
+      return;
+    }
     setChecks({ phase: 'running' });
     try {
       // Hedgeless: exchange fiat check uses fiat collateral only; BTC pool is a
@@ -557,8 +569,8 @@ export function TradeTracingPanel({
         payment_methods: offer.payment_methods ?? undefined,
         dex: offer.exchange,
         market_side: marketSide,
-		settlement: offer.metadata?.resolved_route?.settlement,
-		routing_fee_allowance_sat: offer.metadata?.resolved_route?.routing_fee_allowance_sat,
+        settlement: resolvedRoute.settlement,
+        routing_fee_allowance_sat: resolvedRoute.routing_fee_allowance_sat,
         trade_mode: tradeMode,
         hedge_venue: isHedgeless ? undefined : hedgeVenue || undefined,
         required_btc_liquidity: requiredBtcLiquidity,
@@ -574,7 +586,7 @@ export function TradeTracingPanel({
 
   // Re-run when confirm opens or the effective execution route / capital inputs change.
   useEffect(() => {
-    if (!confirmOpen || !routeCex) return;
+    if (!confirmOpen || !routeCex || !hasResolvedExecutionRoute) return;
     void runPreTradeChecks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
@@ -594,10 +606,12 @@ export function TradeTracingPanel({
     resolvedPaymentMethod,
     fiatCurrency,
     offer.exchange,
+    hasResolvedExecutionRoute,
+    resolvedRoute,
   ]);
 
   async function runTrade() {
-    if (!isHedgeless && !hedgeVenue) return;
+    if (!resolvedRoute?.settlement || (!isHedgeless && !hedgeVenue)) return;
 
     setConfirmOpen(false);
     setChecks({ phase: 'idle' });
@@ -645,10 +659,10 @@ export function TradeTracingPanel({
         payment_method: tradePaymentMethod || undefined,
         payment_methods: tradePaymentMethod ? undefined : offer.payment_methods ?? undefined,
         trade_mode: tradeMode,
-		resolved_route: offer.metadata?.resolved_route,
-		routing_fee_allowance_sat: offer.metadata?.resolved_route?.routing_fee_allowance_sat,
-		cex_withdrawal_fee_btc: offer.metadata?.resolved_route?.cex_withdrawal_fee_btc,
-		swap_safety_headroom_btc: offer.metadata?.resolved_route?.swap_safety_headroom_btc,
+        resolved_route: resolvedRoute,
+        routing_fee_allowance_sat: resolvedRoute.routing_fee_allowance_sat,
+        cex_withdrawal_fee_btc: resolvedRoute.cex_withdrawal_fee_btc,
+        swap_safety_headroom_btc: resolvedRoute.swap_safety_headroom_btc,
         selected_offer: {
           offer_id: offer.offer_id,
           exchange: offer.exchange,
@@ -775,6 +789,7 @@ export function TradeTracingPanel({
                   type="button"
                   disabled={!canTrade}
                   onClick={openConfirm}
+                  title={hasResolvedExecutionRoute ? undefined : routeUnavailableMessage}
                   className={`shrink-0 rounded-md px-3 py-1 text-[0.73rem] font-semibold transition-colors ${canTrade ? 'bg-green/15 border border-green/50 text-green hover:bg-green/25' : 'bg-surface border border-border text-muted cursor-not-allowed'}`}
                 >
                   {submit.phase === 'submitting' ? 'Submitting…' : 'Start trade'}
@@ -795,6 +810,12 @@ export function TradeTracingPanel({
                     : ''}
                 </span>
               </div>
+
+              {!hasResolvedExecutionRoute && (
+                <div role="status" className="rounded-md border border-orange-400/35 bg-orange-400/10 px-2 py-1.5 text-[0.66rem] leading-snug text-orange-300">
+                  {routeUnavailableMessage}
+                </div>
+              )}
 
               {bd && <CapitalRequiredSection capital={tradeCapital} />}
               <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
