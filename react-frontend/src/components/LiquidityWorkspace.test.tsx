@@ -72,10 +72,13 @@ describe('LiquidityWorkspace', () => {
     renderWorkspace();
 
     expect(screen.getByText('CEX Spot & Hedge')).toBeTruthy();
-    expect(screen.getByText('LND Liquidity')).toBeTruthy();
+    expect(screen.getByText('Mainnet Hub Liquidity')).toBeTruthy();
     expect(screen.getByText('Lightning Channel Liquidity')).toBeTruthy();
     expect(screen.getByText('DEX Wallet / Pending Contracts')).toBeTruthy();
-    expect(screen.getAllByText('Current')).toHaveLength(4);
+    expect(screen.getAllByText('Current')).toHaveLength(1);
+    expect(screen.getByText('Current inventory')).toBeTruthy();
+    expect(screen.getByText('Current balance')).toBeTruthy();
+    expect(screen.getByText('Current channel balance')).toBeTruthy();
     expect(screen.getAllByText('Target')).toHaveLength(4);
     expect(screen.getAllByText('Not configured')).toHaveLength(3);
     expect(screen.getAllByText('0 BTC')).toHaveLength(1);
@@ -87,9 +90,11 @@ describe('LiquidityWorkspace', () => {
     vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce({
       fiat_currency: 'EUR',
       amount_source: 'custom',
-      custom_amount: 100,
+      amount_fiat: 100,
+      fee_tier: 'economic', coupled_hedge: false,
       trade_mode: 'hedgefull_single_collateral',
       target_direction: 'bid',
+      lightning_liquidity_source: 'own_channels',
       config_version: 1,
       updated_at: '2026-08-10T00:00:00Z',
     });
@@ -104,8 +109,8 @@ describe('LiquidityWorkspace', () => {
 
   it('switches to hedgeless mode and uses the fiat target converted to BTC for LND and Lightning', async () => {
     const hedgelessSettings = {
-      fiat_currency: 'EUR', amount_source: 'custom' as const, custom_amount: 100,
-      trade_mode: 'hedgeless_double_collateral' as const, target_direction: 'bid' as const, config_version: 2, updated_at: '2026-08-10T00:00:00Z',
+      fiat_currency: 'EUR', amount_source: 'custom' as const, amount_fiat: 100, fee_tier: 'economic' as const, coupled_hedge: false,
+      trade_mode: 'hedgeless_double_collateral' as const, target_direction: 'bid' as const, lightning_liquidity_source: 'own_channels' as const, config_version: 2, updated_at: '2026-08-10T00:00:00Z',
     };
     vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce({ ...hedgelessSettings, trade_mode: 'hedgefull_single_collateral', config_version: 1 });
     vi.mocked(updateTransactionalLiquiditySettings).mockResolvedValueOnce(hedgelessSettings);
@@ -123,8 +128,8 @@ describe('LiquidityWorkspace', () => {
 
   it('persists the selected target direction', async () => {
     const settings = {
-      fiat_currency: 'EUR', amount_source: 'custom' as const, custom_amount: 100,
-      trade_mode: 'hedgefull_single_collateral' as const, target_direction: 'bid' as const,
+      fiat_currency: 'EUR', amount_source: 'custom' as const, amount_fiat: 100, fee_tier: 'economic' as const, coupled_hedge: false,
+      trade_mode: 'hedgefull_single_collateral' as const, target_direction: 'bid' as const, lightning_liquidity_source: 'own_channels' as const,
       config_version: 1, updated_at: '2026-08-10T00:00:00Z',
     };
     vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(settings);
@@ -142,15 +147,46 @@ describe('LiquidityWorkspace', () => {
     expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({ target_direction: 'ask' }));
   });
 
-  it('aggregates healthy CEX balances and live LND on-chain and channel liquidity', async () => {
+  it('requires and persists the selected Lightning liquidity source', async () => {
+    const settings = {
+      fiat_currency: 'EUR', amount_source: 'custom' as const, amount_fiat: 100, fee_tier: 'economic' as const, coupled_hedge: false,
+      trade_mode: 'hedgefull_single_collateral' as const, target_direction: 'bid' as const, lightning_liquidity_source: 'own_channels' as const,
+      config_version: 1, updated_at: '2026-08-10T00:00:00Z',
+    };
+    vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(settings);
+    vi.mocked(updateTransactionalLiquiditySettings).mockResolvedValueOnce({ ...settings, lightning_liquidity_source: 'lsp_channel' });
+
+    const user = userEvent.setup();
     renderWorkspace();
 
-    expect(await screen.findByText('0.25 BTC spot')).toBeTruthy();
-    expect(screen.getByText('2 hedges · 0.15 BTC exposure')).toBeTruthy();
-    expect(screen.getByText('EUR 1,000')).toBeTruthy();
+    await screen.findByText('EUR 100');
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    const source = screen.getByLabelText('Lightning liquidity source');
+    expect(source.getAttribute('required')).not.toBeNull();
+    await user.selectOptions(source, 'lsp_channel');
+    await user.click(screen.getByRole('button', { name: 'Save target' }));
+
+    expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({ lightning_liquidity_source: 'lsp_channel' }));
+    expect(await screen.findByText('LSP channel')).toBeTruthy();
+  });
+
+  it('aggregates healthy CEX balances and live LND on-chain and channel liquidity', async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    expect(await screen.findByText('1,000 EUR')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: /current inventory/i }));
+    expect(screen.getByText('0.25 available')).toBeTruthy();
+    expect(screen.getByText('0.3 total')).toBeTruthy();
+    expect(screen.getByText('2 active hedges')).toBeTruthy();
+    expect(screen.getByText('0.1 BTC')).toBeTruthy();
+    expect(screen.getByText('0.05 BTC')).toBeTruthy();
     expect(screen.getAllByText('0.0125 BTC')).not.toHaveLength(0);
-    expect(screen.getByText('0.006 BTC outbound')).toBeTruthy();
-    expect(screen.getByText('0.004 BTC inbound')).toBeTruthy();
+    expect(screen.getByText('0.01 BTC')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: /current channel balance/i }));
+    expect(screen.getByText('Own liquidity')).toBeTruthy();
+    expect(screen.getByText('600,000 sats')).toBeTruthy();
+    expect(screen.getByText('400,000 sats')).toBeTruthy();
   });
 
   it('shows DEX pending liquidity errors as unavailable and keeps the zero target', async () => {

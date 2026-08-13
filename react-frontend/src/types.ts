@@ -77,13 +77,17 @@ export type TradeMode = 'hedgefull_single_collateral' | 'hedgeless_double_collat
 
 export type TransactionalLiquidityAmountSource = 'custom' | 'capped_volume';
 export type TransactionalLiquidityTargetDirection = 'bid' | 'ask';
+export type TransactionalLiquiditySource = 'own_channels' | 'lsp_channel';
 
 export interface TransactionalLiquiditySettings {
   fiat_currency: string;
   amount_source: TransactionalLiquidityAmountSource;
-  custom_amount: number | null;
+  amount_fiat: number | null;
   trade_mode: TradeMode;
   target_direction: TransactionalLiquidityTargetDirection;
+  lightning_liquidity_source: TransactionalLiquiditySource;
+  fee_tier: 'economic';
+  coupled_hedge: boolean;
   config_version: number;
   updated_at: string;
 }
@@ -346,7 +350,10 @@ export interface Offer {
   premium?: number | null;
   time?: string;
   lifecycle?: LifecyclePoint[];
-  metadata?: { resolved_route?: ResolvedRoute } | null;
+  metadata?: {
+    route_resolution?: { status: 'resolved' | 'blocked' | 'out_of_scope'; code?: string; reason?: string };
+    resolved_route?: ResolvedRoute;
+  } | null;
   // Normalized maker reputation (0-100), null when no signal is obtainable.
   // seller_rating_confidence records which methodology produced it (see
   // internal/sellerrating); seller_rating_raw holds the source inputs.
@@ -548,6 +555,7 @@ export interface LNDWalletAddressEntry {
   label?: string;
   balance_sat?: number;
   is_internal?: boolean;
+  whitelisted_by?: string[];
 }
 
 export interface LNDWalletStatus {
@@ -924,6 +932,8 @@ export interface CexAssetBalance {
 export interface CexBalancesResponse {
   bitcoin?: CexAssetBalance | null;
   fiat: CexAssetBalance[];
+  /** Complete non-zero spot-wallet inventory. Kept separate from the legacy BTC/fiat summaries. */
+  assets?: CexAssetBalance[];
   source: string;
 }
 

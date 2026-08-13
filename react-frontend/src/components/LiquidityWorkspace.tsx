@@ -1,9 +1,9 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
+import { createPortal } from 'react-dom';
 import { closeLNDChannel, fetchCexBalances, fetchCexDepositAddresses, fetchCexHedgePositions, fetchDexPendingLiquidity, fetchLNDChannelPresets, fetchLNDWalletStatus, fetchLSPChannel, fetchLSPChannelStatus, fetchSubmarineSwaps, fetchTradingAccounts, fetchTransactionalLiquiditySettings, openLNDChannel, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
-import type { CexAssetBalance, CexDepositAddress, LNDChannelPreset, LNDWalletStatus, LSPChannelConfig, LSPChannelStatus, SubmarineSwapRecord, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquidityTargetDirection } from '../types';
+import type { CexAssetBalance, CexDepositAddress, CexHedgePosition, LNDChannelPreset, LNDWalletStatus, LSPChannelConfig, LSPChannelStatus, SubmarineSwapRecord, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquiditySource, TransactionalLiquidityTargetDirection } from '../types';
 import { useFilters } from '../hooks/useFilters';
 import { useCEXPermissions } from '../hooks/useCEXPermissions';
-import { usePreferences } from '../hooks/usePreferences';
 import { LocalQrCode } from './LocalQrCode';
 
 type PoolAction = 'fill' | 'drain';
@@ -12,10 +12,8 @@ type TransferRoute = 'exchange' | 'manual';
 type CexLiquiditySource = {
   accountID: number;
   provider: string;
-  spotBTC: number | null;
-  fiat: CexAssetBalance[];
-  activeHedgeCount: number;
-  hedgeExposureBTC: number;
+  spotAssets: CexAssetBalance[];
+  activeHedges: CexHedgePosition[];
   error?: string;
 };
 
@@ -61,19 +59,34 @@ function formatBTC(value: number) {
   return `${value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })} BTC`;
 }
 
+function formatAssetAmount(value: number) {
+  return value.toLocaleString(undefined, { maximumFractionDigits: 8 });
+}
+
+/** Renders existing, stateful controls inside their matching liquidity card. */
+function CardPortal({ targetRef, children }: { targetRef: RefObject<HTMLElement | null>; children: ReactNode }) {
+  const [target, setTarget] = useState<HTMLElement | null>(null);
+  useEffect(() => { setTarget(targetRef.current); }, [targetRef]);
+  return target ? createPortal(children, target) : null;
+}
+
 export function LiquidityWorkspace() {
   const { filters, refPrice } = useFilters();
-  const { maxFiatLimit } = usePreferences();
   const { exchanges: cexPolicies, ready: cexPoliciesReady } = useCEXPermissions();
   const [action, setAction] = useState<PoolAction>('fill');
   const [poolExpanded, setPoolExpanded] = useState(false);
   const [channelsExpanded, setChannelsExpanded] = useState(false);
+  const [lightningInventoryExpanded, setLightningInventoryExpanded] = useState(false);
+  const [hubInventoryExpanded, setHubInventoryExpanded] = useState(false);
+  const hubOperationsRef = useRef<HTMLDivElement>(null);
+  const lightningOperationsRef = useRef<HTMLDivElement>(null);
   const [transferRoute, setTransferRoute] = useState<TransferRoute>('exchange');
   const [amount, setAmount] = useState('');
   const [manualAddress, setManualAddress] = useState('');
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
   const [lndWallet, setLndWallet] = useState<LNDWalletStatus | null>(null);
   const [cexLiquidity, setCexLiquidity] = useState<CexLiquiditySource[]>([]);
+  const [cexInventoryExpanded, setCexInventoryExpanded] = useState(false);
   const [liquidityLoading, setLiquidityLoading] = useState(true);
   const [cexLiquidityError, setCexLiquidityError] = useState<string | null>(null);
   const [lndLiquidityError, setLndLiquidityError] = useState<string | null>(null);
@@ -101,7 +114,7 @@ export function LiquidityWorkspace() {
   const [lspNotice, setLspNotice] = useState<string | null>(null);
   const [lspError, setLspError] = useState<string | null>(null);
   const [transactionalSettings, setTransactionalSettings] = useState<TransactionalLiquiditySettings | null>(null);
-  const [transactionalForm, setTransactionalForm] = useState({ fiat_currency: 'EUR', amount_source: 'custom' as TransactionalLiquidityAmountSource, custom_amount: '', trade_mode: 'hedgefull_single_collateral' as TradeMode, target_direction: 'bid' as TransactionalLiquidityTargetDirection });
+  const [transactionalForm, setTransactionalForm] = useState({ fiat_currency: 'EUR', amount_source: 'custom' as TransactionalLiquidityAmountSource, amount_fiat: '', trade_mode: 'hedgefull_single_collateral' as TradeMode, target_direction: 'bid' as TransactionalLiquidityTargetDirection, lightning_liquidity_source: 'own_channels' as TransactionalLiquiditySource, fee_tier: 'economic' as const, coupled_hedge: false });
   const [transactionalLoading, setTransactionalLoading] = useState(true);
   const [transactionalEditing, setTransactionalEditing] = useState(false);
   const [transactionalSaving, setTransactionalSaving] = useState(false);
@@ -125,19 +138,18 @@ export function LiquidityWorkspace() {
   const channels = lndWallet?.channels ?? [];
   const selectedChannelPreset = channelPresets.find(preset => preset.id === selectedChannelPresetID);
   const lndOnChainSats = lndAddresses.reduce((sum, address) => sum + (address.balance_sat ?? 0), 0);
-  const lightningLocalSats = channels.reduce((sum, channel) => sum + channel.local_balance_sat, 0);
-  const lightningRemoteSats = channels.reduce((sum, channel) => sum + channel.remote_balance_sat, 0);
+  const lightningCapacitySats = channels.reduce((sum, channel) => sum + channel.capacity_sat, 0);
   const activeChannelCount = channels.filter(channel => channel.active).length;
-  const totalCexSpotBTC = cexLiquidity.reduce((sum, source) => sum + (source.spotBTC ?? 0), 0);
-  const totalHedgeExposureBTC = cexLiquidity.reduce((sum, source) => sum + source.hedgeExposureBTC, 0);
-  const totalHedgeCount = cexLiquidity.reduce((sum, source) => sum + source.activeHedgeCount, 0);
-  const totalFiat = useMemo(() => {
-    const values = new Map<string, number>();
-    for (const source of cexLiquidity) {
-      for (const balance of source.fiat) values.set(balance.asset, (values.get(balance.asset) ?? 0) + balance.available);
-    }
-    return [...values.entries()];
-  }, [cexLiquidity]);
+  const lspChannelPoint = lspStatus?.configured ? lspStatus.channel_point : lspConfig.channel_point;
+  const lspLiquidityChannel = channels.find(channel => channel.channel_point === lspChannelPoint);
+  const ownLiquidityChannels = channels.filter(channel => channel.channel_point !== lspChannelPoint);
+  const totalCexFiatValue = useMemo(() => cexLiquidity.reduce((sum, source) => sum + source.spotAssets.reduce((assetSum, balance) => {
+    if (balance.asset === filters.fiat) return assetSum + balance.available;
+    if (balance.asset === 'BTC' && refPrice != null) return assetSum + balance.available * refPrice;
+    return assetSum;
+  }, 0), 0), [cexLiquidity, filters.fiat, refPrice]);
+  const hasUnvaluedCexAssets = useMemo(() => cexLiquidity.some(source => source.spotAssets.some(balance => balance.asset !== filters.fiat && balance.asset !== 'BTC' && !balance.usd_value)), [cexLiquidity, filters.fiat]);
+  const liquidityPanelExpanded = cexInventoryExpanded || hubInventoryExpanded || lightningInventoryExpanded;
   const destinationOptions = action === 'fill'
     ? lndAddresses.map(address => ({ address: address.address, label: address.label || 'LND on-chain address', network: 'Bitcoin' }))
     : depositAddresses.map(address => ({ address: address.address, label: 'CEX BTC deposit address', network: address.network || 'Bitcoin' }));
@@ -148,9 +160,7 @@ export function LiquidityWorkspace() {
     ? 'LND on-chain wallet'
     : (transferRoute === 'exchange' ? `${selectedExchange?.provider ?? 'Selected exchange'} BTC wallet` : 'External BTC address');
 
-  const transactionalAmount = transactionalSettings?.amount_source === 'capped_volume'
-    ? (transactionalSettings.fiat_currency === filters.fiat ? maxFiatLimit : null)
-    : transactionalSettings?.custom_amount ?? null;
+  const transactionalAmount = transactionalSettings?.amount_fiat ?? null;
   const btcTarget = transactionalAmount != null && refPrice != null && transactionalSettings?.fiat_currency === filters.fiat && refPrice > 0
     ? transactionalAmount / refPrice
     : null;
@@ -172,9 +182,12 @@ export function LiquidityWorkspace() {
         setTransactionalForm({
           fiat_currency: settings.fiat_currency,
           amount_source: settings.amount_source,
-          custom_amount: settings.custom_amount == null ? '' : String(settings.custom_amount),
+          amount_fiat: settings.amount_fiat == null ? '' : String(settings.amount_fiat),
           trade_mode: settings.trade_mode,
           target_direction: settings.target_direction ?? 'bid',
+          lightning_liquidity_source: settings.lightning_liquidity_source ?? 'own_channels',
+          fee_tier: settings.fee_tier ?? 'economic',
+          coupled_hedge: settings.coupled_hedge ?? false,
         });
       })
       .catch(error => { if (active) { setTransactionalError(error instanceof Error ? error.message : 'Could not load transactional liquidity settings.'); setTransactionalEditing(true); } })
@@ -216,9 +229,9 @@ export function LiquidityWorkspace() {
 
   const saveTransactionalSettings = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const amount = transactionalForm.amount_source === 'custom' ? Number(transactionalForm.custom_amount) : maxFiatLimit;
-    if (amount == null || !Number.isFinite(amount) || amount <= 0 || (transactionalForm.amount_source === 'capped_volume' && filters.fiat !== transactionalForm.fiat_currency)) {
-      setTransactionalError(transactionalForm.amount_source === 'custom' ? 'Enter a custom amount greater than zero.' : 'Set a positive capped volume before adopting it.');
+    const amount = Number(transactionalForm.amount_fiat);
+    if (!Number.isFinite(amount) || amount <= 0) {
+      setTransactionalError('Enter a persisted fiat amount greater than zero.');
       setTransactionalNotice(null);
       return;
     }
@@ -229,12 +242,15 @@ export function LiquidityWorkspace() {
       const updated = await updateTransactionalLiquiditySettings({
         fiat_currency: transactionalForm.fiat_currency,
         amount_source: transactionalForm.amount_source,
-        custom_amount: transactionalForm.amount_source === 'custom' ? amount : null,
+        amount_fiat: amount,
         trade_mode: transactionalForm.trade_mode,
         target_direction: transactionalForm.target_direction,
+        lightning_liquidity_source: transactionalForm.lightning_liquidity_source,
+        fee_tier: transactionalForm.fee_tier,
+        coupled_hedge: transactionalForm.coupled_hedge,
       });
       setTransactionalSettings(updated);
-      setTransactionalForm(current => ({ ...current, custom_amount: updated.custom_amount == null ? '' : String(updated.custom_amount), target_direction: updated.target_direction ?? 'bid' }));
+      setTransactionalForm(current => ({ ...current, amount_fiat: updated.amount_fiat == null ? '' : String(updated.amount_fiat), target_direction: updated.target_direction ?? 'bid', lightning_liquidity_source: updated.lightning_liquidity_source ?? 'own_channels', fee_tier: updated.fee_tier ?? 'economic', coupled_hedge: updated.coupled_hedge ?? false }));
       setTransactionalNotice('Transactional liquidity targets saved.');
       setTransactionalEditing(false);
     } catch (error) {
@@ -249,9 +265,12 @@ export function LiquidityWorkspace() {
       setTransactionalForm({
         fiat_currency: transactionalSettings.fiat_currency,
         amount_source: transactionalSettings.amount_source,
-        custom_amount: transactionalSettings.custom_amount == null ? '' : String(transactionalSettings.custom_amount),
+        amount_fiat: transactionalSettings.amount_fiat == null ? '' : String(transactionalSettings.amount_fiat),
         trade_mode: transactionalSettings.trade_mode,
         target_direction: transactionalSettings.target_direction ?? 'bid',
+        lightning_liquidity_source: transactionalSettings.lightning_liquidity_source ?? 'own_channels',
+        fee_tier: transactionalSettings.fee_tier ?? 'economic',
+        coupled_hedge: transactionalSettings.coupled_hedge ?? false,
       });
     }
     setTransactionalEditing(false);
@@ -283,16 +302,15 @@ export function LiquidityWorkspace() {
           const [balances, hedges] = await Promise.allSettled([fetchCexBalances(account.id), fetchCexHedgePositions(account.id)]);
           if (balances.status !== 'fulfilled' && hedges.status !== 'fulfilled') {
             const reason = balances.status === 'rejected' ? balances.reason : hedges.status === 'rejected' ? hedges.reason : null;
-            return { accountID: account.id, provider: account.provider, spotBTC: null, fiat: [], activeHedgeCount: 0, hedgeExposureBTC: 0, error: reason instanceof Error ? reason.message : 'Source unavailable' };
+            return { accountID: account.id, provider: account.provider, spotAssets: [], activeHedges: [], error: reason instanceof Error ? reason.message : 'Source unavailable' };
           }
-          const active = hedges.status === 'fulfilled' ? hedges.value.active : [];
+          const activeHedges = hedges.status === 'fulfilled' ? hedges.value.active : [];
+          const response = balances.status === 'fulfilled' ? balances.value : null;
           return {
             accountID: account.id,
             provider: account.provider,
-            spotBTC: balances.status === 'fulfilled' ? balances.value.bitcoin?.available ?? 0 : null,
-            fiat: balances.status === 'fulfilled' ? balances.value.fiat : [],
-            activeHedgeCount: active.length,
-            hedgeExposureBTC: active.reduce((sum, position) => sum + Math.abs(position.size_btc ?? 0), 0),
+            spotAssets: response?.assets ?? [response?.bitcoin, ...(response?.fiat ?? [])].filter((balance): balance is CexAssetBalance => Boolean(balance)),
+            activeHedges,
             error: balances.status === 'rejected' || hedges.status === 'rejected' ? 'Partial source unavailable' : undefined,
           };
         }));
@@ -491,24 +509,37 @@ export function LiquidityWorkspace() {
   };
 
   return (
-    <div className="liquidity-workspace h-full min-h-0 overflow-y-auto pr-0.5 flex flex-col gap-1">
+    <div className={`liquidity-workspace h-full min-h-0 overflow-y-auto pr-0.5 flex flex-col gap-1 ${liquidityPanelExpanded ? 'has-expanded-liquidity-panel' : ''}`}>
       <section aria-label="Liquidity allocation" className="liquidity-overview">
         <div className="liquidity-allocation-board" role="list" aria-label="Liquidity state">
-          <div role="listitem" className="liquidity-allocation-card liquidity-allocation-card--cex">
-            <div className="liquidity-allocation-card__heading"><span className="liquidity-allocation-card__marker">01</span><div className="min-w-0"><div className="text-[0.75rem] font-semibold text-text">CEX Spot & Hedge</div><div className="text-[0.65rem] text-muted mt-0.5">Exchange inventory</div></div></div>
-            <div className="liquidity-allocation-card__figures"><div className="liquidity-allocation-card__current"><div className="liquidity-value-label">Current</div>{liquidityLoading && cexLiquidity.length === 0 ? <span className="text-muted text-[0.7rem]">Loading…</span> : cexLiquidityError && cexLiquidity.length === 0 ? <span className="text-red text-[0.7rem]">Unavailable</span> : cexLiquidity.length === 0 ? <span className="text-muted text-[0.7rem]">No connected CEX</span> : <div className="text-[0.68rem] leading-5"><div className="mono-nums text-text">{formatBTC(totalCexSpotBTC)} spot</div><div className="text-muted">{totalHedgeCount} hedge{totalHedgeCount === 1 ? '' : 's'} · {formatBTC(totalHedgeExposureBTC)} exposure</div>{totalFiat.length > 0 && <div className="text-muted">{totalFiat.map(([asset, amount]) => `${asset} ${amount.toLocaleString(undefined, { maximumFractionDigits: 2 })}`).join(' · ')}</div>}{cexLiquidityError && <div className="text-peach">Refresh failed; showing last value</div>}</div>}</div><div className="liquidity-allocation-card__target"><div className="liquidity-value-label">Target</div><TargetCell value={targetFiat} detail={transactionalSettings ? transactionalSettings.trade_mode === 'hedgeless_double_collateral' ? 'exchange fiat' : 'exchange + hedge capital' : undefined} /></div></div>
+          <div role="listitem" className={`liquidity-allocation-card liquidity-allocation-card--cex ${cexInventoryExpanded ? 'is-expanded' : ''}`}>
+            <div className="liquidity-allocation-card__heading"><span className="liquidity-allocation-card__marker">01</span><div className="min-w-0"><div className="text-[0.75rem] font-semibold text-text">CEX Spot & Hedge</div><div className="text-[0.65rem] text-muted mt-0.5">Exchange inventory</div></div><button type="button" className="liquidity-cex-summary__toggle" aria-label={cexInventoryExpanded ? 'Collapse CEX inventory' : 'Expand CEX inventory'} aria-expanded={cexInventoryExpanded} aria-controls="cex-inventory-details" onClick={() => setCexInventoryExpanded(current => !current)}>{cexInventoryExpanded ? '⌃' : '⌄'}</button></div>
+            <div className="liquidity-allocation-card__figures"><button type="button" className="liquidity-allocation-card__current liquidity-cex-summary" aria-expanded={cexInventoryExpanded} aria-controls="cex-inventory-details" onClick={() => setCexInventoryExpanded(current => !current)}><div className="liquidity-value-label">Current inventory</div>{liquidityLoading && cexLiquidity.length === 0 ? <span className="text-muted text-[0.7rem]">Loading…</span> : cexLiquidityError && cexLiquidity.length === 0 ? <span className="text-red text-[0.7rem]">Unavailable</span> : cexLiquidity.length === 0 ? <span className="text-muted text-[0.7rem]">No connected CEX</span> : <><strong className="liquidity-cex-summary__value">{formatFiatValue(totalCexFiatValue, filters.fiat)}</strong><span className="liquidity-cex-summary__hint">{cexInventoryExpanded ? 'Hide exchange details' : `View ${cexLiquidity.length} connected exchange${cexLiquidity.length === 1 ? '' : 's'}`}</span>{hasUnvaluedCexAssets && <span className="liquidity-cex-summary__note">Some assets are shown in detail only</span>}{cexLiquidityError && <span className="text-peach text-[0.6rem]">Refresh failed; showing last value</span>}</>}</button><div className="liquidity-allocation-card__target"><div className="liquidity-value-label">Target</div><TargetCell value={targetFiat} detail={transactionalSettings ? transactionalSettings.trade_mode === 'hedgeless_double_collateral' ? 'exchange fiat' : 'exchange + hedge capital' : undefined} /></div></div>
+            {cexInventoryExpanded && <div id="cex-inventory-details" className="liquidity-cex-inventory" aria-label="CEX inventory details">
+              {cexLiquidity.map(source => <section key={source.accountID} className="liquidity-cex-inventory__exchange">
+                <div className="liquidity-cex-inventory__exchange-header"><strong>{source.provider}</strong><span>{source.error ? source.error : 'Connected'}</span></div>
+                <div className="liquidity-cex-inventory__location"><div className="liquidity-cex-inventory__location-title"><span>Spot</span><small>{source.spotAssets.length} asset{source.spotAssets.length === 1 ? '' : 's'}</small></div>{source.spotAssets.length > 0 ? <div className="liquidity-cex-inventory__assets">{source.spotAssets.map(balance => <div key={`${balance.asset}-${balance.total}`}><span>{balance.asset}</span><span className="mono-nums">{formatAssetAmount(balance.available)} available</span><span className="mono-nums text-muted">{formatAssetAmount(balance.total)} total</span></div>)}</div> : <p>No spot balances returned.</p>}</div>
+                <div className="liquidity-cex-inventory__location"><div className="liquidity-cex-inventory__location-title"><span>Futures</span><small>{source.activeHedges.length} active hedge{source.activeHedges.length === 1 ? '' : 's'}</small></div>{source.activeHedges.length > 0 ? <div className="liquidity-cex-inventory__assets">{source.activeHedges.map((hedge, index) => <div key={`${hedge.transaction_id ?? index}-${hedge.instrument ?? hedge.venue ?? 'hedge'}`}><span>{hedge.instrument || hedge.venue || 'BTC perpetual'}</span><span>{hedge.direction || 'Hedge'}</span><span className="mono-nums text-muted">{formatBTC(Math.abs(hedge.size_btc ?? 0))}</span></div>)}</div> : <p>No active futures positions.</p>}</div>
+              </section>)}
+            </div>}
           </div>
 
-          <div role="listitem" className="liquidity-allocation-card liquidity-allocation-card--lnd">
-            <div className="liquidity-allocation-card__heading"><span className="liquidity-allocation-card__marker">02</span><div className="min-w-0"><div className="text-[0.75rem] font-semibold text-text">LND Liquidity</div><div className="text-[0.65rem] text-muted mt-0.5">On-chain wallet reserve</div></div></div>
-            <div className="liquidity-allocation-card__figures"><div className="liquidity-allocation-card__current"><div className="liquidity-value-label">Current</div>{liquidityLoading && !lndWallet ? <span className="text-muted text-[0.7rem]">Loading…</span> : lndLiquidityError && !lndWallet ? <span className="text-red text-[0.7rem]">Unavailable</span> : <div className="text-[0.68rem] leading-5"><div className="mono-nums text-text">{formatBTC(lndOnChainSats / 1e8)}</div><div className="text-muted">{lndAddresses.length} on-chain address{lndAddresses.length === 1 ? '' : 'es'}</div>{lndLiquidityError && <div className="text-peach">Refresh failed; showing last value</div>}</div>}</div><div className="liquidity-allocation-card__target"><div className="liquidity-value-label">Target</div><TargetCell value={lndTargetBTC} detail={lndTargetDetail} /></div></div>
-            <div className="liquidity-allocation-card__sources liquidity-allocation-card__sources--empty" aria-hidden="true" />
+          <div role="listitem" className={`liquidity-allocation-card liquidity-allocation-card--lnd ${hubInventoryExpanded ? 'is-expanded' : ''}`}>
+            <div className="liquidity-allocation-card__heading"><span className="liquidity-allocation-card__marker">02</span><div className="min-w-0"><div className="text-[0.75rem] font-semibold text-text">Mainnet Hub Liquidity</div><div className="text-[0.65rem] text-muted mt-0.5">On-chain wallet reserve</div></div><button type="button" className="liquidity-hub-summary__toggle" aria-label={hubInventoryExpanded ? 'Collapse Mainnet Hub liquidity' : 'Expand Mainnet Hub liquidity'} aria-expanded={hubInventoryExpanded} aria-controls="hub-inventory-details" onClick={() => setHubInventoryExpanded(current => !current)}>{hubInventoryExpanded ? '⌃' : '⌄'}</button></div>
+            <div className="liquidity-allocation-card__figures"><button type="button" className="liquidity-allocation-card__current liquidity-hub-summary" aria-expanded={hubInventoryExpanded} aria-controls="hub-inventory-details" onClick={() => setHubInventoryExpanded(current => !current)}><div className="liquidity-value-label">Current balance</div>{liquidityLoading && !lndWallet ? <span className="text-muted text-[0.7rem]">Loading…</span> : lndLiquidityError && !lndWallet ? <span className="text-red text-[0.7rem]">Unavailable</span> : <><strong className="liquidity-hub-summary__value">{formatBTC(lndOnChainSats / 1e8)}</strong><span className="liquidity-hub-summary__hint">{hubInventoryExpanded ? 'Hide address details' : `View ${lndAddresses.length} on-chain address${lndAddresses.length === 1 ? '' : 'es'}`}</span>{lndLiquidityError && <span className="text-peach text-[0.6rem]">Refresh failed; showing last value</span>}</>}</button><div className="liquidity-allocation-card__target"><div className="liquidity-value-label">Target</div><TargetCell value={lndTargetBTC} detail={lndTargetDetail} /></div></div>
+            {hubInventoryExpanded && <div id="hub-inventory-details" className="liquidity-hub-inventory" aria-label="Mainnet Hub address details">{lndAddresses.length > 0 ? lndAddresses.map(address => <div key={address.address} className="liquidity-hub-inventory__address"><div className="liquidity-hub-inventory__address-heading"><div><strong>{address.label || 'Mainnet address'}</strong><code title={address.address}>{shortAddress(address.address)}</code></div><span className="mono-nums">{formatSats(address.balance_sat ?? 0)}</span></div>{address.whitelisted_by && address.whitelisted_by.length > 0 && <div className="liquidity-hub-inventory__whitelist"><span>Whitelisted on</span>{address.whitelisted_by.map(provider => <span className="liquidity-hub-inventory__pill" key={provider}>{provider}</span>)}</div>}</div>) : <p>No on-chain addresses returned by the Mainnet Hub.</p>}<section className="liquidity-hub-management" aria-hidden="true" /></div>}
+            <div ref={hubOperationsRef} className="liquidity-card-operations-host" />
           </div>
 
-          <div role="listitem" className="liquidity-allocation-card liquidity-allocation-card--lightning">
-            <div className="liquidity-allocation-card__heading"><span className="liquidity-allocation-card__marker">03</span><div className="min-w-0"><div className="text-[0.75rem] font-semibold text-text">Lightning Channel Liquidity</div><div className="text-[0.65rem] text-muted mt-0.5">Ready-to-route capacity</div></div></div>
-            <div className="liquidity-allocation-card__figures"><div className="liquidity-allocation-card__current"><div className="liquidity-value-label">Current</div>{liquidityLoading && !lndWallet ? <span className="text-muted text-[0.7rem]">Loading…</span> : lndLiquidityError && !lndWallet ? <span className="text-red text-[0.7rem]">Unavailable</span> : <div className="text-[0.68rem] leading-5"><div className="mono-nums text-text">{formatBTC(lightningLocalSats / 1e8)} outbound</div><div className="mono-nums text-text">{formatBTC(lightningRemoteSats / 1e8)} inbound</div><div className="text-muted">{channels.length} channel{channels.length === 1 ? '' : 's'} · {activeChannelCount} active</div>{lndLiquidityError && <div className="text-peach">Refresh failed; showing last value</div>}</div>}</div><div className="liquidity-allocation-card__target"><div className="liquidity-value-label">Target</div><TargetCell value={lndTargetBTC} detail={lndTargetDetail} /></div></div>
-            <div className="liquidity-allocation-card__sources liquidity-allocation-card__sources--empty" aria-hidden="true" />
+          <div role="listitem" className={`liquidity-allocation-card liquidity-allocation-card--lightning ${lightningInventoryExpanded ? 'is-expanded' : ''}`}>
+            <div className="liquidity-allocation-card__heading"><span className="liquidity-allocation-card__marker">03</span><div className="min-w-0"><div className="text-[0.75rem] font-semibold text-text">Lightning Channel Liquidity</div><div className="text-[0.65rem] text-muted mt-0.5">Ready-to-route capacity</div></div><button type="button" className="liquidity-lightning-summary__toggle" aria-label={lightningInventoryExpanded ? 'Collapse Lightning liquidity' : 'Expand Lightning liquidity'} aria-expanded={lightningInventoryExpanded} aria-controls="lightning-inventory-details" onClick={() => setLightningInventoryExpanded(current => !current)}>{lightningInventoryExpanded ? '⌃' : '⌄'}</button></div>
+            <div className="liquidity-allocation-card__figures"><button type="button" className="liquidity-allocation-card__current liquidity-lightning-summary" aria-expanded={lightningInventoryExpanded} aria-controls="lightning-inventory-details" onClick={() => setLightningInventoryExpanded(current => !current)}><div className="liquidity-value-label">Current channel balance</div>{liquidityLoading && !lndWallet ? <span className="text-muted text-[0.7rem]">Loading…</span> : lndLiquidityError && !lndWallet ? <span className="text-red text-[0.7rem]">Unavailable</span> : <><strong className="liquidity-lightning-summary__value">{formatBTC(lightningCapacitySats / 1e8)}</strong><span className="liquidity-lightning-summary__hint">{lightningInventoryExpanded ? 'Hide channel details' : `View ${channels.length} channel${channels.length === 1 ? '' : 's'} · ${activeChannelCount} active`}</span>{lndLiquidityError && <span className="text-peach text-[0.6rem]">Refresh failed; showing last value</span>}</>}</button><div className="liquidity-allocation-card__target"><div className="liquidity-value-label">Target</div><TargetCell value={lndTargetBTC} detail={lndTargetDetail} /></div></div>
+            {lightningInventoryExpanded && <div id="lightning-inventory-details" className="liquidity-lightning-inventory" aria-label="Lightning channel liquidity details">
+              <section className="liquidity-lightning-inventory__group"><div className="liquidity-lightning-inventory__group-heading"><strong>Own liquidity</strong><span>{ownLiquidityChannels.length} channel{ownLiquidityChannels.length === 1 ? '' : 's'}</span></div>{ownLiquidityChannels.length > 0 ? ownLiquidityChannels.map(channel => <div key={channel.channel_point} className="liquidity-lightning-inventory__channel"><div><strong>{channel.remote_alias || shortAddress(channel.remote_pubkey)}</strong><span>{channel.active ? 'Active' : 'Inactive'}{channel.private ? ' · Private' : ''}</span></div><dl><div><dt>Capacity</dt><dd>{formatSats(channel.capacity_sat)}</dd></div><div><dt>Outbound</dt><dd>{formatSats(channel.local_balance_sat)}</dd></div><div><dt>Inbound</dt><dd>{formatSats(channel.remote_balance_sat)}</dd></div></dl><div className="liquidity-lightning-inventory__channel-actions"><button type="button" disabled={closingChannelPoint === channel.channel_point} onClick={() => void submitCloseChannel(channel.channel_point, false)}>Close</button><button type="button" disabled={closingChannelPoint === channel.channel_point} onClick={() => void submitCloseChannel(channel.channel_point, true)}>Force close</button></div></div>) : <p>No own-liquidity channels.</p>}</section>
+              <section className="liquidity-lightning-inventory__group"><div className="liquidity-lightning-inventory__group-heading"><strong>LSP channel</strong><span>{lspLiquidityChannel ? (lspStatus?.lsp_healthy ? 'Active' : 'Needs attention') : 'Not configured'}</span></div>{lspLiquidityChannel ? <><div className="liquidity-lightning-inventory__channel"><div><strong>{lspConfig.provider_label || lspLiquidityChannel.remote_alias || shortAddress(lspLiquidityChannel.remote_pubkey)}</strong><span>{lspLiquidityChannel.active ? 'Active' : 'Inactive'}{lspLiquidityChannel.private ? ' · Private' : ''}</span></div><dl><div><dt>Capacity</dt><dd>{formatSats(lspLiquidityChannel.capacity_sat)}</dd></div><div><dt>Outbound</dt><dd>{formatSats(lspStatus?.usable_outbound_sat ?? lspLiquidityChannel.local_balance_sat)}</dd></div><div><dt>Inbound</dt><dd>{formatSats(lspStatus?.usable_inbound_sat ?? lspLiquidityChannel.remote_balance_sat)}</dd></div></dl></div><div className="liquidity-lightning-inventory__fees"><span>Headroom <b>{formatSats(lspConfig.headroom_sat)}</b></span><span>Max swap fee <b>{formatSats(lspConfig.max_swap_fee_sat)}</b></span><span>Max fee rate <b>{lspConfig.max_swap_fee_ppm.toLocaleString()} ppm</b></span></div></> : <p>Select an LSP channel below to show its capacity and fees.</p>}</section>
+              <section className="liquidity-lightning-management" aria-labelledby="lightning-controls-heading"><div><span className="liquidity-section-kicker">Lightning channels</span><h4 id="lightning-controls-heading">Manage channels</h4><p>{!lspLoading && (lspStatus?.lsp_healthy ? 'LSP channel active' : 'LSP channel needs attention')}</p></div><label><span>LSP channel</span><select value={lspConfig.channel_point} onChange={event => { const channel = channels.find(item => item.channel_point === event.target.value); setLspConfig(previous => ({ ...previous, channel_point: channel?.channel_point || '', remote_pubkey: channel?.remote_pubkey || '', provider_label: channel?.remote_alias || '', enabled: Boolean(channel) })); }}><option value="">Choose a live LND channel…</option>{channels.map(channel => <option key={channel.channel_point} value={channel.channel_point}>{channel.remote_alias || shortAddress(channel.remote_pubkey)}</option>)}</select></label><div className="liquidity-lightning-management__fees"><label><span>Headroom (sats)</span><input type="number" min="0" value={lspConfig.headroom_sat} onChange={event => setLspConfig(previous => ({ ...previous, headroom_sat: Number(event.target.value) }))} /></label><label><span>Max fee (sats)</span><input type="number" min="1" value={lspConfig.max_swap_fee_sat} onChange={event => setLspConfig(previous => ({ ...previous, max_swap_fee_sat: Number(event.target.value) }))} /></label><label><span>Max fee (ppm)</span><input type="number" min="1" value={lspConfig.max_swap_fee_ppm} onChange={event => setLspConfig(previous => ({ ...previous, max_swap_fee_ppm: Number(event.target.value) }))} /></label></div><button type="button" disabled={savingLsp || !lspConfig.channel_point} onClick={() => void saveLspChannel()}>{savingLsp ? 'Saving…' : 'Save LSP selection'}</button><details><summary>Open a new channel</summary><form onSubmit={event => void submitOpenChannel(event)}><input value={channelForm.nodePubkey} onChange={event => setChannelForm(current => ({ ...current, nodePubkey: event.target.value }))} placeholder="Node public key" /><input value={channelForm.peerHost} onChange={event => setChannelForm(current => ({ ...current, peerHost: event.target.value }))} placeholder="Peer host (optional)" /><input type="number" min="1" value={channelForm.fundingSats} onChange={event => setChannelForm(current => ({ ...current, fundingSats: event.target.value }))} placeholder="Funding sats" /><button type="submit" disabled={openingChannel}>{openingChannel ? 'Opening…' : 'Open channel'}</button></form></details>{(lspError || lspNotice || channelError || channelNotice) && <p className="liquidity-lightning-management__feedback">{lspError || lspNotice || channelError || channelNotice}</p>}</section>
+            </div>}
+            <div ref={lightningOperationsRef} className="liquidity-card-operations-host" />
           </div>
 
           <div role="listitem" className="liquidity-allocation-card liquidity-allocation-card--dex">
@@ -519,10 +550,7 @@ export function LiquidityWorkspace() {
         </div>
       </section>
 
-      <section aria-labelledby="liquidity-management-heading" className="liquidity-management">
-        <div className="mb-2.5 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
-          <h3 id="liquidity-management-heading" className="liquidity-section-kicker">Management</h3>
-        </div>
+      <section aria-label="Liquidity settings" className="liquidity-management">
 
         <section aria-labelledby="transactional-liquidity-heading" className="liquidity-settings-card">
           <div className="liquidity-settings-card__header flex flex-wrap items-start justify-between gap-2">
@@ -536,6 +564,8 @@ export function LiquidityWorkspace() {
               <div><span>Source</span><strong>{transactionalSettings.amount_source === 'custom' ? 'Custom amount' : 'Capped volume'}</strong></div>
               <div><span>Mode</span><strong>{transactionalSettings.trade_mode === 'hedgeless_double_collateral' ? 'Hedgeless' : 'Hedgefull'}</strong></div>
               <div><span>Direction</span><strong className="capitalize">{transactionalSettings.target_direction ?? 'bid'}</strong></div>
+              <div><span>Lightning</span><strong>{transactionalSettings.lightning_liquidity_source === 'lsp_channel' ? 'LSP channel' : 'Own Lightning channels'}</strong></div>
+              <div><span>Fees</span><strong>Economic · {transactionalSettings.coupled_hedge ? 'coupled hedge' : 'independent hedge'}</strong></div>
               <button type="button" onClick={() => { setTransactionalEditing(true); setTransactionalNotice(null); }}>Edit</button>
             </div>}
           </div>
@@ -559,6 +589,13 @@ export function LiquidityWorkspace() {
                 <option value="ask">Ask</option>
               </select>
             </label>
+            <label className="block">
+              <span className="block text-[0.62rem] uppercase tracking-wider font-medium text-muted mb-1">Lightning liquidity source</span>
+              <select aria-label="Lightning liquidity source" required value={transactionalForm.lightning_liquidity_source} onChange={event => setTransactionalForm(current => ({ ...current, lightning_liquidity_source: event.target.value as TransactionalLiquiditySource }))} className="w-full rounded-md border border-border bg-bg px-2 py-1.5 text-[0.72rem] text-text outline-none focus:border-accent">
+                <option value="own_channels">Own Lightning channels</option>
+                <option value="lsp_channel">LSP channel</option>
+              </select>
+            </label>
             <div className="liquidity-target-amount">
               <span className="block text-[0.62rem] uppercase tracking-wider font-medium text-muted mb-1">Target amount</span>
               <div className="liquidity-target-amount__controls">
@@ -566,17 +603,20 @@ export function LiquidityWorkspace() {
                   <option value="custom">Custom amount</option>
                   <option value="capped_volume">Capped volume</option>
                 </select>
-                {transactionalForm.amount_source === 'custom' ? (
-                  <label className="block">
-                    <span className="sr-only">Transactional liquidity ({transactionalForm.fiat_currency})</span>
-                    <input type="number" min={0} step={50} value={transactionalForm.custom_amount} onChange={event => setTransactionalForm(current => ({ ...current, custom_amount: event.target.value }))} placeholder={`Amount in ${transactionalForm.fiat_currency}`} className="w-full rounded-md border border-border bg-bg px-2 py-1.5 text-[0.72rem] text-text outline-none focus:border-accent mono-nums" />
-                  </label>
-                ) : (
-                  <div className="liquidity-target-capped rounded-md border border-border/60 bg-bg/30 px-2 py-1.5 text-[0.68rem] text-muted">Capped: <span className="text-text mono-nums">{maxFiatLimit != null && maxFiatLimit > 0 ? formatFiat(maxFiatLimit, filters.fiat) : 'not configured'}</span></div>
-                )}
+                <label className="block">
+                  <span className="sr-only">Transactional liquidity ({transactionalForm.fiat_currency})</span>
+                  <input type="number" min={0} step={50} value={transactionalForm.amount_fiat} onChange={event => setTransactionalForm(current => ({ ...current, amount_fiat: event.target.value }))} placeholder={`Amount in ${transactionalForm.fiat_currency}`} className="w-full rounded-md border border-border bg-bg px-2 py-1.5 text-[0.72rem] text-text outline-none focus:border-accent mono-nums" />
+                </label>
               </div>
-              {transactionalForm.amount_source === 'capped_volume' && filters.fiat !== transactionalForm.fiat_currency && <span className="sr-only">Select {transactionalForm.fiat_currency} in the market filter to match the live capped volume.</span>}
             </div>
+            <label className="block">
+              <span className="block text-[0.62rem] uppercase tracking-wider font-medium text-muted mb-1">Miner fee tier</span>
+              <select value={transactionalForm.fee_tier} disabled className="w-full rounded-md border border-border bg-bg px-2 py-1.5 text-[0.72rem] text-text opacity-80"><option value="economic">Economic</option></select>
+            </label>
+            <label className="flex items-center gap-2 text-[0.68rem] text-text">
+              <input type="checkbox" checked={transactionalForm.coupled_hedge} onChange={event => setTransactionalForm(current => ({ ...current, coupled_hedge: event.target.checked }))} />
+              Require spot and hedge on the same provider
+            </label>
             <div className="liquidity-target-save">
               <div className="flex items-center gap-1.5">
                 <button type="submit" disabled={transactionalSaving || transactionalLoading} className="rounded-md border border-accent bg-accent/10 px-2.5 py-1.5 text-[0.7rem] font-semibold text-text hover:bg-accent/20 disabled:opacity-60">{transactionalSaving ? 'Saving…' : 'Save target'}</button>
@@ -588,7 +628,7 @@ export function LiquidityWorkspace() {
           {(transactionalNotice || transactionalError) && !transactionalEditing && <div className="liquidity-target-feedback text-[0.62rem] mt-2" aria-live="polite">{transactionalNotice && <span className="text-green">{transactionalNotice}</span>}{transactionalError && <span className="text-red">{transactionalError}</span>}</div>}
         </section>
 
-        <section aria-labelledby="pool-transfer-heading" className="liquidity-action-card">
+        <CardPortal targetRef={hubOperationsRef}><section aria-labelledby="pool-transfer-heading" className="liquidity-action-card">
           <div className="pool-transfer__intro">
             <div className="pool-transfer__intro-copy">
               <span className="liquidity-section-kicker">On-chain BTC</span>
@@ -685,9 +725,9 @@ export function LiquidityWorkspace() {
             <p className="sm:col-span-2 rounded-md border border-peach/40 bg-peach/10 px-2 py-1.5 text-[0.72rem] text-peach" role="status">{feedback}</p>
           )}
           </form>}
-        </section>
+        </section></CardPortal>
 
-        <section aria-labelledby="lightning-management-heading" className="liquidity-action-card">
+        <CardPortal targetRef={lightningOperationsRef}><section aria-labelledby="lightning-management-heading" className="liquidity-action-card">
           <div className="liquidity-channel-disclosure">
             <div><h4 id="lightning-management-heading">Lightning channels <span>{channels.length} open</span></h4><p>Open, inspect, close, or register LSP capacity.</p>{!lspLoading && <p className={lspStatus?.lsp_healthy ? 'text-green' : 'text-peach'}>{lspStatus?.lsp_healthy ? 'LSP channel active' : 'LSP channel needs attention'}</p>}</div>
             <button type="button" aria-expanded={channelsExpanded} aria-controls="lightning-channel-controls" onClick={() => setChannelsExpanded(current => !current)}>{channelsExpanded ? 'Hide controls' : 'Manage channels'}</button>
@@ -748,7 +788,7 @@ export function LiquidityWorkspace() {
             ))}
           </div>
           </div>}
-        </section>
+        </section></CardPortal>
       </section>
     </div>
   );
