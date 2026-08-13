@@ -1,6 +1,6 @@
 import { cleanup, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../utils/api', () => ({
   fetchTradingAccounts: vi.fn().mockResolvedValue([
@@ -65,7 +65,15 @@ function renderWorkspace(offers: Offer[] = []) {
   );
 }
 
-afterEach(cleanup);
+beforeEach(() => {
+  window.localStorage.removeItem('dex-max-fiat-limit');
+});
+
+afterEach(() => {
+  cleanup();
+  vi.clearAllMocks();
+  window.localStorage.removeItem('dex-max-fiat-limit');
+});
 
 describe('LiquidityWorkspace', () => {
   it('shows every collateral location with current and target states', async () => {
@@ -145,6 +153,52 @@ describe('LiquidityWorkspace', () => {
     await user.click(screen.getByRole('button', { name: 'Save target' }));
 
     expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({ target_direction: 'ask' }));
+  });
+
+  it('uses the Settings-overlay cap as the persisted capped-volume amount', async () => {
+    window.localStorage.setItem('dex-max-fiat-limit', '500');
+    const settings = {
+      fiat_currency: 'EUR', amount_source: 'custom' as const, amount_fiat: 100, fee_tier: 'economic' as const, coupled_hedge: false,
+      trade_mode: 'hedgefull_single_collateral' as const, target_direction: 'bid' as const, lightning_liquidity_source: 'own_channels' as const,
+      config_version: 1, updated_at: '2026-08-10T00:00:00Z',
+    };
+    vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(settings);
+    vi.mocked(updateTransactionalLiquiditySettings).mockResolvedValueOnce({ ...settings, amount_source: 'capped_volume', amount_fiat: 500, config_version: 2 });
+
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByText('EUR 100');
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    await user.selectOptions(screen.getByLabelText('Amount source'), 'capped_volume');
+
+    const amountInput = screen.getByRole('spinbutton', { name: /Transactional liquidity/ });
+    expect((amountInput as HTMLInputElement).value).toBe('500');
+    expect(amountInput.hasAttribute('readonly')).toBe(true);
+    expect(screen.getByText('Uses the Max Position Size (Fiat) from Settings.')).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Save target' }));
+    expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({ amount_source: 'capped_volume', amount_fiat: 500 }));
+  });
+
+  it('requires a positive Settings-overlay cap before saving capped volume', async () => {
+    const settings = {
+      fiat_currency: 'EUR', amount_source: 'custom' as const, amount_fiat: 100, fee_tier: 'economic' as const, coupled_hedge: false,
+      trade_mode: 'hedgefull_single_collateral' as const, target_direction: 'bid' as const, lightning_liquidity_source: 'own_channels' as const,
+      config_version: 1, updated_at: '2026-08-10T00:00:00Z',
+    };
+    vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(settings);
+
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByText('EUR 100');
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    await user.selectOptions(screen.getByLabelText('Amount source'), 'capped_volume');
+    await user.click(screen.getByRole('button', { name: 'Save target' }));
+
+    expect(await screen.findByText('Set a positive Max Position Size (Fiat) in Settings before saving capped volume.')).toBeTruthy();
+    expect(updateTransactionalLiquiditySettings).not.toHaveBeenCalled();
   });
 
   it('requires and persists the selected Lightning liquidity source', async () => {

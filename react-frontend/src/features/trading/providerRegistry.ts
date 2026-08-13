@@ -1,4 +1,5 @@
 export type ProviderOption = { value: string; label: string };
+export type ChatExchange = 'robosats' | 'bisq2';
 
 export type ProviderDefinition = ProviderOption & {
   category: string;
@@ -99,10 +100,14 @@ export function isBisq2Provider(value: string): boolean {
   return value.trim().toLowerCase() === 'bisq2';
 }
 
-export function chatExchangeForProvider(value: string): 'RoboSats' | 'Bisq2' | null {
-  if (isRobosatsProvider(value)) return 'RoboSats';
-  if (isBisq2Provider(value)) return 'Bisq2';
+export function chatExchangeForProvider(value: string): ChatExchange | null {
+  if (isRobosatsProvider(value)) return 'robosats';
+  if (isBisq2Provider(value)) return 'bisq2';
   return null;
+}
+
+export function chatExchangeLabel(exchange: ChatExchange): string {
+  return exchange === 'robosats' ? 'RoboSats' : 'Bisq2';
 }
 
 export function isFiatProvider(provider: string): boolean {
