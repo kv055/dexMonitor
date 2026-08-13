@@ -85,21 +85,22 @@ export interface components {
         /** @enum {string} */
         TradeMode: "hedgefull_single_collateral" | "hedgeless_double_collateral";
         CexPreTradeCheckRequest: {
-            provider: string;
-            fiat_currency: string;
-            required_capital: number;
+            provider?: string;
+            fiat_currency?: string;
+            required_capital?: number;
             payment_method?: string;
             payment_methods?: string[];
             dex?: string;
             /** @enum {string} */
             market_side?: "bid" | "ask";
             /** @enum {string} */
-            settlement: "onchain_direct" | "onchain_hub" | "onchain_swap";
+            settlement?: "onchain_direct" | "onchain_hub" | "onchain_swap";
             trade_mode?: components["schemas"]["TradeMode"];
             hedge_venue?: string;
             /** @description Position BTC plus security deposit. Required for hedgeless on-chain liquidity-pool checks and for Swap_main2lightning Lightning liquidity. */
             required_btc_liquidity?: number;
             routing_fee_allowance_sat?: number;
+            resolved_route: components["schemas"]["ResolvedRoute"];
         };
         PreTradeCheckResult: {
             name: string;
@@ -127,6 +128,9 @@ export interface components {
         };
         ResolvedRoute: {
             config_version: number;
+            snapshot_revision: number;
+            /** Format: date-time */
+            resolved_at: string;
             trade_mode: components["schemas"]["TradeMode"];
             target_direction: string;
             /** @enum {string} */
@@ -138,17 +142,36 @@ export interface components {
             leverage?: number;
             /** @enum {string} */
             settlement: "onchain_direct" | "onchain_hub" | "onchain_swap";
-            needs_hub?: boolean;
-            needs_lightning?: boolean;
+            needs_hub: boolean;
+            needs_lightning: boolean;
             fiat_currency: string;
             fiat_amount: number;
             btc_amount: number;
             required_capital: number;
             required_btc_liquidity: number;
-            security_deposit_btc?: number;
-            routing_fee_allowance_sat?: number;
-            cex_withdrawal_fee_btc?: number;
-            swap_safety_headroom_btc?: number;
+            security_deposit_btc: number;
+            routing_fee_allowance_sat: number;
+            cex_withdrawal_fee_btc: number;
+            swap_safety_headroom_btc: number;
+            total_cost_btc: number;
+            total_cost_percent: number;
+            net_premium_percent: number;
+            cost_inputs: components["schemas"]["RouteCostInputs"];
+        };
+        RouteCostInputs: {
+            reference_price: number;
+            /** @enum {string} */
+            fee_tier: "economic";
+            coupled_hedge: boolean;
+            spot_taker_fee_btc: number;
+            withdrawal_fee_btc: number;
+            hedge_open_fee_btc: number;
+            hedge_close_fee_btc: number;
+            projected_funding_fee_btc: number;
+            funding_cost_available: boolean;
+            dex_fee_btc: number;
+            miner_fee_btc: number;
+            conversion_fee_btc: number;
         };
         CexTradeflowRequest: {
             provider: string;

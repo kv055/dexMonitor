@@ -7,8 +7,6 @@ type Action =
   | { type: 'TOGGLE_THEME' }
   | { type: 'TOGGLE_METHOD'; method: string }
   | { type: 'TOGGLE_GROUP'; methods: string[]; exclude: boolean }
-  | { type: 'SET_FEE_TIER'; tier: string }
-  | { type: 'SET_COUPLED_HEDGE'; coupled: boolean }
   | { type: 'SET_MAX_FIAT_LIMIT'; limit: number | null }
   | { type: 'SET_HIDE_ZERO_TRUST_SCORE'; hide: boolean };
 
@@ -40,8 +38,6 @@ function getInitialState(): PreferencesState {
     theme: getInitialTheme(),
     preferredTimezone: readStoredString('dex-timezone') || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
     excludedMethods: normalizePaymentMethodList(readStoredStringArray('dex-excluded-payment-methods')),
-    feeTier: readStoredString('dex-fee-tier'),
-    coupledHedge: readStoredBoolean('dex-coupled-hedge', true),
     maxFiatLimit: readStoredNullableNumber('dex-max-fiat-limit'),
     hideZeroTrustScore: readStoredBoolean('dex-hide-zero-trust-score', false),
   };
@@ -67,10 +63,6 @@ function preferencesReducer(state: PreferencesState, action: Action): Preference
         excludedMethods: action.exclude ? [...withoutGroup, ...action.methods] : withoutGroup,
       };
     }
-    case 'SET_FEE_TIER':
-      return { ...state, feeTier: action.tier };
-    case 'SET_COUPLED_HEDGE':
-      return { ...state, coupledHedge: action.coupled };
     case 'SET_MAX_FIAT_LIMIT':
       return { ...state, maxFiatLimit: action.limit };
     case 'SET_HIDE_ZERO_TRUST_SCORE':
@@ -89,8 +81,6 @@ export function PreferencesProvider({ children }: Props) {
   useEffect(() => {
     writeStoredValue('dex-timezone', state.preferredTimezone);
     writeStoredValue('dex-excluded-payment-methods', state.excludedMethods);
-    writeStoredValue('dex-fee-tier', state.feeTier);
-    writeStoredValue('dex-coupled-hedge', state.coupledHedge);
     writeStoredValue('dex-max-fiat-limit', state.maxFiatLimit);
     writeStoredValue('dex-hide-zero-trust-score', state.hideZeroTrustScore);
   }, [state]);
@@ -101,8 +91,6 @@ export function PreferencesProvider({ children }: Props) {
     toggleTheme: () => dispatch({ type: 'TOGGLE_THEME' }),
     toggleMethod: (method: string) => dispatch({ type: 'TOGGLE_METHOD', method }),
     toggleGroup: (methods: string[], exclude: boolean) => dispatch({ type: 'TOGGLE_GROUP', methods, exclude }),
-    setFeeTier: (tier: string) => dispatch({ type: 'SET_FEE_TIER', tier }),
-    setCoupledHedge: (coupled: boolean) => dispatch({ type: 'SET_COUPLED_HEDGE', coupled }),
     setMaxFiatLimit: (limit: number | null) => dispatch({ type: 'SET_MAX_FIAT_LIMIT', limit }),
     setHideZeroTrustScore: (hide: boolean) => dispatch({ type: 'SET_HIDE_ZERO_TRUST_SCORE', hide }),
   }), [state]);

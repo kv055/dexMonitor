@@ -4,8 +4,6 @@ export interface MarketRequestParams {
   fiat: string;
   capabilityRevision: number;
   excludedPaymentMethods: string[];
-  feeTier: string;
-  coupledHedge: boolean;
   maxFiatLimit: number | null;
 }
 
@@ -14,8 +12,6 @@ export interface AnalyticsRequestBody {
   cex: string;
   fiat: string;
   exclude_payment_methods: string[];
-  fee_tier: string;
-  coupled_hedge: boolean;
   max_fiat_limit: number;
   sections?: string[];
   past_start_date?: string;
@@ -41,8 +37,6 @@ export function marketRequestKey(params: MarketRequestParams): string {
 }
 
 export function appendTradeCostParams(search: URLSearchParams, params: MarketRequestParams): URLSearchParams {
-  if (params.feeTier) search.set('fee_tier', params.feeTier);
-  if (!params.coupledHedge) search.set('coupled_hedge', 'false');
   if (params.maxFiatLimit != null && params.maxFiatLimit > 0) {
     search.set('max_fiat_limit', String(params.maxFiatLimit));
   }
@@ -51,7 +45,7 @@ export function appendTradeCostParams(search: URLSearchParams, params: MarketReq
 
 export function buildLiveOffersSearch(params: MarketRequestParams): string {
   const search = new URLSearchParams({ cex: params.cex, fiat: params.fiat });
-  return appendTradeCostParams(search, params).toString();
+  return search.toString();
 }
 
 export function buildPastOffersSearch(params: MarketRequestParams): string {
@@ -74,8 +68,6 @@ export function buildAnalyticsBody(params: MarketRequestParams, sections?: strin
     cex: params.cex,
     fiat: params.fiat,
     exclude_payment_methods: params.excludedPaymentMethods,
-    fee_tier: params.feeTier,
-    coupled_hedge: params.coupledHedge,
     max_fiat_limit: params.maxFiatLimit ?? 0,
     ...(sections ? { sections } : {}),
     ...(pastRange ? {

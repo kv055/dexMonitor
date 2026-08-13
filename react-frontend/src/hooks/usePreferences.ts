@@ -6,8 +6,6 @@ export interface PreferencesState {
   theme: ThemeMode;
   preferredTimezone: string;
   excludedMethods: string[];
-  feeTier: string;
-  coupledHedge: boolean;
   maxFiatLimit: number | null;
   hideZeroTrustScore: boolean;
 }
@@ -17,8 +15,6 @@ export interface PreferencesContextValue extends PreferencesState {
   toggleTheme: () => void;
   toggleMethod: (method: string) => void;
   toggleGroup: (groupMethods: string[], exclude: boolean) => void;
-  setFeeTier: (tier: string) => void;
-  setCoupledHedge: (coupled: boolean) => void;
   setMaxFiatLimit: (limit: number | null) => void;
   setHideZeroTrustScore: (hide: boolean) => void;
 }

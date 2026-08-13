@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Offer, CexSpotBuyResult, CexHedgeOpenResult, CexTradeflowResult, HedgePositionUpdate, PreTradeCheckReport, PreTradeCheckResult, TradeMode, WithdrawalTrackResult } from '../types';
 import { ExchangeTag } from './ExchangeTag';
 import { stripTrailingZeros } from '../utils/numberFormat';
@@ -352,7 +352,8 @@ export function TradeTracingPanel({
   const [uncontrolledSizeMode, setUncontrolledSizeMode] = useState<SizeMode>(() => (cappedAvailable ? 'capped' : 'full'));
   const sizeMode = controlledSizeMode ?? uncontrolledSizeMode;
   const setSizeMode = onSizeModeChange ?? setUncontrolledSizeMode;
-  const isHedgeless = tradeMode === 'hedgeless_double_collateral';
+  const resolvedRoute = offer.metadata?.resolved_route;
+  const isHedgeless = (resolvedRoute?.trade_mode ?? tradeMode) === 'hedgeless_double_collateral';
 
   const { breakdown: bd, abortCost, effectiveMode } = useMemo(
     () => resolveTradeBreakdown(offer, sizeMode, tradeMode, manualSelection),
@@ -362,19 +363,14 @@ export function TradeTracingPanel({
   const refPrice = getRefPrice(offer);
   const fiatCurrency = offer.pricing?.fiat_currency ?? 'EUR';
   const isAsk = offer.direction === 'sell';
-  const marketSide: 'bid' | 'ask' = isAsk ? 'ask' : 'bid';
-  const isLightningRoute = bd?.routing_profile === 'Swap_main2lightning'
-    || bd?.route_method === 'onchain_swap'
-    || offer.analysis?.full_volume?.route?.settlement === 'Swap_main2lightning'
-    || offer.exchange?.toLowerCase() === 'robosats';
+  const isLightningRoute = resolvedRoute?.settlement === 'onchain_swap';
   const routeCex = bd?.route_cex ?? '';
-  const hedgeVenue = bd?.hedge?.venue ?? '';
   // This immutable snapshot is the Unified API's execution decision. Display
   // breakdowns (including manual what-if route choices) are deliberately not
   // a source for settlement or execution fees.
-  const resolvedRoute = offer.metadata?.resolved_route;
   const hasResolvedExecutionRoute = !!resolvedRoute?.settlement;
-  const routeUnavailableMessage = 'This offer has no resolved execution route. Refresh or recompute it in the Unified API before trading.';
+  const routeUnavailableMessage = offer.metadata?.route_resolution?.reason
+    ?? 'This offer has no resolved execution route. Refresh or recompute it in the Unified API before trading.';
   const cexLabel = routeCex ? routeCex.charAt(0).toUpperCase() + routeCex.slice(1) : '—';
   const netPremium = bd?.estimated_profit_pct ?? null;
   const btcMin = getBtcMin(offer);
@@ -403,6 +399,14 @@ export function TradeTracingPanel({
   const [checks, setChecks] = useState<ChecksState>({ phase: 'idle' });
   const [expectedLndAddress, setExpectedLndAddress] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('preview');
+  const routeIdentity = JSON.stringify(resolvedRoute ?? null);
+  const previousRouteIdentity = useRef(routeIdentity);
+
+  useEffect(() => {
+    if (previousRouteIdentity.current === routeIdentity) return;
+    previousRouteIdentity.current = routeIdentity;
+    setChecks({ phase: 'idle' });
+  }, [routeIdentity]);
 
   // Only stream the live hedge position while the Hedge tab is open, so merely
   // previewing an offer doesn't spin up the upstream exchange feeds. Prefer the
@@ -512,10 +516,10 @@ export function TradeTracingPanel({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [controlledSizeMode, effectiveMode, bd?.btc_amount]);
 
-  const canTrade = !!routeCex
-    && clampedBtc > 0
-    && !!tradeCapital
-    && (isHedgeless || !!hedgeVenue)
+  const canTrade = !!resolvedRoute?.provider
+    && resolvedRoute.btc_amount > 0
+    && resolvedRoute.required_capital > 0
+    && (isHedgeless || !!resolvedRoute.hedge_venue)
     && hasResolvedExecutionRoute
     && submit.phase !== 'submitting';
   const checksPassed = checks.phase === 'done'
@@ -551,29 +555,11 @@ export function TradeTracingPanel({
     }
     setChecks({ phase: 'running' });
     try {
-      // Hedgeless: exchange fiat check uses fiat collateral only; BTC pool is a
-      // separate LND wallet check. Hedgefull: total_fiat covers spot+hedge+deposit.
-      // Swap_main2lightning also needs position+deposit for LN channel capacity.
-      const requiredCapital = isHedgeless
-        ? (tradeCapital?.fiat_collateral ?? tradeCapital?.spot_notional ?? 0)
-        : (tradeCapital?.total_fiat ?? 0);
-      const requiredBtcLiquidity = (isHedgeless || isLightningRoute)
-        ? (tradeCapital?.btc_liquidity_btc
-          ?? ((tradeCapital?.btc_amount ?? 0) + (tradeCapital?.security_deposit_btc ?? 0)))
-        : undefined;
       const report = await cexPreTradeCheck({
-        provider: routeCex,
-        fiat_currency: fiatCurrency,
-        required_capital: requiredCapital,
         payment_method: resolvedPaymentMethod || undefined,
         payment_methods: offer.payment_methods ?? undefined,
         dex: offer.exchange,
-        market_side: marketSide,
-        settlement: resolvedRoute.settlement,
-        routing_fee_allowance_sat: resolvedRoute.routing_fee_allowance_sat,
-        trade_mode: tradeMode,
-        hedge_venue: isHedgeless ? undefined : hedgeVenue || undefined,
-        required_btc_liquidity: requiredBtcLiquidity,
+        resolved_route: resolvedRoute,
       });
       setChecks({ phase: 'done', report });
       if (report.lnd_withdraw_address) {
@@ -586,32 +572,21 @@ export function TradeTracingPanel({
 
   // Re-run when confirm opens or the effective execution route / capital inputs change.
   useEffect(() => {
-    if (!confirmOpen || !routeCex || !hasResolvedExecutionRoute) return;
+    if (!confirmOpen || !hasResolvedExecutionRoute) return;
     void runPreTradeChecks();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     confirmOpen,
-    routeCex,
-    hedgeVenue,
-    tradeMode,
     isHedgeless,
     isLightningRoute,
-    marketSide,
-    tradeCapital?.total_fiat,
-    tradeCapital?.fiat_collateral,
-    tradeCapital?.spot_notional,
-    tradeCapital?.btc_liquidity_btc,
-    tradeCapital?.btc_amount,
-    tradeCapital?.security_deposit_btc,
     resolvedPaymentMethod,
-    fiatCurrency,
     offer.exchange,
     hasResolvedExecutionRoute,
-    resolvedRoute,
+    routeIdentity,
   ]);
 
   async function runTrade() {
-    if (!resolvedRoute?.settlement || (!isHedgeless && !hedgeVenue)) return;
+    if (!resolvedRoute?.settlement || (!isHedgeless && !resolvedRoute.hedge_venue)) return;
 
     setConfirmOpen(false);
     setChecks({ phase: 'idle' });
@@ -620,45 +595,29 @@ export function TradeTracingPanel({
     setWalletSubmit({ phase: 'submitting' });
     setActiveTab('spot');
 
-    const hedgeRatio = bd?.hedge?.position?.hedge_ratio ?? 1.0;
-    const leverage = bd?.hedge?.position?.leverage_used ?? 1.0;
-    const rawHedgeSide = bd?.hedge?.side;
-    const side: 'long' | 'short' = rawHedgeSide === 'long' || rawHedgeSide === 'short'
-      ? rawHedgeSide
-      : isAsk ? 'long' : 'short';
-    const btcNotional = clampedBtc * hedgeRatio;
-    // Hedgeless spends both the position amount and seller security deposit
-    // from LND. Keep that BTC requirement separate from the fiat collateral
-    // used for the replacement spot buy.
-    const requiredBtcLiquidity = tradeCapital?.btc_liquidity_btc
-      ?? ((tradeCapital?.btc_amount ?? 0) + (tradeCapital?.security_deposit_btc ?? 0));
-
-    const fiatAmount = estFiat ?? (refPrice != null ? refPrice * clampedBtc : 0);
     // Pay with the method the pre-trade checks validated: the explicit choice
     // when there is one, else the backend's priority pick echoed in the report.
     const tradePaymentMethod = resolvedPaymentMethod || (checks.phase === 'done' ? checks.report?.resolved_payment_method ?? '' : '');
 
     try {
       const result = await cexTradeflow({
-        provider: routeCex,
-        market_side: 'bid',
-        btc_amount: clampedBtc,
-        fiat_currency: fiatCurrency,
-        required_capital: isHedgeless
-          ? (tradeCapital?.fiat_collateral ?? tradeCapital?.spot_notional ?? 0)
-          : (tradeCapital?.total_fiat ?? 0),
-        required_btc_liquidity: (isHedgeless || isLightningRoute) ? requiredBtcLiquidity : undefined,
-        security_deposit_btc: (isHedgeless || isLightningRoute) ? tradeCapital?.security_deposit_btc : undefined,
-        hedge_venue: isHedgeless ? undefined : hedgeVenue,
-        hedge_side: isHedgeless ? undefined : side,
-        hedge_notional_btc: isHedgeless ? undefined : btcNotional,
-        leverage: isHedgeless ? undefined : leverage,
+        provider: resolvedRoute.provider,
+        market_side: resolvedRoute.market_side,
+        btc_amount: resolvedRoute.btc_amount,
+        fiat_currency: resolvedRoute.fiat_currency,
+        required_capital: resolvedRoute.required_capital,
+        required_btc_liquidity: resolvedRoute.required_btc_liquidity,
+        security_deposit_btc: resolvedRoute.security_deposit_btc,
+        hedge_venue: resolvedRoute.hedge_venue,
+        hedge_side: resolvedRoute.hedge_side as 'long' | 'short' | undefined,
+        hedge_notional_btc: resolvedRoute.hedge_notional_btc,
+        leverage: resolvedRoute.leverage,
         offer_id: offer.offer_id ?? undefined,
         dex: offer.exchange,
-        fiat_amount: fiatAmount > 0 ? fiatAmount : undefined,
+        fiat_amount: resolvedRoute.fiat_amount,
         payment_method: tradePaymentMethod || undefined,
         payment_methods: tradePaymentMethod ? undefined : offer.payment_methods ?? undefined,
-        trade_mode: tradeMode,
+        trade_mode: resolvedRoute.trade_mode,
         resolved_route: resolvedRoute,
         routing_fee_allowance_sat: resolvedRoute.routing_fee_allowance_sat,
         cex_withdrawal_fee_btc: resolvedRoute.cex_withdrawal_fee_btc,
@@ -670,7 +629,7 @@ export function TradeTracingPanel({
           price: offer.price,
           btc_min: offer.btc_min,
           btc_max: offer.btc_max,
-		  metadata: offer.metadata,
+          metadata: offer.metadata,
         },
       });
       setSubmit({ phase: 'done', result: result.spot_buy });
