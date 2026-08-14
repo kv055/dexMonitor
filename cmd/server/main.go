@@ -25,7 +25,6 @@ import (
 	"syscall"
 	"time"
 
-	"commons/exchangecredentials"
 	"commons/fiat"
 	"commons/logging"
 	"commons/metrics"
@@ -231,15 +230,11 @@ func main() {
 	}
 	authSvc := auth.New(db, auth.Config{CookieSecure: sessionCookieSecure})
 
-	credentialStore := exchangecredentials.NewStore(db)
-	orchestrator := tradecost.NewTradeCostEstimatorWithCredentials(credentialStore.Resolve)
+	orchestrator := tradecost.NewTradeCostEstimatorWithPersistedFees(db)
 	tradeCostEstimators = make(map[string]*tradecost.TradeCostEstimator, len(supportedCEXes))
 	for _, c := range supportedCEXes {
 		tradeCostEstimators[c] = orchestrator
-		slog.Info("trade-cost CEX enabled",
-			"cex", c,
-			"taker_fallback_pct", tradecost.TakerFeeFallback(c)*100,
-			"onchain_withdrawal_fallback_btc", tradecost.WithdrawalFallback(c))
+		slog.Info("trade-cost CEX enabled", "cex", c, "fee_source", "persisted_exchange_snapshot")
 	}
 	tradeRouteOptimizer = tradecost.NewTradeRouteOptimizer(tradeCostEstimators)
 
