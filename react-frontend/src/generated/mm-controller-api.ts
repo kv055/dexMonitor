@@ -115,6 +115,11 @@ export interface components {
             lsp_healthy?: boolean;
             usable_inbound_sat?: number;
             usable_outbound_sat?: number;
+            /**
+             * @description Channel policy evaluated for this Lightning route; omitted when the route does not need Lightning.
+             * @enum {string}
+             */
+            lightning_liquidity_source?: "own_channels" | "lsp_channel";
             swap_required?: boolean;
             required_lightning_sat?: number;
             swap_shortfall_sat?: number;

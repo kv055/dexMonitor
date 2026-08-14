@@ -81,7 +81,7 @@ function cexStatusLabel(status: string | undefined): string {
 
 /** Logical display groups for pre-trade checks — order matches backend Run(). */
 const PRE_TRADE_CHECK_GROUPS: { id: string; title: string; names: string[] }[] = [
-  { id: 'capital', title: 'Capital', names: ['capital', 'liquidity_pool', 'lightning_liquidity'] },
+  { id: 'capital', title: 'Capital', names: ['capital', 'liquidity_pool', 'lightning_liquidity', 'lsp_channel'] },
   { id: 'exchange', title: 'Exchange', names: ['permissions', 'lnd_wallet', 'whitelist'] },
   { id: 'payment', title: 'Payment', names: ['payment_setup', 'message_template'] },
   { id: 'ops', title: 'Operations', names: ['communication_gateway', 'fiat_controller_service', 'fiat_controller'] },
@@ -100,7 +100,7 @@ function groupPreTradeChecks(checks: PreTradeCheckResult[], isHedgeless: boolean
       message: 'BTC liquidity pool check was not returned by the server; rebuild mm-controller.',
     });
   }
-  if (isLightningRoute && !byName.has('lightning_liquidity')) {
+  if (isLightningRoute && !byName.has('lightning_liquidity') && !byName.has('lsp_channel')) {
     byName.set('lightning_liquidity', {
       name: 'lightning_liquidity',
       label: 'LND Lightning liquidity',
@@ -152,7 +152,7 @@ function PreTradeChecksPanel({
   const totalCount = flatChecks.length;
   const allPassed = totalCount > 0 && passedCount === totalCount && !!report?.ok
     && !(isHedgeless && !report.checks.some(c => c.name === 'liquidity_pool'))
-    && !(isLightningRoute && !report.checks.some(c => c.name === 'lightning_liquidity'));
+    && !(isLightningRoute && !report.checks.some(c => c.name === 'lightning_liquidity' || c.name === 'lsp_channel'));
 
   return (
     <div className="rounded-lg border border-border bg-bg overflow-hidden min-h-0 flex flex-col">
