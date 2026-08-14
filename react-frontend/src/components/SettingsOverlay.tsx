@@ -2,7 +2,6 @@ import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
-import { useTradeCostConfig } from '../hooks/useTradeCostConfig';
 import { useCEXPermissions } from '../hooks/useCEXPermissions';
 import { fiatSymbol } from '../utils/currency';
 import type { PaymentMethodGroup } from '../types';
@@ -178,17 +177,12 @@ export function SettingsOverlay({
     excludedMethods,
     toggleMethod,
     toggleGroup,
-    feeTier,
-    setFeeTier,
-    coupledHedge,
-    setCoupledHedge,
     maxFiatLimit,
     setMaxFiatLimit,
     hideZeroTrustScore,
     setHideZeroTrustScore,
   } = usePreferences();
   const { zeroTrustHiddenCount, paymentMethodCounts, filters } = useFilters();
-  const { config: tradeCostConfig } = useTradeCostConfig(open);
   const {
     exchanges,
     loading: cexPermissionsLoading,
@@ -500,50 +494,6 @@ export function SettingsOverlay({
                 })}
               </div>
             )}
-          </section>
-
-          <section className="rounded-lg border border-border bg-bg/50 p-2.5">
-            <div className="mb-1.5 lg:flex lg:items-baseline lg:gap-3">
-              <div className="shrink-0">
-                <h3 className="text-xs font-medium">BTC Network Fee Tier</h3>
-              </div>
-              <p className="mt-0.5 lg:mt-0 lg:ml-auto lg:text-right text-[0.65rem] text-muted leading-tight">
-                Auto selects the optimal tier based on mempool congestion. Override to lock a specific fee speed.
-              </p>
-            </div>
-            <select
-              value={feeTier}
-              onChange={event => setFeeTier(event.target.value)}
-              className="w-full rounded-md border border-border bg-surface px-2 py-1.5 text-xs text-text outline-none focus:border-accent"
-            >
-              {tradeCostConfig.fee_tiers.map(tier => (
-                <option key={tier.value} value={tier.value}>
-                  {tier.label}
-                </option>
-              ))}
-            </select>
-          </section>
-
-          <section className="rounded-lg border border-border bg-bg/50 p-2.5">
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0">
-                <h3 className="text-xs font-medium">CEX Spot Trade &amp; Hedge</h3>
-                <p className="mt-0.5 text-[0.65rem] text-muted leading-tight">
-                  When enabled, the perp hedge venue is locked to the same exchange as the spot CEX (Kraken&nbsp;→&nbsp;Kraken Futures, Coinbase&nbsp;→&nbsp;Coinbase Futures). Exchanges without a paired perp fall back to the cheapest available.
-                </p>
-              </div>
-              <button
-                type="button"
-                onClick={() => setCoupledHedge(!coupledHedge)}
-                className={`shrink-0 text-[0.65rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
-                  coupledHedge
-                    ? 'border-accent/60 text-accent bg-accent/10'
-                    : 'border-border text-muted hover:border-muted'
-                }`}
-              >
-                {coupledHedge ? 'Coupled' : 'Independent'}
-              </button>
-            </div>
           </section>
 
           <section className="rounded-lg border border-border bg-bg/50 p-2.5">

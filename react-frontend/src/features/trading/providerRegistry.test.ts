@@ -21,7 +21,8 @@ describe('trading provider registry', () => {
     expect(usesAPIKeysAtCreate('PayPal')).toBe(false);
     expect(showDexIdentitySections('HodlHodl')).toBe(false);
     expect(showDexIdentitySections('Peach')).toBe(true);
-    expect(chatExchangeForProvider('Bisq2')).toBe('Bisq2');
+    expect(chatExchangeForProvider('Bisq2')).toBe('bisq2');
+    expect(chatExchangeForProvider('Robosats')).toBe('robosats');
   });
 
   it('accepts historic LND provider aliases', () => {

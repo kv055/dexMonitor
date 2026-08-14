@@ -79,6 +79,7 @@ import {
   TRADING_CATEGORIES,
   categoryRank,
   chatExchangeForProvider,
+  chatExchangeLabel,
   groupedCreatableProviders,
   isBisq1Provider,
   isBisq2Provider,
@@ -3749,6 +3750,7 @@ export function TradingAccountsPanel() {
   const renderChatPaymentMethodsSection = (account: TradingAccount) => {
     const exchange = chatExchangeForProvider(account.provider);
     if (!exchange) return null;
+    const exchangeLabel = chatExchangeLabel(exchange);
     const open = !!openSectionsByAccount[account.id]?.chatPaymentMethods;
     const methods = chatPaymentMethods.filter(method => {
       const hasTemplate = chatTemplatesByMethod[method.id]?.some(template => template.exchange === exchange);
@@ -3775,7 +3777,7 @@ export function TradingAccountsPanel() {
       >
         <div className="grid gap-2">
           <p className="text-[0.65rem] text-muted">
-            Add a message template for each payment method you use on {exchange}. These chat-only venues do not create a separate DEX payment account.
+            Add a message template for each payment method you use on {exchangeLabel}. These chat-only venues do not create a separate DEX payment account.
           </p>
           {chatPaymentMethodsError ? <p className="text-[0.65rem] text-red">{chatPaymentMethodsError}</p> : null}
           {chatPaymentMethodsLoading ? <p className="text-[0.65rem] text-muted">Loading payment methods…</p> : null}
@@ -3983,7 +3985,7 @@ export function TradingAccountsPanel() {
                             [templateKey]: { ...draft, is_active: event.target.checked },
                           }))}
                         />
-                        Use this template for {exchange}
+                        Use this template for {exchangeLabel}
                       </label>
                       <div className="flex justify-end gap-1.5">
                         {template ? <button type="button" className={`${compactButtonCls} text-red`} onClick={() => void remove()} disabled={saving}>Remove</button> : null}

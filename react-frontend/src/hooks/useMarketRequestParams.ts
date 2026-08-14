@@ -8,8 +8,6 @@ export function useMarketRequestParams(): { params: MarketRequestParams; ready: 
   const { filters } = useFilters();
   const {
     excludedMethods,
-    feeTier,
-    coupledHedge,
     maxFiatLimit,
   } = usePreferences();
   const { revision: capabilityRevision } = useCEXPermissions();
@@ -20,8 +18,6 @@ export function useMarketRequestParams(): { params: MarketRequestParams; ready: 
     fiat: filters.fiat,
     capabilityRevision,
     excludedPaymentMethods: excludedMethods,
-    feeTier,
-    coupledHedge,
     maxFiatLimit,
   }), [
     filters.hours,
@@ -29,8 +25,6 @@ export function useMarketRequestParams(): { params: MarketRequestParams; ready: 
     filters.fiat,
     capabilityRevision,
     excludedMethods,
-    feeTier,
-    coupledHedge,
     maxFiatLimit,
   ]);
 

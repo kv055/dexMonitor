@@ -202,9 +202,12 @@ export function fetchTransactionalLiquiditySettings() {
 export function updateTransactionalLiquiditySettings(payload: {
   fiat_currency: string;
   amount_source: 'custom' | 'capped_volume';
-  custom_amount: number | null;
+  amount_fiat: number;
   trade_mode: 'hedgefull_single_collateral' | 'hedgeless_double_collateral';
   target_direction: 'bid' | 'ask';
+  lightning_liquidity_source: 'own_channels' | 'lsp_channel';
+  fee_tier: 'economic';
+  coupled_hedge: boolean;
 }) {
   return request<TransactionalLiquiditySettings>('/api/mm-controller/transactional-liquidity', {
     method: 'PUT',

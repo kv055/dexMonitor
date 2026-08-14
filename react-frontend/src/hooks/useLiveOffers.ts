@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '../api/client';
-import { buildLiveOffersSearch, marketRequestKey, type MarketRequestParams } from '../shared/marketParams';
+import { buildLiveOffersSearch, type MarketRequestParams } from '../shared/marketParams';
 import type { Offer } from '../types';
 
 const POLL_INTERVAL_MS = 15_000;
@@ -12,8 +12,6 @@ const defaultParams: MarketRequestParams = {
   fiat: 'EUR',
   capabilityRevision: 0,
   excludedPaymentMethods: [],
-  feeTier: '',
-  coupledHedge: true,
   maxFiatLimit: null,
 };
 
@@ -124,8 +122,8 @@ export function useLiveOffers() {
     };
   }, [stopPolling]);
 
-  // Called when market filters or trade-cost settings change.
-  // Reconnects WS so the server pushes a fresh snapshot with updated query params.
+  // Reconnect only when the live-book filter changes. Browser analytics and
+  // display preferences never request a new route calculation.
   const refreshForMarket = useCallback((params: MarketRequestParams) => {
     // This is only called from the active view's mount effect, so the tree is
     // mounted. Under React StrictMode the parent (AppShell) mount effect that resets
@@ -133,7 +131,7 @@ export function useLiveOffers() {
     // a stale mountedRef === false (left over from the strict unmount cleanup) and bail —
     // leaving no WebSocket and no polling. Assert mounted here so connect() proceeds.
     mountedRef.current = true;
-    const refreshKey = marketRequestKey(params);
+    const refreshKey = buildLiveOffersSearch(params);
     if (
       refreshKey === lastRefreshKeyRef.current
       && wsRef.current?.readyState === WebSocket.OPEN

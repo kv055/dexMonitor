@@ -11,7 +11,7 @@ const params: MarketRequestParams = {
   hours: '48', cex: 'coinbase', fiat: 'USD',
   capabilityRevision: 0,
   excludedPaymentMethods: ['Cash App', 'SEPA'],
-  feeTier: 'high', coupledHedge: false, maxFiatLimit: 5_000,
+  maxFiatLimit: 5_000,
 };
 
 describe('market request parameters', () => {
@@ -26,15 +26,17 @@ describe('market request parameters', () => {
     expect(marketRequestKey(params)).not.toBe(marketRequestKey({ ...params, capabilityRevision: 1 }));
   });
 
-  it('serializes the shared trade-cost contract consistently', () => {
+  it('does not serialize browser routing preferences into live requests', () => {
     const live = new URLSearchParams(buildLiveOffersSearch(params));
     const past = new URLSearchParams(buildPastOffersSearch(params));
     for (const search of [live, past]) {
       expect(search.get('cex')).toBe('coinbase');
       expect(search.get('fiat')).toBe('USD');
-      expect(search.get('coupled_hedge')).toBe('false');
-      expect(search.get('max_fiat_limit')).toBe('5000');
     }
+	 expect(live.has('coupled_hedge')).toBe(false);
+	 expect(live.has('fee_tier')).toBe(false);
+	 expect(live.has('max_fiat_limit')).toBe(false);
+	 expect(past.get('max_fiat_limit')).toBe('5000');
     expect(past.get('exclude_payment_methods')).toBe('Cash App,SEPA');
   });
 

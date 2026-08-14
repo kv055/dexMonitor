@@ -81,6 +81,8 @@ describe('TradeTracingPanel execution route snapshot', () => {
     const user = userEvent.setup();
     renderPanel(offer({
       config_version: 1,
+      snapshot_revision: 2,
+      resolved_at: '2026-08-13T12:00:00Z',
       trade_mode: 'hedgefull_single_collateral',
       target_direction: 'bid',
       market_side: 'bid',
@@ -95,14 +97,38 @@ describe('TradeTracingPanel execution route snapshot', () => {
       btc_amount: 0.01,
       required_capital: 600,
       required_btc_liquidity: 0,
+      security_deposit_btc: 0,
       routing_fee_allowance_sat: 42,
+      needs_hub: true,
+      needs_lightning: false,
+      cex_withdrawal_fee_btc: 0,
+      swap_safety_headroom_btc: 0,
+      total_cost_btc: 0,
+      total_cost_percent: 0,
+      net_premium_percent: 1,
+      cost_inputs: {
+        reference_price: 50000,
+        fee_tier: 'economic',
+        coupled_hedge: false,
+        spot_taker_fee_btc: 0,
+        withdrawal_fee_btc: 0,
+        hedge_open_fee_btc: 0,
+        hedge_close_fee_btc: 0,
+        projected_funding_fee_btc: 0,
+        funding_cost_available: false,
+        dex_fee_btc: 0,
+        miner_fee_btc: 0,
+        conversion_fee_btc: 0,
+      },
     }));
 
     await user.click(screen.getByRole('button', { name: 'Start trade' }));
 
     await waitFor(() => expect(cexPreTradeCheck).toHaveBeenCalledWith(expect.objectContaining({
-      settlement: 'onchain_hub',
-      routing_fee_allowance_sat: 42,
+      resolved_route: expect.objectContaining({
+        settlement: 'onchain_hub',
+        routing_fee_allowance_sat: 42,
+      }),
     })));
   });
 });

@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { closeLNDChannel, fetchCexBalances, fetchCexDepositAddresses, fetchCexHedgePositions, fetchDexPendingLiquidity, fetchLNDChannelPresets, fetchLNDWalletStatus, fetchLSPChannel, fetchLSPChannelStatus, fetchSubmarineSwaps, fetchTradingAccounts, fetchTransactionalLiquiditySettings, openLNDChannel, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
 import type { CexAssetBalance, CexDepositAddress, CexHedgePosition, LNDChannelPreset, LNDWalletStatus, LSPChannelConfig, LSPChannelStatus, SubmarineSwapRecord, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquiditySource, TransactionalLiquidityTargetDirection } from '../types';
 import { useFilters } from '../hooks/useFilters';
+import { usePreferences } from '../hooks/usePreferences';
 import { useCEXPermissions } from '../hooks/useCEXPermissions';
 import { LocalQrCode } from './LocalQrCode';
 
@@ -72,6 +73,7 @@ function CardPortal({ targetRef, children }: { targetRef: RefObject<HTMLElement 
 
 export function LiquidityWorkspace() {
   const { filters, refPrice } = useFilters();
+  const { maxFiatLimit } = usePreferences();
   const { exchanges: cexPolicies, ready: cexPoliciesReady } = useCEXPermissions();
   const [action, setAction] = useState<PoolAction>('fill');
   const [poolExpanded, setPoolExpanded] = useState(false);
@@ -229,9 +231,14 @@ export function LiquidityWorkspace() {
 
   const saveTransactionalSettings = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const amount = Number(transactionalForm.amount_fiat);
+    const cappedAmount = transactionalForm.amount_source === 'capped_volume' ? maxFiatLimit : null;
+    const amount = transactionalForm.amount_source === 'capped_volume'
+      ? Number(cappedAmount)
+      : Number(transactionalForm.amount_fiat);
     if (!Number.isFinite(amount) || amount <= 0) {
-      setTransactionalError('Enter a persisted fiat amount greater than zero.');
+      setTransactionalError(transactionalForm.amount_source === 'capped_volume'
+        ? 'Set a positive Max Position Size (Fiat) in Settings before saving capped volume.'
+        : 'Enter a persisted fiat amount greater than zero.');
       setTransactionalNotice(null);
       return;
     }
@@ -605,9 +612,10 @@ export function LiquidityWorkspace() {
                 </select>
                 <label className="block">
                   <span className="sr-only">Transactional liquidity ({transactionalForm.fiat_currency})</span>
-                  <input type="number" min={0} step={50} value={transactionalForm.amount_fiat} onChange={event => setTransactionalForm(current => ({ ...current, amount_fiat: event.target.value }))} placeholder={`Amount in ${transactionalForm.fiat_currency}`} className="w-full rounded-md border border-border bg-bg px-2 py-1.5 text-[0.72rem] text-text outline-none focus:border-accent mono-nums" />
+                  <input type="number" min={0} step={50} readOnly={transactionalForm.amount_source === 'capped_volume'} value={transactionalForm.amount_source === 'capped_volume' ? (maxFiatLimit != null && maxFiatLimit > 0 ? String(maxFiatLimit) : '') : transactionalForm.amount_fiat} onChange={event => setTransactionalForm(current => ({ ...current, amount_fiat: event.target.value }))} placeholder={`Amount in ${transactionalForm.fiat_currency}`} className="w-full rounded-md border border-border bg-bg px-2 py-1.5 text-[0.72rem] text-text outline-none focus:border-accent mono-nums read-only:opacity-70" />
                 </label>
               </div>
+              {transactionalForm.amount_source === 'capped_volume' && <p className="mt-1 text-[0.6rem] text-muted">Uses the Max Position Size (Fiat) from Settings.</p>}
             </div>
             <label className="block">
               <span className="block text-[0.62rem] uppercase tracking-wider font-medium text-muted mb-1">Miner fee tier</span>
