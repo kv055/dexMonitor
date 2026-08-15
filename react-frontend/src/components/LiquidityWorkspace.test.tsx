@@ -107,7 +107,7 @@ describe('LiquidityWorkspace', () => {
       updated_at: '2026-08-10T00:00:00Z',
     });
 
-    renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'buy', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
+    renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'bid', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
 
     expect(await screen.findByText('EUR 100')).toBeTruthy();
     expect(screen.getAllByText('0 BTC')).toHaveLength(3);
@@ -124,7 +124,7 @@ describe('LiquidityWorkspace', () => {
     vi.mocked(updateTransactionalLiquiditySettings).mockResolvedValueOnce(hedgelessSettings);
 
     const user = userEvent.setup();
-    renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'buy', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
+    renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'bid', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
 
     await screen.findByText('EUR 100');
     await user.click(screen.getByRole('button', { name: 'Edit' }));

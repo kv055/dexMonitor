@@ -1516,7 +1516,7 @@ func pastOfferCapitalRequirement(o map[string]any, btcAmount, refPrice float64, 
 		btcAmount,
 		refPrice,
 		offerString(o, "exchange"),
-		offerString(o, "direction") != "sell",
+		offerString(o, "direction") != "ask",
 		hedgePosition,
 		depositPct,
 	)
@@ -1657,7 +1657,7 @@ func normalizePastPriceType(value string) string {
 }
 
 func hedgeSideForOfferDirection(direction string) string {
-	if direction == "sell" {
+	if direction == "ask" {
 		return "long"
 	}
 	return "short"
@@ -1668,7 +1668,7 @@ func buildStoredPastBreakdown(o map[string]any, btcSize, refPrice, tradeCostPct,
 		return tradecost.CostBreakdown{}
 	}
 	direction := offerString(o, "direction")
-	isAsk := direction == "sell"
+	isAsk := direction == "ask"
 	pct := func(btc float64) float64 {
 		if btcSize <= 0 || btc == 0 {
 			return 0
@@ -1775,7 +1775,7 @@ func buildCappedPastBreakdown(o map[string]any, fullBTCSize, cappedBTCSize, refP
 		return tradecost.CostBreakdown{}
 	}
 	direction := offerString(o, "direction")
-	isAsk := direction == "sell"
+	isAsk := direction == "ask"
 	routeCEX := offerString(o, "best_route_cex")
 	dexExchange := offerString(o, "exchange")
 	pct := func(btc float64) float64 {

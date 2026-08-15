@@ -312,10 +312,12 @@ export interface LifecyclePoint {
   net_premium_pct?: number | null;
 }
 
+export type OfferDirection = 'bid' | 'ask';
+
 export interface Offer {
   id: number;
   exchange: string;
-  direction: string;
+	direction: OfferDirection;
   price?: number;
   pricing?: LiveOfferPricing;
   raw_premium_percent?: number | null;
@@ -661,7 +663,7 @@ export interface PastProfitableOrder {
   exchange: string;
   offer_id?: string | null;
   payment_methods?: string[] | null;
-  direction: string;
+	direction: OfferDirection;
   status: LiveOfferStatus;
   pricing: LiveOfferPricing;
   summary: PastProfitableOrderSummary;
@@ -675,7 +677,7 @@ export interface PastProfitableOrderCompact {
   exchange: string;
   offer_id?: string | null;
   payment_methods?: string[] | null;
-  direction: string;
+	direction: OfferDirection;
   status: LiveOfferStatus;
   pricing: LiveOfferPricing;
   summary: PastProfitableOrderSummary;
@@ -817,7 +819,7 @@ export interface OfferLifecyclePremiumPoint {
   premium_rate_pct: number;
   volume_btc: number;
   exchange: string;
-  direction: string;
+	direction: OfferDirection;
   is_live: boolean;
 }
 

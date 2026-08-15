@@ -17,7 +17,7 @@ function offer(resolvedRoute?: NonNullable<Offer['metadata']>['resolved_route'])
   return {
     id: 1,
     exchange: 'Bisq',
-    direction: 'buy',
+    direction: 'bid',
     price: 50000,
     ref_price: 50000,
     btc_min: 0.01,

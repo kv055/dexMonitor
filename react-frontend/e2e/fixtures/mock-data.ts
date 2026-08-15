@@ -15,7 +15,7 @@ function ts(hoursAgo: number): string {
 function offer(
   id: number,
   exchange: string,
-  direction: 'buy' | 'sell',
+  direction: 'bid' | 'ask',
   price: number,
   premiumPct: number,
   opts: Partial<{
@@ -30,10 +30,10 @@ function offer(
   const tradeCost = opts.tradeCostPct ?? 0.85;
   const netPremium = opts.netPremiumPct ?? (premiumPct - tradeCost);
   const cexTakerBTC = btcAmount * 0.0025;
-  const withdrawalBTC = direction === 'sell' ? 0 : btcAmount * 0.0015;
+  const withdrawalBTC = direction === 'ask' ? 0 : btcAmount * 0.0015;
   const networkBTC = btcAmount * 0.001;
-  const abortNetworkBTC = direction === 'sell' ? networkBTC * 2 : networkBTC;
-  const abortTotalBTC = direction === 'sell'
+  const abortNetworkBTC = direction === 'ask' ? networkBTC * 2 : networkBTC;
+  const abortTotalBTC = direction === 'ask'
     ? abortNetworkBTC
     : cexTakerBTC + cexTakerBTC + withdrawalBTC + abortNetworkBTC;
   const pct = (btc: number) => btcAmount > 0 ? (btc / btcAmount) * 100 : 0;
@@ -50,8 +50,8 @@ function offer(
       route_cex: 'kraken',
       route_dex: exchange,
       route_method: 'onchain_direct',
-      trade_direction: direction === 'sell' ? 'ask' : 'bid',
-      num_network_txs: direction === 'sell' ? 1 : 2,
+      trade_direction: direction === 'ask' ? 'ask' : 'bid',
+      num_network_txs: direction === 'ask' ? 1 : 2,
       estimated_profit_pct: netPremium,
       estimated_profit_btc: btcAmount * (netPremium / 100),
       cex_taker_fee_pct: 0.25,
@@ -95,7 +95,7 @@ function offer(
           spot_notional: spotEur,
           hedge_collateral: 0,
           security_deposit_pct: depositPct,
-          security_deposit_side: direction === 'sell' ? 'buyer' : 'seller',
+          security_deposit_side: direction === 'ask' ? 'buyer' : 'seller',
           security_deposit_btc: depositBtc,
           security_deposit_fiat: depositEur,
           total_fiat: spotEur + depositEur,
@@ -105,10 +105,10 @@ function offer(
     },
     abort_cost: {
       btc_amount: btcAmount,
-      trade_direction: direction === 'sell' ? 'ask' : 'bid',
+      trade_direction: direction === 'ask' ? 'ask' : 'bid',
       num_network_txs: 2,
-      cex_buy_taker: { pct: direction === 'sell' ? 0 : pct(cexTakerBTC), btc: direction === 'sell' ? 0 : cexTakerBTC },
-      cex_sell_taker: { pct: direction === 'sell' ? 0 : pct(cexTakerBTC), btc: direction === 'sell' ? 0 : cexTakerBTC },
+      cex_buy_taker: { pct: direction === 'ask' ? 0 : pct(cexTakerBTC), btc: direction === 'ask' ? 0 : cexTakerBTC },
+      cex_sell_taker: { pct: direction === 'ask' ? 0 : pct(cexTakerBTC), btc: direction === 'ask' ? 0 : cexTakerBTC },
       withdrawal: { pct: pct(withdrawalBTC), btc: withdrawalBTC },
       network: { pct: pct(abortNetworkBTC), btc: abortNetworkBTC },
       hedge: {
@@ -120,7 +120,7 @@ function offer(
         funding_fee_btc: 0,
         fee_sum_pct: 0,
         fee_sum_btc: 0,
-        side: direction === 'sell' ? 'long' : 'short',
+        side: direction === 'ask' ? 'long' : 'short',
         venue: '',
         instrument: '',
         transfer_minutes: 0,
@@ -145,37 +145,37 @@ function offer(
 export const MOCK_LIVE_OFFERS = [
   // ── PremiumOnly-passing offers ──
   // Buy direction with positive premium (user sells on DEX at premium)
-  offer(1, 'bisq', 'buy', 84460, 3.0, { btcMax: 0.10, payment: 'SEPA' }),
-  offer(2, 'bisq', 'buy', 83640, 2.0, { btcMax: 0.05, payment: 'Revolut', firstSeenHoursAgo: 6 }),
-  offer(3, 'bisq', 'buy', 85280, 4.0, { btcMax: 0.08, payment: 'SEPA', firstSeenHoursAgo: 3 }),
-  offer(4, 'hodlhodl', 'buy', 85690, 4.5, { btcMax: 0.20, payment: 'SEPA', firstSeenHoursAgo: 10 }),
-  offer(5, 'hodlhodl', 'buy', 82820, 1.0, { btcMax: 0.03, payment: 'Revolut', firstSeenHoursAgo: 4 }),
-  offer(6, 'robosats', 'buy', 86510, 5.5, { btcMax: 0.04, payment: 'Revolut', firstSeenHoursAgo: 2 }),
-  offer(7, 'robosats', 'buy', 83230, 1.5, { btcMax: 0.02, payment: 'Wise', firstSeenHoursAgo: 7 }),
+  offer(1, 'bisq', 'bid', 84460, 3.0, { btcMax: 0.10, payment: 'SEPA' }),
+  offer(2, 'bisq', 'bid', 83640, 2.0, { btcMax: 0.05, payment: 'Revolut', firstSeenHoursAgo: 6 }),
+  offer(3, 'bisq', 'bid', 85280, 4.0, { btcMax: 0.08, payment: 'SEPA', firstSeenHoursAgo: 3 }),
+  offer(4, 'hodlhodl', 'bid', 85690, 4.5, { btcMax: 0.20, payment: 'SEPA', firstSeenHoursAgo: 10 }),
+  offer(5, 'hodlhodl', 'bid', 82820, 1.0, { btcMax: 0.03, payment: 'Revolut', firstSeenHoursAgo: 4 }),
+  offer(6, 'robosats', 'bid', 86510, 5.5, { btcMax: 0.04, payment: 'Revolut', firstSeenHoursAgo: 2 }),
+  offer(7, 'robosats', 'bid', 83230, 1.5, { btcMax: 0.02, payment: 'Wise', firstSeenHoursAgo: 7 }),
   // Sell direction with negative premium (user buys on DEX cheaper)
-  offer(8, 'bisq', 'sell', 80360, -2.0, { btcMax: 0.06, payment: 'SEPA', firstSeenHoursAgo: 15 }),
-  offer(9, 'robosats', 'sell', 81590, -0.5, { btcMax: 0.03, payment: 'PayPal', firstSeenHoursAgo: 5 }),
+  offer(8, 'bisq', 'ask', 80360, -2.0, { btcMax: 0.06, payment: 'SEPA', firstSeenHoursAgo: 15 }),
+  offer(9, 'robosats', 'ask', 81590, -0.5, { btcMax: 0.03, payment: 'PayPal', firstSeenHoursAgo: 5 }),
 
   // ── Non-PremiumOnly offers (filtered out by default) ──
   // Sell direction with positive premium
-  offer(10, 'bisq', 'sell', 84050, 2.5, { btcMax: 0.06, payment: 'SEPA', firstSeenHoursAgo: 8 }),
-  offer(11, 'hodlhodl', 'sell', 87330, 6.5, { btcMax: 0.01, payment: 'Cash App', firstSeenHoursAgo: 1 }),
-  offer(12, 'robosats', 'sell', 88150, 7.5, { btcMax: 0.005, payment: 'Wise', firstSeenHoursAgo: 0.5 }),
+  offer(10, 'bisq', 'ask', 84050, 2.5, { btcMax: 0.06, payment: 'SEPA', firstSeenHoursAgo: 8 }),
+  offer(11, 'hodlhodl', 'ask', 87330, 6.5, { btcMax: 0.01, payment: 'Cash App', firstSeenHoursAgo: 1 }),
+  offer(12, 'robosats', 'ask', 88150, 7.5, { btcMax: 0.005, payment: 'Wise', firstSeenHoursAgo: 0.5 }),
   // Buy direction with negative premium
-  offer(13, 'hodlhodl', 'buy', 79540, -3.0, { btcMax: 0.10, payment: 'Revolut', firstSeenHoursAgo: 9 }),
+  offer(13, 'hodlhodl', 'bid', 79540, -3.0, { btcMax: 0.10, payment: 'Revolut', firstSeenHoursAgo: 9 }),
 
   // ── Closed offers ──
-  offer(14, 'bisq', 'buy', 83500, 1.8, { btcMax: 0.06, payment: 'SEPA', isLive: false, firstSeenHoursAgo: 20, lastSeenHoursAgo: 4 }),
-  offer(15, 'hodlhodl', 'buy', 84200, 2.7, { btcMax: 0.10, payment: 'Revolut', isLive: false, firstSeenHoursAgo: 18, lastSeenHoursAgo: 6 }),
+  offer(14, 'bisq', 'bid', 83500, 1.8, { btcMax: 0.06, payment: 'SEPA', isLive: false, firstSeenHoursAgo: 20, lastSeenHoursAgo: 4 }),
+  offer(15, 'hodlhodl', 'bid', 84200, 2.7, { btcMax: 0.10, payment: 'Revolut', isLive: false, firstSeenHoursAgo: 18, lastSeenHoursAgo: 6 }),
 ];
 
 // Past offers: only closed historical offers (separate IDs to avoid duplicates when app combines live+past)
 export const MOCK_PAST_OFFERS = [
-  offer(101, 'bisq', 'buy', 83800, 2.2, { isLive: false, firstSeenHoursAgo: 36, lastSeenHoursAgo: 30, payment: 'SEPA' }),
-  offer(102, 'hodlhodl', 'sell', 80200, -2.2, { isLive: false, firstSeenHoursAgo: 30, lastSeenHoursAgo: 26, payment: 'Revolut' }),
-  offer(103, 'robosats', 'buy', 83200, 1.5, { isLive: false, firstSeenHoursAgo: 28, lastSeenHoursAgo: 24, payment: 'Wise' }),
-  offer(104, 'bisq', 'sell', 81000, -1.2, { isLive: false, firstSeenHoursAgo: 42, lastSeenHoursAgo: 38, payment: 'PayPal' }),
-  offer(105, 'hodlhodl', 'buy', 85000, 3.7, { isLive: false, firstSeenHoursAgo: 40, lastSeenHoursAgo: 34, payment: 'SEPA' }),
+  offer(101, 'bisq', 'bid', 83800, 2.2, { isLive: false, firstSeenHoursAgo: 36, lastSeenHoursAgo: 30, payment: 'SEPA' }),
+  offer(102, 'hodlhodl', 'ask', 80200, -2.2, { isLive: false, firstSeenHoursAgo: 30, lastSeenHoursAgo: 26, payment: 'Revolut' }),
+  offer(103, 'robosats', 'bid', 83200, 1.5, { isLive: false, firstSeenHoursAgo: 28, lastSeenHoursAgo: 24, payment: 'Wise' }),
+  offer(104, 'bisq', 'ask', 81000, -1.2, { isLive: false, firstSeenHoursAgo: 42, lastSeenHoursAgo: 38, payment: 'PayPal' }),
+  offer(105, 'hodlhodl', 'bid', 85000, 3.7, { isLive: false, firstSeenHoursAgo: 40, lastSeenHoursAgo: 34, payment: 'SEPA' }),
 ];
 
 export const MOCK_PAST_OFFER_LIFECYCLES: Record<number, Array<{ time: string; price: number; net_premium_pct: number }>> = {
@@ -748,8 +748,8 @@ export const MOCK_STATISTICS = {
       avg_bid_premium_pct: -1.6,
     },
     offer_lifecycle_points: [
-      { lifecycle_hours: 0.5, premium_rate_pct: 1.2, volume_btc: 0.01, exchange: 'robosats', direction: 'sell', is_live: true },
-      { lifecycle_hours: 8, premium_rate_pct: -0.8, volume_btc: 0.08, exchange: 'hodlhodl', direction: 'buy', is_live: true },
+      { lifecycle_hours: 0.5, premium_rate_pct: 1.2, volume_btc: 0.01, exchange: 'robosats', direction: 'ask', is_live: true },
+      { lifecycle_hours: 8, premium_rate_pct: -0.8, volume_btc: 0.08, exchange: 'hodlhodl', direction: 'bid', is_live: true },
     ],
   },
   past: {
@@ -789,8 +789,8 @@ export const MOCK_STATISTICS = {
       },
     },
     offer_lifecycle_points: [
-      { lifecycle_hours: 2, premium_rate_pct: 2.1, volume_btc: 0.02, exchange: 'robosats', direction: 'sell', is_live: false },
-      { lifecycle_hours: 36, premium_rate_pct: 3.4, volume_btc: 0.2, exchange: 'hodlhodl', direction: 'sell', is_live: false },
+      { lifecycle_hours: 2, premium_rate_pct: 2.1, volume_btc: 0.02, exchange: 'robosats', direction: 'ask', is_live: false },
+      { lifecycle_hours: 36, premium_rate_pct: 3.4, volume_btc: 0.2, exchange: 'hodlhodl', direction: 'ask', is_live: false },
     ],
   },
   shared: {

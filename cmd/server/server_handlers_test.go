@@ -206,7 +206,7 @@ func storedPastOfferFixture(direction string) map[string]any {
 }
 
 func TestPastOfferAPIIncludesHistoryCountAndActualSecurityDeposit(t *testing.T) {
-	offer := storedPastOfferFixture("buy")
+	offer := storedPastOfferFixture("bid")
 	offer["security_deposit_pct"] = 0.15
 
 	api := buildPastOfferAPI(offer, pastLifecycleAggregate{
@@ -347,7 +347,7 @@ func TestPastOrderStatsExcludesNonAnalyzedClosedOffers(t *testing.T) {
 				avg_ref_price, avg_net_premium_pct, avg_estimated_profit_btc, avg_estimated_profit_fiat,
 				historical_analysis_status, first_seen, last_seen, is_live
 			)
-			VALUES ('bisq', 'buy', 105, 0.1, 0.1, 'SEPA', ?, 100, 4.00, 0.00400, 0.40, ?, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 0)
+			VALUES ('bisq', 'bid', 105, 0.1, 0.1, 'SEPA', ?, 100, 4.00, 0.00400, 0.40, ?, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 0)
 		`, fixture.offerID, fixture.status); err != nil {
 			t.Fatalf("insert %s offer: %v", fixture.offerID, err)
 		}
@@ -437,7 +437,7 @@ func TestPastOfferAnalysisUsesStoredUncappedCosts(t *testing.T) {
 		"kraken": fixedCostEstimator("kraken", "bisq", 0.50, 0.50, 0.50, 0.50),
 	}
 
-	offer := storedPastOfferFixture("buy")
+	offer := storedPastOfferFixture("bid")
 	offer["best_route_cex"] = "coinbase"
 	offer["routing_profile"] = "Swap_main2lightning"
 	offer["avg_trade_cost_pct"] = 1.2345
@@ -463,7 +463,7 @@ func TestPastOfferAnalysisUsesStoredUncappedCosts(t *testing.T) {
 }
 
 func TestPastOfferNetMinUsesCloseTimeMinimumAnalysis(t *testing.T) {
-	offer := storedPastOfferFixture("buy")
+	offer := storedPastOfferFixture("bid")
 	offer["btc_min"] = 0.02
 	offer["btc_max"] = 1.0
 	offer["min_volume_analyzed"] = true
@@ -499,7 +499,7 @@ func TestPastOfferNetMinUsesCloseTimeMinimumAnalysis(t *testing.T) {
 }
 
 func TestPastOfferNetCappedExcludesMinimumVolumeAboveCap(t *testing.T) {
-	offer := storedPastOfferFixture("buy")
+	offer := storedPastOfferFixture("bid")
 	offer["btc_min"] = 0.5
 	offer["btc_max"] = 1.0
 	offer["avg_ref_price"] = 1000.0
@@ -530,7 +530,7 @@ func TestPastOfferFullVolumeRecomputesHedgeWhenStoredAbsent(t *testing.T) {
 	// Simulate an offer snapshotted before the hedge_* columns were populated: stored hedge is
 	// empty, but avg_trade_cost_btc still reflects the hedge. The full-volume breakdown must
 	// recompute the hedge so the "Hedge cost" row reappears (regression guard).
-	offer := storedPastOfferFixture("buy")
+	offer := storedPastOfferFixture("bid")
 	offer["hedge_open_fee_btc"] = 0.0
 	offer["hedge_close_fee_btc"] = 0.0
 	offer["hedge_funding_fee_btc"] = 0.0
@@ -558,7 +558,7 @@ func TestPastOfferFullVolumeUsesHistoricalHedgePositionWhenPersisted(t *testing.
 		"kraken": fixedCostEstimatorWithHedge("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.0001, 0.0009),
 	}
 
-	offer := storedPastOfferFixture("buy")
+	offer := storedPastOfferFixture("bid")
 	agg := pastLifecycleAggregate{
 		AvgHedgeNotionalEUR:      50,
 		AvgLeverageUsed:          5,
@@ -587,7 +587,7 @@ func TestPastOfferCappedHedgePositionScalesWithTradeSize(t *testing.T) {
 		"kraken": fixedCostEstimatorWithHedge("kraken", "bisq", 0.0025, 0.00015, 0.001, 0.0001, 0.0009),
 	}
 
-	offer := storedPastOfferFixture("buy")
+	offer := storedPastOfferFixture("bid")
 	offer["btc_min"] = 0.01
 	offer["btc_max"] = 1.0
 	agg := pastLifecycleAggregate{
@@ -621,7 +621,7 @@ func TestPastOfferCappedAnalysisKeepsStoredRouteAndFixedTransferCosts(t *testing
 	est := tradecost.NewFixedEstimatorWithHedgeRatesForTesting("kraken", "bisq", 0.01, 0.99, 0.002, 0.99, 0.001, 0.002, 0.003)
 	tradeCostEstimators = map[string]*tradecost.TradeCostEstimator{"kraken": est}
 
-	offer := storedPastOfferFixture("buy")
+	offer := storedPastOfferFixture("bid")
 	offer["btc_min"] = 0.01
 	offer["btc_max"] = 1.0
 	offer["avg_ref_price"] = 100.0
@@ -660,7 +660,7 @@ func TestPastOfferCappedAskOmitsWithdrawalAndIncludesLongHedgeCosts(t *testing.T
 		"kraken": fixedCostEstimatorWithHedge("kraken", "bisq", 0.01, 0.99, 0.002, 0.99, 0.25),
 	}
 
-	offer := storedPastOfferFixture("sell")
+	offer := storedPastOfferFixture("ask")
 	offer["btc_min"] = 0.01
 	offer["btc_max"] = 1.0
 	offer["avg_ref_price"] = 100.0
@@ -686,7 +686,7 @@ func TestPastCappedCostVariesBySizeThroughProportionalAndFixedComponents(t *test
 		"kraken": fixedCostEstimator("kraken", "bisq", 0.01, 0.99, 0.002, 0.99),
 	}
 
-	offer := storedPastOfferFixture("buy")
+	offer := storedPastOfferFixture("bid")
 	offer["routing_fee_sum"] = 0.0003
 	offer["cex_withdraw_fee_btc"] = 0.0007
 	offer["hedge_fee_sum_btc"] = 0.0
@@ -745,7 +745,7 @@ func TestPastOffersFiltersFiatBeforeLimitAndSerializesStoredCurrency(t *testing.
 			INSERT INTO offers (
 				exchange, fiat_currency, direction, price, offer_id,
 				avg_ref_price, first_seen, last_seen, is_live
-			) VALUES ('bisq', 'USD', 'buy', 101, ?, 100, datetime('now', '-2 minutes'), datetime('now', '-1 minute'), 0)
+			) VALUES ('bisq', 'USD', 'bid', 101, ?, 100, datetime('now', '-2 minutes'), datetime('now', '-1 minute'), 0)
 		`, "newer-usd-"+strconv.Itoa(i)); err != nil {
 			_ = tx.Rollback()
 			t.Fatalf("insert USD offer %d: %v", i, err)
@@ -755,7 +755,7 @@ func TestPastOffersFiltersFiatBeforeLimitAndSerializesStoredCurrency(t *testing.
 		INSERT INTO offers (
 			exchange, fiat_currency, direction, price, offer_id,
 			avg_ref_price, first_seen, last_seen, is_live
-		) VALUES ('bisq', 'GBP', 'buy', 81, 'target-gbp', 80, datetime('now', '-20 minutes'), datetime('now', '-10 minutes'), 0)
+		) VALUES ('bisq', 'GBP', 'bid', 81, 'target-gbp', 80, datetime('now', '-20 minutes'), datetime('now', '-10 minutes'), 0)
 	`); err != nil {
 		_ = tx.Rollback()
 		t.Fatalf("insert GBP offer: %v", err)
@@ -1109,10 +1109,10 @@ func TestDashboardAnalyticsCustomRangeLoadsRetainedHistoryAtDayBoundaries(t *tes
 	if _, err := db.Exec(`
 		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, avg_premium_pct, avg_net_premium_pct, historical_analysis_status, first_seen, last_seen, is_live)
 		VALUES
-			('bisq', 'buy', 110, .1, .1, 'SEPA', 'custom-before', 100, 12, 10, 'analyzed', '2025-12-31 23:00:00', '2025-12-31 23:59:59', 0),
-			('bisq', 'buy', 110, .1, .1, 'SEPA', 'custom-start', 100, 12, 10, 'analyzed', '2026-01-01 00:00:00', '2026-01-01 00:00:00', 0),
-			('bisq', 'buy', 110, .1, .1, 'SEPA', 'custom-end', 100, 12, 10, 'analyzed', '2026-01-02 23:59:59', '2026-01-02 23:59:59', 0),
-			('bisq', 'buy', 110, .1, .1, 'SEPA', 'custom-after', 100, 12, 10, 'analyzed', '2026-01-03 00:00:00', '2026-01-03 00:00:00', 0)
+			('bisq', 'bid', 110, .1, .1, 'SEPA', 'custom-before', 100, 12, 10, 'analyzed', '2025-12-31 23:00:00', '2025-12-31 23:59:59', 0),
+			('bisq', 'bid', 110, .1, .1, 'SEPA', 'custom-start', 100, 12, 10, 'analyzed', '2026-01-01 00:00:00', '2026-01-01 00:00:00', 0),
+			('bisq', 'bid', 110, .1, .1, 'SEPA', 'custom-end', 100, 12, 10, 'analyzed', '2026-01-02 23:59:59', '2026-01-02 23:59:59', 0),
+			('bisq', 'bid', 110, .1, .1, 'SEPA', 'custom-after', 100, 12, 10, 'analyzed', '2026-01-03 00:00:00', '2026-01-03 00:00:00', 0)
 	`); err != nil {
 		t.Fatalf("insert retained offers: %v", err)
 	}
@@ -1498,10 +1498,10 @@ func TestGeneralStatsPastPremiumsRESTIncludesFixedWindows(t *testing.T) {
 	if _, err := db.Exec(`
 		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, avg_premium_pct, avg_net_premium_pct, first_seen, last_seen, is_live)
 		VALUES
-			('robosats', 'buy', 104, 0.1, 0.1, 'SEPA', 'robo-10h', 100, 4, 3, datetime('now', '-10 hours'), datetime('now', '-10 hours'), 0),
-			('robosats', 'sell', 94, 0.1, 0.1, 'SEPA', 'robo-5d', 100, 6, 4, datetime('now', '-5 days'), datetime('now', '-5 days'), 0),
-			('robosats', 'buy', 96, 0.1, 0.1, 'SEPA', 'robo-negative', 100, -4, -3, datetime('now', '-8 hours'), datetime('now', '-8 hours'), 0),
-			('bisq', 'buy', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
+			('robosats', 'bid', 104, 0.1, 0.1, 'SEPA', 'robo-10h', 100, 4, 3, datetime('now', '-10 hours'), datetime('now', '-10 hours'), 0),
+			('robosats', 'ask', 94, 0.1, 0.1, 'SEPA', 'robo-5d', 100, 6, 4, datetime('now', '-5 days'), datetime('now', '-5 days'), 0),
+			('robosats', 'bid', 96, 0.1, 0.1, 'SEPA', 'robo-negative', 100, -4, -3, datetime('now', '-8 hours'), datetime('now', '-8 hours'), 0),
+			('bisq', 'bid', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
 	`); err != nil {
 		t.Fatalf("insert extra offers: %v", err)
 	}
@@ -1659,7 +1659,7 @@ func TestBuildPastPremiumStatsIgnoresNonPremiumOffers(t *testing.T) {
 			"id":                  1.0,
 			"exchange":            "robosats",
 			"payment_method":      "SEPA",
-			"direction":           "buy",
+			"direction":           "bid",
 			"last_seen":           now.Add(-2 * time.Hour).Format("2006-01-02 15:04:05"),
 			"is_live":             false,
 			"avg_premium_pct":     4.0,
@@ -1671,7 +1671,7 @@ func TestBuildPastPremiumStatsIgnoresNonPremiumOffers(t *testing.T) {
 			"id":                  2.0,
 			"exchange":            "robosats",
 			"payment_method":      "SEPA",
-			"direction":           "buy",
+			"direction":           "bid",
 			"last_seen":           now.Add(-3 * time.Hour).Format("2006-01-02 15:04:05"),
 			"is_live":             false,
 			"avg_premium_pct":     -4.0,
@@ -1683,7 +1683,7 @@ func TestBuildPastPremiumStatsIgnoresNonPremiumOffers(t *testing.T) {
 			"id":                  3.0,
 			"exchange":            "bisq",
 			"payment_method":      "SEPA",
-			"direction":           "sell",
+			"direction":           "ask",
 			"last_seen":           now.Add(-4 * time.Hour).Format("2006-01-02 15:04:05"),
 			"is_live":             false,
 			"avg_premium_pct":     6.0,
@@ -1713,7 +1713,7 @@ func TestBuildPremiumLifetimeStatsIgnoresNonPremiumOffers(t *testing.T) {
 			"id":                  1.0,
 			"exchange":            "robosats",
 			"payment_method":      "SEPA",
-			"direction":           "buy",
+			"direction":           "bid",
 			"first_seen":          now.Add(-3 * time.Hour).Format("2006-01-02 15:04:05"),
 			"last_seen":           now.Format("2006-01-02 15:04:05"),
 			"is_live":             false,
@@ -1726,7 +1726,7 @@ func TestBuildPremiumLifetimeStatsIgnoresNonPremiumOffers(t *testing.T) {
 			"id":                  2.0,
 			"exchange":            "robosats",
 			"payment_method":      "SEPA",
-			"direction":           "buy",
+			"direction":           "bid",
 			"first_seen":          now.Add(-6 * time.Hour).Format("2006-01-02 15:04:05"),
 			"last_seen":           now.Add(-4 * time.Hour).Format("2006-01-02 15:04:05"),
 			"is_live":             false,
@@ -1739,7 +1739,7 @@ func TestBuildPremiumLifetimeStatsIgnoresNonPremiumOffers(t *testing.T) {
 			"id":                  3.0,
 			"exchange":            "bisq",
 			"payment_method":      "SEPA",
-			"direction":           "sell",
+			"direction":           "ask",
 			"first_seen":          now.Add(-7 * time.Hour).Format("2006-01-02 15:04:05"),
 			"last_seen":           now.Add(-3 * time.Hour).Format("2006-01-02 15:04:05"),
 			"is_live":             false,
@@ -1962,11 +1962,11 @@ func withTempOrdersDB(t *testing.T) {
 			first_seen, last_seen, is_live
 		)
 		VALUES
-			('bisq', 'buy', 105, 0.01, 0.1, 'Revolut', 'Revolut', 'premium-30m', 100, 5, 1.00, 0.00100, 0.00025, 0.00015, 0.00010, 0.00010, 4.00, 0.00400, 0.40, 'kraken', 'Direct_main2main', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
-			('bisq', 'sell', 95, 0.02, 0.2, 'Wise', 'Wise', 'premium-5h', 100, 5, 0.37, 0.00074, 0.00050, NULL, 0.00004, 0.00020, 4.63, 0.00926, 0.93, 'kraken', 'Direct_main2main', 'analyzed', datetime('now', '-7 hours'), datetime('now', '-5 hours'), 0),
-			('bisq', 'buy', 105, 0.03, 0.3, 'SEPA', 'SEPA', 'premium-30h', 100, 5, 1.00, 0.00300, 0.00075, 0.00015, 0.00010, 0.00030, 4.00, 0.01200, 1.20, 'kraken', 'Direct_main2main', 'analyzed', datetime('now', '-30 hours'), datetime('now', '-30 hours'), 0),
-			('bisq', 'sell', 95, 0.04, 0.4, 'Revolut', 'Revolut', 'active-ask-30m', 100, 5, 0.26, 0.00104, 0.00100, NULL, 0.00004, 0.00040, 4.74, 0.01896, 1.90, 'kraken', 'Direct_main2main', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
-			('bisq', 'buy', 105, 0.05, 0.5, 'SEPA', 'SEPA', 'old-premium', 100, 5, 1.00, 0.00500, 0.00125, 0.00015, 0.00010, 0.00050, 4.00, 0.02000, 2.00, 'kraken', 'Direct_main2main', 'analyzed', datetime('now', '-200 hours'), datetime('now', '-200 hours'), 0)
+			('bisq', 'bid', 105, 0.01, 0.1, 'Revolut', 'Revolut', 'premium-30m', 100, 5, 1.00, 0.00100, 0.00025, 0.00015, 0.00010, 0.00010, 4.00, 0.00400, 0.40, 'kraken', 'Direct_main2main', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
+			('bisq', 'ask', 95, 0.02, 0.2, 'Wise', 'Wise', 'premium-5h', 100, 5, 0.37, 0.00074, 0.00050, NULL, 0.00004, 0.00020, 4.63, 0.00926, 0.93, 'kraken', 'Direct_main2main', 'analyzed', datetime('now', '-7 hours'), datetime('now', '-5 hours'), 0),
+			('bisq', 'bid', 105, 0.03, 0.3, 'SEPA', 'SEPA', 'premium-30h', 100, 5, 1.00, 0.00300, 0.00075, 0.00015, 0.00010, 0.00030, 4.00, 0.01200, 1.20, 'kraken', 'Direct_main2main', 'analyzed', datetime('now', '-30 hours'), datetime('now', '-30 hours'), 0),
+			('bisq', 'ask', 95, 0.04, 0.4, 'Revolut', 'Revolut', 'active-ask-30m', 100, 5, 0.26, 0.00104, 0.00100, NULL, 0.00004, 0.00040, 4.74, 0.01896, 1.90, 'kraken', 'Direct_main2main', 'analyzed', datetime('now', '-30 minutes'), datetime('now', '-30 minutes'), 0),
+			('bisq', 'bid', 105, 0.05, 0.5, 'SEPA', 'SEPA', 'old-premium', 100, 5, 1.00, 0.00500, 0.00125, 0.00015, 0.00010, 0.00050, 4.00, 0.02000, 2.00, 'kraken', 'Direct_main2main', 'analyzed', datetime('now', '-200 hours'), datetime('now', '-200 hours'), 0)
 	`); err != nil {
 		t.Fatalf("insert offers: %v", err)
 	}

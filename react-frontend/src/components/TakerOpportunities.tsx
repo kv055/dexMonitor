@@ -111,7 +111,7 @@ function timeframeHours(timeframe: string): number {
   }
 }
 
-type DirectionFilter = 'both' | 'buy' | 'sell';
+type DirectionFilter = 'both' | 'bid' | 'ask';
 type PastPaymentFilter = 'settings' | 'all';
 
 function pickScenario(order: PastProfitableOrder, mode: TakerOpportunityMode) {
@@ -289,7 +289,7 @@ const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
 
 const VALID_VIEW_MODES = new Set<InsightsViewMode>(['live', 'past']);
 const VALID_TIMEFRAMES = new Set(['1h', '6h', '24h', '48h', '7d', CUSTOM_TIMEFRAME]);
-const VALID_DIRECTIONS = new Set<DirectionFilter>(['both', 'buy', 'sell']);
+const VALID_DIRECTIONS = new Set<DirectionFilter>(['both', 'bid', 'ask']);
 const VALID_PAST_PAYMENT_FILTERS = new Set<PastPaymentFilter>(['settings', 'all']);
 const VALID_MODES = new Set<TakerOpportunityMode>(['net_full', 'net_capped', 'net_min']);
 const VALID_NET_PROFIT_UNITS = new Set<NetProfitUnit>(['btc', 'fiat']);
@@ -1447,7 +1447,7 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
             >
               <span className={`${LIVE_OFFERS_GRID_COLS} text-[0.72rem]`}>
                 <span className="min-w-0 overflow-hidden"><ExchangeTag exchange={offer.exchange} /></span>
-                <span className={`truncate text-[0.65rem] font-semibold uppercase ${offer.direction === 'buy' ? 'text-green' : 'text-red'}`}>{offer.direction === 'buy' ? 'Bid' : 'Ask'}</span>
+                <span className={`truncate text-[0.65rem] font-semibold uppercase ${offer.direction === 'bid' ? 'text-green' : 'text-red'}`}>{offer.direction === 'bid' ? 'Bid' : 'Ask'}</span>
                 <TradeRowMetric value={premium == null ? '—' : `${premium.toFixed(1)}%`} valueClassName={premiumClass(premium)} />
                 <span className="min-w-0 truncate font-medium text-text" title={offer.payment_methods?.join(', ') || 'Unknown method'}>{offer.payment_methods?.join(', ') || 'Unknown method'}</span>
                 <TradeRowMetric value={formatDateTimeLabel(getFirstSeen(offer) ?? '', timezone)} />
@@ -2188,8 +2188,8 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
             description="Filter the offers list by offer side (applies to live and past offers)"
             options={[
               { value: 'both', label: 'Both' },
-              { value: 'buy', label: 'Buy' },
-              { value: 'sell', label: 'Sell' },
+              { value: 'bid', label: 'Bid' },
+              { value: 'ask', label: 'Ask' },
             ]}
             selected={directionFilter}
             onChange={v => changeDirectionFilter(v as DirectionFilter)}
@@ -2550,8 +2550,8 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                           <div className="min-w-0 overflow-hidden">
                             <ExchangeTag exchange={order.exchange} />
                           </div>
-                          <span className={`truncate text-[0.65rem] font-semibold uppercase ${order.direction === 'buy' ? 'text-green' : 'text-red'}`}>
-                            {order.direction === 'buy' ? 'Bid' : 'Ask'}
+                          <span className={`truncate text-[0.65rem] font-semibold uppercase ${order.direction === 'bid' ? 'text-green' : 'text-red'}`}>
+							{order.direction === 'bid' ? 'Bid' : 'Ask'}
                           </span>
                           <TradeRowMetric
                             value={orderPremiumPercent(order) != null ? `${orderPremiumPercent(order)!.toFixed(1)}%` : '—'}

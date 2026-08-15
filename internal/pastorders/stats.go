@@ -349,7 +349,7 @@ func BuildGeneralStatsPremiumSummary(offers []Offer, now time.Time, hours int, e
 			continue
 		}
 		premium := *offer.PriceDiffPercent
-		if offer.Direction == "sell" {
+		if offer.Direction == "ask" {
 			askPremiumSum += premium
 			askPremiumCount++
 			if bestAskPremium == nil || premium > *bestAskPremium {
@@ -357,7 +357,7 @@ func BuildGeneralStatsPremiumSummary(offers []Offer, now time.Time, hours int, e
 				bestAskPremium = &v
 			}
 		}
-		if offer.Direction == "buy" {
+		if offer.Direction == "bid" {
 			bidPremiumSum += premium
 			bidPremiumCount++
 			if bestBidPremium == nil || premium > *bestBidPremium {

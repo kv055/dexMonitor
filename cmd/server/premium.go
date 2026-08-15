@@ -27,10 +27,10 @@ func computePriceDiffPct(offerPrice, refPrice float64) float64 {
 }
 
 // computeDirectionalPremiumPct orients the raw price diff by trade direction so a
-// "sell" offer's premium is expressed from the taker's perspective.
+// "ask" offer's premium is expressed from the taker's perspective.
 func computeDirectionalPremiumPct(direction string, offerPrice, refPrice float64) float64 {
 	raw := computePriceDiffPct(offerPrice, refPrice)
-	if direction == "sell" {
+	if direction == "ask" {
 		return -raw
 	}
 	return raw

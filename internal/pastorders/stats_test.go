@@ -52,19 +52,19 @@ func TestBuildGeneralStatsOverviewMirrorsFrontendCounts(t *testing.T) {
 
 	stats := BuildGeneralStatsOverview([]Offer{
 		{
-			Exchange: "bisq", Direction: "sell", PaymentMethods: []string{"SEPA"},
+			Exchange: "bisq", Direction: "ask", PaymentMethods: []string{"SEPA"},
 			PriceDiffPercent: &premium3, FirstSeen: now.Add(-3 * time.Hour), LastSeen: now,
 		},
 		{
-			Exchange: "bisq", Direction: "buy", PaymentMethods: []string{"Wise"},
+			Exchange: "bisq", Direction: "bid", PaymentMethods: []string{"Wise"},
 			PriceDiffPercent: &premium2, FirstSeen: now.Add(-5 * time.Hour), LastSeen: now.Add(-2 * time.Hour),
 		},
 		{
-			Exchange: "robosats", Direction: "sell", PaymentMethods: []string{"Revolut"},
+			Exchange: "robosats", Direction: "ask", PaymentMethods: []string{"Revolut"},
 			PriceDiffPercent: &premium5, FirstSeen: now.Add(-30 * time.Minute), LastSeen: now,
 		},
 		{
-			Exchange: "robosats", Direction: "sell", PaymentMethods: []string{"Revolut"},
+			Exchange: "robosats", Direction: "ask", PaymentMethods: []string{"Revolut"},
 			PriceDiffPercent: &premium2, FirstSeen: now.Add(-3 * time.Hour), LastSeen: now.Add(-1 * time.Hour),
 		},
 	}, now, 48, []string{"Wise"})
@@ -100,15 +100,15 @@ func TestBuildGeneralStatsPremiumSummaryMirrorsLegacyFields(t *testing.T) {
 
 	stats := BuildGeneralStatsPremiumSummary([]Offer{
 		{
-			Exchange: "bisq", Direction: "sell", PaymentMethods: []string{"SEPA"},
+			Exchange: "bisq", Direction: "ask", PaymentMethods: []string{"SEPA"},
 			PriceDiffPercent: &premium3, FirstSeen: now.Add(-3 * time.Hour), LastSeen: now,
 		},
 		{
-			Exchange: "bisq", Direction: "buy", PaymentMethods: []string{"Wise"},
+			Exchange: "bisq", Direction: "bid", PaymentMethods: []string{"Wise"},
 			PriceDiffPercent: &premium2, FirstSeen: now.Add(-5 * time.Hour), LastSeen: now.Add(-2 * time.Hour),
 		},
 		{
-			Exchange: "robosats", Direction: "sell", PaymentMethods: []string{"Revolut"},
+			Exchange: "robosats", Direction: "ask", PaymentMethods: []string{"Revolut"},
 			PriceDiffPercent: &premium5, FirstSeen: now.Add(-30 * time.Minute), LastSeen: now,
 		},
 	}, now, 48, []string{"Wise"})
@@ -132,7 +132,7 @@ func TestBuildGeneralStatsDoesNotOwnPremiumSections(t *testing.T) {
 
 	stats := BuildGeneralStats([]Offer{
 		{
-			Exchange: "bisq", Direction: "buy", PaymentMethods: []string{"SEPA"}, PriceDiffPercent: &bisq6h,
+			Exchange: "bisq", Direction: "bid", PaymentMethods: []string{"SEPA"}, PriceDiffPercent: &bisq6h,
 			FirstSeen: now.Add(-5 * time.Hour), LastSeen: now.Add(-5 * time.Hour), IsLive: false,
 		},
 	}, now, 24, nil)

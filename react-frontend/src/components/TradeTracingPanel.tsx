@@ -362,7 +362,7 @@ export function TradeTracingPanel({
   const tradeCapital = bd?.capital ?? null;
   const refPrice = getRefPrice(offer);
   const fiatCurrency = offer.pricing?.fiat_currency ?? 'EUR';
-  const isAsk = offer.direction === 'sell';
+  const isAsk = offer.direction === 'ask';
   const isLightningRoute = resolvedRoute?.settlement === 'onchain_swap';
   const routeCex = bd?.route_cex ?? '';
   // This immutable snapshot is the Unified API's execution decision. Display

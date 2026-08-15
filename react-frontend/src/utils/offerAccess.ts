@@ -195,7 +195,7 @@ export function getDisplayCostBreakdown(offer: Offer, sel: ScenarioSelector = fa
     route_cex: scenario.route.cex,
     route_dex: offer.exchange,
     route_method: scenario.route.settlement,
-    trade_direction: offer.direction === 'sell' ? 'ask' : 'bid',
+    trade_direction: offer.direction === 'ask' ? 'ask' : 'bid',
     num_network_txs: networkFee?.num_txs ?? networkFee?.detail?.num_txs ?? 0,
     estimated_profit_pct: estimatedProfitPct ?? 0,
     estimated_profit_btc: scenario.profit.btc ?? scenario.profit.avg_btc ?? 0,

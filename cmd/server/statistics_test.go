@@ -33,17 +33,17 @@ func TestBuildOfferLifecyclePremiumPointsUsesAgeForLiveAndLifetimeForPast(t *tes
 	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
 	offers := []map[string]any{
 		{
-			"exchange": "robosats", "direction": "sell", "avg_premium_pct": 2.5,
+			"exchange": "robosats", "direction": "ask", "avg_premium_pct": 2.5,
 			"btc_max": 0.15, "first_seen": now.Add(-90 * time.Minute),
 			"last_seen": now.Add(-10 * time.Minute), "is_live": true,
 		},
 		{
-			"exchange": "bisq", "direction": "buy", "avg_premium_pct": -1.25,
+			"exchange": "bisq", "direction": "bid", "avg_premium_pct": -1.25,
 			"btc_max": 0.4, "first_seen": now.Add(-5 * time.Hour),
 			"last_seen": now.Add(-2 * time.Hour), "is_live": false,
 		},
 		{
-			"exchange": "hodlhodl", "direction": "sell", "avg_premium_pct": 4.0,
+			"exchange": "hodlhodl", "direction": "ask", "avg_premium_pct": 4.0,
 			"btc_max": 0.2, "payment_methods": []string{"Cash"},
 			"first_seen": now.Add(-3 * time.Hour), "last_seen": now.Add(-time.Hour), "is_live": false,
 		},
@@ -78,7 +78,7 @@ func TestStatisticsRESTReturnsLivePastShared(t *testing.T) {
 	// withTempOrdersDB fixture only inserts closed (is_live=0) offers.
 	if _, err := db.Exec(`
 		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, avg_premium_pct, avg_net_premium_pct, first_seen, last_seen, is_live)
-		VALUES ('bisq', 'sell', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
+		VALUES ('bisq', 'ask', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
 	`); err != nil {
 		t.Fatalf("insert live offer: %v", err)
 	}
@@ -162,7 +162,7 @@ func TestStatisticsUsesPersistedOfferSummariesWithoutLifecycleTable(t *testing.T
 	}
 	if _, err := db.Exec(`
 		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, avg_premium_pct, avg_net_premium_pct, first_seen, last_seen, is_live)
-		VALUES ('bisq', 'sell', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
+		VALUES ('bisq', 'ask', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
 	`); err != nil {
 		t.Fatalf("insert live offer: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestStatisticsCachesResultByParams(t *testing.T) {
 
 	if _, err := db.Exec(`
 		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, avg_premium_pct, avg_net_premium_pct, first_seen, last_seen, is_live)
-		VALUES ('bisq', 'sell', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
+		VALUES ('bisq', 'ask', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
 	`); err != nil {
 		t.Fatalf("insert live offer: %v", err)
 	}
@@ -346,7 +346,7 @@ func TestStatisticsServesStaleWhileRefreshing(t *testing.T) {
 
 	if _, err := db.Exec(`
 		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, avg_ref_price, avg_premium_pct, avg_net_premium_pct, first_seen, last_seen, is_live)
-		VALUES ('bisq', 'sell', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
+		VALUES ('bisq', 'ask', 107, 0.1, 0.1, 'SEPA Instant', 'bisq-live', 100, 7, 6, datetime('now', '-20 minutes'), datetime('now', '-20 minutes'), 1)
 	`); err != nil {
 		t.Fatalf("insert live offer: %v", err)
 	}

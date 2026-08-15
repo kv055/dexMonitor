@@ -232,7 +232,7 @@ function DepthChartInner() {
     const bidMap: Record<number, number> = {};
     const askMap: Record<number, number> = {};
     open.forEach(o => {
-      const map = o.direction === 'buy' ? bidMap : askMap;
+      const map = o.direction === 'bid' ? bidMap : askMap;
       const price = getOfferPrice(o);
       map[price] = (map[price] || 0) + (getBtcMax(o) || 0);
     });

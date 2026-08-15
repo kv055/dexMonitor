@@ -7,7 +7,7 @@ test('past-offer headers align with their left-aligned values', async ({ page })
     exchange: 'bisq',
     offer_id: 'alignment-fixture',
     payment_methods: ['SEPA'],
-    direction: 'sell',
+    direction: 'ask',
     status: {
       is_live: false,
       first_seen: '2026-07-20T10:00:00Z',
@@ -126,7 +126,7 @@ test('Net Min uses the precomputed minimum-volume scenario', async ({ page }) =>
     exchange: 'bisq',
     offer_id: 'minimum-fixture',
     payment_methods: ['SEPA'],
-    direction: 'sell',
+    direction: 'ask',
     status: {
       is_live: false,
       first_seen: '2026-07-20T10:00:00Z',

@@ -5,7 +5,7 @@ import { applyOfferFilters, countOffersByPaymentMethod } from './filterOffers';
 
 function offer(id: number, premium: number, methods: string[]): Offer {
   return {
-    id, exchange: 'bisq', direction: 'BUY', payment_methods: methods,
+    id, exchange: 'bisq', direction: 'bid', payment_methods: methods,
     offer_id: String(id), net_premium_percent: premium,
   };
 }

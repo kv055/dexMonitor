@@ -459,13 +459,10 @@ type ChatTemplatePayload struct {
 
 func normalizeChatTradeDirection(direction string) (string, error) {
 	direction = strings.ToLower(strings.TrimSpace(direction))
-	if direction == "" || direction == "buy" {
+	if direction == "" || direction == "bid" {
 		return "bid", nil
 	}
-	if direction == "sell" {
-		return "ask", nil
-	}
-	if direction != "bid" && direction != "ask" {
+	if direction != "ask" {
 		return "", ValidationError{fmt.Errorf("trade_direction %q is invalid (allowed: bid, ask)", direction)}
 	}
 	return direction, nil
