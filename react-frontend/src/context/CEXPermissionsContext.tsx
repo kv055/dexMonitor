@@ -34,6 +34,7 @@ export function CEXPermissionsProvider({ children }: Props) {
         if (cancelled) return;
         setExchanges(response.exchanges ?? []);
         setError(null);
+        setRevision(value => value + 1);
       })
       .catch(reason => {
         if (cancelled) return;

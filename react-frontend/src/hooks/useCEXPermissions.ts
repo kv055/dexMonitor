@@ -29,6 +29,20 @@ export interface CEXPermissionExchange {
   execution_supported: boolean;
   active_key_count: number;
   permissions_checked_at?: string | null;
+  fee_snapshot?: {
+    spot_taker_fee_percent?: number | null;
+    withdrawal_fee_btc?: number | null;
+    futures_open_taker_fee_percent?: number | null;
+    futures_close_taker_fee_percent?: number | null;
+    futures_funding_fee_percent?: number | null;
+    futures_funding_interval_seconds?: number | null;
+    spot_available: boolean;
+    hedge_available: boolean;
+    stale: boolean;
+    fetched_at?: string | null;
+    last_attempted_at?: string | null;
+    last_error?: string;
+  };
   policy: CEXPolicy;
   spot: CEXAvailability;
   hedge: CEXAvailability;
@@ -51,4 +65,8 @@ export function useCEXPermissions(): CEXPermissionsContextValue {
   const value = useContext(CEXPermissionsContext);
   if (!value) throw new Error('useCEXPermissions must be used inside <CEXPermissionsProvider>');
   return value;
+}
+
+export function useOptionalCEXPermissions(): CEXPermissionsContextValue | null {
+  return useContext(CEXPermissionsContext);
 }

@@ -6,6 +6,12 @@ export interface MissingRouteExplanation {
   detail: string;
 }
 
+interface RouteResolution {
+  status: 'resolved' | 'blocked' | 'out_of_scope';
+  code?: string;
+  reason?: string;
+}
+
 /** True when the cost engine selected a CEX route for this breakdown. */
 export function hasPricedTradeRoute(bd: CostBreakdown | null | undefined): boolean {
   return Boolean(bd?.route_cex?.trim());
@@ -47,8 +53,29 @@ function legLockedByCapability(exchange: CEXPermissionExchange, leg: 'spot' | 'h
  */
 export function explainMissingTradeRoute(
   exchanges: readonly CEXPermissionExchange[],
+  resolution?: RouteResolution | null,
 ): MissingRouteExplanation {
   const venues = costSupported(exchanges);
+  const spotEnabled = venues.filter(exchange => exchange.spot.effective_enabled);
+  const hedgeEnabled = venues.filter(exchange => exchange.hedge.effective_enabled);
+  const hedgeSupported = venues.filter(exchange => exchange.hedge.supported);
+
+  if (spotEnabled.length > 0 && resolution?.status === 'blocked' && resolution.code === 'no_eligible_spot_provider') {
+    return {
+      title: 'No priced spot CEX route is available',
+      detail:
+        `${resolution.reason ?? 'No provider has the required spot pricing inputs.'} ` +
+        'Check CEX fee snapshot status; API-key permissions alone do not provide the fee inputs used by route calculation.',
+    };
+  }
+  if (hedgeEnabled.length > 0 && resolution?.status === 'blocked' && resolution.code === 'no_eligible_hedge_provider') {
+    return {
+      title: 'Hedgefull routing unavailable',
+      detail:
+        `${resolution.reason ?? 'No provider has the required futures pricing inputs.'} ` +
+        'Check the futures fee snapshot or switch to Hedgeless mode.',
+    };
+  }
   if (venues.length === 0) {
     return {
       title: 'No CEX route available',
@@ -56,10 +83,6 @@ export function explainMissingTradeRoute(
         'Trade costs and net premium cannot be estimated because no cost-supported CEX venues are loaded. Open Settings → CEX Exchanges and retry if permissions failed to load.',
     };
   }
-
-  const spotEnabled = venues.filter(exchange => exchange.spot.effective_enabled);
-  const hedgeEnabled = venues.filter(exchange => exchange.hedge.effective_enabled);
-  const hedgeSupported = venues.filter(exchange => exchange.hedge.supported);
 
   if (spotEnabled.length === 0) {
     const allSpotPolicyOff = venues.every(exchange => !exchange.policy.spot_enabled);

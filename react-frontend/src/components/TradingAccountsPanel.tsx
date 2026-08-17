@@ -74,6 +74,7 @@ import type {
   PaymentMethodUpdatePayload,
 } from '../types';
 import { useFilters } from '../hooks/useFilters';
+import { useOptionalCEXPermissions } from '../hooks/useCEXPermissions';
 import {
   LND_WALLET_PROVIDER,
   TRADING_CATEGORIES,
@@ -421,8 +422,10 @@ function aggregateAPIKeyPermissions(apiKeys: TradingAccount['api_keys']): Record
 function AggregatedPermissionsRow({ apiKeys }: { apiKeys: TradingAccount['api_keys'] }) {
   const aggregated = aggregateAPIKeyPermissions(apiKeys);
   return (
-    <div className="rounded border border-border bg-surface/40 px-2 py-1.5 flex flex-wrap items-center gap-1.5">
-      <span className="text-[0.65rem] text-text whitespace-nowrap font-medium">Aggregated Permissions</span>
+    <div data-testid="aggregated-cex-permissions" className="rounded border border-border bg-surface/40 px-2 py-1.5 flex flex-wrap items-center gap-1.5">
+      <span className="text-[0.65rem] text-text whitespace-nowrap font-medium">
+        Permissions · {apiKeys.length} {apiKeys.length === 1 ? 'key' : 'keys'}
+      </span>
       <div className="flex flex-wrap gap-1">
         {CANONICAL_PERMISSIONS.map(name => {
           const style = PERM_STYLES[aggregated[name] ?? 'denied'];
@@ -702,7 +705,8 @@ type AccountSectionKey =
   | 'walletAddresses'
   | 'cexHedging'
   | 'cexSpotTrades'
-  | 'cexWithdrawalAddresses';
+  | 'cexWithdrawalAddresses'
+  | 'cexFees';
 
 function payloadForCatalogLink(
   row: PaymentMethodRow,
@@ -1842,6 +1846,8 @@ function AccountDetailPane({
 
 export function TradingAccountsPanel() {
   const { filters } = useFilters();
+  const cexPermissions = useOptionalCEXPermissions();
+  const reloadCEXPermissions = cexPermissions?.reload;
   const [accounts, setAccounts] = useState<TradingAccount[]>([]);
   const [activeTab, setActiveTab] = useState<'payment' | 'trading' | 'communication'>(() => {
     if (typeof window !== 'undefined') {
@@ -2669,6 +2675,7 @@ export function TradingAccountsPanel() {
     try {
       const result = await runAccountHealthCheck(account.id);
       setAccounts(prev => prev.map(item => (item.id === result.account.id ? result.account : item)));
+      reloadCEXPermissions?.();
       dispatchUi({
         type: 'UPDATE',
         update: state => ({
@@ -4391,7 +4398,6 @@ export function TradingAccountsPanel() {
         {profile.helpText ? (
           <p className="text-[0.65rem] text-muted leading-relaxed px-1">{profile.helpText}</p>
         ) : null}
-        {isCexAccount(account) ? <AggregatedPermissionsRow apiKeys={account.api_keys} /> : null}
         {account.api_keys.map(key => {
           const edit = editingAPIKeyById[key.id];
           const secretKey = `api-key:${key.id}:key`;
@@ -4686,6 +4692,45 @@ export function TradingAccountsPanel() {
     );
   };
 
+  const renderCexFeesSection = (account: TradingAccount) => {
+    const exchange = cexPermissions?.exchanges.find(item =>
+      item.account_id === account.id || item.exchange.trim().toLowerCase() === account.provider.trim().toLowerCase(),
+    );
+    const snapshot = exchange?.fee_snapshot;
+    const value = (entry: number | null | undefined) => entry == null ? '—' : `${entry}`;
+    const dateValue = (entry: string | null | undefined) => entry ? formatDate(entry) : '—';
+    return (
+      <CollapsibleSection
+        title="Fees"
+        open={!!openSectionsByAccount[account.id]?.cexFees}
+        onToggle={() => toggleSection(account.id, 'cexFees')}
+        actions={
+          <button type="button" className={compactButtonCls} disabled={cexPermissions?.loading} onClick={() => reloadCEXPermissions?.()}>
+            {cexPermissions?.loading ? '…' : 'Refresh'}
+          </button>
+        }
+      >
+        {cexPermissions?.loading && !snapshot ? <div className="text-[0.65rem] text-muted px-1">Loading…</div> : null}
+        {cexPermissions?.error ? <div className="text-[0.65rem] text-red px-1">{cexPermissions.error}</div> : null}
+        {!cexPermissions?.loading && !cexPermissions?.error && !snapshot ? (
+          <div className="text-[0.65rem] text-muted px-1">No persisted fee policy found.</div>
+        ) : null}
+        {snapshot ? (
+          <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
+            <div><span className="text-text">Spot taker fee (%):</span> {value(snapshot.spot_taker_fee_percent)}</div>
+            <div><span className="text-text">Withdrawal fee (BTC):</span> {value(snapshot.withdrawal_fee_btc)}</div>
+            <div><span className="text-text">Futures open taker fee (%):</span> {value(snapshot.futures_open_taker_fee_percent)}</div>
+            <div><span className="text-text">Futures close taker fee (%):</span> {value(snapshot.futures_close_taker_fee_percent)}</div>
+            <div><span className="text-text">Futures funding fee (%):</span> {value(snapshot.futures_funding_fee_percent)}</div>
+            <div><span className="text-text">Futures funding interval (seconds):</span> {value(snapshot.futures_funding_interval_seconds)}</div>
+            <div><span className="text-text">Fees fetched at:</span> {dateValue(snapshot.fetched_at)}</div>
+            <div><span className="text-text">Fees last attempted at:</span> {dateValue(snapshot.last_attempted_at)}</div>
+          </div>
+        ) : null}
+      </CollapsibleSection>
+    );
+  };
+
   const handleToggleNewAccountForm = () => {
     if (showNewAccountForm) {
       resetNewAccountForm();
@@ -4812,6 +4857,7 @@ export function TradingAccountsPanel() {
                   ))}
                 </div>
               ) : null}
+              {isCexAccount(account) ? <AggregatedPermissionsRow apiKeys={account.api_keys} /> : null}
               <div className="grid gap-2 text-xs text-muted sm:grid-cols-2 xl:grid-cols-3">
                 {isPaymentCategory(account.category || 'Uncategorized') ? (
                   <fieldset
@@ -4920,6 +4966,7 @@ export function TradingAccountsPanel() {
         {isLndWalletProvider(account.provider) ? renderLightningManagementSection(account) : null}
         {isLndWalletProvider(account.provider) ? renderWalletAddressesSection(account) : null}
         {isCexAccount(account) ? renderCexWithdrawalAddressesSection(account) : null}
+        {isCexAccount(account) ? renderCexFeesSection(account) : null}
         {isCexAccount(account) ? renderCexHedgingSection(account) : null}
         {isCexAccount(account) ? renderCexSpotTradesSection(account) : null}
         {renderCatalogMethodsSection(account)}

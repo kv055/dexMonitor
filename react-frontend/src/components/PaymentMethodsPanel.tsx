@@ -98,8 +98,10 @@ export function PaymentMethodsPanel() {
   const [aliasPickerError, setAliasPickerError] = useState<string | null>(null);
   const [aliasInput, setAliasInput] = useState('');
   // Empty string = no filter; "__unset__" = methods with an empty array for that column.
+  const [searchQuery, setSearchQuery] = useState('');
   const [sourceFilter, setSourceFilter] = useState('');
   const [currencyFilter, setCurrencyFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -119,7 +121,13 @@ export function PaymentMethodsPanel() {
   }, [open, load]);
 
   const filteredRows = useMemo(() => {
+    const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
     return rows.filter(row => {
+      if (normalizedSearch !== '') {
+        const searchableText = [row.name, ...(row.alias_list ?? [])].join(' ').toLocaleLowerCase();
+        if (!searchableText.includes(normalizedSearch)) return false;
+      }
+      if (categoryFilter !== '' && row.category !== categoryFilter) return false;
       if (sourceFilter === '__unset__') {
         if ((row.sources?.length ?? 0) > 0) return false;
       } else if (sourceFilter !== '' && !(row.sources ?? []).includes(sourceFilter)) {
@@ -132,9 +140,12 @@ export function PaymentMethodsPanel() {
       }
       return true;
     });
-  }, [rows, sourceFilter, currencyFilter]);
+  }, [rows, searchQuery, categoryFilter, sourceFilter, currencyFilter]);
 
-  const filtersActive = sourceFilter !== '' || currencyFilter !== '';
+  const filtersActive = searchQuery.trim() !== ''
+    || categoryFilter !== ''
+    || sourceFilter !== ''
+    || currencyFilter !== '';
 
   const grouped = useMemo(() => {
     const byCategory = new Map<string, PaymentMethodRow[]>();
@@ -300,6 +311,31 @@ export function PaymentMethodsPanel() {
             list. New methods from offers land in Others as inactive.
           </p>
           <div className="flex flex-wrap items-end gap-2 rounded-md border border-border bg-bg px-2.5 py-2">
+            <label className="flex min-w-[12rem] flex-[1.5] flex-col gap-1 text-[0.68rem] text-muted">
+              Search
+              <input
+                type="search"
+                className={compactInputCls}
+                value={searchQuery}
+                onChange={e => setSearchQuery(e.target.value)}
+                placeholder="Search methods or aliases"
+                aria-label="Search payment methods"
+              />
+            </label>
+            <label className="flex min-w-[8rem] flex-1 flex-col gap-1 text-[0.68rem] text-muted">
+              Category
+              <select
+                className={compactInputCls}
+                value={categoryFilter}
+                onChange={e => setCategoryFilter(e.target.value)}
+                aria-label="Filter by category"
+              >
+                <option value="">All categories</option>
+                {CATEGORIES.map(category => (
+                  <option key={category} value={category}>{category}</option>
+                ))}
+              </select>
+            </label>
             <label className="flex min-w-[8rem] flex-1 flex-col gap-1 text-[0.68rem] text-muted">
               Source
               <select
@@ -335,6 +371,8 @@ export function PaymentMethodsPanel() {
                 type="button"
                 className={compactButtonCls}
                 onClick={() => {
+                  setSearchQuery('');
+                  setCategoryFilter('');
                   setSourceFilter('');
                   setCurrencyFilter('');
                 }}

@@ -60,19 +60,36 @@ describe('routeAvailability', () => {
   });
 
   it('explains missing spot API-key capability', () => {
-    const message = explainMissingTradeRoute([
-      exchange({
-        exchange: 'kraken',
-        spot: leg({
-          available: false,
-          effective_enabled: false,
-          blockers: [{ code: 'stale', message: 'API-key permissions have not been verified recently.' }],
+    const message = explainMissingTradeRoute(
+      [
+        exchange({
+          exchange: 'kraken',
+          spot: leg({
+            available: false,
+            effective_enabled: false,
+            blockers: [{ code: 'stale', message: 'API-key permissions have not been verified recently.' }],
+          }),
+          hedge: leg({ available: false, effective_enabled: false }),
         }),
-        hedge: leg({ available: false, effective_enabled: false }),
-      }),
-    ]);
+      ],
+      { status: 'blocked', code: 'no_eligible_spot_provider' },
+    );
     expect(message.title).toMatch(/No spot CEX/i);
     expect(message.detail).toMatch(/API keys/i);
+  });
+
+  it('prefers authoritative fee-route failure over healthy API-key capability', () => {
+    const message = explainMissingTradeRoute(
+      [exchange({ exchange: 'kraken' })],
+      {
+        status: 'blocked',
+        code: 'no_eligible_spot_provider',
+        reason: 'No provider has an eligible spot leg for this snapshot.',
+      },
+    );
+    expect(message.title).toMatch(/priced spot CEX route/i);
+    expect(message.detail).toMatch(/fee snapshot/i);
+    expect(message.detail).not.toMatch(/API keys may be missing/i);
   });
 
   it('explains missing hedge when spot remains available', () => {

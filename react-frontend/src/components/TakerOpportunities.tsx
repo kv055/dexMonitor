@@ -1211,7 +1211,7 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
     ? displayedBreakdown.estimated_profit_pct
     : getNetPremiumPercent(offer, effectiveMode);
   const routeUnavailable = shouldExplainMissingRoute(rawPremium, displayedBreakdown)
-    ? explainMissingTradeRoute(exchanges)
+    ? explainMissingTradeRoute(exchanges, offer.metadata?.route_resolution)
     : null;
   const showTradeModeToggle = !!hedgelessVariant || !hedgeAvailable;
 

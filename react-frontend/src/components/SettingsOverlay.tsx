@@ -415,6 +415,10 @@ export function SettingsOverlay({
                   const allDisabled = spotDisabled && hedgeDisabled;
                   const policyAllDisabled = !spotEnabled && !hedgeEnabled;
                   const someDisabled = spotDisabled || hedgeDisabled;
+                  const feeSnapshot = cex.fee_snapshot;
+                  const missingSpotFees = !!feeSnapshot && cex.spot.effective_enabled && !feeSnapshot.spot_available;
+                  const missingHedgeFees = !!feeSnapshot && cex.hedge.effective_enabled && !feeSnapshot.hedge_available;
+                  const missingFeeData = missingSpotFees || missingHedgeFees;
                   const collapsed = !expandedCEXes.has(cex.exchange);
                   const reason = (kind: 'spot' | 'hedge') => {
                     const availability = cex[kind];
@@ -443,6 +447,8 @@ export function SettingsOverlay({
                           <span className={`text-[0.7rem] font-semibold ${allDisabled ? 'text-muted line-through' : 'text-text'}`}>{cex.provider}</span>
                           <span className="text-[0.55rem] text-muted">{cex.active_key_count} active key{cex.active_key_count === 1 ? '' : 's'}</span>
                           {someDisabled && !allDisabled && <span className="text-[0.5rem] uppercase tracking-wide text-accent border border-accent/40 rounded px-0.5 py-px">partial</span>}
+                          {feeSnapshot?.stale && <span className="text-[0.5rem] uppercase tracking-wide text-amber-600 border border-amber-500/40 rounded px-0.5 py-px">stale fees</span>}
+                          {missingFeeData && <span className="text-[0.5rem] uppercase tracking-wide text-red border border-red/40 rounded px-0.5 py-px">fees missing</span>}
                         </button>
                         <button
                           type="button"
@@ -487,6 +493,16 @@ export function SettingsOverlay({
                             {locked && <p className="mt-1 text-[0.55rem] leading-tight text-muted">{lockedReason}</p>}
                           </div>
                         ))}
+                        {feeSnapshot && (feeSnapshot.stale || feeSnapshot.last_error || missingFeeData) && (
+                          <div className="px-2.5 py-1.5 pl-4 text-[0.55rem] leading-tight text-amber-600">
+                            {missingFeeData
+                              ? `Missing verified ${[missingSpotFees ? 'spot' : '', missingHedgeFees ? 'futures' : ''].filter(Boolean).join(' and ')} fee data.`
+                              : feeSnapshot.stale
+                              ? `Using last verified fees${feeSnapshot.fetched_at ? ` from ${new Date(feeSnapshot.fetched_at).toLocaleString()}` : ''}.`
+                              : 'The latest fee refresh reported a warning.'}
+                            {feeSnapshot.last_error ? ` ${feeSnapshot.last_error}` : ''}
+                          </div>
+                        )}
                       </div>
                       )}
                     </div>
