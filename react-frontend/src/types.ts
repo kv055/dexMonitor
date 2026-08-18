@@ -626,6 +626,47 @@ export interface LNDCloseChannelResult {
 
 export interface LSPChannelConfig { channel_point:string;remote_pubkey:string;provider_label:string;enabled:boolean;headroom_sat:number;max_swap_fee_sat:number;max_swap_fee_ppm:number;updated_at?:string }
 export interface LSPChannelStatus extends LSPChannelConfig { configured:boolean;lsp_healthy:boolean;reason?:string;lsp_inbound_sat:number;lsp_outbound_sat:number;usable_inbound_sat:number;usable_outbound_sat:number }
+export interface MagmaLSPInfo {
+  pool: string;
+  public_key: string;
+  synced_to_chain: boolean;
+  synced_to_graph: boolean;
+  block_height: number;
+  chain_ready: boolean;
+  confirmed_balance_sat?: number;
+  unconfirmed_balance_sat?: number;
+  outbound_sat?: number;
+  wallet_ready?: boolean;
+  info: {
+    min_required_channel_confirmations: number;
+    min_funding_confirms_within_blocks: number;
+    max_channel_expiry_blocks: number;
+    min_initial_lsp_balance_sat: string;
+    max_initial_lsp_balance_sat: string;
+    uris?: string[];
+  };
+}
+export interface MagmaLSPOrder {
+  id: string;
+  pool: string;
+  order_id: string;
+  public_key: string;
+  lsp_balance_sat: number;
+  announce_channel: boolean;
+  channel_expiry_blocks: number;
+  order_state: string;
+  payment_state: string;
+  bolt11_invoice: string;
+  order_total_sat: number;
+  fee_total_sat: number;
+  funding_outpoint: string;
+  remote_pubkey: string;
+  payment_hash: string;
+  auto_registered: boolean;
+  failure_reason?: string;
+  created_at: string;
+  updated_at: string;
+}
 export interface SubmarineSwapRecord { id:string;trade_id?:number;strategy:'submarine_swap';state:string;lightning_output_sat:number;lockup_amount_sat:number;lockup_txid?:string;invoice_hash?:string;service_fee_sat:number;miner_fee_sat:number;quote_expires_at?:string;created_at:string;updated_at:string }
 
 export interface PastOrderTimeframeStats {

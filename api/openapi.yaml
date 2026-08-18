@@ -306,6 +306,60 @@ paths:
           description: Successful response
         default:
           description: Error response
+  '/api/mm-controller/lnd/lsp-channel/magma/info':
+    get:
+      operationId: getApiMmControllerLndLspChannelMagmaInfo
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/lnd/lsp-channel/magma/info'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/lsp-channel/magma/orders':
+    get:
+      operationId: getApiMmControllerLndLspChannelMagmaOrders
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/lnd/lsp-channel/magma/orders'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+    post:
+      operationId: postApiMmControllerLndLspChannelMagmaOrders
+      tags: ['mm-controller']
+      summary: 'POST /api/mm-controller/lnd/lsp-channel/magma/orders'
+      x-contract-status: route-catalog
+      responses:
+        '201':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/lsp-channel/magma/orders/{id}':
+    get:
+      operationId: getApiMmControllerLndLspChannelMagmaOrderById
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/lnd/lsp-channel/magma/orders/{id}'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/lsp-channel/magma/orders/{id}/pay':
+    post:
+      operationId: postApiMmControllerLndLspChannelMagmaOrderPay
+      tags: ['mm-controller']
+      summary: 'POST /api/mm-controller/lnd/lsp-channel/magma/orders/{id}/pay'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
   '/api/mm-controller/lnd/submarine-swaps':
     get:
       operationId: getApiMmControllerLndSubmarineSwaps

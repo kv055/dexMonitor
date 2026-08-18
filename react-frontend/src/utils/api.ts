@@ -13,6 +13,8 @@ import type {
   LNDWalletStatus,
   LSPChannelConfig,
   LSPChannelStatus,
+  MagmaLSPInfo,
+  MagmaLSPOrder,
   SubmarineSwapRecord,
   ServiceVersions,
   TradingAccount,
@@ -271,6 +273,18 @@ export function closeLNDChannel(payload: {
 export function fetchLSPChannel(){return request<LSPChannelConfig>('/api/mm-controller/lnd/lsp-channel')}
 export function updateLSPChannel(payload:LSPChannelConfig){return request<LSPChannelConfig>('/api/mm-controller/lnd/lsp-channel',{method:'PUT',body:JSON.stringify(payload)})}
 export function fetchLSPChannelStatus(){return request<LSPChannelStatus>('/api/mm-controller/lnd/lsp-channel/status')}
+export function fetchMagmaLSPInfo(pool = 'recommended'){return request<MagmaLSPInfo>(`/api/mm-controller/lnd/lsp-channel/magma/info?pool=${encodeURIComponent(pool)}`)}
+export function fetchMagmaLSPOrders(limit = 10){return request<MagmaLSPOrder[]>(`/api/mm-controller/lnd/lsp-channel/magma/orders?limit=${limit}`)}
+export function fetchMagmaLSPOrder(id: string){return request<MagmaLSPOrder>(`/api/mm-controller/lnd/lsp-channel/magma/orders/${encodeURIComponent(id)}`)}
+export function createMagmaLSPOrder(payload: { pool: string; lsp_balance_sat: number; announce_channel: boolean; channel_expiry_blocks: number }) {
+  return request<MagmaLSPOrder>('/api/mm-controller/lnd/lsp-channel/magma/orders', { method: 'POST', body: JSON.stringify(payload) });
+}
+export function payMagmaLSPOrder(id: string, feeLimitSat?: number) {
+  return request<MagmaLSPOrder>(`/api/mm-controller/lnd/lsp-channel/magma/orders/${encodeURIComponent(id)}/pay`, {
+    method: 'POST',
+    body: JSON.stringify(feeLimitSat != null ? { fee_limit_sat: feeLimitSat } : {}),
+  });
+}
 export function fetchSubmarineSwaps(){return request<SubmarineSwapRecord[]>('/api/mm-controller/lnd/submarine-swaps?limit=20')}
 
 export function fetchCexDepositAddresses(accountId: number) {

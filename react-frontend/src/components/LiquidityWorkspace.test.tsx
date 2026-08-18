@@ -34,10 +34,90 @@ vi.mock('../utils/api', () => ({
   updateLSPChannel: vi.fn().mockImplementation(payload => Promise.resolve(payload)),
   fetchTransactionalLiquiditySettings: vi.fn().mockRejectedValue(new Error('settings unavailable in test')),
   updateTransactionalLiquiditySettings: vi.fn(),
+  fetchMagmaLSPInfo: vi.fn().mockResolvedValue({
+    pool: 'recommended',
+    public_key: '03local',
+    synced_to_chain: true,
+    synced_to_graph: true,
+    block_height: 963039,
+    chain_ready: true,
+    confirmed_balance_sat: 1250000,
+    unconfirmed_balance_sat: 0,
+    outbound_sat: 600000,
+    wallet_ready: true,
+    info: {
+      min_required_channel_confirmations: 6,
+      min_funding_confirms_within_blocks: 6,
+      max_channel_expiry_blocks: 12960,
+      min_initial_lsp_balance_sat: '500000',
+      max_initial_lsp_balance_sat: '100000000',
+      uris: ['03lsp@lsp.example.com:9735'],
+    },
+  }),
+  createMagmaLSPOrder: vi.fn().mockResolvedValue({
+    id: 'local-1',
+    pool: 'recommended',
+    order_id: 'magma-order-1',
+    public_key: '03local',
+    lsp_balance_sat: 500000,
+    announce_channel: false,
+    channel_expiry_blocks: 4320,
+    order_state: 'CREATED',
+    payment_state: 'EXPECT_PAYMENT',
+    bolt11_invoice: 'lnbc500000n1p...',
+    order_total_sat: 512500,
+    fee_total_sat: 12500,
+    funding_outpoint: '',
+    remote_pubkey: '',
+    payment_hash: '',
+    auto_registered: false,
+    created_at: '2026-08-18T00:00:00Z',
+    updated_at: '2026-08-18T00:00:00Z',
+  }),
+  payMagmaLSPOrder: vi.fn().mockResolvedValue({
+    id: 'local-1',
+    pool: 'recommended',
+    order_id: 'magma-order-1',
+    public_key: '03local',
+    lsp_balance_sat: 500000,
+    announce_channel: false,
+    channel_expiry_blocks: 4320,
+    order_state: 'CREATED',
+    payment_state: 'HOLD',
+    bolt11_invoice: 'lnbc500000n1p...',
+    order_total_sat: 512500,
+    fee_total_sat: 12500,
+    funding_outpoint: '',
+    remote_pubkey: '',
+    payment_hash: 'hash',
+    auto_registered: false,
+    created_at: '2026-08-18T00:00:00Z',
+    updated_at: '2026-08-18T00:00:00Z',
+  }),
+  fetchMagmaLSPOrder: vi.fn().mockImplementation(async (id: string) => ({
+    id,
+    pool: 'recommended',
+    order_id: 'magma-order-1',
+    public_key: '03local',
+    lsp_balance_sat: 500000,
+    announce_channel: false,
+    channel_expiry_blocks: 4320,
+    order_state: 'CREATED',
+    payment_state: 'EXPECT_PAYMENT',
+    bolt11_invoice: 'lnbc500000n1p...',
+    order_total_sat: 512500,
+    fee_total_sat: 12500,
+    funding_outpoint: '',
+    remote_pubkey: '',
+    payment_hash: '',
+    auto_registered: false,
+    created_at: '2026-08-18T00:00:00Z',
+    updated_at: '2026-08-18T00:00:00Z',
+  })),
 }));
 
 import { LiquidityWorkspace } from './LiquidityWorkspace';
-import { fetchDexPendingLiquidity, fetchLSPChannelStatus, fetchTransactionalLiquiditySettings, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
+import { fetchDexPendingLiquidity, fetchLNDWalletStatus, fetchLSPChannelStatus, fetchMagmaLSPInfo, createMagmaLSPOrder, payMagmaLSPOrder, fetchTransactionalLiquiditySettings, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
 import { FiltersProvider } from '../context/FiltersContext';
 import { PreferencesProvider } from '../context/PreferencesContext';
 import { CEXPermissionsContext, type CEXPermissionsContextValue } from '../hooks/useCEXPermissions';
@@ -67,12 +147,14 @@ function renderWorkspace(offers: Offer[] = []) {
 
 beforeEach(() => {
   window.localStorage.removeItem('dex-max-fiat-limit');
+  window.localStorage.removeItem('dex-hub-balance-unit');
 });
 
 afterEach(() => {
   cleanup();
   vi.clearAllMocks();
   window.localStorage.removeItem('dex-max-fiat-limit');
+  window.localStorage.removeItem('dex-hub-balance-unit');
 });
 
 describe('LiquidityWorkspace', () => {
@@ -92,6 +174,49 @@ describe('LiquidityWorkspace', () => {
     expect(screen.getAllByText('0 BTC')).toHaveLength(1);
     expect(await screen.findByText('0.0375 BTC')).toBeTruthy();
     expect(screen.getByText('2 pending contracts')).toBeTruthy();
+  });
+
+  it('shows full hub addresses with copy and block explorer actions', async () => {
+    const user = userEvent.setup();
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, 'clipboard', {
+      configurable: true,
+      value: { writeText },
+    });
+
+    renderWorkspace();
+
+    await user.click(screen.getByRole('button', { name: 'Expand Mainnet Hub liquidity' }));
+
+    const fullAddress = 'bc1qlndwalletdestination000000000000000000';
+    expect(await screen.findByText(fullAddress)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Copy address' })).toBeTruthy();
+    expect(screen.getByRole('link', { name: 'View address on mempool.space' })).toHaveProperty(
+      'href',
+      `https://mempool.space/address/${encodeURIComponent(fullAddress)}`,
+    );
+
+    await user.click(screen.getByRole('button', { name: 'Copy address' }));
+    expect(writeText).toHaveBeenCalledWith(fullAddress);
+    expect(await screen.findByRole('button', { name: 'Address copied' })).toBeTruthy();
+  });
+
+  it('toggles hub balance display between BTC and sats', async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    expect(await screen.findByText('0.0125 BTC')).toBeTruthy();
+
+    await user.click(screen.getByRole('button', { name: 'Expand Mainnet Hub liquidity' }));
+    expect(screen.getAllByText('0.0125 BTC').length).toBeGreaterThanOrEqual(2);
+
+    await user.click(screen.getByRole('button', { name: 'sats' }));
+    expect(screen.getAllByText('1,250,000 sats').length).toBeGreaterThanOrEqual(2);
+    expect(screen.queryByText('0.0125 BTC')).toBeNull();
+
+    await user.click(screen.getByRole('button', { name: 'BTC' }));
+    expect(screen.getAllByText('0.0125 BTC').length).toBeGreaterThanOrEqual(2);
+    expect(window.localStorage.getItem('dex-hub-balance-unit')).toBe('btc');
   });
 
   it('uses zero BTC targets for LND and Lightning liquidity in hedgefull mode', async () => {
@@ -255,7 +380,7 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await user.click(screen.getByRole('button', { name: 'Manage wallet pool' }));
+    await user.click(screen.getByRole('button', { name: 'Expand Mainnet Hub liquidity' }));
     await screen.findByRole('option', { name: 'Kraken' });
     expect(await screen.findByText('Kraken BTC wallet')).toBeTruthy();
     expect(screen.getByText('LND on-chain wallet')).toBeTruthy();
@@ -269,14 +394,14 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await user.click(screen.getByRole('button', { name: 'Manage wallet pool' }));
+    await user.click(screen.getByRole('button', { name: 'Expand Mainnet Hub liquidity' }));
     await user.click(screen.getByRole('button', { name: /fill lnd pool/i }));
     await user.click(screen.getByRole('button', { name: 'Manual address' }));
 
     expect(screen.getByRole('button', { name: 'Connected exchange' })).toBeTruthy();
     expect(await screen.findByText(/LND deposit address/)).toBeTruthy();
     expect(screen.getByText('Send Bitcoin to this address')).toBeTruthy();
-    expect(screen.getByText('bc1qlndwalletdestination000000000000000000')).toBeTruthy();
+    expect(screen.getAllByText('bc1qlndwalletdestination000000000000000000').length).toBeGreaterThanOrEqual(1);
     expect(screen.queryByText('Source BTC address')).toBeNull();
     expect(screen.queryByText('Amount to move')).toBeNull();
     expect(screen.queryByPlaceholderText('0.00000000')).toBeNull();
@@ -288,7 +413,7 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await user.click(screen.getByRole('button', { name: 'Manage wallet pool' }));
+    await user.click(screen.getByRole('button', { name: 'Expand Mainnet Hub liquidity' }));
     await screen.findByRole('option', { name: 'Kraken' });
     await user.click(screen.getByRole('button', { name: /drain lnd pool/i }));
 
@@ -301,7 +426,7 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await user.click(screen.getByRole('button', { name: 'Manage wallet pool' }));
+    await user.click(screen.getByRole('button', { name: 'Expand Mainnet Hub liquidity' }));
     await user.click(screen.getByRole('button', { name: /drain lnd pool/i }));
     await user.click(screen.getByRole('button', { name: 'Manual address' }));
     await user.type(screen.getByPlaceholderText('Paste a Bitcoin address'), 'bc1qexternaldestination0000000000000000');
@@ -316,15 +441,26 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await user.click(screen.getByRole('button', { name: 'Manage channels' }));
+    await user.click(screen.getByRole('button', { name: /current channel balance/i }));
     expect(screen.getByText('Hub')).toBeTruthy();
-    await user.click(screen.getByText('Open a new channel'));
+    expect(screen.getByRole('tab', { name: /own liquidity/i })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Open a channel' })).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Configure' }).getAttribute('aria-expanded')).toBe('false');
+    expect(screen.queryByRole('button', { name: 'Open channel' })).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Registered LSP channel' })).toBeNull();
+    await user.click(screen.getByRole('tab', { name: /lsp channel/i }));
+    expect(screen.getByRole('heading', { name: 'Registered LSP channel' })).toBeTruthy();
+    expect(screen.queryByText('LSP channel is disabled')).toBeNull();
+    expect(screen.queryByText('No LSP channel configured')).toBeNull();
+    expect(screen.queryByRole('heading', { name: 'Open a channel' })).toBeNull();
+    await user.click(screen.getByRole('tab', { name: /own liquidity/i }));
+    await user.click(screen.getByRole('button', { name: 'Configure' }));
     await user.click(screen.getByRole('button', { name: 'Open channel' }));
 
     expect(screen.getByRole('alert').textContent).toContain('Enter a node pubkey');
   });
 
-  it('shows and saves the LSP channel controls in liquidity management', async () => {
+  it('shows and saves the LSP channel controls in the LSP workspace', async () => {
     vi.mocked(fetchLSPChannelStatus).mockResolvedValueOnce({
       channel_point: 'txid:0', remote_pubkey: '03remote', provider_label: 'Hub', enabled: true,
       configured: true, lsp_healthy: true, headroom_sat: 10000, max_swap_fee_sat: 5000, max_swap_fee_ppm: 10000,
@@ -333,9 +469,10 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
+    await user.click(screen.getByRole('button', { name: /current channel balance/i }));
+    await user.click(screen.getByRole('tab', { name: /lsp channel/i }));
     expect(await screen.findByText('LSP channel active')).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: 'Manage channels' }));
-    expect(screen.getByRole('heading', { name: 'Long-lived LSP channel' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Registered LSP channel' })).toBeTruthy();
     await user.selectOptions(screen.getByLabelText('LND channel'), 'txid:0');
     await user.clear(screen.getByLabelText('Headroom (sats)'));
     await user.type(screen.getByLabelText('Headroom (sats)'), '10000');
@@ -345,5 +482,83 @@ describe('LiquidityWorkspace', () => {
       channel_point: 'txid:0', remote_pubkey: '03remote', provider_label: 'Hub', enabled: true, headroom_sat: 10000,
     }));
     expect(await screen.findByText('LSP channel monitoring configuration saved.')).toBeTruthy();
+  });
+
+  it('loads Magma quote info and creates plus pays an order from the LSP tab', async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole('button', { name: /current channel balance/i }));
+    await user.click(screen.getByRole('tab', { name: /lsp channel/i }));
+
+    expect(await screen.findByText(/Inbound range/)).toBeTruthy();
+    expect(fetchMagmaLSPInfo).toHaveBeenCalledWith('recommended');
+    expect((screen.getByLabelText('Inbound capacity (sats)') as HTMLInputElement).value).toBe('500000');
+    await user.click(screen.getByRole('button', { name: 'Create Magma order' }));
+    expect(createMagmaLSPOrder).toHaveBeenCalledWith(expect.objectContaining({
+      pool: 'recommended',
+      lsp_balance_sat: 500000,
+      announce_channel: false,
+      channel_expiry_blocks: 4320,
+    }));
+    expect(await screen.findByText(/Magma order created/)).toBeTruthy();
+    await user.click(await screen.findByRole('button', { name: 'Pay from LND' }));
+    expect(payMagmaLSPOrder).toHaveBeenCalledWith('local-1');
+    expect(await screen.findByText(/Invoice payment submitted from LND/)).toBeTruthy();
+  });
+
+  it('does not show an LSP-disabled banner when no channel is registered', async () => {
+    vi.mocked(fetchLSPChannelStatus).mockResolvedValueOnce({
+      channel_point: '', remote_pubkey: '', provider_label: '', enabled: false,
+      configured: false, lsp_healthy: false, reason: 'LSP channel is disabled',
+      headroom_sat: 0, max_swap_fee_sat: 0, max_swap_fee_ppm: 0,
+      lsp_inbound_sat: 0, lsp_outbound_sat: 0, usable_inbound_sat: 0, usable_outbound_sat: 0,
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole('button', { name: /current channel balance/i }));
+    await user.click(screen.getByRole('tab', { name: /lsp channel/i }));
+
+    expect(screen.getByRole('heading', { name: 'Open via Amboss Magma' })).toBeTruthy();
+    expect(screen.queryByText('LSP channel is disabled')).toBeNull();
+    expect(screen.queryByText('LSP channel active')).toBeNull();
+  });
+
+  it('blocks Magma orders when the LND wallet has no spendable Lightning balance', async () => {
+    vi.mocked(fetchLNDWalletStatus).mockResolvedValue({
+      addresses: [{ address: 'bc1qempty', kind: 'onchain', label: 'Liquidity pool', balance_sat: 0 }],
+      channels: [],
+    } as Awaited<ReturnType<typeof fetchLNDWalletStatus>>);
+    vi.mocked(fetchMagmaLSPInfo).mockResolvedValue({
+      pool: 'recommended',
+      public_key: '03local',
+      synced_to_chain: true,
+      synced_to_graph: true,
+      block_height: 963039,
+      chain_ready: true,
+      confirmed_balance_sat: 0,
+      unconfirmed_balance_sat: 0,
+      outbound_sat: 0,
+      wallet_ready: false,
+      info: {
+        min_required_channel_confirmations: 6,
+        min_funding_confirms_within_blocks: 6,
+        max_channel_expiry_blocks: 12960,
+        min_initial_lsp_balance_sat: '500000',
+        max_initial_lsp_balance_sat: '100000000',
+        uris: ['03lsp@lsp.example.com:9735'],
+      },
+    });
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole('button', { name: /current channel balance/i }));
+    await user.click(screen.getByRole('tab', { name: /lsp channel/i }));
+
+    expect(await screen.findByText(/no spendable Lightning balance/i)).toBeTruthy();
+    expect(screen.getByRole('button', { name: 'Create Magma order' })).toHaveProperty('disabled', true);
+    await user.click(screen.getByRole('button', { name: 'Create Magma order' }));
+    expect(createMagmaLSPOrder).not.toHaveBeenCalled();
   });
 });

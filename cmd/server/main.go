@@ -2437,6 +2437,37 @@ func handleMmControllerLSPChannelStatus(w http.ResponseWriter, r *http.Request) 
 func handleMmControllerLSPChannelCandidates(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/lnd/lsp-channel/candidates")
 }
+
+func handleMmControllerMagmaLSPInfo(w http.ResponseWriter, r *http.Request) {
+	path := "/api/lnd/lsp-channel/magma/info"
+	if r.URL.RawQuery != "" {
+		path += "?" + r.URL.RawQuery
+	}
+	forwardMMControllerJSON(w, r, path)
+}
+
+func handleMmControllerMagmaLSPOrders(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/lnd/lsp-channel/magma/orders")
+}
+
+func handleMmControllerMagmaLSPOrderByID(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		http.Error(w, "missing order id", http.StatusBadRequest)
+		return
+	}
+	forwardMMControllerJSON(w, r, "/api/lnd/lsp-channel/magma/orders/"+url.PathEscape(id))
+}
+
+func handleMmControllerMagmaLSPOrderPay(w http.ResponseWriter, r *http.Request) {
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		http.Error(w, "missing order id", http.StatusBadRequest)
+		return
+	}
+	forwardMMControllerJSON(w, r, "/api/lnd/lsp-channel/magma/orders/"+url.PathEscape(id)+"/pay")
+}
+
 func handleMmControllerSubmarineSwaps(w http.ResponseWriter, r *http.Request) {
 	path := "/api/lnd/submarine-swaps"
 	if r.URL.RawQuery != "" {

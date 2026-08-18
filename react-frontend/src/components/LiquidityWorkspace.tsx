@@ -1,7 +1,6 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode, type RefObject } from 'react';
-import { createPortal } from 'react-dom';
-import { closeLNDChannel, fetchCexBalances, fetchCexDepositAddresses, fetchCexHedgePositions, fetchDexPendingLiquidity, fetchLNDChannelPresets, fetchLNDWalletStatus, fetchLSPChannel, fetchLSPChannelStatus, fetchSubmarineSwaps, fetchTradingAccounts, fetchTransactionalLiquiditySettings, openLNDChannel, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
-import type { CexAssetBalance, CexDepositAddress, CexHedgePosition, LNDChannelPreset, LNDWalletStatus, LSPChannelConfig, LSPChannelStatus, SubmarineSwapRecord, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquiditySource, TransactionalLiquidityTargetDirection } from '../types';
+import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { closeLNDChannel, createMagmaLSPOrder, fetchCexBalances, fetchCexDepositAddresses, fetchCexHedgePositions, fetchDexPendingLiquidity, fetchLNDChannelPresets, fetchLNDWalletStatus, fetchLSPChannel, fetchLSPChannelStatus, fetchMagmaLSPInfo, fetchMagmaLSPOrder, fetchSubmarineSwaps, fetchTradingAccounts, fetchTransactionalLiquiditySettings, openLNDChannel, payMagmaLSPOrder, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
+import type { CexAssetBalance, CexDepositAddress, CexHedgePosition, LNDChannelPreset, LNDWalletChannelSummary, LNDWalletStatus, LSPChannelConfig, LSPChannelStatus, MagmaLSPInfo, MagmaLSPOrder, SubmarineSwapRecord, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquiditySource, TransactionalLiquidityTargetDirection } from '../types';
 import { useFilters } from '../hooks/useFilters';
 import { usePreferences } from '../hooks/usePreferences';
 import { useCEXPermissions } from '../hooks/useCEXPermissions';
@@ -40,6 +39,8 @@ const emptyLSPConfig: LSPChannelConfig = {
   max_swap_fee_ppm: 0,
 };
 
+const DEFAULT_MAGMA_EXPIRY_BLOCKS = 4320;
+
 function formatFiat(value: number, currency: string) {
   return `${currency} ${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
 }
@@ -52,6 +53,102 @@ function shortAddress(address: string) {
   return address.length <= 22 ? address : `${address.slice(0, 12)}…${address.slice(-8)}`;
 }
 
+function bitcoinAddressExplorerUrl(address: string) {
+  return `https://mempool.space/address/${encodeURIComponent(address)}`;
+}
+
+function CopyIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="liquidity-hub-inventory__icon">
+      <rect x="8.5" y="8.5" width="11" height="11" rx="1.5" fill="none" stroke="currentColor" strokeWidth="1.7" />
+      <path d="M7.5 15.5h-1a2 2 0 0 1-2-2v-9a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" fill="none" stroke="currentColor" strokeWidth="1.7" />
+    </svg>
+  );
+}
+
+function ExternalLinkIcon() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="liquidity-hub-inventory__icon">
+      <path d="M14 5h5v5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+      <path d="M10 14 19 5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" />
+      <path d="M19 14v5H5V5h5" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+function HubAddressCopyButton({ address }: { address: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const copyAddress = async () => {
+    try {
+      await navigator.clipboard.writeText(address);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 1400);
+    } catch {
+      setCopied(false);
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className="liquidity-hub-inventory__action"
+      aria-label={copied ? 'Address copied' : 'Copy address'}
+      title={copied ? 'Copied' : 'Copy address'}
+      onClick={() => void copyAddress()}
+    >
+      {copied ? '✓' : <CopyIcon />}
+    </button>
+  );
+}
+
+function HubInventoryAddress({
+  label,
+  address,
+  balanceSat,
+  balanceUnit,
+  whitelistedBy,
+}: {
+  label: string;
+  address: string;
+  balanceSat: number;
+  balanceUnit: HubBalanceUnit;
+  whitelistedBy?: string[];
+}) {
+  return (
+    <div className="liquidity-hub-inventory__address">
+      <div className="liquidity-hub-inventory__address-row">
+        <div className="liquidity-hub-inventory__address-main">
+          <strong title={label}>{label}</strong>
+          <code>{address}</code>
+        </div>
+        <div className="liquidity-hub-inventory__address-actions">
+          <HubAddressCopyButton address={address} />
+          <a
+            href={bitcoinAddressExplorerUrl(address)}
+            target="_blank"
+            rel="noreferrer"
+            className="liquidity-hub-inventory__action"
+            aria-label="View address on mempool.space"
+            title="View on mempool.space"
+          >
+            <ExternalLinkIcon />
+          </a>
+        </div>
+        <span className="liquidity-hub-inventory__address-balance mono-nums">{formatHubBalance(balanceSat, balanceUnit)}</span>
+      </div>
+      {whitelistedBy && whitelistedBy.length > 0 && (
+        <div className="liquidity-hub-inventory__whitelist">
+          <span>Whitelisted on</span>
+          {whitelistedBy.map(provider => (
+            <span className="liquidity-hub-inventory__pill" key={provider}>{provider}</span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function formatSats(value: number) {
   return `${new Intl.NumberFormat().format(value)} sats`;
 }
@@ -60,28 +157,87 @@ function formatBTC(value: number) {
   return `${value.toLocaleString(undefined, { minimumFractionDigits: 0, maximumFractionDigits: 8 })} BTC`;
 }
 
+type HubBalanceUnit = 'btc' | 'sats';
+
+const HUB_BALANCE_UNIT_STORAGE_KEY = 'dex-hub-balance-unit';
+
+function formatHubBalance(balanceSat: number, unit: HubBalanceUnit) {
+  return unit === 'sats' ? formatSats(balanceSat) : formatBTC(balanceSat / 1e8);
+}
+
+function HubBalanceUnitToggle({ unit, onChange }: { unit: HubBalanceUnit; onChange: (unit: HubBalanceUnit) => void }) {
+  return (
+    <div className="liquidity-hub-unit-toggle" role="group" aria-label="Balance unit">
+      <button type="button" aria-pressed={unit === 'btc'} className={unit === 'btc' ? 'is-selected' : ''} onClick={() => onChange('btc')}>BTC</button>
+      <button type="button" aria-pressed={unit === 'sats'} className={unit === 'sats' ? 'is-selected' : ''} onClick={() => onChange('sats')}>sats</button>
+    </div>
+  );
+}
+
+function LightningSplit({ outboundSat, inboundSat }: { outboundSat: number; inboundSat: number }) {
+  const total = outboundSat + inboundSat;
+  const outboundPct = total > 0 ? Math.max(4, (outboundSat / total) * 100) : 50;
+  return (
+    <div className="lightning-split">
+      <div className="lightning-split__bar" aria-hidden="true"><span style={{ width: `${outboundPct}%` }} /></div>
+      <div className="lightning-split__legend"><span>Outbound {formatSats(outboundSat)}</span><span>Inbound {formatSats(inboundSat)}</span></div>
+    </div>
+  );
+}
+
+function LightningChannelRow({
+  channel,
+  closing,
+  onClose,
+  onForceClose,
+}: {
+  channel: LNDWalletChannelSummary;
+  closing: boolean;
+  onClose: () => void;
+  onForceClose: () => void;
+}) {
+  return (
+    <article className="lightning-channel">
+      <header>
+        <div>
+          <strong>{channel.remote_alias || shortAddress(channel.remote_pubkey)}</strong>
+          <span>{channel.active ? 'Active' : 'Inactive'}{channel.private ? ' · Private' : ''}</span>
+        </div>
+        <code title={channel.channel_point}>{shortAddress(channel.channel_point)}</code>
+      </header>
+      <LightningSplit outboundSat={channel.local_balance_sat} inboundSat={channel.remote_balance_sat} />
+      <dl>
+        <div><dt>Capacity</dt><dd>{formatSats(channel.capacity_sat)}</dd></div>
+        <div><dt>Outbound</dt><dd>{formatSats(channel.local_balance_sat)}</dd></div>
+        <div><dt>Inbound</dt><dd>{formatSats(channel.remote_balance_sat)}</dd></div>
+      </dl>
+      <div className="lightning-channel__actions">
+        <button type="button" disabled={closing} onClick={onClose}>{closing ? 'Closing…' : 'Close'}</button>
+        <button type="button" disabled={closing} onClick={onForceClose}>Force close</button>
+      </div>
+    </article>
+  );
+}
+
 function formatAssetAmount(value: number) {
   return value.toLocaleString(undefined, { maximumFractionDigits: 8 });
 }
 
-/** Renders existing, stateful controls inside their matching liquidity card. */
-function CardPortal({ targetRef, children }: { targetRef: RefObject<HTMLElement | null>; children: ReactNode }) {
-  const [target, setTarget] = useState<HTMLElement | null>(null);
-  useEffect(() => { setTarget(targetRef.current); }, [targetRef]);
-  return target ? createPortal(children, target) : null;
-}
 
 export function LiquidityWorkspace() {
   const { filters, refPrice } = useFilters();
   const { maxFiatLimit } = usePreferences();
   const { exchanges: cexPolicies, ready: cexPoliciesReady } = useCEXPermissions();
   const [action, setAction] = useState<PoolAction>('fill');
-  const [poolExpanded, setPoolExpanded] = useState(false);
-  const [channelsExpanded, setChannelsExpanded] = useState(false);
+  const [poolExpanded, setPoolExpanded] = useState(true);
+  const [openChannelFormExpanded, setOpenChannelFormExpanded] = useState(false);
   const [lightningInventoryExpanded, setLightningInventoryExpanded] = useState(false);
+  const [lightningPath, setLightningPath] = useState<TransactionalLiquiditySource>('own_channels');
   const [hubInventoryExpanded, setHubInventoryExpanded] = useState(false);
-  const hubOperationsRef = useRef<HTMLDivElement>(null);
-  const lightningOperationsRef = useRef<HTMLDivElement>(null);
+  const [hubBalanceUnit, setHubBalanceUnit] = useState<HubBalanceUnit>(() => {
+    const stored = window.localStorage.getItem(HUB_BALANCE_UNIT_STORAGE_KEY);
+    return stored === 'sats' ? 'sats' : 'btc';
+  });
   const [transferRoute, setTransferRoute] = useState<TransferRoute>('exchange');
   const [amount, setAmount] = useState('');
   const [manualAddress, setManualAddress] = useState('');
@@ -115,11 +271,20 @@ export function LiquidityWorkspace() {
   const [savingLsp, setSavingLsp] = useState(false);
   const [lspNotice, setLspNotice] = useState<string | null>(null);
   const [lspError, setLspError] = useState<string | null>(null);
+  const [magmaInfo, setMagmaInfo] = useState<MagmaLSPInfo | null>(null);
+  const [magmaInfoLoading, setMagmaInfoLoading] = useState(false);
+  const [magmaInfoError, setMagmaInfoError] = useState<string | null>(null);
+  const [magmaForm, setMagmaForm] = useState({ pool: 'recommended', inboundSats: '', privateChannel: true, expiryBlocks: String(DEFAULT_MAGMA_EXPIRY_BLOCKS) });
+  const [magmaOrder, setMagmaOrder] = useState<MagmaLSPOrder | null>(null);
+  const [creatingMagmaOrder, setCreatingMagmaOrder] = useState(false);
+  const [payingMagmaOrder, setPayingMagmaOrder] = useState(false);
+  const [magmaNotice, setMagmaNotice] = useState<string | null>(null);
   const [transactionalSettings, setTransactionalSettings] = useState<TransactionalLiquiditySettings | null>(null);
   const [transactionalForm, setTransactionalForm] = useState({ fiat_currency: 'EUR', amount_source: 'custom' as TransactionalLiquidityAmountSource, amount_fiat: '', trade_mode: 'hedgefull_single_collateral' as TradeMode, target_direction: 'bid' as TransactionalLiquidityTargetDirection, lightning_liquidity_source: 'own_channels' as TransactionalLiquiditySource, fee_tier: 'economic' as const, coupled_hedge: false });
   const [transactionalLoading, setTransactionalLoading] = useState(true);
   const [transactionalEditing, setTransactionalEditing] = useState(false);
   const [transactionalSaving, setTransactionalSaving] = useState(false);
+  const [savingLightningRoute, setSavingLightningRoute] = useState(false);
   const [transactionalNotice, setTransactionalNotice] = useState<string | null>(null);
   const [transactionalError, setTransactionalError] = useState<string | null>(null);
 
@@ -138,13 +303,28 @@ export function LiquidityWorkspace() {
   const lndAddresses = useMemo(() => lndWallet?.addresses.filter(address => address.kind === 'onchain') ?? [], [lndWallet]);
   const selectedExchange = connectedExchanges.find(account => String(account.id) === selectedExchangeID) ?? null;
   const channels = lndWallet?.channels ?? [];
+  const pendingChannels = lndWallet?.pending_channels ?? [];
   const selectedChannelPreset = channelPresets.find(preset => preset.id === selectedChannelPresetID);
   const lndOnChainSats = lndAddresses.reduce((sum, address) => sum + (address.balance_sat ?? 0), 0);
-  const lightningCapacitySats = channels.reduce((sum, channel) => sum + channel.capacity_sat, 0);
   const activeChannelCount = channels.filter(channel => channel.active).length;
   const lspChannelPoint = lspStatus?.configured ? lspStatus.channel_point : lspConfig.channel_point;
   const lspLiquidityChannel = channels.find(channel => channel.channel_point === lspChannelPoint);
   const ownLiquidityChannels = channels.filter(channel => channel.channel_point !== lspChannelPoint);
+  const ownCapacitySats = ownLiquidityChannels.reduce((sum, channel) => sum + channel.capacity_sat, 0);
+  const ownOutboundSats = ownLiquidityChannels.reduce((sum, channel) => sum + channel.local_balance_sat, 0);
+  const ownInboundSats = ownLiquidityChannels.reduce((sum, channel) => sum + channel.remote_balance_sat, 0);
+  const lightningRoutingSource = transactionalSettings?.lightning_liquidity_source ?? 'own_channels';
+  const routingCapacitySats = lightningRoutingSource === 'lsp_channel'
+    ? (lspLiquidityChannel?.capacity_sat ?? 0)
+    : ownCapacitySats;
+  const incompleteSwaps = submarineSwaps.filter(item => !['settled', 'refunded'].includes(item.state));
+  const magmaChainReady = magmaInfo?.chain_ready ?? lndWallet?.node?.synced_to_chain ?? false;
+  const magmaBlockHeight = magmaInfo?.block_height ?? lndWallet?.node?.block_height;
+  const lightningOutboundSat = channels.filter(channel => channel.active).reduce((sum, channel) => sum + (channel.local_balance_sat || 0), 0);
+  const magmaOutboundSat = magmaInfo?.outbound_sat ?? lightningOutboundSat;
+  const magmaConfirmedSat = magmaInfo?.confirmed_balance_sat ?? lndOnChainSats;
+  const magmaWalletReady = magmaInfo != null ? magmaInfo.wallet_ready !== false && magmaOutboundSat > 0 : magmaOutboundSat > 0;
+  const magmaCanCreate = magmaChainReady && magmaWalletReady;
   const totalCexFiatValue = useMemo(() => cexLiquidity.reduce((sum, source) => sum + source.spotAssets.reduce((assetSum, balance) => {
     if (balance.asset === filters.fiat) return assetSum + balance.available;
     if (balance.asset === 'BTC' && refPrice != null) return assetSum + balance.available * refPrice;
@@ -176,6 +356,10 @@ export function LiquidityWorkspace() {
     : 'fiat target in BTC';
 
   useEffect(() => {
+    window.localStorage.setItem(HUB_BALANCE_UNIT_STORAGE_KEY, hubBalanceUnit);
+  }, [hubBalanceUnit]);
+
+  useEffect(() => {
     let active = true;
     void fetchTransactionalLiquiditySettings()
       .then(settings => {
@@ -191,6 +375,7 @@ export function LiquidityWorkspace() {
           fee_tier: settings.fee_tier ?? 'economic',
           coupled_hedge: settings.coupled_hedge ?? false,
         });
+        setLightningPath(settings.lightning_liquidity_source ?? 'own_channels');
       })
       .catch(error => { if (active) { setTransactionalError(error instanceof Error ? error.message : 'Could not load transactional liquidity settings.'); setTransactionalEditing(true); } })
       .finally(() => { if (active) setTransactionalLoading(false); });
@@ -208,7 +393,21 @@ export function LiquidityWorkspace() {
       if (!active) return;
 
       if (configResult.status === 'fulfilled') setLspConfig(configResult.value);
-      if (statusResult.status === 'fulfilled') setLspStatus(statusResult.value);
+      if (statusResult.status === 'fulfilled') {
+        setLspStatus(statusResult.value);
+        if (statusResult.value.configured) {
+          setLspConfig({
+            channel_point: statusResult.value.channel_point,
+            remote_pubkey: statusResult.value.remote_pubkey,
+            provider_label: statusResult.value.provider_label,
+            enabled: statusResult.value.enabled,
+            headroom_sat: statusResult.value.headroom_sat,
+            max_swap_fee_sat: statusResult.value.max_swap_fee_sat,
+            max_swap_fee_ppm: statusResult.value.max_swap_fee_ppm,
+            updated_at: statusResult.value.updated_at,
+          });
+        }
+      }
       if (swapsResult.status === 'fulfilled') setSubmarineSwaps(swapsResult.value ?? []);
 
       const failure = [configResult, statusResult, swapsResult].find(result => result.status === 'rejected');
@@ -220,6 +419,55 @@ export function LiquidityWorkspace() {
     void load();
     return () => { active = false; };
   }, []);
+
+  useEffect(() => {
+    if (lightningPath !== 'lsp_channel') return;
+    let active = true;
+    setMagmaInfoLoading(true);
+    setMagmaInfoError(null);
+    void fetchMagmaLSPInfo(magmaForm.pool)
+      .then(info => {
+        if (!active) return;
+        setMagmaInfo(info);
+        const minInbound = Number(info.info.min_initial_lsp_balance_sat || 0);
+        setMagmaForm(current => ({
+          ...current,
+          inboundSats: current.inboundSats || (minInbound > 0 ? String(minInbound) : ''),
+          expiryBlocks: current.expiryBlocks || String(Math.min(DEFAULT_MAGMA_EXPIRY_BLOCKS, info.info.max_channel_expiry_blocks || DEFAULT_MAGMA_EXPIRY_BLOCKS)),
+        }));
+      })
+      .catch(error => {
+        if (!active) return;
+        setMagmaInfoError(error instanceof Error ? error.message : 'Could not load Amboss Magma quote info.');
+      })
+      .finally(() => { if (active) setMagmaInfoLoading(false); });
+    return () => { active = false; };
+  }, [lightningPath, magmaForm.pool]);
+
+  useEffect(() => {
+    if (!magmaOrder || ['COMPLETED', 'FAILED'].includes(magmaOrder.order_state)) return;
+    let active = true;
+    const poll = async () => {
+      try {
+        const next = await fetchMagmaLSPOrder(magmaOrder.id);
+        if (!active || !next?.id) return;
+        setMagmaOrder(next);
+        if (next.order_state === 'COMPLETED') {
+          setMagmaNotice(next.auto_registered ? 'Magma channel opened and registered as the LSP channel.' : 'Magma channel opened.');
+          setLspStatus(await fetchLSPChannelStatus());
+          await refreshLndWallet();
+        }
+        if (next.order_state === 'FAILED') {
+          setMagmaNotice(next.failure_reason || 'Magma order failed.');
+        }
+      } catch {
+        // Keep polling; transient proxy errors should not stop the UI.
+      }
+    };
+    void poll();
+    const interval = window.setInterval(() => { void poll(); }, 5000);
+    return () => { active = false; window.clearInterval(interval); };
+  }, [magmaOrder?.id, magmaOrder?.order_state]);
 
   useEffect(() => {
     let active = true;
@@ -258,12 +506,53 @@ export function LiquidityWorkspace() {
       });
       setTransactionalSettings(updated);
       setTransactionalForm(current => ({ ...current, amount_fiat: updated.amount_fiat == null ? '' : String(updated.amount_fiat), target_direction: updated.target_direction ?? 'bid', lightning_liquidity_source: updated.lightning_liquidity_source ?? 'own_channels', fee_tier: updated.fee_tier ?? 'economic', coupled_hedge: updated.coupled_hedge ?? false }));
+      setLightningPath(updated.lightning_liquidity_source ?? 'own_channels');
       setTransactionalNotice('Transactional liquidity targets saved.');
       setTransactionalEditing(false);
     } catch (error) {
       setTransactionalError(error instanceof Error ? error.message : 'Could not save transactional liquidity settings.');
     } finally {
       setTransactionalSaving(false);
+    }
+  };
+
+  const persistLightningRoutingSource = async (source: TransactionalLiquiditySource) => {
+    const amountFiat = transactionalSettings?.amount_fiat;
+    if (!transactionalSettings || amountFiat == null || amountFiat <= 0) {
+      setChannelError('Save a transactional liquidity target before choosing which Lightning path trades should use.');
+      setChannelNotice(null);
+      return;
+    }
+    setSavingLightningRoute(true);
+    setChannelError(null);
+    setChannelNotice(null);
+    try {
+      const updated = await updateTransactionalLiquiditySettings({
+        fiat_currency: transactionalSettings.fiat_currency,
+        amount_source: transactionalSettings.amount_source,
+        amount_fiat: amountFiat,
+        trade_mode: transactionalSettings.trade_mode,
+        target_direction: transactionalSettings.target_direction ?? 'bid',
+        lightning_liquidity_source: source,
+        fee_tier: transactionalSettings.fee_tier ?? 'economic',
+        coupled_hedge: transactionalSettings.coupled_hedge ?? false,
+      });
+      setTransactionalSettings(updated);
+      setTransactionalForm(current => ({
+        ...current,
+        lightning_liquidity_source: updated.lightning_liquidity_source ?? source,
+        target_direction: updated.target_direction ?? 'bid',
+        fee_tier: updated.fee_tier ?? 'economic',
+        coupled_hedge: updated.coupled_hedge ?? false,
+      }));
+      setLightningPath(source);
+      setChannelNotice(source === 'lsp_channel'
+        ? 'Trades will route through the registered LSP channel.'
+        : 'Trades will route through your own Lightning channels.');
+    } catch (error) {
+      setChannelError(error instanceof Error ? error.message : 'Could not save the Lightning routing source.');
+    } finally {
+      setSavingLightningRoute(false);
     }
   };
 
@@ -448,6 +737,107 @@ export function LiquidityWorkspace() {
     }
   };
 
+  const selectLspCandidate = (channelPoint: string) => {
+    const channel = channels.find(item => item.channel_point === channelPoint);
+    setLspConfig(previous => ({
+      ...previous,
+      channel_point: channel?.channel_point || '',
+      remote_pubkey: channel?.remote_pubkey || '',
+      provider_label: channel?.remote_alias || previous.provider_label,
+      enabled: Boolean(channel),
+    }));
+  };
+
+  const clearLspChannel = async () => {
+    setSavingLsp(true);
+    setLspError(null);
+    setLspNotice(null);
+    try {
+      const saved = await updateLSPChannel({ ...emptyLSPConfig });
+      setLspConfig(saved);
+      setLspStatus(await fetchLSPChannelStatus());
+      setLspNotice('LSP channel registration cleared.');
+    } catch (error) {
+      setLspError(error instanceof Error ? error.message : 'Failed to clear the LSP channel.');
+    } finally {
+      setSavingLsp(false);
+    }
+  };
+
+  const createMagmaOrder = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const inboundSats = Number(magmaForm.inboundSats);
+    const expiryBlocks = Number(magmaForm.expiryBlocks);
+    if (!Number.isFinite(inboundSats) || inboundSats <= 0) {
+      setMagmaNotice(null);
+      setLspError('Enter a positive inbound capacity in sats.');
+      return;
+    }
+    if (!Number.isFinite(expiryBlocks) || expiryBlocks <= 0) {
+      setMagmaNotice(null);
+      setLspError('Enter a positive channel expiry in blocks.');
+      return;
+    }
+    if (!magmaChainReady) {
+      setMagmaNotice(null);
+      setLspError('LND must finish syncing to chain before creating a Magma order.');
+      return;
+    }
+    if (!magmaWalletReady) {
+      setMagmaNotice(null);
+      setLspError(`LND Lightning outbound is too low to pay a Magma invoice (outbound ${formatSats(magmaOutboundSat)}, confirmed wallet ${formatSats(magmaConfirmedSat)}).`);
+      return;
+    }
+    setCreatingMagmaOrder(true);
+    setLspError(null);
+    setMagmaNotice(null);
+    try {
+      const order = await createMagmaLSPOrder({
+        pool: magmaForm.pool,
+        lsp_balance_sat: inboundSats,
+        announce_channel: !magmaForm.privateChannel,
+        channel_expiry_blocks: expiryBlocks,
+      });
+      setMagmaOrder(order);
+      setMagmaNotice('Magma order created. Pay the invoice from LND or copy it for manual payment.');
+    } catch (error) {
+      setLspError(error instanceof Error ? error.message : 'Could not create the Magma order.');
+    } finally {
+      setCreatingMagmaOrder(false);
+    }
+  };
+
+  const payMagmaOrderFromLnd = async () => {
+    if (!magmaOrder) return;
+    if (!magmaWalletReady || magmaOutboundSat < (magmaOrder.order_total_sat || 0)) {
+      setMagmaNotice(null);
+      setLspError(`LND Lightning outbound is too low to pay this Magma invoice (outbound ${formatSats(magmaOutboundSat)}, invoice ${formatSats(magmaOrder.order_total_sat || 0)}).`);
+      return;
+    }
+    setPayingMagmaOrder(true);
+    setLspError(null);
+    setMagmaNotice(null);
+    try {
+      const order = await payMagmaLSPOrder(magmaOrder.id);
+      setMagmaOrder(order);
+      setMagmaNotice('Invoice payment submitted from LND. Waiting for Magma to open the channel.');
+    } catch (error) {
+      setLspError(error instanceof Error ? error.message : 'Could not pay the Magma invoice from LND.');
+    } finally {
+      setPayingMagmaOrder(false);
+    }
+  };
+
+  const copyMagmaInvoice = async () => {
+    if (!magmaOrder?.bolt11_invoice) return;
+    try {
+      await navigator.clipboard.writeText(magmaOrder.bolt11_invoice);
+      setMagmaNotice('Invoice copied to clipboard.');
+    } catch {
+      setLspError('Could not copy the invoice to the clipboard.');
+    }
+  };
+
   const submitOpenChannel = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const fundingSats = Number(channelForm.fundingSats);
@@ -532,21 +922,372 @@ export function LiquidityWorkspace() {
           </div>
 
           <div role="listitem" className={`liquidity-allocation-card liquidity-allocation-card--lnd ${hubInventoryExpanded ? 'is-expanded' : ''}`}>
-            <div className="liquidity-allocation-card__heading"><span className="liquidity-allocation-card__marker">02</span><div className="min-w-0"><div className="text-[0.75rem] font-semibold text-text">Mainnet Hub Liquidity</div><div className="text-[0.65rem] text-muted mt-0.5">On-chain wallet reserve</div></div><button type="button" className="liquidity-hub-summary__toggle" aria-label={hubInventoryExpanded ? 'Collapse Mainnet Hub liquidity' : 'Expand Mainnet Hub liquidity'} aria-expanded={hubInventoryExpanded} aria-controls="hub-inventory-details" onClick={() => setHubInventoryExpanded(current => !current)}>{hubInventoryExpanded ? '⌃' : '⌄'}</button></div>
-            <div className="liquidity-allocation-card__figures"><button type="button" className="liquidity-allocation-card__current liquidity-hub-summary" aria-expanded={hubInventoryExpanded} aria-controls="hub-inventory-details" onClick={() => setHubInventoryExpanded(current => !current)}><div className="liquidity-value-label">Current balance</div>{liquidityLoading && !lndWallet ? <span className="text-muted text-[0.7rem]">Loading…</span> : lndLiquidityError && !lndWallet ? <span className="text-red text-[0.7rem]">Unavailable</span> : <><strong className="liquidity-hub-summary__value">{formatBTC(lndOnChainSats / 1e8)}</strong><span className="liquidity-hub-summary__hint">{hubInventoryExpanded ? 'Hide address details' : `View ${lndAddresses.length} on-chain address${lndAddresses.length === 1 ? '' : 'es'}`}</span>{lndLiquidityError && <span className="text-peach text-[0.6rem]">Refresh failed; showing last value</span>}</>}</button><div className="liquidity-allocation-card__target"><div className="liquidity-value-label">Target</div><TargetCell value={lndTargetBTC} detail={lndTargetDetail} /></div></div>
-            {hubInventoryExpanded && <div id="hub-inventory-details" className="liquidity-hub-inventory" aria-label="Mainnet Hub address details">{lndAddresses.length > 0 ? lndAddresses.map(address => <div key={address.address} className="liquidity-hub-inventory__address"><div className="liquidity-hub-inventory__address-heading"><div><strong>{address.label || 'Mainnet address'}</strong><code title={address.address}>{shortAddress(address.address)}</code></div><span className="mono-nums">{formatSats(address.balance_sat ?? 0)}</span></div>{address.whitelisted_by && address.whitelisted_by.length > 0 && <div className="liquidity-hub-inventory__whitelist"><span>Whitelisted on</span>{address.whitelisted_by.map(provider => <span className="liquidity-hub-inventory__pill" key={provider}>{provider}</span>)}</div>}</div>) : <p>No on-chain addresses returned by the Mainnet Hub.</p>}<section className="liquidity-hub-management" aria-hidden="true" /></div>}
-            <div ref={hubOperationsRef} className="liquidity-card-operations-host" />
+            <div className="liquidity-allocation-card__heading"><span className="liquidity-allocation-card__marker">02</span><div className="min-w-0"><div className="text-[0.75rem] font-semibold text-text">Mainnet Hub Liquidity</div><div className="text-[0.65rem] text-muted mt-0.5">On-chain wallet reserve</div></div><div className="liquidity-hub-heading__controls"><HubBalanceUnitToggle unit={hubBalanceUnit} onChange={setHubBalanceUnit} /><button type="button" className="liquidity-hub-summary__toggle" aria-label={hubInventoryExpanded ? 'Collapse Mainnet Hub liquidity' : 'Expand Mainnet Hub liquidity'} aria-expanded={hubInventoryExpanded} aria-controls="hub-workspace" onClick={() => setHubInventoryExpanded(current => !current)}>{hubInventoryExpanded ? '⌃' : '⌄'}</button></div></div>
+            <div className="liquidity-allocation-card__figures"><button type="button" className="liquidity-allocation-card__current liquidity-hub-summary" aria-expanded={hubInventoryExpanded} aria-controls="hub-workspace" onClick={() => setHubInventoryExpanded(current => !current)}><div className="liquidity-value-label">Current balance</div>{liquidityLoading && !lndWallet ? <span className="text-muted text-[0.7rem]">Loading…</span> : lndLiquidityError && !lndWallet ? <span className="text-red text-[0.7rem]">Unavailable</span> : <><strong className="liquidity-hub-summary__value">{formatHubBalance(lndOnChainSats, hubBalanceUnit)}</strong><span className="liquidity-hub-summary__hint">{hubInventoryExpanded ? 'Hide hub workspace' : `View ${lndAddresses.length} on-chain address${lndAddresses.length === 1 ? '' : 'es'}`}</span>{lndLiquidityError && <span className="text-peach text-[0.6rem]">Refresh failed; showing last value</span>}</>}</button><div className="liquidity-allocation-card__target"><div className="liquidity-value-label">Target</div><TargetCell value={lndTargetBTC} detail={lndTargetDetail} /></div></div>
+            {hubInventoryExpanded && (
+              <div id="hub-workspace" className="hub-workspace">
+                <div id="hub-inventory-details" className={`liquidity-hub-inventory ${hubBalanceUnit === 'sats' ? 'is-sats' : 'is-btc'}`} aria-label="Mainnet Hub address details">
+                  {lndAddresses.length > 0
+                    ? lndAddresses.map(address => (
+                      <HubInventoryAddress
+                        key={address.address}
+                        label={address.label || 'Mainnet address'}
+                        address={address.address}
+                        balanceSat={address.balance_sat ?? 0}
+                        balanceUnit={hubBalanceUnit}
+                        whitelistedBy={address.whitelisted_by}
+                      />
+                    ))
+                    : <p>No on-chain addresses returned by the Mainnet Hub.</p>}
+                </div>
+
+                <section className="hub-move" aria-labelledby="pool-transfer-heading">
+                  <div className="hub-move__toolbar">
+                    <div>
+                      <h4 id="pool-transfer-heading">Move funds</h4>
+                      <p>Fill the on-chain wallet from an exchange or external address, or drain BTC out of LND.</p>
+                    </div>
+                    <div className="hub-move__toolbar-aside">
+                      <div className="hub-move__available">
+                        <span>Available</span>
+                        <strong className="mono-nums">{formatHubBalance(lndOnChainSats, hubBalanceUnit)}</strong>
+                      </div>
+                      <button
+                        type="button"
+                        className="hub-move__toggle"
+                        aria-expanded={poolExpanded}
+                        aria-controls="wallet-pool-controls"
+                        onClick={() => setPoolExpanded(current => !current)}
+                      >
+                        <span>{poolExpanded ? 'Hide form' : 'Set up transfer'}</span>
+                        <span className="hub-move__toggle-icon" aria-hidden="true">{poolExpanded ? '⌃' : '⌄'}</span>
+                      </button>
+                    </div>
+                  </div>
+
+                  {poolExpanded && (
+                    <form id="wallet-pool-controls" onSubmit={submit} className="hub-move__form" noValidate>
+                      <div className="hub-move__chooser" role="group" aria-label="Pool transfer direction">
+                        <button type="button" aria-pressed={action === 'fill'} className={action === 'fill' ? 'is-selected' : ''} onClick={() => selectAction('fill')}>
+                          <strong>Fill LND pool</strong>
+                          <span>Send BTC into the hub wallet.</span>
+                        </button>
+                        <button type="button" aria-pressed={action === 'drain'} className={action === 'drain' ? 'is-selected' : ''} onClick={() => selectAction('drain')}>
+                          <strong>Drain LND pool</strong>
+                          <span>Send on-chain BTC out of LND.</span>
+                        </button>
+                      </div>
+
+                      <div className="hub-move__route" role="group" aria-label="Transfer route">
+                        <button type="button" aria-pressed={transferRoute === 'exchange'} className={transferRoute === 'exchange' ? 'is-selected' : ''} onClick={() => selectRoute('exchange')}>Connected exchange</button>
+                        <button type="button" aria-pressed={transferRoute === 'manual'} className={transferRoute === 'manual' ? 'is-selected' : ''} onClick={() => selectRoute('manual')}>Manual address</button>
+                      </div>
+
+                      {action === 'fill' && transferRoute === 'manual' ? (
+                        <div className="hub-move__deposit">
+                          <span className="hub-move__label">LND deposit address</span>
+                          {selectedDestination ? (
+                            <div className="hub-move__deposit-body">
+                              <LocalQrCode
+                                value={`bitcoin:${selectedDestination}`}
+                                alt="QR code for the LND Bitcoin deposit address"
+                                size={148}
+                                fallback="Could not generate QR code."
+                              />
+                              <div className="hub-move__deposit-address">
+                                <span className="hub-move__label">Send Bitcoin to this address</span>
+                                <div className="hub-move__deposit-value">
+                                  <code>{selectedDestination}</code>
+                                  <div className="liquidity-hub-inventory__address-actions">
+                                    <HubAddressCopyButton address={selectedDestination} />
+                                    <a
+                                      href={bitcoinAddressExplorerUrl(selectedDestination)}
+                                      target="_blank"
+                                      rel="noreferrer"
+                                      className="liquidity-hub-inventory__action"
+                                      aria-label="View address on mempool.space"
+                                      title="View on mempool.space"
+                                    >
+                                      <ExternalLinkIcon />
+                                    </a>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          ) : (
+                            <p className="hub-move__empty">No LND on-chain address available.</p>
+                          )}
+                        </div>
+                      ) : (
+                        <>
+                          <div className="hub-move__fields">
+                            {transferRoute === 'exchange' ? (
+                              <label>
+                                <span>Exchange account</span>
+                                <select value={selectedExchangeID} onChange={event => { setSelectedExchangeID(event.target.value); setFeedback(null); }} disabled={loadingAccounts || connectedExchanges.length === 0}>
+                                  {loadingAccounts && <option>Loading connections…</option>}
+                                  {!loadingAccounts && connectedExchanges.length === 0 && <option>No connected exchange available</option>}
+                                  {connectedExchanges.map(account => <option key={account.id} value={account.id}>{account.provider}</option>)}
+                                </select>
+                              </label>
+                            ) : (
+                              <label>
+                                <span>{action === 'fill' ? 'Source BTC address' : 'Destination BTC address'}</span>
+                                <input type="text" value={manualAddress} onChange={event => { setManualAddress(event.target.value); setFeedback(null); }} placeholder="Paste a Bitcoin address" />
+                              </label>
+                            )}
+                            <label>
+                              <span>Amount to move</span>
+                              <div className="hub-move__amount">
+                                <input
+                                  type="number"
+                                  inputMode="decimal"
+                                  min="0"
+                                  step="any"
+                                  value={amount}
+                                  onChange={event => { setAmount(event.target.value); setFeedback(null); }}
+                                  placeholder={hubBalanceUnit === 'sats' ? '0' : '0.00000000'}
+                                  className="mono-nums"
+                                  aria-label="Amount to move"
+                                />
+                                <span>{hubBalanceUnit === 'sats' ? 'sats' : 'BTC'}</span>
+                              </div>
+                            </label>
+                            {!(transferRoute === 'manual' && action === 'drain') && (
+                              <label className="hub-move__destination">
+                                <span>Destination BTC address</span>
+                                <select value={selectedDestination} onChange={event => { setSelectedDestination(event.target.value); setFeedback(null); }} disabled={loadingDestination || destinationOptions.length === 0}>
+                                  {loadingDestination && <option>Loading BTC addresses…</option>}
+                                  {!loadingDestination && destinationOptions.length === 0 && <option>No BTC destination address available</option>}
+                                  {destinationOptions.map(option => <option key={option.address} value={option.address}>{option.label} · {option.network} · {shortAddress(option.address)}</option>)}
+                                </select>
+                              </label>
+                            )}
+                          </div>
+
+                          <div className="hub-move__review">
+                            <div className="hub-move__path">
+                              <div><span>From</span><strong>{sourceLabel}</strong></div>
+                              <i aria-hidden="true">→</i>
+                              <div><span>To</span><strong>{destinationLabel}</strong></div>
+                            </div>
+                            <div className="hub-move__submit">
+                              <p>Creates a request only; funds are not sent yet.</p>
+                              <button type="submit">Create transfer request</button>
+                            </div>
+                          </div>
+                        </>
+                      )}
+
+                      {loadError && <p className="hub-move__alert" role="alert">{loadError}</p>}
+                      {feedback && <p className="hub-move__notice" role="status">{feedback}</p>}
+                    </form>
+                  )}
+                </section>
+              </div>
+            )}
           </div>
 
           <div role="listitem" className={`liquidity-allocation-card liquidity-allocation-card--lightning ${lightningInventoryExpanded ? 'is-expanded' : ''}`}>
             <div className="liquidity-allocation-card__heading"><span className="liquidity-allocation-card__marker">03</span><div className="min-w-0"><div className="text-[0.75rem] font-semibold text-text">Lightning Channel Liquidity</div><div className="text-[0.65rem] text-muted mt-0.5">Ready-to-route capacity</div></div><button type="button" className="liquidity-lightning-summary__toggle" aria-label={lightningInventoryExpanded ? 'Collapse Lightning liquidity' : 'Expand Lightning liquidity'} aria-expanded={lightningInventoryExpanded} aria-controls="lightning-inventory-details" onClick={() => setLightningInventoryExpanded(current => !current)}>{lightningInventoryExpanded ? '⌃' : '⌄'}</button></div>
-            <div className="liquidity-allocation-card__figures"><button type="button" className="liquidity-allocation-card__current liquidity-lightning-summary" aria-expanded={lightningInventoryExpanded} aria-controls="lightning-inventory-details" onClick={() => setLightningInventoryExpanded(current => !current)}><div className="liquidity-value-label">Current channel balance</div>{liquidityLoading && !lndWallet ? <span className="text-muted text-[0.7rem]">Loading…</span> : lndLiquidityError && !lndWallet ? <span className="text-red text-[0.7rem]">Unavailable</span> : <><strong className="liquidity-lightning-summary__value">{formatBTC(lightningCapacitySats / 1e8)}</strong><span className="liquidity-lightning-summary__hint">{lightningInventoryExpanded ? 'Hide channel details' : `View ${channels.length} channel${channels.length === 1 ? '' : 's'} · ${activeChannelCount} active`}</span>{lndLiquidityError && <span className="text-peach text-[0.6rem]">Refresh failed; showing last value</span>}</>}</button><div className="liquidity-allocation-card__target"><div className="liquidity-value-label">Target</div><TargetCell value={lndTargetBTC} detail={lndTargetDetail} /></div></div>
-            {lightningInventoryExpanded && <div id="lightning-inventory-details" className="liquidity-lightning-inventory" aria-label="Lightning channel liquidity details">
-              <section className="liquidity-lightning-inventory__group"><div className="liquidity-lightning-inventory__group-heading"><strong>Own liquidity</strong><span>{ownLiquidityChannels.length} channel{ownLiquidityChannels.length === 1 ? '' : 's'}</span></div>{ownLiquidityChannels.length > 0 ? ownLiquidityChannels.map(channel => <div key={channel.channel_point} className="liquidity-lightning-inventory__channel"><div><strong>{channel.remote_alias || shortAddress(channel.remote_pubkey)}</strong><span>{channel.active ? 'Active' : 'Inactive'}{channel.private ? ' · Private' : ''}</span></div><dl><div><dt>Capacity</dt><dd>{formatSats(channel.capacity_sat)}</dd></div><div><dt>Outbound</dt><dd>{formatSats(channel.local_balance_sat)}</dd></div><div><dt>Inbound</dt><dd>{formatSats(channel.remote_balance_sat)}</dd></div></dl><div className="liquidity-lightning-inventory__channel-actions"><button type="button" disabled={closingChannelPoint === channel.channel_point} onClick={() => void submitCloseChannel(channel.channel_point, false)}>Close</button><button type="button" disabled={closingChannelPoint === channel.channel_point} onClick={() => void submitCloseChannel(channel.channel_point, true)}>Force close</button></div></div>) : <p>No own-liquidity channels.</p>}</section>
-              <section className="liquidity-lightning-inventory__group"><div className="liquidity-lightning-inventory__group-heading"><strong>LSP channel</strong><span>{lspLiquidityChannel ? (lspStatus?.lsp_healthy ? 'Active' : 'Needs attention') : 'Not configured'}</span></div>{lspLiquidityChannel ? <><div className="liquidity-lightning-inventory__channel"><div><strong>{lspConfig.provider_label || lspLiquidityChannel.remote_alias || shortAddress(lspLiquidityChannel.remote_pubkey)}</strong><span>{lspLiquidityChannel.active ? 'Active' : 'Inactive'}{lspLiquidityChannel.private ? ' · Private' : ''}</span></div><dl><div><dt>Capacity</dt><dd>{formatSats(lspLiquidityChannel.capacity_sat)}</dd></div><div><dt>Outbound</dt><dd>{formatSats(lspStatus?.usable_outbound_sat ?? lspLiquidityChannel.local_balance_sat)}</dd></div><div><dt>Inbound</dt><dd>{formatSats(lspStatus?.usable_inbound_sat ?? lspLiquidityChannel.remote_balance_sat)}</dd></div></dl></div><div className="liquidity-lightning-inventory__fees"><span>Headroom <b>{formatSats(lspConfig.headroom_sat)}</b></span><span>Max swap fee <b>{formatSats(lspConfig.max_swap_fee_sat)}</b></span><span>Max fee rate <b>{lspConfig.max_swap_fee_ppm.toLocaleString()} ppm</b></span></div></> : <p>Select an LSP channel below to show its capacity and fees.</p>}</section>
-              <section className="liquidity-lightning-management" aria-labelledby="lightning-controls-heading"><div><span className="liquidity-section-kicker">Lightning channels</span><h4 id="lightning-controls-heading">Manage channels</h4><p>{!lspLoading && (lspStatus?.lsp_healthy ? 'LSP channel active' : 'LSP channel needs attention')}</p></div><label><span>LSP channel</span><select value={lspConfig.channel_point} onChange={event => { const channel = channels.find(item => item.channel_point === event.target.value); setLspConfig(previous => ({ ...previous, channel_point: channel?.channel_point || '', remote_pubkey: channel?.remote_pubkey || '', provider_label: channel?.remote_alias || '', enabled: Boolean(channel) })); }}><option value="">Choose a live LND channel…</option>{channels.map(channel => <option key={channel.channel_point} value={channel.channel_point}>{channel.remote_alias || shortAddress(channel.remote_pubkey)}</option>)}</select></label><div className="liquidity-lightning-management__fees"><label><span>Headroom (sats)</span><input type="number" min="0" value={lspConfig.headroom_sat} onChange={event => setLspConfig(previous => ({ ...previous, headroom_sat: Number(event.target.value) }))} /></label><label><span>Max fee (sats)</span><input type="number" min="1" value={lspConfig.max_swap_fee_sat} onChange={event => setLspConfig(previous => ({ ...previous, max_swap_fee_sat: Number(event.target.value) }))} /></label><label><span>Max fee (ppm)</span><input type="number" min="1" value={lspConfig.max_swap_fee_ppm} onChange={event => setLspConfig(previous => ({ ...previous, max_swap_fee_ppm: Number(event.target.value) }))} /></label></div><button type="button" disabled={savingLsp || !lspConfig.channel_point} onClick={() => void saveLspChannel()}>{savingLsp ? 'Saving…' : 'Save LSP selection'}</button><details><summary>Open a new channel</summary><form onSubmit={event => void submitOpenChannel(event)}><input value={channelForm.nodePubkey} onChange={event => setChannelForm(current => ({ ...current, nodePubkey: event.target.value }))} placeholder="Node public key" /><input value={channelForm.peerHost} onChange={event => setChannelForm(current => ({ ...current, peerHost: event.target.value }))} placeholder="Peer host (optional)" /><input type="number" min="1" value={channelForm.fundingSats} onChange={event => setChannelForm(current => ({ ...current, fundingSats: event.target.value }))} placeholder="Funding sats" /><button type="submit" disabled={openingChannel}>{openingChannel ? 'Opening…' : 'Open channel'}</button></form></details>{(lspError || lspNotice || channelError || channelNotice) && <p className="liquidity-lightning-management__feedback">{lspError || lspNotice || channelError || channelNotice}</p>}</section>
+            <div className="liquidity-allocation-card__figures"><button type="button" className="liquidity-allocation-card__current liquidity-lightning-summary" aria-expanded={lightningInventoryExpanded} aria-controls="lightning-inventory-details" onClick={() => setLightningInventoryExpanded(current => !current)}><div className="liquidity-value-label">Current channel balance</div>{liquidityLoading && !lndWallet ? <span className="text-muted text-[0.7rem]">Loading…</span> : lndLiquidityError && !lndWallet ? <span className="text-red text-[0.7rem]">Unavailable</span> : <><strong className="liquidity-lightning-summary__value">{formatBTC(routingCapacitySats / 1e8)}</strong><span className="liquidity-lightning-summary__hint">{lightningInventoryExpanded ? 'Hide Lightning workspace' : `${lightningRoutingSource === 'lsp_channel' ? 'Routing via LSP' : 'Routing via own channels'} · ${ownLiquidityChannels.length} own · ${lspStatus?.lsp_healthy ? 'LSP active' : lspStatus?.configured ? 'LSP needs attention' : 'no LSP'} · ${activeChannelCount} active`}</span>{lndLiquidityError && <span className="text-peach text-[0.6rem]">Refresh failed; showing last value</span>}</>}</button><div className="liquidity-allocation-card__target"><div className="liquidity-value-label">Target</div><TargetCell value={lndTargetBTC} detail={lndTargetDetail} /></div></div>
+            {lightningInventoryExpanded && <div id="lightning-inventory-details" className="lightning-workspace" aria-label="Lightning channel workspace">
+              <div className="lightning-workspace__chooser" role="tablist" aria-label="Lightning liquidity path">
+                <button type="button" role="tab" id="lightning-path-own" aria-controls="lightning-pane-own" aria-selected={lightningPath === 'own_channels'} className={lightningPath === 'own_channels' ? 'is-selected' : ''} onClick={() => setLightningPath('own_channels')}>
+                  <strong>Own liquidity</strong>
+                  <span>Open channels funded from your LND on-chain wallet.</span>
+                  {lightningRoutingSource === 'own_channels' && <em>Used for routing</em>}
+                </button>
+                <button type="button" role="tab" id="lightning-path-lsp" aria-controls="lightning-pane-lsp" aria-selected={lightningPath === 'lsp_channel'} className={lightningPath === 'lsp_channel' ? 'is-selected' : ''} onClick={() => setLightningPath('lsp_channel')}>
+                  <strong>LSP channel</strong>
+                  <span>Buy inbound capacity from Amboss Magma or register an existing LSP channel.</span>
+                  {lightningRoutingSource === 'lsp_channel' && <em>Used for routing</em>}
+                </button>
+              </div>
+
+              {lightningPath === 'own_channels' && <div id="lightning-pane-own" role="tabpanel" aria-labelledby="lightning-path-own" className="lightning-workspace__pane">
+                <div className="lightning-workspace__toolbar">
+                  <div>
+                    <h4>Own Lightning channels</h4>
+                    <p>These channels spend your own on-chain BTC. Close unused peers here, or open a new channel below.</p>
+                  </div>
+                  {lightningRoutingSource === 'own_channels'
+                    ? <span className="lightning-workspace__badge">Used for routing</span>
+                    : <button type="button" disabled={savingLightningRoute} onClick={() => void persistLightningRoutingSource('own_channels')}>{savingLightningRoute ? 'Saving…' : 'Use own channels for routing'}</button>}
+                </div>
+                {ownLiquidityChannels.length > 0 && <LightningSplit outboundSat={ownOutboundSats} inboundSat={ownInboundSats} />}
+                {ownLiquidityChannels.length > 0
+                  ? ownLiquidityChannels.map(channel => (
+                    <LightningChannelRow
+                      key={channel.channel_point}
+                      channel={channel}
+                      closing={closingChannelPoint === channel.channel_point}
+                      onClose={() => void submitCloseChannel(channel.channel_point, false)}
+                      onForceClose={() => void submitCloseChannel(channel.channel_point, true)}
+                    />
+                  ))
+                  : <p className="lightning-workspace__empty">No own-liquidity channels yet. Open one below with funds from the Mainnet Hub wallet.</p>}
+                {pendingChannels.length > 0 && <section className="lightning-pending" aria-label="Pending channels">
+                  <h5>Pending confirmation</h5>
+                  {pendingChannels.map(channel => (
+                    <div key={`${channel.remote_pubkey}-${channel.state}`} className="lightning-pending__row">
+                      <strong>{channel.remote_alias || shortAddress(channel.remote_pubkey)}</strong>
+                      <span>{channel.state || 'pending'}</span>
+                      <span>{formatSats(channel.capacity_sat)}</span>
+                    </div>
+                  ))}
+                </section>}
+                <form onSubmit={event => void submitOpenChannel(event)} className="lightning-open-form" noValidate>
+                  <div className="lightning-open-form__intro">
+                    <div className="lightning-open-form__intro-copy">
+                      <h5>Open a channel</h5>
+                      <p>Funds come from the LND on-chain wallet. The channel stays pending until the funding transaction confirms.</p>
+                    </div>
+                    <button type="button" className="lightning-open-form__toggle" aria-expanded={openChannelFormExpanded} aria-controls="open-channel-form-details" onClick={() => setOpenChannelFormExpanded(current => !current)}>
+                      <span>{openChannelFormExpanded ? 'Hide form' : 'Configure'}</span>
+                      <span className="lightning-open-form__toggle-icon" aria-hidden="true">{openChannelFormExpanded ? '⌃' : '⌄'}</span>
+                    </button>
+                  </div>
+                  {openChannelFormExpanded && <div id="open-channel-form-details" className="lightning-open-form__details">
+                    <label><span>Public node (optional)</span><select value={selectedChannelPresetID} onChange={event => setSelectedChannelPresetID(event.target.value)}><option value="">Manual connection details</option>{channelPresets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
+                    {selectedChannelPreset && <div className="lightning-open-form__preset"><div><span>{selectedChannelPreset.name}</span> · {selectedChannelPreset.peer_host}</div><div>Minimum funding: {formatSats(selectedChannelPreset.min_funding_amount_sat)}</div>{selectedChannelPreset.warning && <div className="text-peach">{selectedChannelPreset.warning}</div>}<a href={selectedChannelPreset.source_url} target="_blank" rel="noreferrer">Source · verified {selectedChannelPreset.verified_at}</a></div>}
+                    <label><span>Node pubkey</span><input disabled={!!selectedChannelPreset} value={channelForm.nodePubkey} onChange={event => setChannelForm(current => ({ ...current, nodePubkey: event.target.value }))} placeholder="Remote node public key" /></label>
+                    <label><span>Peer host (optional)</span><input disabled={!!selectedChannelPreset} value={channelForm.peerHost} onChange={event => setChannelForm(current => ({ ...current, peerHost: event.target.value }))} placeholder="node.example:9735" /></label>
+                    <label><span>Local funding (sats)</span><input type="number" min="1" step="1" value={channelForm.fundingSats} onChange={event => setChannelForm(current => ({ ...current, fundingSats: event.target.value }))} placeholder="1000000" /></label>
+                    <div className="lightning-open-form__pair">
+                      <label><span>Push sats</span><input type="number" min="0" step="1" value={channelForm.pushSats} onChange={event => setChannelForm(current => ({ ...current, pushSats: event.target.value }))} placeholder="0" /></label>
+                      <label><span>Fee (sat/vB)</span><input type="number" min="1" step="1" value={channelForm.feeRate} onChange={event => setChannelForm(current => ({ ...current, feeRate: event.target.value }))} /></label>
+                    </div>
+                    <label className="lightning-open-form__check"><input type="checkbox" checked={channelForm.private} onChange={event => setChannelForm(current => ({ ...current, private: event.target.checked }))} /> Private channel</label>
+                    <div className="lightning-open-form__submit"><button type="submit" disabled={openingChannel}>{openingChannel ? 'Opening channel…' : 'Open channel'}</button><span>A confirmation is required before LND receives the request.</span></div>
+                  </div>}
+                </form>
+                {(channelError || channelNotice) && <p className={channelError ? 'lightning-workspace__alert' : 'lightning-workspace__notice'} role={channelError ? 'alert' : 'status'}>{channelError || channelNotice}</p>}
+              </div>}
+
+              {lightningPath === 'lsp_channel' && <div id="lightning-pane-lsp" role="tabpanel" aria-labelledby="lightning-path-lsp" className="lightning-workspace__pane">
+                <section className="lightning-lsp-form" aria-labelledby="magma-lsp-heading">
+                  <div className="lightning-workspace__toolbar">
+                    <div>
+                      <h4 id="magma-lsp-heading">Open via Amboss Magma</h4>
+                      <p>Buy inbound capacity through Magma&apos;s BLIP-0051 API, then pay the returned invoice from LND or manually.</p>
+                    </div>
+                  </div>
+                  {magmaInfoLoading && <p className="text-muted text-[0.7rem]">Loading Magma quote info…</p>}
+                  {magmaInfoError && <p className="lightning-workspace__alert" role="alert">{magmaInfoError}</p>}
+                  {!magmaChainReady && !magmaInfoLoading && (
+                    <p className="lightning-workspace__alert" role="alert">
+                      LND is still syncing to chain{magmaBlockHeight ? ` (block ${magmaBlockHeight.toLocaleString()})` : ''}. Magma orders stay disabled until sync completes so invoices can be paid and new channels are recognized.
+                    </p>
+                  )}
+                  {magmaChainReady && !magmaWalletReady && !magmaInfoLoading && (
+                    <p className="lightning-workspace__alert" role="alert">
+                      LND has no spendable Lightning balance to pay a Magma invoice (outbound {formatSats(magmaOutboundSat)}, confirmed wallet {formatSats(magmaConfirmedSat)}). Magma orders stay disabled until outbound channel liquidity is available.
+                    </p>
+                  )}
+                  {magmaInfo && !magmaInfoLoading && (
+                    <p className="text-[0.65rem] text-muted">
+                      Inbound range {formatSats(Number(magmaInfo.info.min_initial_lsp_balance_sat || 0))} – {formatSats(Number(magmaInfo.info.max_initial_lsp_balance_sat || 0))}
+                      {' · '}
+                      Node {shortAddress(magmaInfo.public_key)}
+                      {' · '}
+                      Chain {magmaChainReady ? 'synced' : 'syncing'}
+                    </p>
+                  )}
+                  <form onSubmit={event => { event.preventDefault(); void createMagmaOrder(event); }}>
+                    <div className="lightning-lsp-form__fees">
+                      <label><span>Seller pool</span>
+                        <select aria-label="Magma seller pool" value={magmaForm.pool} onChange={event => setMagmaForm(current => ({ ...current, pool: event.target.value }))}>
+                          <option value="recommended">Recommended</option>
+                          <option value="cheapest">Cheapest</option>
+                        </select>
+                      </label>
+                      <label><span>Inbound capacity (sats)</span>
+                        <input type="number" min="1" aria-label="Inbound capacity (sats)" value={magmaForm.inboundSats} onChange={event => setMagmaForm(current => ({ ...current, inboundSats: event.target.value }))} />
+                      </label>
+                      <label><span>Channel expiry (blocks)</span>
+                        <input type="number" min="1" aria-label="Channel expiry (blocks)" value={magmaForm.expiryBlocks} onChange={event => setMagmaForm(current => ({ ...current, expiryBlocks: event.target.value }))} />
+                      </label>
+                    </div>
+                    <label className="lightning-open-form__check"><input type="checkbox" checked={magmaForm.privateChannel} onChange={event => setMagmaForm(current => ({ ...current, privateChannel: event.target.checked }))} /> Private channel</label>
+                    <div className="lightning-lsp-form__actions">
+                      <button type="submit" disabled={creatingMagmaOrder || magmaInfoLoading || !magmaCanCreate}>{creatingMagmaOrder ? 'Creating order…' : 'Create Magma order'}</button>
+                    </div>
+                  </form>
+                  {magmaOrder && (
+                    <article className="lightning-channel">
+                      <header>
+                        <div>
+                          <strong>Magma order {shortAddress(magmaOrder.order_id)}</strong>
+                          <span>{magmaOrder.order_state}{magmaOrder.payment_state ? ` · ${magmaOrder.payment_state}` : ''}</span>
+                        </div>
+                      </header>
+                      <dl>
+                        <div><dt>Total cost</dt><dd>{formatSats(magmaOrder.order_total_sat)}</dd></div>
+                        <div><dt>Service fee</dt><dd>{formatSats(magmaOrder.fee_total_sat)}</dd></div>
+                        <div><dt>Inbound</dt><dd>{formatSats(magmaOrder.lsp_balance_sat)}</dd></div>
+                        {magmaOrder.funding_outpoint && <div><dt>Funding outpoint</dt><dd><code>{magmaOrder.funding_outpoint}</code></dd></div>}
+                      </dl>
+                      {magmaOrder.bolt11_invoice && !['COMPLETED', 'FAILED'].includes(magmaOrder.order_state) && (
+                        <div className="lightning-lsp-form__actions">
+                          <button type="button" disabled={payingMagmaOrder || !magmaWalletReady || magmaOutboundSat < (magmaOrder.order_total_sat || 0) || ['HOLD', 'PAID'].includes(magmaOrder.payment_state)} onClick={() => void payMagmaOrderFromLnd()}>{payingMagmaOrder ? 'Paying…' : 'Pay from LND'}</button>
+                          <button type="button" onClick={() => void copyMagmaInvoice()}>Copy invoice</button>
+                        </div>
+                      )}
+                      {magmaOrder.auto_registered && <p className="lightning-workspace__notice" role="status">Registered as the active LSP channel.</p>}
+                    </article>
+                  )}
+                  {magmaNotice && <p className="lightning-workspace__notice" role="status">{magmaNotice}</p>}
+                </section>
+                <div className="lightning-workspace__toolbar">
+                  <div>
+                    <h4>Registered LSP channel</h4>
+                    <p>Pick a live LND channel that an LSP already opened. The monitor uses it for inbound liquidity and submarine-swap fee limits.</p>
+                  </div>
+                  {lightningRoutingSource === 'lsp_channel'
+                    ? <span className="lightning-workspace__badge">Used for routing</span>
+                    : <button type="button" disabled={savingLightningRoute || !lspStatus?.configured} onClick={() => void persistLightningRoutingSource('lsp_channel')}>{savingLightningRoute ? 'Saving…' : 'Use LSP channel for routing'}</button>}
+                </div>
+                {lspStatus?.lsp_healthy && <div className="lightning-lsp-status is-healthy">LSP channel active</div>}
+                {lspStatus?.configured && lspStatus.enabled && !lspStatus.lsp_healthy && lspStatus.reason && (
+                  <div className="lightning-lsp-status">{lspStatus.reason}</div>
+                )}
+                {lspLiquidityChannel && <article className="lightning-channel">
+                  <header>
+                    <div>
+                      <strong>{lspConfig.provider_label || lspLiquidityChannel.remote_alias || shortAddress(lspLiquidityChannel.remote_pubkey)}</strong>
+                      <span>{lspLiquidityChannel.active ? 'Active' : 'Inactive'}{lspLiquidityChannel.private ? ' · Private' : ''}</span>
+                    </div>
+                    <code title={lspLiquidityChannel.channel_point}>{shortAddress(lspLiquidityChannel.channel_point)}</code>
+                  </header>
+                  <LightningSplit outboundSat={lspStatus?.usable_outbound_sat ?? lspLiquidityChannel.local_balance_sat} inboundSat={lspStatus?.usable_inbound_sat ?? lspLiquidityChannel.remote_balance_sat} />
+                  <dl>
+                    <div><dt>Capacity</dt><dd>{formatSats(lspLiquidityChannel.capacity_sat)}</dd></div>
+                    <div><dt>Usable outbound</dt><dd>{formatSats(lspStatus?.usable_outbound_sat ?? lspLiquidityChannel.local_balance_sat)}</dd></div>
+                    <div><dt>Usable inbound</dt><dd>{formatSats(lspStatus?.usable_inbound_sat ?? lspLiquidityChannel.remote_balance_sat)}</dd></div>
+                  </dl>
+                </article>}
+                <form className="lightning-lsp-form" onSubmit={event => { event.preventDefault(); void saveLspChannel(); }}>
+                  <h5>Register or update</h5>
+                  <label><span>LND channel</span><select aria-label="LND channel" value={lspConfig.channel_point} onChange={event => selectLspCandidate(event.target.value)}>
+                    <option value="">Choose a live LND channel…</option>
+                    {channels.map(channel => <option key={channel.channel_point} value={channel.channel_point}>{channel.remote_alias || shortAddress(channel.remote_pubkey)} · {formatSats(channel.capacity_sat)} · {channel.active ? 'active' : 'inactive'}</option>)}
+                  </select></label>
+                  <div className="lightning-lsp-form__fees">
+                    <label><span>Headroom (sats)</span><input type="number" min="0" aria-label="Headroom (sats)" value={lspConfig.headroom_sat} onChange={event => setLspConfig(previous => ({ ...previous, headroom_sat: Number(event.target.value) }))} /></label>
+                    <label><span>Maximum fee (sats)</span><input type="number" min="1" aria-label="Maximum fee (sats)" value={lspConfig.max_swap_fee_sat} onChange={event => setLspConfig(previous => ({ ...previous, max_swap_fee_sat: Number(event.target.value) }))} /></label>
+                    <label><span>Maximum fee (ppm)</span><input type="number" min="1" aria-label="Maximum fee (ppm)" value={lspConfig.max_swap_fee_ppm} onChange={event => setLspConfig(previous => ({ ...previous, max_swap_fee_ppm: Number(event.target.value) }))} /></label>
+                  </div>
+                  {lspStatus?.configured && <div className="lightning-lsp-form__stats"><span>LSP outbound {formatSats(lspStatus.lsp_outbound_sat)}</span><span>LSP inbound {formatSats(lspStatus.lsp_inbound_sat)}</span></div>}
+                  {incompleteSwaps.length > 0 && <p className="lightning-workspace__warn">{incompleteSwaps.length} incomplete or refund-pending submarine swap(s) require attention.</p>}
+                  <div className="lightning-lsp-form__actions">
+                    <button type="submit" disabled={savingLsp || !lspConfig.channel_point}>{savingLsp ? 'Saving…' : 'Save LSP selection'}</button>
+                    {lspStatus?.configured && <button type="button" disabled={savingLsp} onClick={() => void clearLspChannel()}>Clear registration</button>}
+                  </div>
+                </form>
+                {(lspError || lspNotice || channelError || channelNotice) && <p className={lspError || channelError ? 'lightning-workspace__alert' : 'lightning-workspace__notice'} role={lspError || channelError ? 'alert' : 'status'}>{lspError || channelError || lspNotice || channelNotice}</p>}
+              </div>}
             </div>}
-            <div ref={lightningOperationsRef} className="liquidity-card-operations-host" />
           </div>
 
           <div role="listitem" className="liquidity-allocation-card liquidity-allocation-card--dex">
@@ -635,168 +1376,6 @@ export function LiquidityWorkspace() {
           </form>}
           {(transactionalNotice || transactionalError) && !transactionalEditing && <div className="liquidity-target-feedback text-[0.62rem] mt-2" aria-live="polite">{transactionalNotice && <span className="text-green">{transactionalNotice}</span>}{transactionalError && <span className="text-red">{transactionalError}</span>}</div>}
         </section>
-
-        <CardPortal targetRef={hubOperationsRef}><section aria-labelledby="pool-transfer-heading" className="liquidity-action-card">
-          <div className="pool-transfer__intro">
-            <div className="pool-transfer__intro-copy">
-              <span className="liquidity-section-kicker">On-chain BTC</span>
-              <h4 id="pool-transfer-heading" className="pool-transfer__title">Move funds</h4>
-              <p className="pool-transfer__description">Rebalance the LND wallet without leaving the liquidity workspace.</p>
-            </div>
-            <div className="pool-transfer__intro-actions"><div className="pool-transfer__balance"><span>Available in LND</span><strong>{formatSats(lndOnChainSats)}</strong></div><button type="button" aria-expanded={poolExpanded} aria-controls="wallet-pool-controls" onClick={() => setPoolExpanded(current => !current)}>{poolExpanded ? 'Hide controls' : 'Manage wallet pool'}</button></div>
-          </div>
-
-          {poolExpanded && <form id="wallet-pool-controls" onSubmit={submit} className="pool-transfer__form" noValidate>
-            <fieldset className="pool-transfer__step pool-transfer__step--direction">
-              <legend>1. Choose movement</legend>
-              <div className="pool-transfer__directions" role="group" aria-label="Pool transfer direction">
-                <button type="button" aria-pressed={action === 'fill'} onClick={() => selectAction('fill')} className={action === 'fill' ? 'pool-transfer__direction--active' : ''}>Fill LND pool <span>into LND</span></button>
-                <button type="button" aria-pressed={action === 'drain'} onClick={() => selectAction('drain')} className={action === 'drain' ? 'pool-transfer__direction--active' : ''}>Drain LND pool <span>out of LND</span></button>
-              </div>
-            </fieldset>
-
-            {action === 'fill' && transferRoute === 'manual' ? (
-              <div className="pool-transfer__manual-deposit">
-                <span className="pool-transfer__step-label">2. Fund from</span>
-                <div className="pool-transfer__route-choice" role="group" aria-label="Transfer route">
-                  <button type="button" aria-pressed={false} onClick={() => selectRoute('exchange')}>Connected exchange</button>
-                  <button type="button" aria-pressed={true} onClick={() => selectRoute('manual')} className="is-selected">Manual address</button>
-                </div>
-                <span className="pool-transfer__step-label">LND deposit address</span>
-                {selectedDestination ? (
-                  <div className="pool-transfer__manual-deposit-content">
-                    <LocalQrCode
-                      value={`bitcoin:${selectedDestination}`}
-                      alt="QR code for the LND Bitcoin deposit address"
-                      size={164}
-                      fallback="Could not generate QR code."
-                    />
-                    <div className="pool-transfer__manual-deposit-address">
-                      <span className="pool-transfer__field-label">Send Bitcoin to this address</span>
-                      <code>{selectedDestination}</code>
-                    </div>
-                  </div>
-                ) : (
-                  <p className="pool-transfer__empty">No LND on-chain address available.</p>
-                )}
-              </div>
-            ) : (
-            <div className="pool-transfer__details">
-              <div className="pool-transfer__step">
-                <span className="pool-transfer__step-label">2. {action === 'fill' ? 'Fund from' : 'Send to'}</span>
-                <div className="pool-transfer__route-choice" role="group" aria-label="Transfer route">
-                  <button type="button" aria-pressed={transferRoute === 'exchange'} onClick={() => selectRoute('exchange')} className={transferRoute === 'exchange' ? 'is-selected' : ''}>Connected exchange</button>
-                  <button type="button" aria-pressed={transferRoute === 'manual'} onClick={() => selectRoute('manual')} className={transferRoute === 'manual' ? 'is-selected' : ''}>Manual address</button>
-                </div>
-                {transferRoute === 'exchange' ? (
-                  <label className="block">
-                    <span className="pool-transfer__field-label">Exchange account</span>
-                    <select value={selectedExchangeID} onChange={event => { setSelectedExchangeID(event.target.value); setFeedback(null); }} disabled={loadingAccounts || connectedExchanges.length === 0} className="pool-transfer__input">
-                      {loadingAccounts && <option>Loading connections…</option>}
-                      {!loadingAccounts && connectedExchanges.length === 0 && <option>No connected exchange available</option>}
-                      {connectedExchanges.map(account => <option key={account.id} value={account.id}>{account.provider}</option>)}
-                    </select>
-                  </label>
-                ) : (
-                  <label className="block">
-                    <span className="pool-transfer__field-label">{action === 'fill' ? 'Source BTC address' : 'Destination BTC address'}</span>
-                    <input type="text" value={manualAddress} onChange={event => { setManualAddress(event.target.value); setFeedback(null); }} placeholder="Paste a Bitcoin address" className="pool-transfer__input" />
-                  </label>
-                )}
-              </div>
-
-              <div className="pool-transfer__step">
-                <label className="block">
-                  <span className="pool-transfer__step-label">3. Amount to move</span>
-                  <div className="pool-transfer__amount-field"><input type="number" inputMode="decimal" min="0" step="any" value={amount} onChange={event => { setAmount(event.target.value); setFeedback(null); }} placeholder="0.00000000" className="pool-transfer__input mono-nums" /><span>BTC</span></div>
-                </label>
-                {!(transferRoute === 'manual' && action === 'drain') && (
-                  <label className="block pool-transfer__destination">
-                    <span className="pool-transfer__field-label">Destination BTC address</span>
-                    <select value={selectedDestination} onChange={event => { setSelectedDestination(event.target.value); setFeedback(null); }} disabled={loadingDestination || destinationOptions.length === 0} className="pool-transfer__input">
-                      {loadingDestination && <option>Loading BTC addresses…</option>}
-                      {!loadingDestination && destinationOptions.length === 0 && <option>No BTC destination address available</option>}
-                      {destinationOptions.map(option => <option key={option.address} value={option.address}>{option.label} · {option.network} · {shortAddress(option.address)}</option>)}
-                    </select>
-                  </label>
-                )}
-              </div>
-            </div>
-            )}
-
-            {!(action === 'fill' && transferRoute === 'manual') && <div className="pool-transfer__review">
-              <div className="pool-transfer__route"><div><span>From</span><strong>{sourceLabel}</strong></div><i aria-hidden>→</i><div><span>To</span><strong>{destinationLabel}</strong></div></div>
-              <div className="pool-transfer__submit"><p>Review creates a request only; transfers are not sent yet.</p><button type="submit">Create transfer request</button></div>
-            </div>}
-          {loadError && <p className="sm:col-span-2 rounded-md border border-red/40 bg-error px-2 py-1.5 text-[0.72rem] text-red" role="alert">{loadError}</p>}
-          {feedback && (
-            <p className="sm:col-span-2 rounded-md border border-peach/40 bg-peach/10 px-2 py-1.5 text-[0.72rem] text-peach" role="status">{feedback}</p>
-          )}
-          </form>}
-        </section></CardPortal>
-
-        <CardPortal targetRef={lightningOperationsRef}><section aria-labelledby="lightning-management-heading" className="liquidity-action-card">
-          <div className="liquidity-channel-disclosure">
-            <div><h4 id="lightning-management-heading">Lightning channels <span>{channels.length} open</span></h4><p>Open, inspect, close, or register LSP capacity.</p>{!lspLoading && <p className={lspStatus?.lsp_healthy ? 'text-green' : 'text-peach'}>{lspStatus?.lsp_healthy ? 'LSP channel active' : 'LSP channel needs attention'}</p>}</div>
-            <button type="button" aria-expanded={channelsExpanded} aria-controls="lightning-channel-controls" onClick={() => setChannelsExpanded(current => !current)}>{channelsExpanded ? 'Hide controls' : 'Manage channels'}</button>
-          </div>
-
-          {channelsExpanded && <div id="lightning-channel-controls" className="liquidity-channel-controls">
-          <section aria-labelledby="lsp-channel-heading" className="mb-2 rounded-md border border-border bg-surface/40 p-2">
-            <div className="mb-2 flex flex-wrap items-start justify-between gap-2">
-              <div><h5 id="lsp-channel-heading" className="text-[0.75rem] font-medium text-text">Long-lived LSP channel</h5><p className="text-[0.65rem] text-muted">Select and monitor inbound capacity opened outside the application.</p></div>
-              <span className={`rounded border px-2 py-1 text-[0.65rem] ${lspStatus?.lsp_healthy ? 'border-green/40 text-green' : 'border-peach/40 text-peach'}`}>
-                {lspLoading ? 'Loading LSP status…' : lspStatus?.lsp_healthy ? 'Active' : (lspStatus?.reason || 'Not configured')}
-              </span>
-            </div>
-            <div className="grid gap-2 text-[0.7rem]">
-              <label className="grid gap-1 text-muted"><span>LND channel</span><select className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" value={lspConfig.channel_point} onChange={event => { const channel = channels.find(item => item.channel_point === event.target.value); setLspConfig(previous => ({ ...previous, channel_point: channel?.channel_point || '', remote_pubkey: channel?.remote_pubkey || '', provider_label: channel?.remote_alias || '', enabled: Boolean(channel) })); }}>
-                <option value="">Choose a live LND channel…</option>
-                {channels.map(channel => <option key={channel.channel_point} value={channel.channel_point}>{channel.remote_alias || shortAddress(channel.remote_pubkey)} · {formatSats(channel.capacity_sat)} · {channel.active ? 'active' : 'inactive'}</option>)}
-              </select></label>
-              <div className="grid gap-1.5 sm:grid-cols-3">
-                <label className="grid gap-1 text-muted"><span>Headroom (sats)</span><input className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" type="number" min="0" value={lspConfig.headroom_sat} onChange={event => setLspConfig(previous => ({ ...previous, headroom_sat: Number(event.target.value) }))} /></label>
-                <label className="grid gap-1 text-muted"><span>Maximum fee (sats)</span><input className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" type="number" min="1" value={lspConfig.max_swap_fee_sat} onChange={event => setLspConfig(previous => ({ ...previous, max_swap_fee_sat: Number(event.target.value) }))} /></label>
-                <label className="grid gap-1 text-muted"><span>Maximum fee (ppm)</span><input className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" type="number" min="1" value={lspConfig.max_swap_fee_ppm} onChange={event => setLspConfig(previous => ({ ...previous, max_swap_fee_ppm: Number(event.target.value) }))} /></label>
-              </div>
-              {lspStatus && <div className="grid gap-1 text-muted sm:grid-cols-2"><div>Usable outbound: <span className="text-text">{formatSats(lspStatus.usable_outbound_sat)}</span></div><div>Usable inbound: <span className="text-text">{formatSats(lspStatus.usable_inbound_sat)}</span></div><div>LSP outbound: <span className="text-text">{formatSats(lspStatus.lsp_outbound_sat)}</span></div><div>LSP inbound: <span className="text-text">{formatSats(lspStatus.lsp_inbound_sat)}</span></div></div>}
-              {submarineSwaps.some(item => !['settled', 'refunded'].includes(item.state)) && <div className="rounded border border-yellow px-2 py-1.5 text-yellow">{submarineSwaps.filter(item => !['settled', 'refunded'].includes(item.state)).length} incomplete or refund-pending submarine swap(s) require attention.</div>}
-              {lspError && <p className="rounded-md border border-red/40 bg-error px-2 py-1.5 text-red" role="alert">{lspError}</p>}
-              {lspNotice && <p className="rounded-md border border-green/40 bg-green/8 px-2 py-1.5 text-green" role="status">{lspNotice}</p>}
-              <div className="flex justify-end"><button type="button" disabled={savingLsp || !lspConfig.channel_point} onClick={() => void saveLspChannel()} className="rounded-md border border-accent bg-accent/10 px-3 py-1.5 text-[0.75rem] font-semibold text-accent hover:bg-accent/20 disabled:opacity-60">{savingLsp ? 'Saving…' : 'Save LSP selection'}</button></div>
-            </div>
-          </section>
-          <details className="group rounded-md border border-border bg-surface/40 mb-2">
-            <summary className="cursor-pointer list-none px-2 py-1.5 text-[0.72rem] font-medium text-text flex items-center justify-between">Open a new channel <span className="text-muted transition-transform group-open:rotate-180">⌄</span></summary>
-          <form onSubmit={event => void submitOpenChannel(event)} className="grid grid-cols-1 sm:grid-cols-2 gap-1.5 border-t border-border px-2 pb-2 pt-1.5" noValidate>
-            <label className="block sm:col-span-2"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Public node <span className="normal-case tracking-normal">(optional)</span></span><select value={selectedChannelPresetID} onChange={event => setSelectedChannelPresetID(event.target.value)} className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent"><option value="">Manual connection details</option>{channelPresets.map(preset => <option key={preset.id} value={preset.id}>{preset.name}</option>)}</select></label>
-            {selectedChannelPreset && <div className="sm:col-span-2 rounded-md border border-border bg-bg px-2 py-1.5 text-[0.7rem] text-muted"><div><span className="text-text">{selectedChannelPreset.name}</span> · {selectedChannelPreset.peer_host}</div><div>Minimum funding: {formatSats(selectedChannelPreset.min_funding_amount_sat)}</div>{selectedChannelPreset.warning && <div className="mt-1 text-peach">{selectedChannelPreset.warning}</div>}<a className="mt-1 inline-block text-accent underline" href={selectedChannelPreset.source_url} target="_blank" rel="noreferrer">Source · verified {selectedChannelPreset.verified_at}</a></div>}
-            <label className="block"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Node pubkey</span><input disabled={!!selectedChannelPreset} value={channelForm.nodePubkey} onChange={event => setChannelForm(current => ({ ...current, nodePubkey: event.target.value }))} placeholder="Remote node public key" className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent disabled:opacity-50" /></label>
-            <label className="block"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Peer host <span className="normal-case tracking-normal">(optional)</span></span><input disabled={!!selectedChannelPreset} value={channelForm.peerHost} onChange={event => setChannelForm(current => ({ ...current, peerHost: event.target.value }))} placeholder="node.example:9735" className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent disabled:opacity-50" /></label>
-            <label className="block"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Local funding (sats)</span><input type="number" min="1" step="1" value={channelForm.fundingSats} onChange={event => setChannelForm(current => ({ ...current, fundingSats: event.target.value }))} placeholder="1000000" className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" /></label>
-            <div className="grid grid-cols-2 gap-2">
-              <label className="block"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Push sats</span><input type="number" min="0" step="1" value={channelForm.pushSats} onChange={event => setChannelForm(current => ({ ...current, pushSats: event.target.value }))} placeholder="0" className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" /></label>
-              <label className="block"><span className="block text-[0.65rem] uppercase tracking-wider font-medium text-muted mb-1">Fee (sat/vB)</span><input type="number" min="1" step="1" value={channelForm.feeRate} onChange={event => setChannelForm(current => ({ ...current, feeRate: event.target.value }))} className="w-full box-border rounded-md border border-border bg-bg px-2 py-1.5 text-[0.75rem] text-text outline-none focus:border-accent" /></label>
-            </div>
-            <label className="sm:col-span-2 flex items-center gap-2 text-[0.72rem] text-muted"><input type="checkbox" checked={channelForm.private} onChange={event => setChannelForm(current => ({ ...current, private: event.target.checked }))} /> Private channel</label>
-            <div className="sm:col-span-2 flex items-center gap-2"><button type="submit" disabled={openingChannel} className="rounded-md border border-accent bg-accent/10 px-3 py-1.5 text-[0.75rem] font-semibold text-accent hover:bg-accent/20 disabled:opacity-60">{openingChannel ? 'Opening channel…' : 'Open channel'}</button><span className="text-[0.63rem] text-muted">A confirmation is required before LND receives the request.</span></div>
-          </form>
-          </details>
-
-          {channelError && <p className="mt-2 rounded-md border border-red/40 bg-error px-2 py-1.5 text-[0.72rem] text-red" role="alert">{channelError}</p>}
-          {channelNotice && <p className="mt-2 rounded-md border border-green/40 bg-green/8 px-2 py-1.5 text-[0.72rem] text-green" role="status">{channelNotice}</p>}
-
-          <div className="grid gap-1">
-            {channels.length === 0 ? <p className="px-0.5 text-[0.7rem] text-muted">No open channels reported by LND.</p> : channels.map(channel => (
-              <div key={channel.channel_point} className="rounded-md border border-border bg-surface/40 px-2 py-1.5">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1"><span className="text-[0.75rem] font-medium text-text">{channel.remote_alias || shortAddress(channel.remote_pubkey)}</span><span className={`rounded-full border px-1.5 py-0.5 text-[0.6rem] ${channel.active ? 'border-green/40 text-green' : 'border-red/40 text-red'}`}>{channel.active ? 'Active' : 'Inactive'}</span>{channel.private && <span className="rounded-full border border-border px-1.5 py-0.5 text-[0.6rem] text-muted">Private</span>}</div>
-                <div className="grid grid-cols-2 gap-x-3 gap-y-1 mt-1.5 text-[0.68rem] text-muted"><span>Capacity <b className="font-medium text-text">{formatSats(channel.capacity_sat)}</b></span><span>Local <b className="font-medium text-text">{formatSats(channel.local_balance_sat)}</b></span><span>Remote <b className="font-medium text-text">{formatSats(channel.remote_balance_sat)}</b></span><span className="truncate" title={channel.channel_point}>ID {shortAddress(channel.channel_point)}</span></div>
-                <div className="flex flex-wrap gap-1 mt-1.5"><button type="button" disabled={closingChannelPoint === channel.channel_point} onClick={() => void submitCloseChannel(channel.channel_point, false)} className="rounded border border-border px-2 py-0.5 text-[0.65rem] text-text hover:bg-surface disabled:opacity-60">{closingChannelPoint === channel.channel_point ? 'Closing…' : 'Close'}</button><button type="button" disabled={closingChannelPoint === channel.channel_point} onClick={() => void submitCloseChannel(channel.channel_point, true)} className="rounded border border-red/40 px-2 py-0.5 text-[0.65rem] text-red hover:bg-error disabled:opacity-60">Force close</button></div>
-              </div>
-            ))}
-          </div>
-          </div>}
-        </section></CardPortal>
       </section>
     </div>
   );
