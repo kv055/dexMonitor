@@ -34,6 +34,8 @@ import type {
   BisqPaymentAccountForm,
   BisqCreatePaymentAccountPayload,
   TransactionalLiquiditySettings,
+  TransactionalLiquiditySource,
+  TransactionalRoutingProfile,
   DexPendingLiquidity,
 } from '../types';
 import { fetchResponse, request } from '../api/client';
@@ -207,7 +209,8 @@ export function updateTransactionalLiquiditySettings(payload: {
   amount_fiat: number;
   trade_mode: 'hedgefull_single_collateral' | 'hedgeless_double_collateral';
   target_direction: 'bid' | 'ask';
-  lightning_liquidity_source: 'own_channels' | 'lsp_channel';
+  lightning_liquidity_source: TransactionalLiquiditySource;
+  supported_routing_profiles: TransactionalRoutingProfile[];
   fee_tier: 'economic';
   coupled_hedge: boolean;
 }) {

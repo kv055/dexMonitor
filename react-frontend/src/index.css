@@ -664,15 +664,59 @@ body {
   display: grid;
   gap: 0.45rem;
   grid-column: 1 / -1;
-  grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr));
+  grid-template-columns: minmax(0, 1fr);
   overflow: auto;
   padding: 0.6rem 0.75rem 0.75rem;
 }
 
+.liquidity-cex-inventory__empty {
+  color: var(--app-muted);
+  font-size: 0.62rem;
+  margin: 0;
+}
+
 .liquidity-cex-inventory__exchange { background: color-mix(in srgb, var(--app-bg) 48%, transparent); border: 1px solid var(--app-border); border-radius: 0.45rem; min-width: 0; overflow: hidden; }
-.liquidity-cex-inventory__exchange-header { align-items: center; border-bottom: 1px solid var(--app-border); display: flex; gap: 0.5rem; justify-content: space-between; padding: 0.4rem 0.55rem; }
-.liquidity-cex-inventory__exchange-header strong { color: var(--app-text); font-size: 0.68rem; }
-.liquidity-cex-inventory__exchange-header span { color: var(--app-muted); font-size: 0.55rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.liquidity-cex-inventory__exchange-header { align-items: end; border-bottom: 1px solid var(--app-border); display: flex; gap: 0.5rem; justify-content: space-between; padding: 0.4rem 0.55rem; }
+.liquidity-cex-inventory__exchange-header label { display: grid; gap: 0.18rem; min-width: 0; }
+.liquidity-cex-inventory__exchange-header label > span { color: var(--app-muted); font-size: 0.52rem; font-weight: 650; letter-spacing: 0.06em; text-transform: uppercase; }
+.liquidity-cex-inventory__exchange-header select { background: var(--app-bg); border: 1px solid var(--app-border); border-radius: 0.35rem; color: var(--app-text); field-sizing: content; font-size: 0.72rem; font-weight: 650; min-height: 1.7rem; padding: 0.2rem 0.4rem; }
+.liquidity-cex-inventory__exchange-header > span { color: var(--app-muted); font-size: 0.55rem; overflow: hidden; padding-bottom: 0.28rem; text-overflow: ellipsis; white-space: nowrap; }
+.liquidity-cex-inventory__tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.2rem;
+  padding: 0.4rem 0.55rem 0.15rem;
+}
+.liquidity-cex-inventory__tabs button {
+  background: transparent;
+  border: 1px solid var(--app-border);
+  border-radius: 0.3rem;
+  color: var(--app-muted);
+  cursor: pointer;
+  font-size: 0.6rem;
+  font-weight: 650;
+  padding: 0.22rem 0.45rem;
+}
+.liquidity-cex-inventory__tabs button.is-selected,
+.liquidity-cex-inventory__tabs button[aria-selected='true'] {
+  background: color-mix(in srgb, var(--app-accent) 14%, transparent);
+  border-color: var(--app-accent);
+  color: var(--app-text);
+}
+.liquidity-cex-inventory__soon {
+  padding: 0.75rem 0.55rem 0.85rem;
+  text-align: center;
+}
+.liquidity-cex-inventory__soon strong {
+  color: var(--app-text);
+  display: block;
+  font-size: 0.68rem;
+}
+.liquidity-cex-inventory__soon p {
+  color: var(--app-muted);
+  font-size: 0.58rem;
+  margin: 0.25rem 0 0;
+}
 .liquidity-cex-inventory__location { padding: 0.45rem 0.55rem; }
 .liquidity-cex-inventory__location + .liquidity-cex-inventory__location { border-top: 1px dashed var(--app-border); }
 .liquidity-cex-inventory__location-title { align-items: center; display: flex; justify-content: space-between; margin-bottom: 0.3rem; }
@@ -766,10 +810,57 @@ body {
 }
 
 .liquidity-target-form {
-  align-items: start;
+  align-items: end;
+  display: flex;
+  flex-wrap: nowrap;
+  gap: 0.4rem 0.45rem;
+  width: 100%;
+}
+
+.liquidity-target-form > label,
+.liquidity-target-form > .liquidity-target-amount,
+.liquidity-target-form > .liquidity-target-routing,
+.liquidity-target-form > .liquidity-target-save {
   display: grid;
-  gap: 0.55rem;
-  grid-template-columns: minmax(4.8rem, 0.65fr) minmax(7rem, 1.05fr) minmax(5.2rem, 0.7fr) minmax(13rem, 1.75fr) auto;
+  flex: 0 0 auto;
+  gap: 0.22rem;
+  min-width: 0;
+}
+
+.liquidity-target-form > label > span,
+.liquidity-target-amount > span,
+.liquidity-target-routing > span {
+  color: var(--app-muted);
+  font-size: 0.52rem;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.liquidity-target-form select,
+.liquidity-target-form input[type='number'] {
+  background: var(--app-bg);
+  border: 1px solid var(--app-border);
+  border-radius: 0.35rem;
+  box-sizing: content-box;
+  color: var(--app-text);
+  field-sizing: content;
+  font-size: 0.72rem;
+  max-width: none;
+  min-height: 1.85rem;
+  padding: 0.28rem 0.4rem;
+  width: max-content;
+}
+
+.liquidity-target-form select:focus,
+.liquidity-target-form input[type='number']:focus {
+  border-color: var(--app-accent);
+  outline: none;
+}
+
+.liquidity-target-form select:disabled,
+.liquidity-target-form input[type='number']:read-only {
+  opacity: 0.7;
 }
 
 .liquidity-target-amount {
@@ -777,9 +868,50 @@ body {
 }
 
 .liquidity-target-amount__controls {
-  display: grid;
-  gap: 0.35rem;
-  grid-template-columns: minmax(6.8rem, 0.85fr) minmax(7.5rem, 1.15fr);
+  align-items: center;
+  display: flex;
+  gap: 0.3rem;
+}
+
+.liquidity-target-amount input[type='number'] {
+  font-variant-numeric: tabular-nums;
+  width: 8ch;
+}
+
+.liquidity-target-amount p {
+  color: var(--app-muted);
+  font-size: 0.56rem;
+  grid-column: 1 / -1;
+  margin: 0;
+  position: absolute;
+  width: max-content;
+}
+
+.liquidity-target-routing__toggles {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.liquidity-target-routing__toggles button {
+  background: var(--app-bg);
+  border: 1px solid var(--app-border);
+  border-radius: 0.35rem;
+  color: var(--app-muted);
+  cursor: pointer;
+  font-size: 0.68rem;
+  font-weight: 650;
+  min-height: 1.85rem;
+  padding: 0.28rem 0.45rem;
+}
+
+.liquidity-target-routing__toggles button.is-selected {
+  background: color-mix(in srgb, var(--app-accent) 14%, transparent);
+  border-color: var(--app-accent);
+  color: var(--app-text);
+}
+
+.liquidity-target-routing__toggles button:hover {
+  border-color: var(--app-accent);
 }
 
 .liquidity-target-capped {
@@ -788,14 +920,49 @@ body {
   white-space: nowrap;
 }
 
+.liquidity-target-coupled {
+  align-items: center !important;
+  color: var(--app-text);
+  display: flex !important;
+  flex-direction: row;
+  font-size: 0.64rem;
+  gap: 0.3rem;
+  min-height: 1.85rem;
+  padding-bottom: 0.12rem;
+  white-space: nowrap;
+}
+
+.liquidity-target-coupled span { display: none; }
+
 .liquidity-target-save {
   align-self: end;
+  display: flex;
+  flex-direction: row;
+  gap: 0.3rem;
 }
 
 .liquidity-target-save button {
-  min-height: 2rem;
+  background: color-mix(in srgb, var(--app-accent) 11%, transparent);
+  border: 1px solid var(--app-accent);
+  border-radius: 0.35rem;
+  color: var(--app-text);
+  cursor: pointer;
+  font-size: 0.64rem;
+  font-weight: 650;
+  min-height: 1.85rem;
+  padding: 0.28rem 0.5rem;
   white-space: nowrap;
 }
+
+.liquidity-target-save button[type='button'] {
+  background: transparent;
+  border-color: var(--app-border);
+  color: var(--app-muted);
+}
+
+.liquidity-target-save button:hover { background: color-mix(in srgb, var(--app-accent) 20%, transparent); }
+.liquidity-target-save button[type='button']:hover { background: var(--app-bg); }
+.liquidity-target-save button:disabled { opacity: 0.6; }
 
 .liquidity-target-feedback {
   grid-column: 1 / -1;
@@ -806,19 +973,20 @@ body {
   background: color-mix(in srgb, var(--app-bg) 48%, transparent);
   border: 1px solid var(--app-border);
   border-radius: 0.55rem;
-  display: grid;
+  display: flex;
+  flex-wrap: wrap;
   gap: 0.3rem 0.65rem;
   flex: 1 1 42rem;
-  grid-template-columns: repeat(6, minmax(0, 1fr)) auto;
   margin-left: 0;
   max-width: none;
   padding: 0.3rem 0.4rem;
 }
+.liquidity-target-summary.is-compact { gap: 0.3rem 0.5rem; }
 
-.liquidity-target-summary div { min-width: 0; padding-right: 0.1rem; }
+.liquidity-target-summary div { flex: 0 1 auto; min-width: 0; padding-right: 0.1rem; }
 .liquidity-target-summary span { color: var(--app-muted); display: block; font-size: 0.5rem; font-weight: 700; letter-spacing: 0.1em; overflow: hidden; text-overflow: ellipsis; text-transform: uppercase; white-space: nowrap; }
 .liquidity-target-summary strong { color: var(--app-text); display: block; font-size: 0.62rem; font-weight: 600; margin-top: 0.12rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.liquidity-target-summary button { background: transparent; border: 1px solid var(--app-border); border-radius: 0.3rem; color: var(--app-text); font-size: 0.58rem; font-weight: 650; padding: 0.25rem 0.4rem; white-space: nowrap; }
+.liquidity-target-summary button { background: transparent; border: 1px solid var(--app-border); border-radius: 0.3rem; color: var(--app-text); font-size: 0.58rem; font-weight: 650; margin-left: auto; padding: 0.25rem 0.4rem; white-space: nowrap; }
 .liquidity-target-summary button:hover { background: var(--app-bg); }
 
 .liquidity-management__switcher {
@@ -850,16 +1018,7 @@ body {
 }
 
 @media (max-width: 42rem) {
-  .liquidity-target-form {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .liquidity-target-amount {
-    grid-column: 1 / -1;
-  }
-
-  .liquidity-target-summary { grid-template-columns: repeat(2, minmax(0, 1fr)) auto; }
-  .liquidity-target-summary button { grid-column: 3; grid-row: 1 / span 2; }
+  .liquidity-target-summary button { width: 100%; margin-left: 0; }
   .liquidity-settings-card .liquidity-target-summary { margin-left: 0; max-width: none; width: 100%; }
 
   .hub-move__toolbar, .hub-move__toolbar-aside, .hub-move__review, .hub-move__deposit-body { align-items: stretch; flex-direction: column; }

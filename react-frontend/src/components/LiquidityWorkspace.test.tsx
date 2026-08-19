@@ -1,4 +1,4 @@
-import { cleanup, render, screen } from '@testing-library/react';
+import { cleanup, render, screen, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -117,11 +117,30 @@ vi.mock('../utils/api', () => ({
 }));
 
 import { LiquidityWorkspace } from './LiquidityWorkspace';
-import { fetchDexPendingLiquidity, fetchLNDWalletStatus, fetchLSPChannelStatus, fetchMagmaLSPInfo, createMagmaLSPOrder, payMagmaLSPOrder, fetchTransactionalLiquiditySettings, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
+import { fetchCexBalances, fetchCexHedgePositions, fetchDexPendingLiquidity, fetchLNDWalletStatus, fetchLSPChannelStatus, fetchMagmaLSPInfo, createMagmaLSPOrder, payMagmaLSPOrder, fetchTradingAccounts, fetchTransactionalLiquiditySettings, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
 import { FiltersProvider } from '../context/FiltersContext';
 import { PreferencesProvider } from '../context/PreferencesContext';
 import { CEXPermissionsContext, type CEXPermissionsContextValue } from '../hooks/useCEXPermissions';
-import type { Offer } from '../types';
+import type { Offer, TransactionalLiquiditySettings } from '../types';
+
+const ALL_ROUTING_PROFILES = ['Direct_main2main', 'Hub_main2main', 'Swap_main2lightning'] as const;
+
+function liquiditySettings(overrides: Partial<TransactionalLiquiditySettings> = {}): TransactionalLiquiditySettings {
+  return {
+    fiat_currency: 'EUR',
+    amount_source: 'custom',
+    amount_fiat: 100,
+    fee_tier: 'economic',
+    coupled_hedge: false,
+    trade_mode: 'hedgefull_single_collateral',
+    target_direction: 'bid',
+    lightning_liquidity_source: 'own_channels',
+    supported_routing_profiles: [...ALL_ROUTING_PROFILES],
+    config_version: 1,
+    updated_at: '2026-08-10T00:00:00Z',
+    ...overrides,
+  };
+}
 
 function renderWorkspace(offers: Offer[] = []) {
   const cexPermissions: CEXPermissionsContextValue = {
@@ -220,17 +239,7 @@ describe('LiquidityWorkspace', () => {
   });
 
   it('uses zero BTC targets for LND and Lightning liquidity in hedgefull mode', async () => {
-    vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce({
-      fiat_currency: 'EUR',
-      amount_source: 'custom',
-      amount_fiat: 100,
-      fee_tier: 'economic', coupled_hedge: false,
-      trade_mode: 'hedgefull_single_collateral',
-      target_direction: 'bid',
-      lightning_liquidity_source: 'own_channels',
-      config_version: 1,
-      updated_at: '2026-08-10T00:00:00Z',
-    });
+    vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(liquiditySettings());
 
     renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'bid', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
 
@@ -241,11 +250,8 @@ describe('LiquidityWorkspace', () => {
   });
 
   it('switches to hedgeless mode and uses the fiat target converted to BTC for LND and Lightning', async () => {
-    const hedgelessSettings = {
-      fiat_currency: 'EUR', amount_source: 'custom' as const, amount_fiat: 100, fee_tier: 'economic' as const, coupled_hedge: false,
-      trade_mode: 'hedgeless_double_collateral' as const, target_direction: 'bid' as const, lightning_liquidity_source: 'own_channels' as const, config_version: 2, updated_at: '2026-08-10T00:00:00Z',
-    };
-    vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce({ ...hedgelessSettings, trade_mode: 'hedgefull_single_collateral', config_version: 1 });
+    const hedgelessSettings = liquiditySettings({ trade_mode: 'hedgeless_double_collateral', config_version: 2 });
+    vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(liquiditySettings());
     vi.mocked(updateTransactionalLiquiditySettings).mockResolvedValueOnce(hedgelessSettings);
 
     const user = userEvent.setup();
@@ -254,17 +260,13 @@ describe('LiquidityWorkspace', () => {
     await screen.findByText('EUR 100');
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     await user.selectOptions(screen.getByLabelText('Trade mode'), 'hedgeless_double_collateral');
-    await user.click(screen.getByRole('button', { name: 'Save target' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findAllByText('0.002 BTC')).toHaveLength(2);
     expect(screen.getAllByText('fiat target in BTC')).toHaveLength(2);
   });
 
   it('persists the selected target direction', async () => {
-    const settings = {
-      fiat_currency: 'EUR', amount_source: 'custom' as const, amount_fiat: 100, fee_tier: 'economic' as const, coupled_hedge: false,
-      trade_mode: 'hedgefull_single_collateral' as const, target_direction: 'bid' as const, lightning_liquidity_source: 'own_channels' as const,
-      config_version: 1, updated_at: '2026-08-10T00:00:00Z',
-    };
+    const settings = liquiditySettings();
     vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(settings);
     vi.mocked(updateTransactionalLiquiditySettings).mockResolvedValueOnce({ ...settings, target_direction: 'ask', config_version: 2 });
 
@@ -273,20 +275,16 @@ describe('LiquidityWorkspace', () => {
 
     await screen.findByText('EUR 100');
     await user.click(screen.getByRole('button', { name: 'Edit' }));
-    await screen.findByDisplayValue('Custom amount');
+    await screen.findByDisplayValue('Custom');
     await user.selectOptions(screen.getByLabelText('Target direction'), 'ask');
-    await user.click(screen.getByRole('button', { name: 'Save target' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({ target_direction: 'ask' }));
   });
 
   it('uses the Settings-overlay cap as the persisted capped-volume amount', async () => {
     window.localStorage.setItem('dex-max-fiat-limit', '500');
-    const settings = {
-      fiat_currency: 'EUR', amount_source: 'custom' as const, amount_fiat: 100, fee_tier: 'economic' as const, coupled_hedge: false,
-      trade_mode: 'hedgefull_single_collateral' as const, target_direction: 'bid' as const, lightning_liquidity_source: 'own_channels' as const,
-      config_version: 1, updated_at: '2026-08-10T00:00:00Z',
-    };
+    const settings = liquiditySettings();
     vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(settings);
     vi.mocked(updateTransactionalLiquiditySettings).mockResolvedValueOnce({ ...settings, amount_source: 'capped_volume', amount_fiat: 500, config_version: 2 });
 
@@ -302,16 +300,12 @@ describe('LiquidityWorkspace', () => {
     expect(amountInput.hasAttribute('readonly')).toBe(true);
     expect(screen.getByText('Uses the Max Position Size (Fiat) from Settings.')).toBeTruthy();
 
-    await user.click(screen.getByRole('button', { name: 'Save target' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({ amount_source: 'capped_volume', amount_fiat: 500 }));
   });
 
   it('requires a positive Settings-overlay cap before saving capped volume', async () => {
-    const settings = {
-      fiat_currency: 'EUR', amount_source: 'custom' as const, amount_fiat: 100, fee_tier: 'economic' as const, coupled_hedge: false,
-      trade_mode: 'hedgefull_single_collateral' as const, target_direction: 'bid' as const, lightning_liquidity_source: 'own_channels' as const,
-      config_version: 1, updated_at: '2026-08-10T00:00:00Z',
-    };
+    const settings = liquiditySettings();
     vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(settings);
 
     const user = userEvent.setup();
@@ -320,18 +314,14 @@ describe('LiquidityWorkspace', () => {
     await screen.findByText('EUR 100');
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     await user.selectOptions(screen.getByLabelText('Amount source'), 'capped_volume');
-    await user.click(screen.getByRole('button', { name: 'Save target' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByText('Set a positive Max Position Size (Fiat) in Settings before saving capped volume.')).toBeTruthy();
     expect(updateTransactionalLiquiditySettings).not.toHaveBeenCalled();
   });
 
   it('requires and persists the selected Lightning liquidity source', async () => {
-    const settings = {
-      fiat_currency: 'EUR', amount_source: 'custom' as const, amount_fiat: 100, fee_tier: 'economic' as const, coupled_hedge: false,
-      trade_mode: 'hedgefull_single_collateral' as const, target_direction: 'bid' as const, lightning_liquidity_source: 'own_channels' as const,
-      config_version: 1, updated_at: '2026-08-10T00:00:00Z',
-    };
+    const settings = liquiditySettings();
     vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(settings);
     vi.mocked(updateTransactionalLiquiditySettings).mockResolvedValueOnce({ ...settings, lightning_liquidity_source: 'lsp_channel' });
 
@@ -342,11 +332,49 @@ describe('LiquidityWorkspace', () => {
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     const source = screen.getByLabelText('Lightning liquidity source');
     expect(source.getAttribute('required')).not.toBeNull();
+    expect(screen.getByRole('option', { name: 'Own Collateral' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'LSP Collateral' })).toBeTruthy();
     await user.selectOptions(source, 'lsp_channel');
-    await user.click(screen.getByRole('button', { name: 'Save target' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({ lightning_liquidity_source: 'lsp_channel' }));
-    expect(await screen.findByText('LSP channel')).toBeTruthy();
+    expect(await screen.findByText('LSP Collateral')).toBeTruthy();
+  });
+
+  it('persists the selected routing profiles and hides Lightning when Swap is off', async () => {
+    const settings = liquiditySettings();
+    const withoutSwap = liquiditySettings({
+      supported_routing_profiles: ['Direct_main2main', 'Hub_main2main'],
+      config_version: 2,
+    });
+    vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(settings);
+    vi.mocked(updateTransactionalLiquiditySettings).mockResolvedValueOnce(withoutSwap);
+
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await screen.findByText('EUR 100');
+    await user.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(screen.getByLabelText('Lightning liquidity source')).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: 'Swap routing' }));
+    expect(screen.queryByLabelText('Lightning liquidity source')).toBeNull();
+    expect(screen.getByRole('button', { name: 'Direct routing' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Hub routing' }).getAttribute('aria-pressed')).toBe('true');
+    expect(screen.getByRole('button', { name: 'Swap routing' }).getAttribute('aria-pressed')).toBe('false');
+    await user.click(screen.getByRole('button', { name: 'Direct routing' }));
+    expect(screen.getByRole('button', { name: 'Direct routing' }).getAttribute('aria-pressed')).toBe('false');
+    await user.click(screen.getByRole('button', { name: 'Hub routing' }));
+    expect(screen.getByRole('button', { name: 'Hub routing' }).getAttribute('aria-pressed')).toBe('true');
+    await user.click(screen.getByRole('button', { name: 'Direct routing' }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({
+      supported_routing_profiles: ['Direct_main2main', 'Hub_main2main'],
+      lightning_liquidity_source: 'own_channels',
+    }));
+    expect(await screen.findByText('Direct · Hub')).toBeTruthy();
+    expect(screen.queryByText('Own Collateral')).toBeNull();
+    expect(screen.queryByText('LSP Collateral')).toBeNull();
   });
 
   it('aggregates healthy CEX balances and live LND on-chain and channel liquidity', async () => {
@@ -366,6 +394,64 @@ describe('LiquidityWorkspace', () => {
     expect(screen.getByText('Own liquidity')).toBeTruthy();
     expect(screen.getByText('600,000 sats')).toBeTruthy();
     expect(screen.getByText('400,000 sats')).toBeTruthy();
+  });
+
+  it('shows one CEX inventory panel at a time from the exchange dropdown', async () => {
+    vi.mocked(fetchTradingAccounts).mockResolvedValueOnce([
+      { id: 7, provider: 'Kraken', category: 'CEX', is_active: true, is_healthy: true, api_keys: [{ is_active: true }] },
+      { id: 8, provider: 'Bitfinex', category: 'CEX', is_active: true, is_healthy: true, api_keys: [{ is_active: true }] },
+    ] as never);
+    vi.mocked(fetchCexBalances).mockImplementation(async (accountId: number) => (
+      accountId === 8
+        ? { bitcoin: { asset: 'BTC', available: 1.5, total: 1.6 }, fiat: [{ asset: 'EUR', available: 200, total: 200 }], source: 'Bitfinex' }
+        : { bitcoin: { asset: 'BTC', available: 0.25, total: 0.3 }, fiat: [{ asset: 'EUR', available: 1000, total: 1000 }], source: 'Kraken' }
+    ));
+    vi.mocked(fetchCexHedgePositions).mockImplementation(async (accountId: number) => (
+      accountId === 8
+        ? { active: [{ size_btc: -0.4 }], past: [] }
+        : { active: [{ size_btc: -0.1 }, { size_btc: 0.05 }], past: [] }
+    ));
+
+    const user = userEvent.setup();
+    renderWorkspace();
+    await user.click(await screen.findByRole('button', { name: /current inventory/i }));
+
+    const picker = await screen.findByLabelText('CEX inventory exchange');
+    expect((picker as HTMLSelectElement).value).toBe('7');
+    expect(screen.getByRole('option', { name: 'Kraken' })).toBeTruthy();
+    expect(screen.getByRole('option', { name: 'Bitfinex' })).toBeTruthy();
+    expect(screen.getByText('0.25 available')).toBeTruthy();
+    expect(screen.getByText('2 active hedges')).toBeTruthy();
+    expect(screen.queryByText('1.5 available')).toBeNull();
+
+    await user.selectOptions(picker, '8');
+    expect(screen.getByText('1.5 available')).toBeTruthy();
+    expect(screen.getByText('1 active hedge')).toBeTruthy();
+    expect(screen.queryByText('0.25 available')).toBeNull();
+    expect(screen.getAllByLabelText('CEX inventory exchange')).toHaveLength(1);
+  });
+
+  it('shows coming-soon placeholders for CEX positions, trades, and withdrawals', async () => {
+    const user = userEvent.setup();
+    renderWorkspace();
+    await user.click(await screen.findByRole('button', { name: /current inventory/i }));
+
+    expect(await screen.findByRole('tab', { name: 'Balances' })).toBeTruthy();
+    expect(screen.getByText('0.25 available')).toBeTruthy();
+
+    await user.click(screen.getByRole('tab', { name: 'Open positions' }));
+    expect(screen.getByText('Coming soon')).toBeTruthy();
+    expect(screen.getByText('Open spot and futures positions for this exchange will appear here.')).toBeTruthy();
+    expect(screen.queryByText('0.25 available')).toBeNull();
+
+    await user.click(screen.getByRole('tab', { name: 'Trade history' }));
+    expect(screen.getByText('Spot and futures fills for this exchange will appear here.')).toBeTruthy();
+
+    await user.click(screen.getByRole('tab', { name: 'Withdraw history' }));
+    expect(screen.getByText('Withdrawal history for this exchange will appear here.')).toBeTruthy();
+
+    await user.click(screen.getByRole('tab', { name: 'Balances' }));
+    expect(screen.getByText('0.25 available')).toBeTruthy();
   });
 
   it('shows DEX pending liquidity errors as unavailable and keeps the zero target', async () => {
@@ -442,7 +528,7 @@ describe('LiquidityWorkspace', () => {
     renderWorkspace();
 
     await user.click(screen.getByRole('button', { name: /current channel balance/i }));
-    expect(screen.getByText('Hub')).toBeTruthy();
+    expect(within(screen.getByLabelText('Lightning channel workspace')).getByText('Hub')).toBeTruthy();
     expect(screen.getByRole('tab', { name: /own liquidity/i })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Open a channel' })).toBeTruthy();
     expect(screen.getByRole('button', { name: 'Configure' }).getAttribute('aria-expanded')).toBe('false');

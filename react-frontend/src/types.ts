@@ -78,6 +78,7 @@ export type TradeMode = 'hedgefull_single_collateral' | 'hedgeless_double_collat
 export type TransactionalLiquidityAmountSource = 'custom' | 'capped_volume';
 export type TransactionalLiquidityTargetDirection = 'bid' | 'ask';
 export type TransactionalLiquiditySource = 'own_channels' | 'lsp_channel';
+export type TransactionalRoutingProfile = 'Direct_main2main' | 'Hub_main2main' | 'Swap_main2lightning';
 
 export interface TransactionalLiquiditySettings {
   fiat_currency: string;
@@ -86,6 +87,7 @@ export interface TransactionalLiquiditySettings {
   trade_mode: TradeMode;
   target_direction: TransactionalLiquidityTargetDirection;
   lightning_liquidity_source: TransactionalLiquiditySource;
+  supported_routing_profiles: TransactionalRoutingProfile[];
   fee_tier: 'economic';
   coupled_hedge: boolean;
   config_version: number;
