@@ -408,8 +408,8 @@ describe('LiquidityWorkspace', () => {
     ));
     vi.mocked(fetchCexHedgePositions).mockImplementation(async (accountId: number) => (
       accountId === 8
-        ? { active: [{ size_btc: -0.4 }], past: [] }
-        : { active: [{ size_btc: -0.1 }, { size_btc: 0.05 }], past: [] }
+        ? { active: [{ size_btc: -0.4 }], past: [] } as never
+        : { active: [{ size_btc: -0.1 }, { size_btc: 0.05 }], past: [] } as never
     ));
 
     const user = userEvent.setup();
@@ -615,7 +615,7 @@ describe('LiquidityWorkspace', () => {
     vi.mocked(fetchLNDWalletStatus).mockResolvedValue({
       addresses: [{ address: 'bc1qempty', kind: 'onchain', label: 'Liquidity pool', balance_sat: 0 }],
       channels: [],
-    } as Awaited<ReturnType<typeof fetchLNDWalletStatus>>);
+    } as unknown as Awaited<ReturnType<typeof fetchLNDWalletStatus>>);
     vi.mocked(fetchMagmaLSPInfo).mockResolvedValue({
       pool: 'recommended',
       public_key: '03local',
