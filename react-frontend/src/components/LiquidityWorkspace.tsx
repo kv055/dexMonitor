@@ -307,7 +307,7 @@ export function LiquidityWorkspace() {
   const [lspConfig, setLspConfig] = useState<LSPChannelConfig>(emptyLSPConfig);
   const [lspStatus, setLspStatus] = useState<LSPChannelStatus | null>(null);
   const [submarineSwaps, setSubmarineSwaps] = useState<SubmarineSwapRecord[]>([]);
-  const [lspLoading, setLspLoading] = useState(true);
+  const [, setLspLoading] = useState(true);
   const [savingLsp, setSavingLsp] = useState(false);
   const [lspNotice, setLspNotice] = useState<string | null>(null);
   const [lspError, setLspError] = useState<string | null>(null);
