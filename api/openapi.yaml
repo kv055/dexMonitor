@@ -295,17 +295,6 @@ paths:
           description: Successful response
         default:
           description: Error response
-  '/api/mm-controller/lnd/lsp-channel/status':
-    get:
-      operationId: getApiMmControllerLndLspChannelStatus
-      tags: ['mm-controller']
-      summary: 'GET /api/mm-controller/lnd/lsp-channel/status'
-      x-contract-status: route-catalog
-      responses:
-        '200':
-          description: Successful response
-        default:
-          description: Error response
   '/api/mm-controller/lnd/lsp-channel/magma/info':
     get:
       operationId: getApiMmControllerLndLspChannelMagmaInfo
@@ -334,16 +323,22 @@ paths:
       summary: 'POST /api/mm-controller/lnd/lsp-channel/magma/orders'
       x-contract-status: route-catalog
       responses:
-        '201':
+        '200':
           description: Successful response
         default:
           description: Error response
   '/api/mm-controller/lnd/lsp-channel/magma/orders/{id}':
     get:
-      operationId: getApiMmControllerLndLspChannelMagmaOrderById
+      operationId: getApiMmControllerLndLspChannelMagmaOrdersId
       tags: ['mm-controller']
       summary: 'GET /api/mm-controller/lnd/lsp-channel/magma/orders/{id}'
       x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         '200':
           description: Successful response
@@ -351,9 +346,26 @@ paths:
           description: Error response
   '/api/mm-controller/lnd/lsp-channel/magma/orders/{id}/pay':
     post:
-      operationId: postApiMmControllerLndLspChannelMagmaOrderPay
+      operationId: postApiMmControllerLndLspChannelMagmaOrdersIdPay
       tags: ['mm-controller']
       summary: 'POST /api/mm-controller/lnd/lsp-channel/magma/orders/{id}/pay'
+      x-contract-status: route-catalog
+      parameters:
+        - name: 'id'
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
+  '/api/mm-controller/lnd/lsp-channel/status':
+    get:
+      operationId: getApiMmControllerLndLspChannelStatus
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/lnd/lsp-channel/status'
       x-contract-status: route-catalog
       responses:
         '200':
