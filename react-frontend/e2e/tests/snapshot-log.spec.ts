@@ -12,12 +12,12 @@ test.describe('SnapshotLog', () => {
     await expect(snapshotLog.getByText('108 offers')).toBeVisible();
     await snapshotLog.getByRole('button').filter({ hasText: '108 offers' }).click();
     await expect(snapshotLog.getByText('Bisq v1')).toBeVisible();
-    await expect(snapshotLog.getByRole('button', { name: /^Bisq v1 0 offers/ })).toBeVisible();
+    await expect(snapshotLog.getByRole('button', { name: /^Bisq v1 complete, 0 offers/ })).toBeVisible();
 
-    await snapshotLog.getByRole('button', { name: /^Bisq v1 0 offers/ }).click();
+    await snapshotLog.getByRole('button', { name: /^Bisq v1 complete, 0 offers/ }).click();
     await expect(snapshotLog.getByText('No offer IDs in this snapshot.')).toBeVisible();
 
     await snapshotLog.getByRole('button').filter({ hasText: '107 offers' }).click();
-    await expect(snapshotLog.getByRole('button', { name: /Bisq.*offline/ }).first()).toBeVisible();
+    await expect(snapshotLog.getByRole('button', { name: /Bisq.*failed/ }).first()).toBeVisible();
   });
 });

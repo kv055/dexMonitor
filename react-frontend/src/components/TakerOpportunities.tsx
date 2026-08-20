@@ -1285,8 +1285,9 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
   );
 }
 
-function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChartOfferVisible, toggleChartOfferKey, setChartOfferKeysVisible, onSelectOffer, onCloseOffer, tradeMode, onTradeModeChange, scenarioMode, onScenarioModeChange, manualSelection, onManualSelectionChange }: {
+function LiveOffersList({ offers, observedLiveCount, fiat, timezone, loading, chartEnabled, isChartOfferVisible, toggleChartOfferKey, setChartOfferKeysVisible, onSelectOffer, onCloseOffer, tradeMode, onTradeModeChange, scenarioMode, onScenarioModeChange, manualSelection, onManualSelectionChange }: {
   offers: Offer[];
+  observedLiveCount: number;
   fiat: string;
   timezone: string;
   loading: boolean;
@@ -1389,9 +1390,16 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
   }
 
   const headerClass = 'truncate text-[0.65rem] font-semibold uppercase tracking-wide text-muted';
+  const captureLabel = observedLiveCount === offers.length
+    ? `${observedLiveCount} live on DEX`
+    : `${observedLiveCount} live on DEX · ${offers.length} after filters`;
   return (
     <div data-testid="live-offers-list" className="min-h-0 flex-1 overflow-y-auto overflow-x-auto">
-      <div className={`${LIVE_OFFERS_GRID_COLS} sticky top-0 z-20 border-b border-border bg-surface/95 px-3 py-1.5`}>
+      <div className="sticky top-0 z-20 border-b border-border bg-surface/95">
+        <div className="px-3 py-1 text-[0.7rem] text-muted" title="Hub count versus the table after opportunity filters">
+          {captureLabel}
+        </div>
+        <div className={`${LIVE_OFFERS_GRID_COLS} px-3 py-1.5`}>
         <SortHeaderButton label="Offer" column="exchange" sort={sort} onSort={handleSort} />
         <SortHeaderButton label="Dir" column="direction" sort={sort} onSort={handleSort} />
         <SortHeaderButton label="Premium" column="premium" sort={sort} onSort={handleSort} />
@@ -1413,6 +1421,7 @@ function LiveOffersList({ offers, fiat, timezone, loading, chartEnabled, isChart
           )}
         </span>
         <span aria-hidden />
+        </div>
       </div>
       {loading && offers.length === 0 ? (
         <div className="relative min-h-64"><LoadingSpinner size={112} label="Loading offers" /></div>
@@ -2428,6 +2437,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
           {viewMode === 'live' ? (
             <LiveOffersList
               offers={filteredOffers.filter(isOfferLive)}
+              observedLiveCount={contextOffers.filter(isOfferLive).length}
               fiat={liveFilters.fiat}
               timezone={timezone}
               // A background core-data request must not replace a deliberately

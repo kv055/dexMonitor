@@ -6,6 +6,8 @@ import { formatDateTimeParts } from '../utils/formatters';
 interface ExchangeData {
   count: number;
   ids?: string[];
+  status?: 'complete' | 'incomplete' | 'failed';
+  offline?: boolean;
 }
 
 interface LogEntry {
@@ -47,16 +49,40 @@ function exchangeNamesForEntry(entry: LogEntry) {
   return names;
 }
 
+function captureStatus(data?: ExchangeData): 'complete' | 'incomplete' | 'failed' | 'offline' {
+  if (!data) return 'offline';
+  if (data.offline || data.status === 'failed') return 'failed';
+  if (data.status === 'incomplete') return 'incomplete';
+  return 'complete';
+}
+
 function exchangeSummary(name: string, data?: ExchangeData) {
-  if (!data) return `${exchangeLabel(name)}: offline`;
-  if (data.count === 0) return `${exchangeLabel(name)}: queried, 0 offers`;
-  return `${exchangeLabel(name)}: ${data.count} ${data.count === 1 ? 'offer' : 'offers'}`;
+  const status = captureStatus(data);
+  if (status === 'offline' || status === 'failed') return `${exchangeLabel(name)}: failed`;
+  if (status === 'incomplete') {
+    return `${exchangeLabel(name)}: incomplete, ${data?.count ?? 0} ${(data?.count ?? 0) === 1 ? 'offer' : 'offers'}`;
+  }
+  if ((data?.count ?? 0) === 0) return `${exchangeLabel(name)}: complete, 0 offers`;
+  return `${exchangeLabel(name)}: complete, ${data!.count} ${data!.count === 1 ? 'offer' : 'offers'}`;
 }
 
 function exchangeDotClass(data?: ExchangeData) {
-  if (!data) return 'opacity-35 ring-1 ring-muted/60';
-  if (data.count === 0) return 'opacity-45 ring-1 ring-white/25';
+  const status = captureStatus(data);
+  if (status === 'offline' || status === 'failed') return 'opacity-35 ring-1 ring-muted/60';
+  if (status === 'incomplete') return 'opacity-70 ring-1 ring-peach/60';
+  if ((data?.count ?? 0) === 0) return 'opacity-45 ring-1 ring-white/25';
   return 'opacity-100';
+}
+
+function exchangeStatusLabel(data?: ExchangeData) {
+  const status = captureStatus(data);
+  if (status === 'offline' || status === 'failed') return 'failed';
+  if (status === 'incomplete') {
+    const count = data?.count ?? 0;
+    return `incomplete, ${count} ${count === 1 ? 'offer' : 'offers'}`;
+  }
+  const count = data?.count ?? 0;
+  return `complete, ${count} ${count === 1 ? 'offer' : 'offers'}`;
 }
 
 export function SnapshotLog() {
@@ -180,7 +206,7 @@ export function SnapshotLog() {
                         />
                         <span className="text-muted w-22">{exchangeLabel(ex)}</span>
                         <span className={exchange ? 'text-text' : 'text-muted'}>
-                          {exchange ? `${exchange.count} ${exchange.count === 1 ? 'offer' : 'offers'}` : 'offline'}
+                          {exchangeStatusLabel(exchange)}
                         </span>
                         <span className="ml-auto text-muted">{exOpen ? '▲' : '▼'}</span>
                       </button>

@@ -464,9 +464,9 @@ export const MOCK_SNAPSHOT_LOG_COMPACT = [
     id: 1,
     timestamp: ts(0.1),
     exchanges: {
-      bisq: { count: 0 },
-      hodlhodl: { count: 100 },
-      robosats: { count: 8 },
+      bisq: { count: 0, status: 'complete' },
+      hodlhodl: { count: 100, status: 'complete' },
+      robosats: { count: 8, status: 'complete' },
     },
     offers_count: 108,
   },
@@ -474,8 +474,8 @@ export const MOCK_SNAPSHOT_LOG_COMPACT = [
     id: 2,
     timestamp: ts(1.1),
     exchanges: {
-      hodlhodl: { count: 100 },
-      robosats: { count: 7 },
+      hodlhodl: { count: 100, status: 'complete' },
+      robosats: { count: 7, status: 'complete' },
     },
     offers_count: 107,
   },
@@ -485,16 +485,16 @@ export const MOCK_SNAPSHOT_LOG_DETAIL: Record<number, (typeof MOCK_SNAPSHOT_LOG_
   1: {
     ...MOCK_SNAPSHOT_LOG_COMPACT[0],
     exchanges: {
-      bisq: { count: 0, ids: [] },
-      hodlhodl: { count: 100, ids: ['hh-1', 'hh-2'] },
-      robosats: { count: 8, ids: ['rs-1'] },
+      bisq: { count: 0, ids: [], status: 'complete' },
+      hodlhodl: { count: 100, ids: ['hh-1', 'hh-2'], status: 'complete' },
+      robosats: { count: 8, ids: ['rs-1'], status: 'complete' },
     },
   },
   2: {
     ...MOCK_SNAPSHOT_LOG_COMPACT[1],
     exchanges: {
-      hodlhodl: { count: 100, ids: ['hh-old-1'] },
-      robosats: { count: 7, ids: ['rs-old-1'] },
+      hodlhodl: { count: 100, ids: ['hh-old-1'], status: 'complete' },
+      robosats: { count: 7, ids: ['rs-old-1'], status: 'complete' },
     },
   },
 };

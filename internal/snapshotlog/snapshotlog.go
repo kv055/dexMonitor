@@ -85,7 +85,16 @@ func CompactExchanges(exchanges map[string]any) map[string]any {
 				}
 			}
 		}
-		out[name] = map[string]any{"count": count}
+		entry := map[string]any{"count": count}
+		if data, ok := raw.(map[string]any); ok {
+			if status, ok := data["status"].(string); ok && status != "" {
+				entry["status"] = status
+			}
+			if offline, ok := data["offline"].(bool); ok && offline {
+				entry["offline"] = true
+			}
+		}
+		out[name] = entry
 	}
 	return out
 }

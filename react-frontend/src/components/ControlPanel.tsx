@@ -22,7 +22,7 @@ const PREMIUM_FILTER_OPTIONS: { value: PremiumFilterMode; label: string }[] = [
   { value: 'net_capped', label: 'Net Premium Capped' },
 ];
 
-/** Dropdown order top→bottom; fallback walks downward when a category is empty. */
+/** Dropdown order top→bottom. */
 type PremiumCategory = { mode: PremiumFilterMode; premiumOnly: boolean; label: string };
 
 const PREMIUM_CATEGORIES: PremiumCategory[] = [
@@ -56,11 +56,6 @@ function premiumCategoryAvailable(offers: Offer[], mode: PremiumFilterMode, prem
   return offers.some(o => (getPremiumMetricValue(o, mode) ?? 0) > 0);
 }
 
-function categoryIndex(mode: PremiumFilterMode, premiumOnly: boolean): number {
-  if (!premiumOnly) return PREMIUM_CATEGORIES.length - 1;
-  const idx = PREMIUM_CATEGORIES.findIndex(c => c.premiumOnly && c.mode === mode);
-  return idx >= 0 ? idx : 0;
-}
 const FIAT_OPTIONS = ['EUR', 'USD', 'GBP', 'AUD', 'CHF', 'SEK', 'NOK', 'CAD'];
 const SOURCE_OPTIONS = ['kraken', 'coinbase', 'bitstamp', 'binance'];
 
@@ -281,7 +276,7 @@ interface PremiumModeDropdownProps {
 }
 
 function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls, scope }: PremiumModeDropdownProps) {
-  const { offers, filters, setFilters } = useFilters();
+  const { offers, filters } = useFilters();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
 
@@ -302,22 +297,6 @@ function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls, scope }: 
   const isAvailable = (mode: PremiumFilterMode, only: boolean) =>
     availability.get(only ? `${mode}:only` : 'incl:all') === true;
 
-  // When the active category has no offers, fall through to the next one below.
-  useEffect(() => {
-    const available = (mode: PremiumFilterMode, only: boolean) =>
-      availability.get(only ? `${mode}:only` : 'incl:all') === true;
-    if (available(value, premiumOnly)) return;
-    const start = categoryIndex(value, premiumOnly);
-    const below = PREMIUM_CATEGORIES.slice(start + 1);
-    const fallback = below.find(c => available(c.mode, c.premiumOnly))
-      ?? PREMIUM_CATEGORIES.find(c => available(c.mode, c.premiumOnly));
-    if (!fallback) return;
-    if (fallback.premiumOnly === premiumOnly && (!fallback.premiumOnly || fallback.mode === value)) return;
-    setFilters({
-      premiumMode: fallback.premiumOnly ? fallback.mode : value,
-      premiumOnly: fallback.premiumOnly,
-    });
-  }, [availability, value, premiumOnly, setFilters]);
   useEffect(() => {
     const handler = (e: MouseEvent) => {
       if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
