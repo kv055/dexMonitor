@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from 'react';
-import { closeLNDChannel, createMagmaLSPOrder, fetchCexBalances, fetchCexDepositAddresses, fetchCexHedgePositions, fetchDexPendingLiquidity, fetchLNDChannelPresets, fetchLNDWalletStatus, fetchLSPChannel, fetchLSPChannelStatus, fetchMagmaLSPInfo, fetchMagmaLSPOrder, fetchSubmarineSwaps, fetchTradingAccounts, fetchTransactionalLiquiditySettings, openLNDChannel, payMagmaLSPOrder, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
-import type { CexAssetBalance, CexDepositAddress, CexHedgePosition, LNDChannelPreset, LNDWalletChannelSummary, LNDWalletStatus, LSPChannelConfig, LSPChannelStatus, MagmaLSPInfo, MagmaLSPOrder, SubmarineSwapRecord, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquiditySource, TransactionalLiquidityTargetDirection, TransactionalRoutingProfile } from '../types';
+import { closeLNDChannel, createMagmaLSPOrder, fetchCexBalances, fetchCexDepositAddresses, fetchCexHedgePositions, fetchDexPendingLiquidity, fetchLNDChannelPresets, fetchLNDWalletStatus, fetchLSPChannel, fetchLSPChannelStatus, fetchMagmaLSPInfo, fetchMagmaLSPOrder, fetchMagmaOffers, fetchSubmarineSwaps, fetchTradingAccounts, fetchTransactionalLiquiditySettings, openLNDChannel, payMagmaLSPOrder, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
+import type { CexAssetBalance, CexDepositAddress, CexHedgePosition, LNDChannelPreset, LNDWalletChannelSummary, LNDWalletStatus, LSPChannelConfig, LSPChannelStatus, MagmaLSPInfo, MagmaLSPOrder, MagmaOffer, SubmarineSwapRecord, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquiditySource, TransactionalLiquidityTargetDirection, TransactionalRoutingProfile } from '../types';
 import { useFilters } from '../hooks/useFilters';
 import { usePreferences } from '../hooks/usePreferences';
 import { useCEXPermissions } from '../hooks/useCEXPermissions';
@@ -331,6 +331,10 @@ export function LiquidityWorkspace() {
   const [creatingMagmaOrder, setCreatingMagmaOrder] = useState(false);
   const [payingMagmaOrder, setPayingMagmaOrder] = useState(false);
   const [magmaNotice, setMagmaNotice] = useState<string | null>(null);
+  const [magmaOffers, setMagmaOffers] = useState<MagmaOffer[]>([]);
+  const [magmaOffersLoading, setMagmaOffersLoading] = useState(false);
+  const [magmaOffersError, setMagmaOffersError] = useState<string | null>(null);
+  const [magmaOffersReload, setMagmaOffersReload] = useState(0);
   const [transactionalSettings, setTransactionalSettings] = useState<TransactionalLiquiditySettings | null>(null);
   const [transactionalForm, setTransactionalForm] = useState({ fiat_currency: 'EUR', amount_source: 'custom' as TransactionalLiquidityAmountSource, amount_fiat: '', trade_mode: 'hedgefull_single_collateral' as TradeMode, target_direction: 'bid' as TransactionalLiquidityTargetDirection, lightning_liquidity_source: 'own_channels' as TransactionalLiquiditySource, supported_routing_profiles: [...DEFAULT_ROUTING_PROFILES], fee_tier: 'economic' as const, coupled_hedge: false });
   const [transactionalLoading, setTransactionalLoading] = useState(true);
@@ -541,6 +545,23 @@ export function LiquidityWorkspace() {
       .finally(() => { if (active) setMagmaInfoLoading(false); });
     return () => { active = false; };
   }, [lightningPath, magmaForm.pool]);
+
+  useEffect(() => {
+    if (lightningPath !== 'lsp_channel') return;
+    let active = true;
+    setMagmaOffersLoading(true);
+    setMagmaOffersError(null);
+    void fetchMagmaOffers()
+      .then(offers => {
+        if (active) setMagmaOffers(offers);
+      })
+      .catch(error => {
+        if (!active) return;
+        setMagmaOffersError(error instanceof Error ? error.message : 'Could not load the Amboss Magma offer book.');
+      })
+      .finally(() => { if (active) setMagmaOffersLoading(false); });
+    return () => { active = false; };
+  }, [lightningPath, magmaOffersReload]);
 
   useEffect(() => {
     if (!magmaOrder || ['COMPLETED', 'FAILED'].includes(magmaOrder.order_state)) return;
@@ -955,6 +976,22 @@ export function LiquidityWorkspace() {
     }
   };
 
+  const applyMagmaOffer = (offer: MagmaOffer) => {
+    const maxExpiry = Number(magmaInfo?.info.max_channel_expiry_blocks || 0);
+    setMagmaForm(current => {
+      const requested = Number(current.inboundSats);
+      const maxSize = Math.max(offer.max_size_sat, offer.min_size_sat);
+      const inbound = Math.min(Math.max(Number.isFinite(requested) && requested > 0 ? requested : offer.min_size_sat, offer.min_size_sat), maxSize);
+      const minExpiry = Math.max(offer.min_block_length || 1, 1);
+      const currentExpiry = Number(current.expiryBlocks);
+      let expiryBlocks = Number.isFinite(currentExpiry) && currentExpiry > 0 ? Math.max(currentExpiry, minExpiry) : minExpiry;
+      if (maxExpiry > 0) expiryBlocks = Math.min(expiryBlocks, maxExpiry);
+      return { ...current, inboundSats: String(inbound), expiryBlocks: String(expiryBlocks) };
+    });
+    setLspError(null);
+    setMagmaNotice(`Prefilled from offer ${shortAddress(offer.id)}: inbound clamped to ${formatSats(offer.min_size_sat)}–${formatSats(offer.max_size_sat)}, expiry at least ${offer.min_block_length} blocks. Magma matches orders automatically; the closer the conditions the likelier this seller is picked.`);
+  };
+
   const submitOpenChannel = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const fundingSats = Number(channelForm.fundingSats);
@@ -1366,6 +1403,45 @@ export function LiquidityWorkspace() {
                       <button type="submit" disabled={creatingMagmaOrder || magmaInfoLoading || !magmaCanCreate}>{creatingMagmaOrder ? 'Creating order…' : 'Create Magma order'}</button>
                     </div>
                   </form>
+                  <div className="lightning-workspace__toolbar">
+                    <div>
+                      <h4>Marketplace offers</h4>
+                      <p>Live sell offers from the Magma book. Pick one to prefill the order form within that seller&apos;s conditions.</p>
+                    </div>
+                    <button type="button" disabled={magmaOffersLoading} onClick={() => setMagmaOffersReload(count => count + 1)}>{magmaOffersLoading ? 'Refreshing…' : 'Refresh offers'}</button>
+                  </div>
+                  {magmaOffersError && <p className="lightning-workspace__alert" role="alert">{magmaOffersError}</p>}
+                  {!magmaOffersLoading && !magmaOffersError && magmaOffers.length === 0 && (
+                    <p className="text-muted text-[0.7rem]">No enabled sell offers on the Magma book right now.</p>
+                  )}
+                  {magmaOffers.length > 0 && (
+                    <table className="w-full text-[0.65rem]">
+                      <thead>
+                        <tr className="text-left text-muted">
+                          <th className="py-1 pr-2 font-normal">Seller</th>
+                          <th className="py-1 pr-2 font-normal">Score</th>
+                          <th className="py-1 pr-2 font-normal">Base fee</th>
+                          <th className="py-1 pr-2 font-normal">Fee rate (ppm)</th>
+                          <th className="py-1 pr-2 font-normal">Size range</th>
+                          <th className="py-1 pr-2 font-normal">Min expiry (blocks)</th>
+                          <th className="py-1 font-normal"><span className="sr-only">Use offer</span></th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {magmaOffers.map(offer => (
+                          <tr key={offer.id} className="border-t border-white/10">
+                            <td className="py-1 pr-2"><code title={offer.seller_pubkey}>{shortAddress(offer.seller_pubkey)}</code></td>
+                            <td className="py-1 pr-2">{offer.seller_score}</td>
+                            <td className="py-1 pr-2">{offer.base_fee} sat{offer.base_fee_cap != null ? ` (cap ${offer.base_fee_cap})` : ''}</td>
+                            <td className="py-1 pr-2">{offer.fee_rate}{offer.fee_rate_cap != null ? ` (cap ${offer.fee_rate_cap})` : ''}</td>
+                            <td className="py-1 pr-2">{formatSats(offer.min_size_sat)} – {formatSats(offer.max_size_sat)}</td>
+                            <td className="py-1 pr-2">{offer.min_block_length}</td>
+                            <td className="py-1"><button type="button" onClick={() => applyMagmaOffer(offer)}>Use</button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
                   {magmaOrder && (
                     <article className="lightning-channel">
                       <header>

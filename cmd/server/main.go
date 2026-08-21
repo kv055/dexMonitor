@@ -2446,6 +2446,14 @@ func handleMmControllerMagmaLSPInfo(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, path)
 }
 
+func handleMmControllerMagmaOffers(w http.ResponseWriter, r *http.Request) {
+	path := "/api/lnd/lsp-channel/magma/offers"
+	if r.URL.RawQuery != "" {
+		path += "?" + r.URL.RawQuery
+	}
+	forwardMMControllerJSON(w, r, path)
+}
+
 func handleMmControllerMagmaLSPOrders(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/lnd/lsp-channel/magma/orders")
 }

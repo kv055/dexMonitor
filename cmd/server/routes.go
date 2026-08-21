@@ -59,6 +59,7 @@ func registerMMControllerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel/status", handleMmControllerLSPChannelStatus)
 	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel/candidates", handleMmControllerLSPChannelCandidates)
 	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel/magma/info", handleMmControllerMagmaLSPInfo)
+	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel/magma/offers", handleMmControllerMagmaOffers)
 	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel/magma/orders", handleMmControllerMagmaLSPOrders)
 	mux.HandleFunc("POST /api/mm-controller/lnd/lsp-channel/magma/orders", handleMmControllerMagmaLSPOrders)
 	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel/magma/orders/{id}", handleMmControllerMagmaLSPOrderByID)

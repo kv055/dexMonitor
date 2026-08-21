@@ -95,6 +95,23 @@ vi.mock('../utils/api', () => ({
     created_at: '2026-08-18T00:00:00Z',
     updated_at: '2026-08-18T00:00:00Z',
   }),
+  fetchMagmaOffers: vi.fn().mockResolvedValue([
+    {
+      id: 'offer-1',
+      side: 'SELL',
+      status: 'ENABLED',
+      base_fee: 1000,
+      fee_rate: 2000,
+      base_fee_cap: null,
+      fee_rate_cap: null,
+      min_size_sat: 300000,
+      max_size_sat: 5000000,
+      total_size_sat: 5000000,
+      min_block_length: 4320,
+      seller_score: '42.5',
+      seller_pubkey: '03seller00000000000000000000000000000000000000000000000000000000',
+    },
+  ]),
   fetchMagmaLSPOrder: vi.fn().mockImplementation(async (id: string) => ({
     id,
     pool: 'recommended',

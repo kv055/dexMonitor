@@ -15,6 +15,7 @@ import type {
   LSPChannelStatus,
   MagmaLSPInfo,
   MagmaLSPOrder,
+  MagmaOffer,
   SubmarineSwapRecord,
   ServiceVersions,
   TradingAccount,
@@ -277,6 +278,7 @@ export function fetchLSPChannel(){return request<LSPChannelConfig>('/api/mm-cont
 export function updateLSPChannel(payload:LSPChannelConfig){return request<LSPChannelConfig>('/api/mm-controller/lnd/lsp-channel',{method:'PUT',body:JSON.stringify(payload)})}
 export function fetchLSPChannelStatus(){return request<LSPChannelStatus>('/api/mm-controller/lnd/lsp-channel/status')}
 export function fetchMagmaLSPInfo(pool = 'recommended'){return request<MagmaLSPInfo>(`/api/mm-controller/lnd/lsp-channel/magma/info?pool=${encodeURIComponent(pool)}`)}
+export function fetchMagmaOffers(){return request<MagmaOffer[]>('/api/mm-controller/lnd/lsp-channel/magma/offers')}
 export function fetchMagmaLSPOrders(limit = 10){return request<MagmaLSPOrder[]>(`/api/mm-controller/lnd/lsp-channel/magma/orders?limit=${limit}`)}
 export function fetchMagmaLSPOrder(id: string){return request<MagmaLSPOrder>(`/api/mm-controller/lnd/lsp-channel/magma/orders/${encodeURIComponent(id)}`)}
 export function createMagmaLSPOrder(payload: { pool: string; lsp_balance_sat: number; announce_channel: boolean; channel_expiry_blocks: number }) {

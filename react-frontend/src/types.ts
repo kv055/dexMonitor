@@ -648,6 +648,21 @@ export interface MagmaLSPInfo {
     uris?: string[];
   };
 }
+export interface MagmaOffer {
+  id: string;
+  side: string;
+  status: string;
+  base_fee: number;
+  fee_rate: number;
+  base_fee_cap?: number | null;
+  fee_rate_cap?: number | null;
+  min_size_sat: number;
+  max_size_sat: number;
+  total_size_sat: number;
+  min_block_length: number;
+  seller_score: string;
+  seller_pubkey: string;
+}
 export interface MagmaLSPOrder {
   id: string;
   pool: string;
