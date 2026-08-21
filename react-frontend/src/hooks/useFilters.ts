@@ -8,6 +8,12 @@ import type { Filters, Offer, PaymentMethodGroup } from '../types';
  */
 export type ChartScope = 'monitor' | 'insights';
 
+export interface LinkedPaymentMethodOption {
+  name: string;
+  aliases: string[];
+  category: string;
+}
+
 export interface FiltersContextValue {
   filters: Filters;
   setFilters: (partial: Partial<Filters>) => void;
@@ -20,6 +26,10 @@ export interface FiltersContextValue {
   offersForPremiumRange: Offer[];
   depthOffers: Offer[];
   paymentMethods: string[];
+  /** Null while the payment-method catalog is loading or unavailable. */
+  linkedPaymentMethods: Set<string> | null;
+  /** Linked catalog methods available for fine-grained filtering. */
+  linkedPaymentMethodOptions: LinkedPaymentMethodOption[] | null;
   /** Offer counts per payment method in the current monitor view (payment filter excluded). */
   paymentMethodCounts: Record<string, number>;
   groups: PaymentMethodGroup[];

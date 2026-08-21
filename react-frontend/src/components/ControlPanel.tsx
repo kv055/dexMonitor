@@ -66,7 +66,7 @@ interface PaymentDropdownProps {
   containerRef: React.RefObject<HTMLDivElement | null>;
 }
 
-function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDropdownProps) {
+export function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDropdownProps) {
   const { offers, filters, groups } = useFilters();
   const [open, setOpen] = useState(false);
   const [menuMaxWidth, setMenuMaxWidth] = useState<number | undefined>(undefined);
@@ -100,15 +100,18 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
     }
     if (filters.status === 'open')   f = f.filter(o => isOfferLive(o));
     if (filters.status === 'closed') f = f.filter(o => !isOfferLive(o));
-    const pMin = parseFloat(filters.premiumMin);
-    const pMax = parseFloat(filters.premiumMax);
-    if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
-    if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
-    const profitMin = parseFloat(filters.profitMin);
-    const profitMax = parseFloat(filters.profitMax);
-    const profitScenario = profitScenarioForPremiumMode(filters.premiumMode);
-    if (!isNaN(profitMin)) f = f.filter(o => (getEstimatedProfitFiat(o, profitScenario) ?? 0) >= profitMin);
-    if (!isNaN(profitMax)) f = f.filter(o => (getEstimatedProfitFiat(o, profitScenario) ?? 0) <= profitMax);
+    if (filters.rangeMetric === 'premium') {
+      const pMin = parseFloat(filters.premiumMin);
+      const pMax = parseFloat(filters.premiumMax);
+      if (!isNaN(pMin)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) >= pMin);
+      if (!isNaN(pMax)) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) || 0) <= pMax);
+    } else {
+      const profitMin = parseFloat(filters.profitMin);
+      const profitMax = parseFloat(filters.profitMax);
+      const profitScenario = profitScenarioForPremiumMode(filters.premiumMode);
+      if (!isNaN(profitMin)) f = f.filter(o => (getEstimatedProfitFiat(o, profitScenario) ?? 0) >= profitMin);
+      if (!isNaN(profitMax)) f = f.filter(o => (getEstimatedProfitFiat(o, profitScenario) ?? 0) <= profitMax);
+    }
     if (filters.premiumOnly) f = f.filter(o => (getPremiumMetricValue(o, filters.premiumMode) ?? 0) > 0);
 
     const counts: Record<string, number> = {};
@@ -267,6 +270,67 @@ function PaymentDropdown({ value, onChange, inputCls, containerRef }: PaymentDro
   );
 }
 
+interface FilterSelectDropdownProps {
+  value: string;
+  options: { value: string; label: string }[];
+  onChange: (value: string) => void;
+  inputCls: string;
+  title: string;
+}
+
+function FilterSelectDropdown({ value, options, onChange, inputCls, title }: FilterSelectDropdownProps) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const selected = options.find(option => option.value === value) ?? options[0];
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        className={`${inputCls} flex w-full items-center text-left`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={title}
+        onClick={() => setOpen(current => !current)}
+      >
+        <span className="truncate">{selected.label}</span>
+        <span className="ml-auto text-[0.65rem] text-muted">▾</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-full min-w-36 overflow-hidden rounded-md border border-border bg-surface shadow-lg" role="menu">
+          {options.map(option => {
+            const active = option.value === value;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="menuitemradio"
+                aria-checked={active}
+                className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors ${active ? 'bg-accent/15 text-accent' : 'text-text hover:bg-bg'}`}
+                onClick={() => {
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                <span className="w-3 text-center">{active ? '✓' : ''}</span>
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
 interface PremiumModeDropdownProps {
   value: PremiumFilterMode;
   premiumOnly: boolean;
@@ -343,7 +407,7 @@ function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls, scope }: 
                   !enabled
                     ? 'text-muted/45 cursor-not-allowed'
                     : active
-                      ? 'text-accent bg-bg hover:bg-bg'
+                      ? 'bg-accent/15 text-accent hover:bg-accent/20'
                       : 'text-text hover:bg-bg'
                 }`}
               >
@@ -368,7 +432,7 @@ function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls, scope }: 
                   !inclEnabled
                     ? 'text-muted/45 cursor-not-allowed'
                     : active
-                      ? 'text-accent bg-bg hover:bg-bg'
+                      ? 'bg-accent/15 text-accent hover:bg-accent/20'
                       : 'text-text hover:bg-bg'
                 }`}
               >
@@ -458,6 +522,10 @@ function PastPremiumRange() {
   }, [offersForPremiumRange, filters.premiumMode]);
 
   useEffect(() => {
+    if (filters.rangeMetric !== 'premium') {
+      setFilters({ rangeMetric: 'premium' });
+      return;
+    }
     if (bounds == null) return;
     if (filters.premiumMin === '' || filters.premiumMax === '') {
       setFilters({
@@ -465,7 +533,7 @@ function PastPremiumRange() {
         premiumMax: (bounds.max / 100).toFixed(2),
       });
     }
-  }, [bounds, filters.premiumMin, filters.premiumMax, setFilters]);
+  }, [bounds, filters.rangeMetric, filters.premiumMin, filters.premiumMax, setFilters]);
 
   if (bounds == null) {
     return null;
@@ -493,7 +561,7 @@ function PastPremiumRange() {
 
 function LiveNetProfitRange() {
   const { filters, setFilters, offersForProfitRange, offersForPremiumRange } = useFilters();
-  const [metric, setMetric] = useState<'profit' | 'premium'>('profit');
+  const metric = filters.rangeMetric;
   const profitScenario = profitScenarioForPremiumMode(filters.premiumMode);
   const categoryKey = `${filters.premiumMode}:${filters.premiumOnly ? 'only' : 'all'}`;
   const prevCategoryRef = useRef(categoryKey);
@@ -538,8 +606,8 @@ function LiveNetProfitRange() {
     <div className="flex items-center justify-between gap-2">
       <span className={labelCls}>Range</span>
       <div className="flex rounded border border-border bg-bg/60 p-0.5 text-[0.62rem] font-semibold">
-        <button type="button" onClick={() => setMetric('profit')} aria-pressed={metric === 'profit'} className={metric === 'profit' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>{fiatToggleLabel}</button>
-        <button type="button" onClick={() => setMetric('premium')} aria-pressed={metric === 'premium'} className={metric === 'premium' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>%</button>
+        <button type="button" onClick={() => setFilters({ rangeMetric: 'profit' })} aria-pressed={metric === 'profit'} className={metric === 'profit' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>{fiatToggleLabel}</button>
+        <button type="button" onClick={() => setFilters({ rangeMetric: 'premium' })} aria-pressed={metric === 'premium'} className={metric === 'premium' ? 'rounded bg-accent px-1.5 py-0.5 text-black' : 'rounded px-1.5 py-0.5 text-muted'}>%</button>
       </div>
     </div>
   );
@@ -596,17 +664,16 @@ export function SharedOfferFilters({ scope }: { scope: 'live' | 'past' }) {
 
   return (
     <div className="flex flex-col gap-3 min-w-0">
-      <label className="flex flex-col gap-1">
+      <div className="flex flex-col gap-1">
         <span className={labelCls}>Fiat</span>
-        <select
+        <FilterSelectDropdown
           value={filters.fiat}
-          onChange={event => setFilters({ fiat: event.target.value })}
-          className={controlCls}
+          onChange={fiat => setFilters({ fiat })}
+          options={FIAT_OPTIONS.map(currency => ({ value: currency, label: currency }))}
+          inputCls={controlCls}
           title="Show live and past offers quoted in this currency"
-        >
-          {FIAT_OPTIONS.map(currency => <option key={currency} value={currency}>{currency}</option>)}
-        </select>
-      </label>
+        />
+      </div>
 
       <div className="flex flex-col gap-1">
         <span className={labelCls}>Premium</span>
@@ -625,34 +692,28 @@ export function SharedOfferFilters({ scope }: { scope: 'live' | 'past' }) {
 }
 
 /**
- * Live-only filter controls (reference CEX, payment method, refresh). Shared
+ * Live-only filter controls (reference CEX, payment methods, refresh). Shared
  * Fiat / Premium / Range live in SharedOfferFilters above this block.
  */
 export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersProps) {
   const { filters, setFilters } = useFilters();
   const { timezone } = useTimezone();
-  const panelRef = useRef<HTMLDivElement>(null);
-
   const lastUpdated = lastUpdatedAt ? `Updated ${formatTimeOnly(lastUpdatedAt, timezone)}` : '';
 
   return (
-    <div ref={panelRef} className="relative flex flex-col gap-3 min-w-0">
-      <label className="flex flex-col gap-1">
-        <span className={labelCls}>Reference source</span>
-        <select
-          value={filters.cex}
-          onChange={event => setFilters({ cex: event.target.value })}
-          className={controlCls}
-          title="CEX reference-price source used while displaying offers"
-        >
-          {SOURCE_OPTIONS.map(source => <option key={source} value={source}>{source[0].toUpperCase() + source.slice(1)}</option>)}
-        </select>
-      </label>
-
+    <div className="relative flex flex-col gap-3 min-w-0">
       <div className="flex flex-col gap-1">
-        <span className={labelCls}>Payment</span>
-        <PaymentDropdown value={filters.payment} onChange={v => setFilters({ payment: v })} inputCls={controlCls} containerRef={panelRef} />
+        <span className={labelCls}>Reference source</span>
+        <FilterSelectDropdown
+          value={filters.cex}
+          onChange={cex => setFilters({ cex })}
+          options={SOURCE_OPTIONS.map(source => ({ value: source, label: source[0].toUpperCase() + source.slice(1) }))}
+          inputCls={controlCls}
+          title="CEX reference-price source used while displaying offers"
+        />
       </div>
+
+      <PaymentMethodScopeDropdown />
 
       <div className="flex items-center justify-between gap-2 border-t border-border/70 pt-2">
         <span className="text-[0.68rem] text-muted truncate">{lastUpdated}</span>
@@ -672,22 +733,127 @@ export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersP
  * SharedOfferFilters; timeframe / duration / profit / size mode stay in the
  * Insights sidebar below this block.
  */
-export function PastOfferFilters({ paymentFilter, onPaymentFilterChange }: {
-  paymentFilter: 'settings' | 'all';
-  onPaymentFilterChange: (filter: 'settings' | 'all') => void;
-}) {
+function PaymentMethodScopeDropdown() {
+  const { filters, setFilters, linkedPaymentMethodOptions } = useFilters();
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, []);
+
+  const selected = new Set(filters.selectedLinkedPaymentMethods);
+  const selectedLabel = selected.size === 0
+    ? 'Linked methods'
+    : `${selected.size} linked method${selected.size === 1 ? '' : 's'}`;
+  const linkedMethodsByCategory = useMemo(() => {
+    const categories = new Map<string, typeof linkedPaymentMethodOptions extends null ? never : NonNullable<typeof linkedPaymentMethodOptions>>();
+    for (const method of linkedPaymentMethodOptions ?? []) {
+      const methods = categories.get(method.category) ?? [];
+      methods.push(method);
+      categories.set(method.category, methods);
+    }
+    return [...categories.entries()]
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([category, methods]) => ({
+        category,
+        methods: methods.sort((left, right) => left.name.localeCompare(right.name)),
+      }));
+  }, [linkedPaymentMethodOptions]);
+
+  const selectScope = (scope: 'all' | 'linked') => {
+    setFilters({
+      paymentScope: scope,
+      ...(scope === 'all' ? { selectedLinkedPaymentMethods: [] } : {}),
+    });
+  };
+
+  const toggleMethod = (name: string) => {
+    const next = new Set(selected);
+    if (next.has(name)) next.delete(name);
+    else next.add(name);
+    setFilters({ paymentScope: 'linked', selectedLinkedPaymentMethods: [...next].sort((a, b) => a.localeCompare(b)) });
+  };
+
   return (
-    <label className="flex flex-col gap-1">
-      <span className={labelCls}>Payments</span>
-      <select
-        value={paymentFilter}
-        onChange={event => onPaymentFilterChange(event.target.value as 'settings' | 'all')}
-        className={controlCls}
-        title="Choose whether past offers use every payment method or only methods enabled in Settings"
+    <div ref={ref} className="relative flex flex-col gap-1">
+      <span className={labelCls}>Payment methods</span>
+      <button
+        type="button"
+        className={`${controlCls} flex w-full items-center gap-1.5 text-left`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title="Show all methods, linked methods, or selected linked methods"
+        onClick={() => setOpen(value => !value)}
       >
-        <option value="settings">Selected in Settings</option>
-        <option value="all">All payment methods</option>
-      </select>
-    </label>
+        <span className="truncate">{filters.paymentScope === 'all' ? 'All methods' : selectedLabel}</span>
+        <span className="ml-auto text-[0.65rem] text-muted">▾</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-full min-w-52 overflow-hidden rounded-md border border-border bg-surface shadow-lg" role="menu">
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={filters.paymentScope === 'all'}
+            className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors ${filters.paymentScope === 'all' ? 'bg-accent/15 text-accent hover:bg-accent/20' : 'text-text hover:bg-bg'}`}
+            onClick={() => selectScope('all')}
+          >
+            <span className="w-3 text-center">{filters.paymentScope === 'all' ? '✓' : ''}</span>
+            All methods
+          </button>
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={filters.paymentScope === 'linked' && selected.size === 0}
+            className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors ${filters.paymentScope === 'linked' && selected.size === 0 ? 'bg-accent/15 text-accent hover:bg-accent/20' : 'text-text hover:bg-bg'}`}
+            onClick={() => {
+              setFilters({ paymentScope: 'linked', selectedLinkedPaymentMethods: [] });
+            }}
+          >
+            <span className="w-3 text-center">{filters.paymentScope === 'linked' && selected.size === 0 ? '✓' : ''}</span>
+            Linked methods
+          </button>
+          {filters.paymentScope === 'linked' && (
+            <div className="border-t border-border px-2.5 py-1.5">
+              <p className="mb-1 text-[0.6rem] uppercase tracking-wide text-muted">Linked payment methods</p>
+              {linkedPaymentMethodOptions == null ? (
+                <p className="text-[0.68rem] text-muted">Loading linked methods…</p>
+              ) : linkedPaymentMethodOptions.length === 0 ? (
+                <p className="text-[0.68rem] text-muted">No linked methods.</p>
+              ) : linkedMethodsByCategory.length === 0 ? (
+                <p className="text-[0.68rem] text-muted">No linked methods.</p>
+              ) : (
+                <div className="flex max-h-52 flex-col overflow-y-auto">
+                  {linkedMethodsByCategory.map(({ category, methods }, index) => (
+                    <div key={category} className={`py-1 ${index > 0 ? 'mt-1 border-t border-border/70 pt-2' : 'pt-0'}`}>
+                      <p className="px-1 pb-1 text-[0.68rem] font-semibold uppercase tracking-wide text-muted">{category}</p>
+                      {methods.map(method => (
+                        <label key={method.name} className="flex cursor-pointer items-center gap-2 rounded px-1 py-1 text-xs text-text hover:bg-bg">
+                          <input
+                            type="checkbox"
+                            checked={selected.has(method.name)}
+                            onChange={() => toggleMethod(method.name)}
+                          />
+                          <span className="truncate">{method.name}</span>
+                        </label>
+                      ))}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
+}
+
+/** Past-only controls; shared offer filters are rendered above this block. */
+export function PastOfferFilters() {
+  return <PaymentMethodScopeDropdown />;
 }

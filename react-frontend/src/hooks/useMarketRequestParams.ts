@@ -6,10 +6,7 @@ import type { MarketRequestParams } from '../shared/marketParams';
 
 export function useMarketRequestParams(): { params: MarketRequestParams; ready: boolean } {
   const { filters } = useFilters();
-  const {
-    excludedMethods,
-    maxFiatLimit,
-  } = usePreferences();
+  const { maxFiatLimit } = usePreferences();
   const { revision: capabilityRevision } = useCEXPermissions();
 
   const params = useMemo<MarketRequestParams>(() => ({
@@ -17,14 +14,12 @@ export function useMarketRequestParams(): { params: MarketRequestParams; ready: 
     cex: filters.cex,
     fiat: filters.fiat,
     capabilityRevision,
-    excludedPaymentMethods: excludedMethods,
     maxFiatLimit,
   }), [
     filters.hours,
     filters.cex,
     filters.fiat,
     capabilityRevision,
-    excludedMethods,
     maxFiatLimit,
   ]);
 

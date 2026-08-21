@@ -10,16 +10,12 @@ import {
 const params: MarketRequestParams = {
   hours: '48', cex: 'coinbase', fiat: 'USD',
   capabilityRevision: 0,
-  excludedPaymentMethods: ['Cash App', 'SEPA'],
   maxFiatLimit: 5_000,
 };
 
 describe('market request parameters', () => {
-  it('uses stable keys when exclusion order changes', () => {
-    expect(marketRequestKey(params)).toBe(marketRequestKey({
-      ...params,
-      excludedPaymentMethods: [...params.excludedPaymentMethods].reverse(),
-    }));
+  it('uses stable keys for the same request parameters', () => {
+    expect(marketRequestKey(params)).toBe(marketRequestKey({ ...params }));
   });
 
   it('refreshes market requests when central capability policy changes', () => {
@@ -37,7 +33,7 @@ describe('market request parameters', () => {
 	 expect(live.has('fee_tier')).toBe(false);
 	 expect(live.has('max_fiat_limit')).toBe(false);
 	 expect(past.get('max_fiat_limit')).toBe('5000');
-    expect(past.get('exclude_payment_methods')).toBe('Cash App,SEPA');
+    expect(past.has('exclude_payment_methods')).toBe(false);
   });
 
   it('propagates the selected fiat into analytics and statistics bodies', () => {

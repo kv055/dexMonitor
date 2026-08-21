@@ -932,18 +932,26 @@ export interface TradeCostConfig {
 }
 
 export type PremiumFilterMode = 'raw' | 'net_full' | 'net_capped';
+export type LiveRangeMetric = 'profit' | 'premium';
+export type PaymentMethodScope = 'all' | 'linked';
 
 export interface Filters {
   direction: string;
   exchange: string;
   excludedExchanges: string[];
   payment: string;
+  /** Whether offers must include a catalog method linked to one of our accounts. */
+  paymentScope: PaymentMethodScope;
+  /** Canonical linked method names selected for a finer-grained payment filter. */
+  selectedLinkedPaymentMethods: string[];
   status: string;
   premiumOnly: boolean;
   premiumMin: string;
   premiumMax: string;
   profitMin: string;
   profitMax: string;
+  /** Which live-offer range is active. The inactive range must not filter. */
+  rangeMetric: LiveRangeMetric;
   premiumMode: PremiumFilterMode;
   hours: string;
   cex: string;

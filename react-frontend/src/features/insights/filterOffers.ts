@@ -38,7 +38,7 @@ export function applyOfferFilters(
   if (!options?.skipPayment && paymentFilter) filtered = filtered.filter(paymentFilter);
   if (filters.status === 'open') filtered = filtered.filter(isOfferLive);
   if (filters.status === 'closed') filtered = filtered.filter(offer => !isOfferLive(offer));
-  if (!options?.skipPremiumRange) {
+  if (!options?.skipPremiumRange && filters.rangeMetric === 'premium') {
     const minimum = Number.parseFloat(filters.premiumMin);
     const maximum = Number.parseFloat(filters.premiumMax);
     if (!Number.isNaN(minimum)) {
@@ -48,7 +48,7 @@ export function applyOfferFilters(
       filtered = filtered.filter(offer => (getPremiumMetricValue(offer, filters.premiumMode) ?? 0) <= maximum);
     }
   }
-  if (!options?.skipProfitRange) {
+  if (!options?.skipProfitRange && filters.rangeMetric === 'profit') {
     const minimum = Number.parseFloat(filters.profitMin);
     const maximum = Number.parseFloat(filters.profitMax);
     const scenario = profitScenarioForPremiumMode(filters.premiumMode);

@@ -4,12 +4,9 @@ import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
 import { useCEXPermissions } from '../hooks/useCEXPermissions';
 import { fiatSymbol } from '../utils/currency';
-import type { PaymentMethodGroup } from '../types';
-
 interface Props {
   open: boolean;
   onClose: () => void;
-  groups: PaymentMethodGroup[];
 }
 
 function getOffsetMinutes(timezone: string): number {
@@ -169,20 +166,16 @@ const allTimezones = getAllTimezonesSorted();
 export function SettingsOverlay({
   open,
   onClose,
-  groups,
 }: Props) {
   const {
     preferredTimezone,
     setPreferredTimezone,
-    excludedMethods,
-    toggleMethod,
-    toggleGroup,
     maxFiatLimit,
     setMaxFiatLimit,
     hideZeroTrustScore,
     setHideZeroTrustScore,
   } = usePreferences();
-  const { zeroTrustHiddenCount, paymentMethodCounts, filters } = useFilters();
+  const { zeroTrustHiddenCount, filters } = useFilters();
   const {
     exchanges,
     loading: cexPermissionsLoading,
@@ -191,17 +184,7 @@ export function SettingsOverlay({
     updatePolicy,
     reload: reloadCEXPermissions,
   } = useCEXPermissions();
-  const excludedSet = new Set(excludedMethods);
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(() => new Set());
   const [expandedCEXes, setExpandedCEXes] = useState<Set<string>>(() => new Set());
-
-  const toggleCollapse = (name: string) =>
-    setExpandedGroups(prev => {
-      const next = new Set(prev);
-      if (next.has(name)) next.delete(name);
-      else next.add(name);
-      return next;
-    });
 
   const toggleCEXCollapse = (exchange: string) =>
     setExpandedCEXes(prev => {
@@ -214,12 +197,16 @@ export function SettingsOverlay({
   useEffect(() => {
     if (!open) return;
     reloadCEXPermissions();
+  }, [open, reloadCEXPermissions]);
+
+  useEffect(() => {
+    if (!open) return;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [open, onClose, reloadCEXPermissions]);
+  }, [open, onClose]);
 
   if (!open) return null;
 
@@ -278,89 +265,6 @@ export function SettingsOverlay({
           </section>
 
           <section className="rounded-lg border border-border bg-bg/50 p-2.5">
-            <div className="mb-2 lg:flex lg:items-baseline lg:gap-3">
-              <div className="shrink-0">
-                <h3 className="text-xs font-medium">Payment Methods</h3>
-              </div>
-              <p className="mt-0.5 lg:mt-0 lg:ml-auto lg:text-right text-[0.65rem] text-muted leading-tight">Disabled methods are hidden from all views and excluded from API queries.</p>
-            </div>
-
-            {groups.length === 0 ? (
-              <p className="text-[0.65rem] text-muted">Loading payment methods…</p>
-            ) : (
-              <div className="flex flex-col gap-1.5">
-                {groups.map(group => {
-                  const allExcluded = group.methods.every(m => excludedSet.has(m));
-                  const someExcluded = group.methods.some(m => excludedSet.has(m));
-                  const collapsed = !expandedGroups.has(group.name);
-                  return (
-                    <div key={group.name} className="rounded-md border border-border overflow-hidden">
-                      {/* Group header row — click left side to collapse, right button to toggle */}
-                      <div className={`flex items-center gap-1.5 px-2.5 py-1.5 ${allExcluded ? 'bg-bg/80' : 'bg-bg/30'}`}>
-                        <button
-                          type="button"
-                          onClick={() => toggleCollapse(group.name)}
-                          className="flex items-center gap-1.5 flex-1 min-w-0 text-left"
-                        >
-                          <span className={`text-[0.55rem] text-muted transition-transform duration-150 ${collapsed ? '' : 'rotate-90'}`}>▶</span>
-                          <span className={`text-[0.7rem] font-semibold ${allExcluded ? 'text-muted line-through' : 'text-text'}`}>
-                            {group.display_name}
-                          </span>
-                          <span className="text-[0.55rem] text-muted tabular-nums">
-                            {group.methods.reduce((sum, m) => sum + (paymentMethodCounts[m] ?? 0), 0)}
-                          </span>
-                          {someExcluded && !allExcluded && (
-                            <span className="text-[0.5rem] uppercase tracking-wide text-accent border border-accent/40 rounded px-0.5 py-px">partial</span>
-                          )}
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => toggleGroup(group.methods, !allExcluded)}
-                          className={`shrink-0 text-[0.65rem] px-2 py-0.5 rounded-md border font-medium transition-colors ${
-                            allExcluded
-                              ? 'border-green/50 text-green hover:bg-green/10'
-                              : 'border-red/50 text-red hover:bg-red/10'
-                          }`}
-                        >
-                          {allExcluded ? 'Enable all' : 'Disable all'}
-                        </button>
-                      </div>
-
-                      {/* Individual methods — hidden when collapsed */}
-                      {!collapsed && (
-                      <div className="divide-y divide-border/50">
-                        {group.methods.map(method => {
-                          const excluded = excludedSet.has(method);
-                          return (
-                            <div key={method} className={`flex items-center justify-between gap-1.5 px-2.5 py-1 pl-4 ${excluded ? 'opacity-50' : ''}`}>
-                              <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                                <span className={`text-[0.65rem] truncate ${excluded ? 'text-muted line-through' : 'text-text'}`}>{method}</span>
-                                <span className="text-[0.55rem] text-muted tabular-nums shrink-0">{paymentMethodCounts[method] ?? 0}</span>
-                              </div>
-                              <button
-                                type="button"
-                                onClick={() => toggleMethod(method)}
-                                className={`text-[0.6rem] px-1.5 py-0.5 rounded border font-medium transition-colors ${
-                                  excluded
-                                    ? 'border-green/40 text-green hover:bg-green/10'
-                                    : 'border-border text-muted hover:border-red/50 hover:text-red'
-                                }`}
-                              >
-                                {excluded ? 'Enable' : 'Disable'}
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </section>
-
-          <section className="rounded-lg border border-border bg-bg/50 p-2.5">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <h3 className="text-xs font-medium">Seller Trust Score</h3>
@@ -403,7 +307,7 @@ export function SettingsOverlay({
                   Retry
                 </button>
               </div>
-            ) : (
+            ) : exchanges.some(cex => cex.cost_supported) ? (
               <div className="flex flex-col gap-1">
                 {exchanges.filter(cex => cex.cost_supported).map(cex => {
                   const spotEnabled = cex.policy.spot_enabled;
@@ -509,6 +413,8 @@ export function SettingsOverlay({
                   );
                 })}
               </div>
+            ) : (
+              <p className="text-[0.65rem] text-muted">No cost-supported exchanges are configured.</p>
             )}
           </section>
 

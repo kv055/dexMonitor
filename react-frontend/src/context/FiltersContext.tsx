@@ -1,6 +1,6 @@
-import { useCallback, useReducer, useState, useMemo, type ReactNode } from 'react';
+import { useCallback, useEffect, useReducer, useState, useMemo, type ReactNode } from 'react';
 import type { Filters, Offer, PaymentMethodGroup } from '../types';
-import { FiltersContext, type ChartScope } from '../hooks/useFilters';
+import { FiltersContext, type ChartScope, type LinkedPaymentMethodOption } from '../hooks/useFilters';
 
 interface ChartScopeVisibility {
   defaultVisible: boolean;
@@ -9,6 +9,7 @@ interface ChartScopeVisibility {
 import { INITIAL_FILTERS, filtersReducer } from './filtersState';
 import { getRefPrice, hasZeroTrustScore, isOfferLive } from '../utils/offerAccess';
 import { applyOfferFilters, countOffersByPaymentMethod } from '../features/insights/filterOffers';
+import { fetchPaymentMethods } from '../utils/api';
 
 // ── Provider ───────────────────────────────────────────────────────────────
 
@@ -16,15 +17,38 @@ interface Props {
   offers: Offer[];
   loading: boolean;
   groups: PaymentMethodGroup[];
-  excludedMethods: string[];
   hideZeroTrustScore: boolean;
   children: ReactNode;
 }
 
-export function FiltersProvider({ offers, loading, groups, excludedMethods, hideZeroTrustScore, children }: Props) {
+export function FiltersProvider({ offers, loading, groups, hideZeroTrustScore, children }: Props) {
   const [filters, dispatch] = useReducer(filtersReducer, INITIAL_FILTERS);
   const [selectedOfferKey, setSelectedOfferKey] = useState<string | null>(null);
   const [hoveredOhlcTime, setHoveredOhlcTime] = useState<number | null>(null);
+  const [linkedPaymentMethods, setLinkedPaymentMethods] = useState<Set<string> | null>(null);
+  const [linkedPaymentMethodOptions, setLinkedPaymentMethodOptions] = useState<LinkedPaymentMethodOption[] | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    void fetchPaymentMethods()
+      .then(({ payment_methods }) => {
+        if (!cancelled) {
+          const linked = payment_methods
+            .filter(method => method.is_linked)
+            .map(method => ({ name: method.name, aliases: method.alias_list, category: method.category }));
+          setLinkedPaymentMethodOptions(linked);
+          setLinkedPaymentMethods(new Set(linked.flatMap(method => [method.name, ...method.aliases])));
+        }
+      })
+      .catch(() => {
+        // Keep all methods visible if the catalog cannot be loaded.
+        if (!cancelled) {
+          setLinkedPaymentMethods(null);
+          setLinkedPaymentMethodOptions(null);
+        }
+      });
+    return () => { cancelled = true; };
+  }, []);
   // Chart-overlay visibility per scope: a default plus per-offer exceptions.
   // Monitor is visible-by-default (exceptions = unticked offers); Insights is
   // hidden-by-default (exceptions = explicitly ticked offers), so offers
@@ -72,12 +96,18 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
     return liveOffer ? getRefPrice(liveOffer) : null;
   }, [offers]);
 
-  // Payment-method exclusions only — zero-trust hiding is applied after monitor filters for counting.
+  // A linked-method filter is driven by the catalog's DB-backed is_linked state.
   const baseOffers = useMemo(() => {
-    if (excludedMethods.length === 0) return offers;
-    const excluded = new Set(excludedMethods);
-    return offers.filter(o => !o.payment_methods?.some(m => excluded.has(m)));
-  }, [offers, excludedMethods]);
+    if (filters.paymentScope !== 'linked' || linkedPaymentMethods == null) return offers;
+    const allowed = filters.selectedLinkedPaymentMethods.length === 0
+      ? linkedPaymentMethods
+      : new Set(
+        (linkedPaymentMethodOptions ?? [])
+          .filter(method => filters.selectedLinkedPaymentMethods.includes(method.name))
+          .flatMap(method => [method.name, ...method.aliases]),
+      );
+    return offers.filter(o => o.payment_methods?.some(method => allowed.has(method)) ?? false);
+  }, [offers, filters.paymentScope, filters.selectedLinkedPaymentMethods, linkedPaymentMethods, linkedPaymentMethodOptions]);
 
   const paymentMethods = useMemo(
     () => [...new Set(baseOffers.flatMap(o => o.payment_methods ?? []))].sort((a, b) => a.localeCompare(b)),
@@ -153,6 +183,8 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
     offersForPremiumRange,
     depthOffers,
     paymentMethods,
+    linkedPaymentMethods,
+    linkedPaymentMethodOptions,
     paymentMethodCounts,
     groups,
     selectedOfferKey,
@@ -176,6 +208,8 @@ export function FiltersProvider({ offers, loading, groups, excludedMethods, hide
     offersForPremiumRange,
     depthOffers,
     paymentMethods,
+    linkedPaymentMethods,
+    linkedPaymentMethodOptions,
     paymentMethodCounts,
     groups,
     selectedOfferKey,

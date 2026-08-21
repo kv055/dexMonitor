@@ -184,7 +184,7 @@ function AppShell() {
   } = useDashboard();
   const { liveOffers, wssConnected, pollError, refreshForMarket } = useLiveOffers();
   const { groups } = usePaymentMethodGroups();
-  const { preferredTimezone, excludedMethods, hideZeroTrustScore } = usePreferences();
+  const { preferredTimezone, hideZeroTrustScore } = usePreferences();
   const [activeTab, setActiveTab] = useState<Tab>('insights');
   const [settingsOpen, setSettingsOpen] = useState(false);
 
@@ -199,7 +199,7 @@ function AppShell() {
 
   return (
     <TimezoneProvider timezone={preferredTimezone}>
-      <FiltersProvider offers={allOffers} loading={loading} groups={groups} excludedMethods={excludedMethods} hideZeroTrustScore={hideZeroTrustScore}>
+      <FiltersProvider offers={allOffers} loading={loading} groups={groups} hideZeroTrustScore={hideZeroTrustScore}>
       <div className="min-h-dvh lg:h-dvh flex flex-col overflow-y-auto lg:overflow-hidden bg-bg text-text gap-1 sm:gap-2">
         <Header
           activeTab={activeTab}
@@ -214,7 +214,6 @@ function AppShell() {
             <SettingsOverlay
               open
               onClose={() => setSettingsOpen(false)}
-              groups={groups}
             />
           </Suspense>
         )}

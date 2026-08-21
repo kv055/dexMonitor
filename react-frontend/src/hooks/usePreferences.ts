@@ -5,7 +5,6 @@ export type ThemeMode = 'dark' | 'light';
 export interface PreferencesState {
   theme: ThemeMode;
   preferredTimezone: string;
-  excludedMethods: string[];
   maxFiatLimit: number | null;
   hideZeroTrustScore: boolean;
 }
@@ -13,8 +12,6 @@ export interface PreferencesState {
 export interface PreferencesContextValue extends PreferencesState {
   setPreferredTimezone: (timezone: string) => void;
   toggleTheme: () => void;
-  toggleMethod: (method: string) => void;
-  toggleGroup: (groupMethods: string[], exclude: boolean) => void;
   setMaxFiatLimit: (limit: number | null) => void;
   setHideZeroTrustScore: (hide: boolean) => void;
 }

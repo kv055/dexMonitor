@@ -308,7 +308,7 @@ export function PaymentMethodsPanel() {
             Categorize payment methods and aliases. Observed DEX sources and currencies are filled
             by the snapshot service. Link catalog methods to payment solutions under Accounts
             Management → payment accounts. Offer-method priority lives in the Payments tab account
-            list. New methods from offers land in Others as inactive.
+            list. New methods from offers land in Others as unlinked.
           </p>
           <div className="flex flex-wrap items-end gap-2 rounded-md border border-border bg-bg px-2.5 py-2">
             <label className="flex min-w-[12rem] flex-[1.5] flex-col gap-1 text-[0.68rem] text-muted">
@@ -408,7 +408,7 @@ export function PaymentMethodsPanel() {
               {!collapsed.has(category) && catRows.length > 0 && (
                 <ul className="border-t border-border divide-y divide-border">
                   {catRows.map(row => (
-                    <li key={row.id} className="px-2.5 py-1.5 text-xs">
+                    <li key={row.id} className={`px-2.5 py-1.5 text-xs ${row.is_linked ? 'bg-green/10' : ''}`}>
                       <div className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-2 min-w-0">
                           <span className="text-text font-medium truncate">{row.name}</span>
@@ -417,10 +417,10 @@ export function PaymentMethodsPanel() {
                               → {row.link_label}
                             </span>
                           )}
-                          {row.is_active ? (
-                            <span className="rounded bg-green/10 px-1.5 py-0.5 text-[0.62rem] text-green">active</span>
+                          {row.is_linked ? (
+                            <span className="rounded bg-green/10 px-1.5 py-0.5 text-[0.62rem] text-green">linked</span>
                           ) : (
-                            <span className="rounded bg-border/50 px-1.5 py-0.5 text-[0.62rem] text-muted">inactive</span>
+                            <span className="rounded bg-border/50 px-1.5 py-0.5 text-[0.62rem] text-muted">unlinked</span>
                           )}
                           {(row.alias_list?.length ?? 0) > 0 && (
                             <span className="text-[0.62rem] text-muted">
@@ -466,10 +466,12 @@ export function PaymentMethodsPanel() {
                           </button>
                           <button
                             type="button"
-                            className={compactButtonCls}
+                            className={`${compactButtonCls} inline-flex items-center gap-1`}
                             onClick={() => (editingId === row.id ? setEditingId(null) : startEdit(row))}
+                            aria-expanded={editingId === row.id}
                           >
-                            {editingId === row.id ? 'Close' : 'Edit'}
+                            <span className={`text-[0.55rem] transition-transform ${editingId === row.id ? 'rotate-90' : ''}`} aria-hidden="true">▶</span>
+                            {editingId === row.id ? 'Collapse' : 'Expand'}
                           </button>
                         </div>
                       </div>

@@ -5,12 +5,15 @@ const BASE_FILTERS: Filters = {
   exchange: '',
   excludedExchanges: [],
   payment: '',
+  paymentScope: 'all',
+  selectedLinkedPaymentMethods: [],
   status: 'open',
   premiumOnly: true,
   premiumMin: '',
   premiumMax: '',
   profitMin: '',
   profitMax: '',
+  rangeMetric: 'profit',
   premiumMode: 'net_full',
   hours: '24',
   cex: 'kraken',
@@ -20,12 +23,8 @@ const BASE_FILTERS: Filters = {
 /** Used by resetFilters — premium range cleared */
 export const RESET_FILTERS: Filters = { ...BASE_FILTERS };
 
-/** Used on first mount only — premium range pre-filled */
-export const INITIAL_FILTERS: Filters = {
-  ...BASE_FILTERS,
-  premiumMin: '0',
-  premiumMax: '30',
-};
+/** Used on first mount only. Live range defaults to net profit. */
+export const INITIAL_FILTERS: Filters = { ...BASE_FILTERS };
 
 type Action =
   | { type: 'SET'; payload: Partial<Filters> }

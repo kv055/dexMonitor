@@ -78,7 +78,6 @@ export function StatisticsView() {
   const activeFilters = [
     params.cex.toUpperCase(),
     `${shared.hours}h window`,
-    params.excludedPaymentMethods.length > 0 ? `${params.excludedPaymentMethods.length} methods hidden` : null,
   ].filter(Boolean).join(' · ');
   const metaLabel = cacheState === 'stale'
     ? `Refreshed ${builtAtLabel ?? 'recently'} · refreshing in background`

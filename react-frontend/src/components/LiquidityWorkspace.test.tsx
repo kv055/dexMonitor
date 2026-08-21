@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 vi.mock('../utils/api', () => ({
+  fetchPaymentMethods: vi.fn().mockResolvedValue({ payment_methods: [] }),
   fetchTradingAccounts: vi.fn().mockResolvedValue([
     {
       id: 7,
@@ -156,7 +157,7 @@ function renderWorkspace(offers: Offer[] = []) {
   return render(
     <CEXPermissionsContext.Provider value={cexPermissions}>
       <PreferencesProvider>
-        <FiltersProvider offers={offers} loading={false} groups={[]} excludedMethods={[]} hideZeroTrustScore={false}>
+        <FiltersProvider offers={offers} loading={false} groups={[]} hideZeroTrustScore={false}>
           <LiquidityWorkspace />
         </FiltersProvider>
       </PreferencesProvider>

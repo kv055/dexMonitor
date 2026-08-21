@@ -58,7 +58,7 @@ function templatesFor(methodID: number) {
 
 function renderPanel() {
   return render(
-    <FiltersProvider offers={[]} loading={false} groups={[]} excludedMethods={[]} hideZeroTrustScore={false}>
+    <FiltersProvider offers={[]} loading={false} groups={[]} hideZeroTrustScore={false}>
       <TradingAccountsPanel />
     </FiltersProvider>,
   );

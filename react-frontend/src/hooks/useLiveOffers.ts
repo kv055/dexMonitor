@@ -11,7 +11,6 @@ const defaultParams: MarketRequestParams = {
   cex: 'kraken',
   fiat: 'EUR',
   capabilityRevision: 0,
-  excludedPaymentMethods: [],
   maxFiatLimit: null,
 };
 

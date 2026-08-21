@@ -57,7 +57,7 @@ function offer(resolvedRoute?: NonNullable<Offer['metadata']>['resolved_route'])
 
 function renderPanel(currentOffer: Offer) {
   return render(
-    <FiltersProvider offers={[currentOffer]} loading={false} groups={[]} excludedMethods={[]} hideZeroTrustScore={false}>
+    <FiltersProvider offers={[currentOffer]} loading={false} groups={[]} hideZeroTrustScore={false}>
       <TradeTracingPanel offer={currentOffer} />
     </FiltersProvider>,
   );

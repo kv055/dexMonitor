@@ -222,7 +222,6 @@ export function useDashboard() {
     const { signal } = controller;
     dispatch({ type: 'ANALYTICS_LOAD_START' });
 
-    const hasPaymentExclusions = params.excludedPaymentMethods.length > 0;
     const promise = (async () => {
       try {
         // Fire the fast/full requests together. Both stay on persisted offer-row
@@ -239,9 +238,7 @@ export function useDashboard() {
             type: 'ANALYTICS_OVERVIEW_SUCCESS',
             payload: {
               pastOrderStatsAll: res.past_order_stats_all ?? null,
-              pastOrderStats: hasPaymentExclusions && res.past_order_stats
-                ? res.past_order_stats
-                : res.past_order_stats_all ?? null,
+              pastOrderStats: res.past_order_stats_all ?? null,
               pastOrderStatsAllNetCapped: null,
               pastOrderStatsNetCapped: null,
               pastOrderStatsAllNetMin: null,
@@ -278,13 +275,9 @@ export function useDashboard() {
               type: 'ANALYTICS_CAPPED_SUCCESS',
               payload: {
                 pastOrderStatsAllNetCapped: res.past_order_stats_all_net_capped ?? null,
-                pastOrderStatsNetCapped: hasPaymentExclusions && res.past_order_stats_net_capped
-                  ? res.past_order_stats_net_capped
-                  : res.past_order_stats_all_net_capped ?? null,
+                pastOrderStatsNetCapped: res.past_order_stats_all_net_capped ?? null,
                 pastOrderStatsAllNetMin: res.past_order_stats_all_net_min ?? null,
-                pastOrderStatsNetMin: hasPaymentExclusions && res.past_order_stats_net_min
-                  ? res.past_order_stats_net_min
-                  : res.past_order_stats_all_net_min ?? null,
+                pastOrderStatsNetMin: res.past_order_stats_all_net_min ?? null,
                 detailedPastProfitableOrders: res.past_profitable_orders ?? [],
               },
             });

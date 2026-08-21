@@ -3,7 +3,6 @@ export interface MarketRequestParams {
   cex: string;
   fiat: string;
   capabilityRevision: number;
-  excludedPaymentMethods: string[];
   maxFiatLimit: number | null;
 }
 
@@ -11,7 +10,6 @@ export interface AnalyticsRequestBody {
   hours: number;
   cex: string;
   fiat: string;
-  exclude_payment_methods: string[];
   max_fiat_limit: number;
   sections?: string[];
   past_start_date?: string;
@@ -25,15 +23,8 @@ export interface AnalyticsPastRange {
   timezone: string;
 }
 
-function sorted(values: readonly string[]): string[] {
-  return [...values].sort((a, b) => a.localeCompare(b));
-}
-
 export function marketRequestKey(params: MarketRequestParams): string {
-  return JSON.stringify({
-    ...params,
-    excludedPaymentMethods: sorted(params.excludedPaymentMethods),
-  });
+  return JSON.stringify(params);
 }
 
 export function appendTradeCostParams(search: URLSearchParams, params: MarketRequestParams): URLSearchParams {
@@ -56,9 +47,6 @@ export function buildPastOffersSearch(params: MarketRequestParams): string {
     cex: params.cex,
     fiat: params.fiat,
   });
-  if (params.excludedPaymentMethods.length > 0) {
-    search.set('exclude_payment_methods', params.excludedPaymentMethods.join(','));
-  }
   return appendTradeCostParams(search, params).toString();
 }
 
@@ -67,7 +55,6 @@ export function buildAnalyticsBody(params: MarketRequestParams, sections?: strin
     hours: Number(params.hours),
     cex: params.cex,
     fiat: params.fiat,
-    exclude_payment_methods: params.excludedPaymentMethods,
     max_fiat_limit: params.maxFiatLimit ?? 0,
     ...(sections ? { sections } : {}),
     ...(pastRange ? {

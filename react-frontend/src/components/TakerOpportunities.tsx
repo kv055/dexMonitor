@@ -1,7 +1,6 @@
 import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import type { ManualRouteOptions, Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCompact, PremiumFilterMode, TakerOpportunityMode, TradeMode } from '../types';
-import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
 import { useTemporaryChartVisibility } from '../hooks/useTemporaryChartVisibility';
@@ -112,7 +111,6 @@ function timeframeHours(timeframe: string): number {
 }
 
 type DirectionFilter = 'both' | 'bid' | 'ask';
-type PastPaymentFilter = 'settings' | 'all';
 
 function pickScenario(order: PastProfitableOrder, mode: TakerOpportunityMode) {
   // In capped mode, always use the server-computed capped scenario when present.
@@ -253,7 +251,6 @@ interface PersistedInsightsFilters {
   customStartDate: string;
   customEndDate: string;
   directionFilter: DirectionFilter;
-  paymentFilter: PastPaymentFilter;
   disabledExchanges: string[];
   mode: TakerOpportunityMode;
   sortColumn: SortColumn | null;
@@ -273,7 +270,6 @@ const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
   customStartDate: '',
   customEndDate: '',
   directionFilter: 'both',
-  paymentFilter: 'settings',
   disabledExchanges: [],
   mode: 'net_full',
   sortColumn: null,
@@ -290,7 +286,6 @@ const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
 const VALID_VIEW_MODES = new Set<InsightsViewMode>(['live', 'past']);
 const VALID_TIMEFRAMES = new Set(['1h', '6h', '24h', '48h', '7d', CUSTOM_TIMEFRAME]);
 const VALID_DIRECTIONS = new Set<DirectionFilter>(['both', 'bid', 'ask']);
-const VALID_PAST_PAYMENT_FILTERS = new Set<PastPaymentFilter>(['settings', 'all']);
 const VALID_MODES = new Set<TakerOpportunityMode>(['net_full', 'net_capped', 'net_min']);
 const VALID_NET_PROFIT_UNITS = new Set<NetProfitUnit>(['btc', 'fiat']);
 const VALID_SIZE_UNITS = new Set<SizeUnit>(['btc', 'fiat']);
@@ -381,9 +376,6 @@ function readPersistedInsightsFilters(): PersistedInsightsFilters {
       directionFilter: VALID_DIRECTIONS.has(parsed.directionFilter as DirectionFilter)
         ? parsed.directionFilter as DirectionFilter
         : DEFAULT_INSIGHTS_FILTERS.directionFilter,
-      paymentFilter: VALID_PAST_PAYMENT_FILTERS.has(parsed.paymentFilter as PastPaymentFilter)
-        ? parsed.paymentFilter as PastPaymentFilter
-        : DEFAULT_INSIGHTS_FILTERS.paymentFilter,
       disabledExchanges: readStringArray(parsed.disabledExchanges),
       mode: VALID_MODES.has(parsed.mode as TakerOpportunityMode)
         ? parsed.mode as TakerOpportunityMode
@@ -699,22 +691,65 @@ interface SelectGroupProps {
 }
 
 function SelectGroup({ label, description, options, selected, onChange }: SelectGroupProps) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const activeOption = options.find(option => option.value === selected) ?? options[0];
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, []);
+
   return (
-    <label className="flex flex-col gap-1">
+    <div ref={ref} className="relative flex flex-col gap-1">
       <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
-      <select
+      <button
+        type="button"
         title={description}
-        value={selected}
-        onChange={event => onChange(event.target.value)}
-        className="w-full rounded border border-border bg-bg/60 px-2 py-1.5 text-[0.75rem] font-medium text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(value => !value)}
+        className="flex w-full items-center rounded border border-border bg-bg/60 px-2 py-1.5 text-left text-[0.75rem] font-medium text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
       >
-        {options.map(option => (
-          <option key={option.value} value={option.value} disabled={option.disabled} title={option.title}>
-            {option.label}
-          </option>
-        ))}
-      </select>
-    </label>
+        <span className="truncate">{activeOption.label}</span>
+        <span className="ml-auto text-[0.65rem] text-muted">▾</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-full min-w-44 overflow-hidden rounded-md border border-border bg-surface shadow-lg" role="menu">
+          {options.map(option => {
+            const active = option.value === selected;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="menuitemradio"
+                aria-checked={active}
+                disabled={option.disabled}
+                title={option.title}
+                className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors ${
+                  option.disabled
+                    ? 'cursor-not-allowed text-muted/45'
+                    : active
+                      ? 'bg-accent/15 text-accent hover:bg-accent/20'
+                      : 'text-text hover:bg-bg'
+                }`}
+                onClick={() => {
+                  if (option.disabled) return;
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                <span className="w-3 text-center">{active ? '✓' : ''}</span>
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1482,7 +1517,6 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const deferredOrders = useDeferredValue(displayedOrders);
   const ordersPending = deferredOrders !== displayedOrders;
   const { timezone } = useTimezone();
-  const { excludedMethods } = usePreferences();
   const {
     offers: contextOffers,
     filteredOffers,
@@ -1497,6 +1531,8 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     toggleChartOfferKey: toggleChartOfferKeyInScope,
     setChartOfferKeysVisible: setChartOfferKeysVisibleInScope,
     hideAllChartOffers,
+    linkedPaymentMethods,
+    linkedPaymentMethodOptions,
   } = useFilters();
   // All chart-visibility interactions here belong to the Insights scope,
   // where offers are hidden by default and render only when ticked.
@@ -1515,7 +1551,6 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const [customStartDate, setCustomStartDate] = useState(initialFilters.customStartDate);
   const [customEndDate, setCustomEndDate] = useState(initialFilters.customEndDate);
   const [directionFilter, setDirectionFilter] = useState<DirectionFilter>(initialFilters.directionFilter);
-  const [paymentFilter, setPaymentFilter] = useState<PastPaymentFilter>(initialFilters.paymentFilter);
   const [disabledExchanges, setDisabledExchanges] = useState<string[]>(initialFilters.disabledExchanges);
   const [mode, setMode] = useState<TakerOpportunityMode>(
     initialFilters.mode === 'net_capped' && (!initialCapAvailable || initialCappedModePending)
@@ -1664,19 +1699,28 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       return [] as DisplayOrder[];
     }
     let list = deferredOrders.filter(order => displayOrderProfitable(order, mode));
-    const premiumMin = parseFloat(liveFilters.premiumMin);
-    const premiumMax = parseFloat(liveFilters.premiumMax);
-    if (!Number.isNaN(premiumMin)) {
-      list = list.filter(order => (orderPremiumMetric(order, liveFilters.premiumMode) ?? 0) >= premiumMin);
+    if (liveFilters.rangeMetric === 'premium') {
+      const premiumMin = parseFloat(liveFilters.premiumMin);
+      const premiumMax = parseFloat(liveFilters.premiumMax);
+      if (!Number.isNaN(premiumMin)) {
+        list = list.filter(order => (orderPremiumMetric(order, liveFilters.premiumMode) ?? 0) >= premiumMin);
+      }
+      if (!Number.isNaN(premiumMax)) {
+        list = list.filter(order => (orderPremiumMetric(order, liveFilters.premiumMode) ?? 0) <= premiumMax);
+      }
     }
-    if (!Number.isNaN(premiumMax)) {
-      list = list.filter(order => (orderPremiumMetric(order, liveFilters.premiumMode) ?? 0) <= premiumMax);
-    }
-    if (paymentFilter === 'settings' && excludedMethods.length > 0) {
-      list = list.filter(order => !order.payment_methods?.some(m => excludedMethods.includes(m)));
+    if (liveFilters.paymentScope === 'linked' && linkedPaymentMethods != null) {
+      const allowed = liveFilters.selectedLinkedPaymentMethods.length === 0
+        ? linkedPaymentMethods
+        : new Set(
+          (linkedPaymentMethodOptions ?? [])
+            .filter(method => liveFilters.selectedLinkedPaymentMethods.includes(method.name))
+            .flatMap(method => [method.name, ...method.aliases]),
+        );
+      list = list.filter(order => order.payment_methods?.some(method => allowed.has(method)) ?? false);
     }
     return list;
-  }, [scenarioDataPending, deferredOrders, mode, paymentFilter, excludedMethods, liveFilters.premiumMin, liveFilters.premiumMax, liveFilters.premiumMode]);
+  }, [scenarioDataPending, deferredOrders, mode, liveFilters.paymentScope, liveFilters.selectedLinkedPaymentMethods, linkedPaymentMethods, linkedPaymentMethodOptions, liveFilters.rangeMetric, liveFilters.premiumMin, liveFilters.premiumMax, liveFilters.premiumMode]);
 
   // Capped mode is only meaningful when the global Max Position Size is set.
   const capAvailable = maxFiatLimit != null && maxFiatLimit > 0;
@@ -1849,7 +1893,6 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       customStartDate,
       customEndDate,
       directionFilter,
-      paymentFilter,
       disabledExchanges,
       mode,
       sortColumn: sort?.column ?? null,
@@ -1877,7 +1920,6 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     customStartDate,
     customEndDate,
     directionFilter,
-    paymentFilter,
     disabledExchanges,
     mode,
     sort,
@@ -2047,7 +2089,6 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     setCustomStartDate(DEFAULT_INSIGHTS_FILTERS.customStartDate);
     setCustomEndDate(DEFAULT_INSIGHTS_FILTERS.customEndDate);
     setDirectionFilter(DEFAULT_INSIGHTS_FILTERS.directionFilter);
-    setPaymentFilter(DEFAULT_INSIGHTS_FILTERS.paymentFilter);
     setDisabledExchanges([]);
     setMode(DEFAULT_INSIGHTS_FILTERS.mode);
     setSort(null);
@@ -2219,7 +2260,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
           )}
           {viewMode === 'past' && (
           <>
-          <PastOfferFilters paymentFilter={paymentFilter} onPaymentFilterChange={setPaymentFilter} />
+          <PastOfferFilters />
           <SelectGroup
             label="Timeframe"
             description="Show offers closed within a preset window or a custom date range"
