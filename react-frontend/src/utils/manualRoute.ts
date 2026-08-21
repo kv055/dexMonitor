@@ -49,11 +49,11 @@ export function applyManualRouteSelection(
   premiumPct: number | null,
 ): CostBreakdown {
   if (!options || (selection.spot === 'auto' && selection.hedge === 'auto')) return bd;
-  const spot = selection.spot === 'auto' ? undefined : options.spot_taker_fees.find(option => option.exchange === selection.spot);
-  const withdrawal = selection.spot === 'auto' ? undefined : options.withdrawal_fees.find(option => option.exchange === selection.spot);
+  const spot = selection.spot === 'auto' ? undefined : (options.spot_taker_fees ?? []).find(option => option.exchange === selection.spot);
+  const withdrawal = selection.spot === 'auto' ? undefined : (options.withdrawal_fees ?? []).find(option => option.exchange === selection.spot);
   const hedge = selection.hedge === 'auto'
     ? undefined
-    : options.hedge_costs.find(option => option.hedge.venue === selection.hedge && !option.disabled);
+    : (options.hedge_costs ?? []).find(option => option.hedge.venue === selection.hedge && !option.disabled);
   const next = { ...bd, capital: bd.capital ? { ...bd.capital } : null, hedge: hedge?.hedge ?? bd.hedge };
   if (spot) {
     next.route_cex = spot.exchange;

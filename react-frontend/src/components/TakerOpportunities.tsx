@@ -1199,8 +1199,8 @@ function ManualRouteControls({ options, selection, onChange, isAsk, hideHedge = 
         <label className="grid gap-0.5 text-[0.58rem] text-muted">Spot CEX{isAsk ? '' : ' + withdrawal'}
           <select className={selectClass} value={selection.spot} onChange={event => onChange({ ...selection, spot: event.target.value })}>
             <option value="auto">Auto (cheapest)</option>
-            {options.spot_taker_fees.map(option => {
-              const withdrawal = options.withdrawal_fees.find(item => item.exchange === option.exchange);
+            {(options.spot_taker_fees ?? []).map(option => {
+              const withdrawal = (options.withdrawal_fees ?? []).find(item => item.exchange === option.exchange);
               const detail = !isAsk && withdrawal ? ` · withdraw ${withdrawal.fee_btc.toFixed(8)} BTC` : '';
               return <option key={option.exchange} value={option.exchange} disabled={option.disabled}>{option.exchange} · taker {option.fee_pct.toFixed(4)}%{detail}{option.disabled ? ' (excluded)' : ''}</option>;
             })}
@@ -1210,7 +1210,7 @@ function ManualRouteControls({ options, selection, onChange, isAsk, hideHedge = 
           <label className="grid gap-0.5 text-[0.58rem] text-muted">Hedge
             <select className={selectClass} value={selection.hedge} onChange={event => onChange({ ...selection, hedge: event.target.value })}>
               <option value="auto">Auto (cheapest)</option>
-              {options.hedge_costs.map(option => <option key={option.hedge.venue} value={option.hedge.venue} disabled={option.disabled}>{option.hedge.venue} · {option.hedge.fee_sum_pct.toFixed(4)}%{option.disabled ? ' (excluded)' : ''}</option>)}
+              {(options.hedge_costs ?? []).map(option => <option key={option.hedge.venue} value={option.hedge.venue} disabled={option.disabled}>{option.hedge.venue} · {option.hedge.fee_sum_pct.toFixed(4)}%{option.disabled ? ' (excluded)' : ''}</option>)}
             </select>
           </label>
         )}
