@@ -192,7 +192,8 @@ describe('LiquidityWorkspace', () => {
     expect(screen.getAllByText('Not configured')).toHaveLength(3);
     expect(screen.getAllByText('0 BTC')).toHaveLength(1);
     expect(await screen.findByText('0.0375 BTC')).toBeTruthy();
-    expect(screen.getByText('2 pending contracts')).toBeTruthy();
+    expect(screen.getAllByText('Liquidity below target')).toHaveLength(3);
+    expect(screen.getByText('Liquidity at or above target')).toBeTruthy();
   });
 
   it('shows full hub addresses with copy and block explorer actions', async () => {
@@ -244,9 +245,49 @@ describe('LiquidityWorkspace', () => {
     renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'bid', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
 
     expect(await screen.findByText('EUR 100')).toBeTruthy();
-    expect(screen.getAllByText('0 BTC')).toHaveLength(3);
-    expect(screen.getAllByText('no LND pool required')).toHaveLength(2);
-    expect(screen.getAllByText('0 BTC')).toHaveLength(3);
+    expect(screen.getAllByText('0 BTC')).toHaveLength(4);
+    expect(screen.queryByText('no LND pool required')).toBeNull();
+    expect(screen.getAllByText('0 BTC')).toHaveLength(4);
+  });
+
+  it('shows the routing matrix totals and only the enabled profiles', async () => {
+    vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(liquiditySettings({
+      trade_mode: 'hedgeless_double_collateral',
+      supported_routing_profiles: ['Direct_main2main', 'Swap_main2lightning'],
+    }));
+
+    renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'bid', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
+
+    expect(await screen.findByRole('heading', { name: 'Routing matrix' })).toBeTruthy();
+    const requirements = screen.getByLabelText('Routing capital requirements');
+    expect(within(requirements).getByText('Total required capital')).toBeTruthy();
+    expect(within(requirements).getByText('Total required fiat')).toBeTruthy();
+    expect(within(requirements).getByText('Total required bitcoin')).toBeTruthy();
+    expect(within(requirements).getByText('300 EUR')).toBeTruthy();
+    expect(within(requirements).getByText('100 EUR')).toBeTruthy();
+    expect(within(requirements).getByText('0.004 BTC')).toBeTruthy();
+    expect(screen.getByText('CEX → DEX wallet')).toBeTruthy();
+    expect(screen.getByText('CEX → Lightning → DEX wallet')).toBeTruthy();
+    expect(screen.queryByText('CEX → Mainnet Hub → DEX wallet')).toBeNull();
+    expect(screen.getByRole('img', { name: 'Direct requirements met' })).toBeTruthy();
+    expect(screen.getByRole('img', { name: 'Swap requirements met' })).toBeTruthy();
+  });
+
+  it('marks routing profiles red when their required liquidity is unavailable', async () => {
+    vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(liquiditySettings({
+      trade_mode: 'hedgeless_double_collateral',
+    }));
+    vi.mocked(fetchCexBalances).mockResolvedValueOnce({
+      bitcoin: { asset: 'BTC', available: 0, total: 0 }, fiat: [{ asset: 'EUR', available: 0, total: 0 }], source: 'Kraken',
+    });
+    vi.mocked(fetchLNDWalletStatus).mockResolvedValueOnce({ addresses: [], channels: [] } as unknown as Awaited<ReturnType<typeof fetchLNDWalletStatus>>);
+
+    renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'bid', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
+
+    for (const profile of ['Direct', 'Hub', 'Swap']) {
+      const indicator = await screen.findByRole('img', { name: `${profile} requirements not met` });
+      expect(indicator.closest('article')?.classList.contains('is-blocked')).toBe(true);
+    }
   });
 
   it('switches to hedgeless mode and uses the fiat target converted to BTC for LND and Lightning', async () => {
@@ -262,7 +303,7 @@ describe('LiquidityWorkspace', () => {
     await user.selectOptions(screen.getByLabelText('Trade mode'), 'hedgeless_double_collateral');
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(await screen.findAllByText('0.002 BTC')).toHaveLength(2);
-    expect(screen.getAllByText('fiat target in BTC')).toHaveLength(2);
+    expect(screen.queryByText('fiat target in BTC')).toBeNull();
   });
 
   it('persists the selected target direction', async () => {
