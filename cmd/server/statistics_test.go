@@ -49,7 +49,7 @@ func TestBuildOfferLifecyclePremiumPointsUsesAgeForLiveAndLifetimeForPast(t *tes
 		},
 	}
 
-	live, past := buildOfferLifecyclePremiumPoints(offers, now, 24, []string{"Cash"})
+	live, past := buildOfferLifecyclePremiumPoints(offers, now, 24, []string{"Cash"}, nil)
 	if len(live) != 1 || len(past) != 1 {
 		t.Fatalf("point counts live=%d past=%d, want 1 and 1", len(live), len(past))
 	}
@@ -64,6 +64,94 @@ func TestBuildOfferLifecyclePremiumPointsUsesAgeForLiveAndLifetimeForPast(t *tes
 	}
 	if past[0].VolumeBTC != 0.4 || past[0].PremiumRatePct != -1.25 || past[0].IsLive {
 		t.Fatalf("unexpected past point: %#v", past[0])
+	}
+}
+
+// TestBuildOfferLifecyclePremiumPointsFallsBackToLifecycleSnapshot verifies
+// that live offers without persisted premium averages (reconcileLiveOfferStatus
+// nulls them until close) still produce a bubble via their newest order_lifecycle
+// baseline snapshot, and that live offers without any snapshot are dropped.
+func TestBuildOfferLifecyclePremiumPointsFallsBackToLifecycleSnapshot(t *testing.T) {
+	now := time.Date(2026, time.July, 14, 12, 0, 0, 0, time.UTC)
+	offers := []map[string]any{
+		{
+			"id": int64(1), "exchange": "robosats", "direction": "ask",
+			"price": 103.0, "btc_max": 0.15,
+			"first_seen": now.Add(-90 * time.Minute), "last_seen": now.Add(-5 * time.Minute),
+			"is_live": true,
+		},
+		{
+			"id": int64(2), "exchange": "bisq", "direction": "bid",
+			"price": 97.0, "btc_max": 0.2,
+			"first_seen": now.Add(-2 * time.Hour), "last_seen": now.Add(-time.Minute),
+			"is_live": true,
+		},
+	}
+	liveLifecycle := map[int64]offerLifecycleSnapshot{
+		1: {RefPrice: 100, PremiumPct: 3.0},
+	}
+
+	live, past := buildOfferLifecyclePremiumPoints(offers, now, 24, nil, liveLifecycle)
+	if len(past) != 0 {
+		t.Fatalf("past points = %d, want 0", len(past))
+	}
+	if len(live) != 1 {
+		t.Fatalf("live points = %d, want 1 (offer 2 has no lifecycle snapshot)", len(live))
+	}
+	if live[0].PremiumRatePct != -3.0 {
+		t.Fatalf("live premium = %v, want -3.0 (directional ask premium) from lifecycle snapshot fallback", live[0].PremiumRatePct)
+	}
+	if live[0].VolumeBTC != 0.15 {
+		t.Fatalf("live volume = %v, want 0.15", live[0].VolumeBTC)
+	}
+}
+
+// TestStatisticsRESTLivePointsFromLifecycleBaseline exercises the end-to-end
+// fix: a seeded live offer with no avg_ref_price/avg_premium_pct (the real
+// state of every live offer) must appear in live.offer_lifecycle_points once
+// an order_lifecycle baseline row exists for it.
+func TestStatisticsRESTLivePointsFromLifecycleBaseline(t *testing.T) {
+	withTempOrdersDB(t)
+	resetStatisticsCache()
+
+	res, err := db.Exec(`
+		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, first_seen, last_seen, is_live)
+		VALUES ('robosats', 'ask', 103, 0.1, 0.25, 'SEPA Instant', 'robosats-live', datetime('now', '-30 minutes'), datetime('now', '-1 minutes'), 1)
+	`)
+	if err != nil {
+		t.Fatalf("insert live offer: %v", err)
+	}
+	offerID, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+	if _, err := db.Exec(`
+		INSERT INTO order_lifecycle (offer_db_id, snapshot_time, price, ref_price, premium_pct)
+		VALUES (?, datetime('now', '-2 minutes'), 103, 100, 3)
+	`, offerID); err != nil {
+		t.Fatalf("insert lifecycle baseline: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/statistics", strings.NewReader(`{"hours":48,"cex":"kraken","fiat":"EUR"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	handleStatistics(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusOK, rec.Body.String())
+	}
+
+	var resp statisticsResponse
+	if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Live.OfferLifecyclePoints) != 1 {
+		t.Fatalf("live.offer_lifecycle_points = %d entries, want the seeded live offer: %#v", len(resp.Live.OfferLifecyclePoints), resp.Live)
+	}
+	point := resp.Live.OfferLifecyclePoints[0]
+	if point.PremiumRatePct != -3.0 || !point.IsLive {
+		t.Fatalf("unexpected live point: %#v", point)
 	}
 }
 

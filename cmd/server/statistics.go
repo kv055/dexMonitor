@@ -116,11 +116,20 @@ type statisticsBuildTimings struct {
 	buildResponseMs float64
 }
 
+// offerLifecycleSnapshot is the newest order_lifecycle baseline row for one
+// live offer: the price/reference-price pair the snapshot pipeline recorded
+// most recently, including its directional premium.
+type offerLifecycleSnapshot struct {
+	RefPrice   float64
+	PremiumPct float64
+}
+
 type statisticsContext struct {
 	hours                  int
 	excludedPaymentMethods []string
 	offers                 []map[string]any
 	generalOffers          []pastorders.Offer
+	liveLifecycle          map[int64]offerLifecycleSnapshot
 	now                    time.Time
 }
 
@@ -176,11 +185,17 @@ func splitGeneralOffersByLiveness(ctx statisticsContext) (live, past []pastorder
 	return live, past
 }
 
+// buildOfferLifecyclePremiumPoints builds the lifecycle/premium bubbles. Live
+// offers use their current age as lifecycle; past offers their completed
+// first-seen-to-last-seen lifetime. liveLifecycle carries each live offer's
+// newest order_lifecycle baseline snapshot, used as premium fallback because
+// live offers have no persisted avg_premium_pct/avg_ref_price until they close.
 func buildOfferLifecyclePremiumPoints(
 	offers []map[string]any,
 	now time.Time,
 	hours int,
 	excludedPaymentMethods []string,
+	liveLifecycle map[int64]offerLifecycleSnapshot,
 ) (live, past []offerLifecyclePremiumPoint) {
 	if now.IsZero() {
 		now = time.Now()
@@ -211,18 +226,31 @@ func buildOfferLifecyclePremiumPoints(
 			continue
 		}
 
+		offerID := int64(offerFloat(offer, "id"))
 		premium := offerFloatPtrPreserveZero(offer, "avg_premium_pct")
 		if premium == nil {
 			refPrice := offerRefPrice(offer)
-			if refPrice <= 0 {
+			if refPrice <= 0 && isLive {
+				if snap, ok := liveLifecycle[offerID]; ok && snap.RefPrice > 0 {
+					computed := computeDirectionalPremiumPct(
+						offerString(offer, "direction"),
+						offerFloat(offer, "price"),
+						snap.RefPrice,
+					)
+					premium = &computed
+				}
+			}
+			if premium == nil && refPrice <= 0 {
 				continue
 			}
-			computed := computeDirectionalPremiumPct(
-				offerString(offer, "direction"),
-				offerFloat(offer, "price"),
-				refPrice,
-			)
-			premium = &computed
+			if premium == nil {
+				computed := computeDirectionalPremiumPct(
+					offerString(offer, "direction"),
+					offerFloat(offer, "price"),
+					refPrice,
+				)
+				premium = &computed
+			}
 		}
 		if math.IsNaN(*premium) || math.IsInf(*premium, 0) {
 			continue
@@ -281,6 +309,15 @@ func loadStatisticsContextForParams(p dashboardAnalyticsParams) (statisticsConte
 		return statisticsContext{}, err
 	}
 
+	windowHours := p.Hours
+	if windowHours <= 0 {
+		windowHours = 24
+	}
+	liveLifecycle, err := loadLiveLifecyclePremiums(offers, time.Now().Add(-time.Duration(windowHours)*time.Hour))
+	if err != nil {
+		return statisticsContext{}, err
+	}
+
 	generalOffers := make([]pastorders.Offer, 0, len(offers))
 	for _, o := range offers {
 		direction := offerString(o, "direction")
@@ -307,8 +344,59 @@ func loadStatisticsContextForParams(p dashboardAnalyticsParams) (statisticsConte
 		excludedPaymentMethods: p.ExcludePaymentMethods,
 		offers:                 offers,
 		generalOffers:          generalOffers,
+		liveLifecycle:          liveLifecycle,
 		now:                    time.Now(),
 	}, nil
+}
+
+// loadLiveLifecyclePremiums returns each live offer's newest order_lifecycle
+// baseline row inside the window. Live offers carry no persisted premium
+// averages (reconcileLiveOfferStatus nulls them until close), so this single
+// indexed lookup — not a full lifecycle replay — supplies the reference price
+// the lifecycle/premium chart needs for currently-live offers.
+func loadLiveLifecyclePremiums(offers []map[string]any, cutoff time.Time) (map[int64]offerLifecycleSnapshot, error) {
+	liveIDs := make([]int64, 0, len(offers))
+	for _, o := range offers {
+		if offerBool(o, "is_live") {
+			liveIDs = append(liveIDs, int64(offerFloat(o, "id")))
+		}
+	}
+	if len(liveIDs) == 0 {
+		return nil, nil
+	}
+
+	query := `
+SELECT offer_db_id, ref_price, premium_pct
+FROM order_lifecycle
+WHERE snapshot_time >= ? AND offer_db_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(liveIDs)), ",") + `)
+ORDER BY offer_db_id, snapshot_time`
+	args := make([]any, 0, len(liveIDs)+1)
+	args = append(args, cutoff.Format("2006-01-02 15:04:05"))
+	for _, id := range liveIDs {
+		args = append(args, id)
+	}
+
+	rows, err := db.Query(rebind(query), args...)
+	if err != nil {
+		// Non-fatal: without lifecycle rows (or the table itself) the chart
+		// simply loses its live-offer fallback, as before this lookup existed.
+		slog.Warn("statistics: live lifecycle premium lookup failed", "err", err)
+		return nil, nil
+	}
+	defer rows.Close()
+
+	latest := make(map[int64]offerLifecycleSnapshot, len(liveIDs))
+	for rows.Next() {
+		var (
+			id   int64
+			snap offerLifecycleSnapshot
+		)
+		if err := rows.Scan(&id, &snap.RefPrice, &snap.PremiumPct); err != nil {
+			return nil, fmt.Errorf("scan live lifecycle premium: %w", err)
+		}
+		latest[id] = snap
+	}
+	return latest, rows.Err()
 }
 
 func writeStatisticsServerTiming(w http.ResponseWriter, timings statisticsBuildTimings) {
@@ -339,6 +427,7 @@ func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, st
 		ctx.now,
 		ctx.hours,
 		ctx.excludedPaymentMethods,
+		ctx.liveLifecycle,
 	)
 
 	// Live dimension: overview (active/live counts + exchange distribution) and
@@ -562,11 +651,13 @@ func runStatisticsRefreshLoop(stop <-chan struct{}) {
 
 // handleStatistics serves POST /api/statistics: a single-call breakdown of the
 // offer window into live, past, and shared statistics. This endpoint is a
-// persisted-summary surface: it builds from selected offers columns only, keeps
-// the same body schema as /api/dashboard/analytics, and avoids lifecycle
-// replay. Statistics are served stale-while-revalidate: the first request for a
-// key builds synchronously, later expired snapshots are returned immediately
-// while a background refresh rebuilds them.
+// persisted-summary surface: it builds from selected offers columns only,
+// keeps the same body schema as /api/dashboard/analytics, and avoids lifecycle
+// replay — except for one indexed newest-snapshot lookup per live offer that
+// backs the lifecycle/premium chart (see loadLiveLifecyclePremiums). Statistics
+// are served stale-while-revalidate: the first request for a key builds
+// synchronously, later expired snapshots are returned immediately while a
+// background refresh rebuilds them.
 func handleStatistics(w http.ResponseWriter, r *http.Request) {
 	p, err := parseDashboardAnalyticsParams(r)
 	if err != nil {
