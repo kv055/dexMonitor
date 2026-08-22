@@ -306,6 +306,17 @@ paths:
           description: Successful response
         default:
           description: Error response
+  '/api/mm-controller/lnd/lsp-channel/magma/offers':
+    get:
+      operationId: getApiMmControllerLndLspChannelMagmaOffers
+      tags: ['mm-controller']
+      summary: 'GET /api/mm-controller/lnd/lsp-channel/magma/offers'
+      x-contract-status: route-catalog
+      responses:
+        '200':
+          description: Successful response
+        default:
+          description: Error response
   '/api/mm-controller/lnd/lsp-channel/magma/orders':
     get:
       operationId: getApiMmControllerLndLspChannelMagmaOrders
