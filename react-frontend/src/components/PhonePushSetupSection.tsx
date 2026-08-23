@@ -222,6 +222,17 @@ PHONE SETTINGS
 • Keep the payment and heartbeat macros separate.`;
   }, [setup]);
 
+  const pairingQrPayload = useMemo(() => {
+    if (!setup || !secrets) return '';
+    return JSON.stringify({
+      v: 1,
+      type: 'pushpush-pairing',
+      notify_url: setup.notify_url,
+      heartbeat_url: setup.heartbeat_url,
+      secret: secrets.shared_secret,
+    });
+  }, [setup, secrets]);
+
   const lastSeen = setup?.last_seen ? new Date(setup.last_seen).toLocaleString() : 'No check-in yet';
   const filteredCallbackHistory = useMemo(
     () => (setup?.callback_history ?? []).filter(attempt => (
@@ -360,10 +371,35 @@ PHONE SETTINGS
                     <p className="mt-2 text-[0.55rem] leading-relaxed text-muted">
                       It does not configure MacroDroid automatically. Follow the guide to create the trigger, HTTP actions, banking-app filter and timer, then add the revealed secrets separately.
                     </p>
-                    <p className="mt-2 text-[0.52rem] font-medium text-blue">No credentials are stored in this code.</p>
-                  </div>
-                </div>
-              </aside>
+                     <p className="mt-2 text-[0.52rem] font-medium text-blue">No credentials are stored in this code.</p>
+                   </div>
+                 </div>
+                 {secrets && pairingQrPayload ? (
+                   <div className="grid gap-3">
+                     <div className="overflow-hidden rounded-lg border border-white/80 bg-white p-2 shadow-sm">
+                       <LocalQrCode
+                         value={pairingQrPayload}
+                         size={256}
+                         alt="PushPush Relay app pairing QR code"
+                         fallback="Use the connection details below instead."
+                         className="mx-auto aspect-square w-full"
+                       />
+                     </div>
+                     <div className="min-w-0">
+                       <div className="flex flex-wrap items-center gap-2">
+                         <p className="text-[0.64rem] font-semibold text-text">Relay app pairing</p>
+                         <span className="rounded bg-red/10 px-1.5 py-0.5 text-[0.46rem] font-semibold uppercase tracking-wider text-red">Secret inside</span>
+                       </div>
+                       <p className="mt-1.5 text-[0.55rem] leading-relaxed text-muted">
+                         Scan with the PushPush Relay Android app to pair it with this deployment in one step.
+                       </p>
+                       <p className="mt-2 text-[0.55rem] leading-relaxed text-muted">
+                         This code contains the shared callback secret. Reveal only while pairing and close it afterwards.
+                       </p>
+                     </div>
+                   </div>
+                 ) : null}
+               </aside>
             </div>
             ) : (
               <div className="mt-4">
