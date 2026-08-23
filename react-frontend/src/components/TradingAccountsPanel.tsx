@@ -4725,6 +4725,19 @@ export function TradingAccountsPanel() {
             <div><span className="text-text">Futures funding interval (seconds):</span> {value(snapshot.futures_funding_interval_seconds)}</div>
             <div><span className="text-text">Fees fetched at:</span> {dateValue(snapshot.fetched_at)}</div>
             <div><span className="text-text">Fees last attempted at:</span> {dateValue(snapshot.last_attempted_at)}</div>
+            {snapshot.stale ? (
+              <div className="text-amber-600 sm:col-span-2">
+                Fees are stale — the last successful fetch is older than 1h.
+              </div>
+            ) : null}
+            {!snapshot.spot_available ? (
+              <div className="text-red sm:col-span-2">No verified spot/withdrawal fee snapshot for this exchange.</div>
+            ) : null}
+            {snapshot.last_error ? (
+              <div className="break-words text-red sm:col-span-2">
+                <span className="text-text">Last refresh error:</span> {snapshot.last_error}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </CollapsibleSection>
