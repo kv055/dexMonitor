@@ -49,7 +49,8 @@ import {
   updatePasskey,
   updateSeed,
   updateTOTPSecret,
-} from '../utils/api';
+  } from '../utils/api';
+import { normalizePemInput, pemInputNeedsNormalization } from '../utils/pemInput';
 import { emailFormatError, ibanFormatError } from '../utils/validators';
 import type {
   CexBalancesResponse,
@@ -260,7 +261,7 @@ function apiKeyFormProfile(provider: string): APIKeyFormProfile {
 
 function apiKeyPayloadExtras(profile: APIKeyFormProfile, form: APIKeyFormState) {
   return {
-    api_secret: profile.showSecret ? form.api_secret || null : null,
+    api_secret: profile.showSecret ? normalizePemInput(form.api_secret).value || null : null,
     passphrase: profile.showPassphrase ? form.passphrase || null : null,
   };
 }
@@ -3070,13 +3071,14 @@ export function TradingAccountsPanel() {
                       Active
                     </label>
                     <textarea className={`${textareaCls} md:col-span-2`} value={form.private_key_pkcs8} onChange={e => setEditingPasskeyById(prev => ({ ...prev, [cred.id]: { ...form, private_key_pkcs8: e.target.value } }))} placeholder="Private key PKCS8" />
+                    {pemInputNeedsNormalization(form.private_key_pkcs8) ? <span className="text-[0.62rem] text-yellow md:col-span-2" role="status">Contains escaped newlines (\n) as copied from JSON/env files — will be converted to real line breaks when saved.</span> : null}
                   </div>
                   <div className="mt-1.5 flex gap-1">
                     <button type="button" className={compactButtonCls} onClick={() => withReload(async () => {
                       await updatePasskey(cred.id, {
                         credential_id: form.credential_id,
                         rp_id: form.rp_id,
-                        private_key_pkcs8: form.private_key_pkcs8,
+                        private_key_pkcs8: normalizePemInput(form.private_key_pkcs8).value,
                         user_handle: form.user_handle,
                         sign_count: Number(form.sign_count || 0),
                         is_active: form.is_active,
@@ -3113,13 +3115,14 @@ export function TradingAccountsPanel() {
                 Active
               </label>
               <textarea className={`${textareaCls} md:col-span-2`} value={draft.private_key_pkcs8} onChange={e => setNewPasskeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, private_key_pkcs8: e.target.value } }))} placeholder="Private key PKCS8" />
+              {pemInputNeedsNormalization(draft.private_key_pkcs8) ? <span className="text-[0.62rem] text-yellow md:col-span-2" role="status">Contains escaped newlines (\n) as copied from JSON/env files — will be converted to real line breaks when saved.</span> : null}
             </div>
             <div className="mt-1.5 flex justify-end">
               <button type="button" className={compactButtonCls} onClick={() => withReload(async () => {
                 await createPasskey(account.id, {
                   credential_id: draft.credential_id,
                   rp_id: draft.rp_id,
-                  private_key_pkcs8: draft.private_key_pkcs8,
+                  private_key_pkcs8: normalizePemInput(draft.private_key_pkcs8).value,
                   user_handle: draft.user_handle,
                   sign_count: Number(draft.sign_count || 0),
                   is_active: draft.is_active,
@@ -4457,6 +4460,7 @@ export function TradingAccountsPanel() {
                       <label className="grid gap-1 text-xs text-muted md:col-span-2">
                         <span>{profile.secretLabel}</span>
                         <textarea className={textareaCls} value={form.api_secret} onChange={e => setEditingAPIKeyById(prev => ({ ...prev, [key.id]: { ...form, api_secret: e.target.value } }))} placeholder={profile.secretPlaceholder ?? undefined} />
+                        {pemInputNeedsNormalization(form.api_secret) ? <span className="text-[0.62rem] text-yellow" role="status">Contains escaped newlines (\n) as copied from JSON/env files — will be converted to real line breaks when saved.</span> : null}
                       </label>
                     ) : null}
                     {profile.showPassphrase ? (
@@ -4535,6 +4539,7 @@ export function TradingAccountsPanel() {
                 <label className="grid gap-1 text-xs text-muted md:col-span-2">
                   <span>{profile.secretLabel}</span>
                   <textarea className={textareaCls} value={draft.api_secret} onChange={e => setNewAPIKeyByAccount(prev => ({ ...prev, [account.id]: { ...draft, api_secret: e.target.value } }))} placeholder={profile.secretPlaceholder ?? undefined} />
+                  {pemInputNeedsNormalization(draft.api_secret) ? <span className="text-[0.62rem] text-yellow" role="status">Contains escaped newlines (\n) as copied from JSON/env files — will be converted to real line breaks when saved.</span> : null}
                 </label>
               ) : null}
               {profile.showPassphrase ? (
