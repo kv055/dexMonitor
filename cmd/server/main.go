@@ -252,12 +252,13 @@ func main() {
 	go runStatisticsRefreshLoop(ctx.Done())
 
 	mux := http.NewServeMux()
+	legacyMux := http.NewServeMux()
 
-	// Auth (login/session). Registered before the API + static routes; these
-	// endpoints are intentionally exempt from the requireSession gate below.
-	authSvc.RegisterRoutes(mux)
-
-	registerBackendRoutes(mux)
+	// Existing handlers remain the response implementation behind generated
+	// strict request adapters while they are migrated operation by operation.
+	authSvc.RegisterRoutes(legacyMux)
+	registerLegacyBackendRoutes(legacyMux)
+	registerOpenAPIRoutes(mux, legacyMux)
 
 	mux.Handle("GET /metrics", metricsReg.Handler())
 
@@ -2678,6 +2679,7 @@ func handleMmControllerCexWithdrawalTrack(w http.ResponseWriter, r *http.Request
 
 func handleHealth(w http.ResponseWriter, r *http.Request) {
 	if !coreTablesReady() {
+		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusServiceUnavailable)
 		writeJSON(w, map[string]string{
 			"status":    "starting",

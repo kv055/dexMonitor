@@ -1,0 +1,3832 @@
+openapi: 3.1.0
+info:
+  title: dexMonitor HTTP API
+  version: 1.0.0
+  description: Handwritten source-of-truth contract for this runtime.
+  contact:
+    name: dexArbTrading maintainers
+    url: https://github.com/kv055/dexArbTrading
+servers:
+  - url: http://localhost:5002
+paths:
+  /api/auth/login:
+    post:
+      operationId: postApiAuthLogin
+      tags:
+        - auth
+      summary: POST /api/auth/login
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/auth/login
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/auth/logout:
+    post:
+      operationId: postApiAuthLogout
+      tags:
+        - auth
+      summary: POST /api/auth/logout
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/auth/logout
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/auth/me:
+    get:
+      operationId: getApiAuthMe
+      tags:
+        - auth
+      summary: GET /api/auth/me
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/auth/me
+      security:
+        - dashboardSession: []
+  /api/auth/register:
+    post:
+      operationId: postApiAuthRegister
+      tags:
+        - auth
+      summary: POST /api/auth/register
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/auth/register
+      security: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/auth/registration_available:
+    get:
+      operationId: getApiAuthRegistrationAvailable
+      tags:
+        - auth
+      summary: GET /api/auth/registration_available
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/auth/registration_available
+      security: []
+  /api/dashboard/analytics:
+    post:
+      operationId: postApiDashboardAnalytics
+      tags:
+        - dashboard
+      summary: POST /api/dashboard/analytics
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/dashboard/analytics
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/general_stats/lifetimes:
+    get:
+      operationId: getApiGeneralStatsLifetimes
+      tags:
+        - general-stats
+      summary: GET /api/general_stats/lifetimes
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/general_stats/lifetimes
+      security:
+        - dashboardSession: []
+  /api/general_stats/overview:
+    get:
+      operationId: getApiGeneralStatsOverview
+      tags:
+        - general-stats
+      summary: GET /api/general_stats/overview
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/general_stats/overview
+      security:
+        - dashboardSession: []
+  /api/general_stats/past_premiums:
+    get:
+      operationId: getApiGeneralStatsPastPremiums
+      tags:
+        - general-stats
+      summary: GET /api/general_stats/past_premiums
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/general_stats/past_premiums
+      security:
+        - dashboardSession: []
+  /api/general_stats/payment_methods:
+    get:
+      operationId: getApiGeneralStatsPaymentMethods
+      tags:
+        - general-stats
+      summary: GET /api/general_stats/payment_methods
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/general_stats/payment_methods
+      security:
+        - dashboardSession: []
+  /api/mm-controller/bisq/payment-accounts:
+    get:
+      operationId: getApiMmControllerBisqPaymentAccounts
+      tags:
+        - raw
+      summary: GET /api/mm-controller/bisq/payment-accounts
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/bisq/payment-accounts
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+    post:
+      operationId: postApiMmControllerBisqPaymentAccounts
+      tags:
+        - raw
+      summary: POST /api/mm-controller/bisq/payment-accounts
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/mm-controller/bisq/payment-accounts
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/bisq/payment-accounts/{id}:
+    delete:
+      operationId: deleteApiMmControllerBisqPaymentAccountsId
+      tags:
+        - raw
+      summary: DELETE /api/mm-controller/bisq/payment-accounts/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: DELETE /api/mm-controller/bisq/payment-accounts/{id}
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/bisq/payment-methods:
+    get:
+      operationId: getApiMmControllerBisqPaymentMethods
+      tags:
+        - raw
+      summary: GET /api/mm-controller/bisq/payment-methods
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/bisq/payment-methods
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/bisq/payment-methods/{id}/form:
+    get:
+      operationId: getApiMmControllerBisqPaymentMethodsIdForm
+      tags:
+        - raw
+      summary: GET /api/mm-controller/bisq/payment-methods/{id}/form
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/bisq/payment-methods/{id}/form
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/cex/pre-trade-check:
+    post:
+      operationId: proxyRunCexPreTradeCheck
+      summary: Run the read-only checks required before executing a trade
+      tags:
+        - raw
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CexPreTradeCheckRequest"
+      responses:
+        "200":
+          description: Every check ran, regardless of whether individual checks passed
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PreTradeCheckReport"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+      description: Run the read-only checks required before executing a trade
+      security:
+        - dashboardSession: []
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+  /api/mm-controller/cex/tradeflow:
+    post:
+      operationId: proxyStartCexTradeflow
+      summary: Start one CEX-to-DEX execution flow
+      tags:
+        - raw
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CexTradeflowRequest"
+      responses:
+        "200":
+          description: Execution result at request completion
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CexTradeflowResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+      description: Start one CEX-to-DEX execution flow
+      security:
+        - dashboardSession: []
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+  /api/mm-controller/cex/withdrawal-track:
+    get:
+      operationId: proxyTrackCexWithdrawal
+      summary: Combine a CEX withdrawal status with optional mempool data
+      tags:
+        - raw
+      parameters:
+        - name: provider
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: withdrawal_id
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: client_request_id
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Current withdrawal status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WithdrawalTrackResult"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "502":
+          $ref: "#/components/responses/BadGateway"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+      description: Combine a CEX withdrawal status with optional mempool data
+      security:
+        - dashboardSession: []
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+  /api/mm-controller/lnd/addresses:
+    post:
+      operationId: postApiMmControllerLndAddresses
+      tags:
+        - raw
+      summary: POST /api/mm-controller/lnd/addresses
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/mm-controller/lnd/addresses
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/channel-presets:
+    get:
+      operationId: getApiMmControllerLndChannelPresets
+      tags:
+        - raw
+      summary: GET /api/mm-controller/lnd/channel-presets
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/lnd/channel-presets
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/channels/close:
+    post:
+      operationId: postApiMmControllerLndChannelsClose
+      tags:
+        - raw
+      summary: POST /api/mm-controller/lnd/channels/close
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/mm-controller/lnd/channels/close
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/channels/open:
+    post:
+      operationId: postApiMmControllerLndChannelsOpen
+      tags:
+        - raw
+      summary: POST /api/mm-controller/lnd/channels/open
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/mm-controller/lnd/channels/open
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/lsp-channel:
+    get:
+      operationId: getApiMmControllerLndLspChannel
+      tags:
+        - raw
+      summary: GET /api/mm-controller/lnd/lsp-channel
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/lnd/lsp-channel
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+    put:
+      operationId: putApiMmControllerLndLspChannel
+      tags:
+        - raw
+      summary: PUT /api/mm-controller/lnd/lsp-channel
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/mm-controller/lnd/lsp-channel
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/lsp-channel/candidates:
+    get:
+      operationId: getApiMmControllerLndLspChannelCandidates
+      tags:
+        - raw
+      summary: GET /api/mm-controller/lnd/lsp-channel/candidates
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/lnd/lsp-channel/candidates
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/lsp-channel/magma/info:
+    get:
+      operationId: getApiMmControllerLndLspChannelMagmaInfo
+      tags:
+        - raw
+      summary: GET /api/mm-controller/lnd/lsp-channel/magma/info
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/lnd/lsp-channel/magma/info
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/lsp-channel/magma/offers:
+    get:
+      operationId: getApiMmControllerLndLspChannelMagmaOffers
+      tags:
+        - raw
+      summary: GET /api/mm-controller/lnd/lsp-channel/magma/offers
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/lnd/lsp-channel/magma/offers
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/lsp-channel/magma/orders:
+    get:
+      operationId: getApiMmControllerLndLspChannelMagmaOrders
+      tags:
+        - raw
+      summary: GET /api/mm-controller/lnd/lsp-channel/magma/orders
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/lnd/lsp-channel/magma/orders
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+    post:
+      operationId: postApiMmControllerLndLspChannelMagmaOrders
+      tags:
+        - raw
+      summary: POST /api/mm-controller/lnd/lsp-channel/magma/orders
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/mm-controller/lnd/lsp-channel/magma/orders
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/lsp-channel/magma/orders/{id}:
+    get:
+      operationId: getApiMmControllerLndLspChannelMagmaOrdersId
+      tags:
+        - raw
+      summary: GET /api/mm-controller/lnd/lsp-channel/magma/orders/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/lnd/lsp-channel/magma/orders/{id}
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/lsp-channel/magma/orders/{id}/pay:
+    post:
+      operationId: postApiMmControllerLndLspChannelMagmaOrdersIdPay
+      tags:
+        - raw
+      summary: POST /api/mm-controller/lnd/lsp-channel/magma/orders/{id}/pay
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/mm-controller/lnd/lsp-channel/magma/orders/{id}/pay
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/lsp-channel/status:
+    get:
+      operationId: getApiMmControllerLndLspChannelStatus
+      tags:
+        - raw
+      summary: GET /api/mm-controller/lnd/lsp-channel/status
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/lnd/lsp-channel/status
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/submarine-swaps:
+    get:
+      operationId: getApiMmControllerLndSubmarineSwaps
+      tags:
+        - raw
+      summary: GET /api/mm-controller/lnd/submarine-swaps
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/lnd/submarine-swaps
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/wallet:
+    get:
+      operationId: getApiMmControllerLndWallet
+      tags:
+        - raw
+      summary: GET /api/mm-controller/lnd/wallet
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/lnd/wallet
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/wallet/init:
+    post:
+      operationId: postApiMmControllerLndWalletInit
+      tags:
+        - raw
+      summary: POST /api/mm-controller/lnd/wallet/init
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/mm-controller/lnd/wallet/init
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/lnd/wallet/state:
+    get:
+      operationId: getApiMmControllerLndWalletState
+      tags:
+        - raw
+      summary: GET /api/mm-controller/lnd/wallet/state
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/lnd/wallet/state
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/service-versions:
+    get:
+      operationId: getApiMmControllerServiceVersions
+      tags:
+        - raw
+      summary: GET /api/mm-controller/service-versions
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/service-versions
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/telegram/config:
+    get:
+      operationId: getApiMmControllerTelegramConfig
+      tags:
+        - raw
+      summary: GET /api/mm-controller/telegram/config
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/telegram/config
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+    put:
+      operationId: putApiMmControllerTelegramConfig
+      tags:
+        - raw
+      summary: PUT /api/mm-controller/telegram/config
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/mm-controller/telegram/config
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/telegram/pair:
+    post:
+      operationId: postApiMmControllerTelegramPair
+      tags:
+        - raw
+      summary: POST /api/mm-controller/telegram/pair
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/mm-controller/telegram/pair
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/telegram/set-webhook:
+    post:
+      operationId: postApiMmControllerTelegramSetWebhook
+      tags:
+        - raw
+      summary: POST /api/mm-controller/telegram/set-webhook
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/mm-controller/telegram/set-webhook
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/telegram/test:
+    post:
+      operationId: postApiMmControllerTelegramTest
+      tags:
+        - raw
+      summary: POST /api/mm-controller/telegram/test
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/mm-controller/telegram/test
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/transactional-liquidity:
+    get:
+      operationId: getApiMmControllerTransactionalLiquidity
+      tags:
+        - raw
+      summary: GET /api/mm-controller/transactional-liquidity
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/transactional-liquidity
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+    put:
+      operationId: putApiMmControllerTransactionalLiquidity
+      tags:
+        - raw
+      summary: PUT /api/mm-controller/transactional-liquidity
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/mm-controller/transactional-liquidity
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/transactions:
+    get:
+      operationId: getApiMmControllerTransactions
+      tags:
+        - raw
+      summary: GET /api/mm-controller/transactions
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/transactions
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/transactions/dex-pending-liquidity:
+    get:
+      operationId: getApiMmControllerTransactionsDexPendingLiquidity
+      tags:
+        - raw
+      summary: GET /api/mm-controller/transactions/dex-pending-liquidity
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/mm-controller/transactions/dex-pending-liquidity
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+      security:
+        - dashboardSession: []
+  /api/mm-controller/transactions/{id}:
+    get:
+      operationId: proxyGetTransaction
+      summary: Read the durable state of one MM transaction
+      tags:
+        - raw
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+            minimum: 1
+      responses:
+        "200":
+          description: Transaction state
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MMTransactionStatus"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "404":
+          $ref: "#/components/responses/NotFound"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+      description: Read the durable state of one MM transaction
+      security:
+        - dashboardSession: []
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+  /api/ohlc:
+    get:
+      operationId: getApiOhlc
+      tags:
+        - ohlc
+      summary: GET /api/ohlc
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/ohlc
+      security:
+        - dashboardSession: []
+  /api/past_offers:
+    get:
+      operationId: getApiPastOffers
+      tags:
+        - past-offers
+      summary: GET /api/past_offers
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/past_offers
+      security:
+        - dashboardSession: []
+  /api/past_offers/{id}/lifecycle:
+    get:
+      operationId: getApiPastOffersIdLifecycle
+      tags:
+        - past-offers
+      summary: GET /api/past_offers/{id}/lifecycle
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/past_offers/{id}/lifecycle
+      security:
+        - dashboardSession: []
+  /api/past_order_stats:
+    get:
+      operationId: getApiPastOrderStats
+      tags:
+        - past-order-stats
+      summary: GET /api/past_order_stats
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/past_order_stats
+      security:
+        - dashboardSession: []
+  /api/past_profitable_orders:
+    get:
+      operationId: getApiPastProfitableOrders
+      tags:
+        - past-profitable-orders
+      summary: GET /api/past_profitable_orders
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/past_profitable_orders
+      security:
+        - dashboardSession: []
+  /api/payment_method_groups:
+    get:
+      operationId: getApiPaymentMethodGroups
+      tags:
+        - payment-method-groups
+      summary: GET /api/payment_method_groups
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/payment_method_groups
+      security:
+        - dashboardSession: []
+  /api/phone-push/setup:
+    get:
+      operationId: getApiPhonePushSetup
+      tags:
+        - phone-push
+      summary: GET /api/phone-push/setup
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/phone-push/setup
+      security:
+        - dashboardSession: []
+  /api/phone-push/setup/reveal:
+    post:
+      operationId: postApiPhonePushSetupReveal
+      tags:
+        - phone-push
+      summary: POST /api/phone-push/setup/reveal
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/phone-push/setup/reveal
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/snapshot-log:
+    get:
+      operationId: getApiSnapshotLog
+      tags:
+        - snapshot-log
+      summary: GET /api/snapshot-log
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/snapshot-log
+      security:
+        - dashboardSession: []
+  /api/snapshot-log/{id}:
+    get:
+      operationId: getApiSnapshotLogId
+      tags:
+        - snapshot-log
+      summary: GET /api/snapshot-log/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/snapshot-log/{id}
+      security:
+        - dashboardSession: []
+  /api/statistics:
+    post:
+      operationId: postApiStatistics
+      tags:
+        - statistics
+      summary: POST /api/statistics
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/statistics
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/stats:
+    get:
+      operationId: getApiStats
+      tags:
+        - stats
+      summary: GET /api/stats
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/stats
+      security:
+        - dashboardSession: []
+  /api/trading/accounts:
+    get:
+      operationId: getApiTradingAccounts
+      tags:
+        - trading
+      summary: GET /api/trading/accounts
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/accounts
+      security:
+        - dashboardSession: []
+    post:
+      operationId: postApiTradingAccounts
+      tags:
+        - trading
+      summary: POST /api/trading/accounts
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/trading/accounts
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/accounts/priorities:
+    put:
+      operationId: putApiTradingAccountsPriorities
+      tags:
+        - trading
+      summary: PUT /api/trading/accounts/priorities
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/trading/accounts/priorities
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/accounts/{id}:
+    delete:
+      operationId: deleteApiTradingAccountsId
+      tags:
+        - trading
+      summary: DELETE /api/trading/accounts/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: DELETE /api/trading/accounts/{id}
+      security:
+        - dashboardSession: []
+    put:
+      operationId: putApiTradingAccountsId
+      tags:
+        - trading
+      summary: PUT /api/trading/accounts/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/trading/accounts/{id}
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/accounts/{id}/api_keys:
+    post:
+      operationId: postApiTradingAccountsIdApiKeys
+      tags:
+        - trading
+      summary: POST /api/trading/accounts/{id}/api_keys
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/trading/accounts/{id}/api_keys
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/accounts/{id}/bank_accounts:
+    post:
+      operationId: postApiTradingAccountsIdBankAccounts
+      tags:
+        - trading
+      summary: POST /api/trading/accounts/{id}/bank_accounts
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/trading/accounts/{id}/bank_accounts
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/accounts/{id}/bisq-account-file:
+    get:
+      operationId: getApiTradingAccountsIdBisqAccountFile
+      tags:
+        - raw
+      summary: GET /api/trading/accounts/{id}/bisq-account-file
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/accounts/{id}/bisq-account-file
+      x-raw-reason: The endpoint streams a binary download with content-disposition metadata.
+      security:
+        - dashboardSession: []
+  /api/trading/accounts/{id}/bisq-data-directory:
+    get:
+      operationId: getApiTradingAccountsIdBisqDataDirectory
+      tags:
+        - raw
+      summary: GET /api/trading/accounts/{id}/bisq-data-directory
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/accounts/{id}/bisq-data-directory
+      x-raw-reason: The endpoint streams a binary download with content-disposition metadata.
+      security:
+        - dashboardSession: []
+  /api/trading/accounts/{id}/cex/balances:
+    get:
+      operationId: getApiTradingAccountsIdCexBalances
+      tags:
+        - trading
+      summary: GET /api/trading/accounts/{id}/cex/balances
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/accounts/{id}/cex/balances
+      security:
+        - dashboardSession: []
+  /api/trading/accounts/{id}/cex/deposit-addresses:
+    get:
+      operationId: getApiTradingAccountsIdCexDepositAddresses
+      tags:
+        - trading
+      summary: GET /api/trading/accounts/{id}/cex/deposit-addresses
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/accounts/{id}/cex/deposit-addresses
+      security:
+        - dashboardSession: []
+  /api/trading/accounts/{id}/cex/hedge-positions:
+    get:
+      operationId: getApiTradingAccountsIdCexHedgePositions
+      tags:
+        - trading
+      summary: GET /api/trading/accounts/{id}/cex/hedge-positions
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/accounts/{id}/cex/hedge-positions
+      security:
+        - dashboardSession: []
+  /api/trading/accounts/{id}/cex/spot-trades:
+    get:
+      operationId: getApiTradingAccountsIdCexSpotTrades
+      tags:
+        - trading
+      summary: GET /api/trading/accounts/{id}/cex/spot-trades
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/accounts/{id}/cex/spot-trades
+      security:
+        - dashboardSession: []
+  /api/trading/accounts/{id}/cex/withdrawal-addresses:
+    get:
+      operationId: getApiTradingAccountsIdCexWithdrawalAddresses
+      tags:
+        - trading
+      summary: GET /api/trading/accounts/{id}/cex/withdrawal-addresses
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/accounts/{id}/cex/withdrawal-addresses
+      security:
+        - dashboardSession: []
+  /api/trading/accounts/{id}/credentials:
+    get:
+      operationId: getApiTradingAccountsIdCredentials
+      tags:
+        - trading
+      summary: GET /api/trading/accounts/{id}/credentials
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/accounts/{id}/credentials
+      security:
+        - dashboardSession: []
+  /api/trading/accounts/{id}/health_check:
+    post:
+      operationId: postApiTradingAccountsIdHealthCheck
+      tags:
+        - trading
+      summary: POST /api/trading/accounts/{id}/health_check
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/trading/accounts/{id}/health_check
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/accounts/{id}/passkey_credentials:
+    post:
+      operationId: postApiTradingAccountsIdPasskeyCredentials
+      tags:
+        - trading
+      summary: POST /api/trading/accounts/{id}/passkey_credentials
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/trading/accounts/{id}/passkey_credentials
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/accounts/{id}/secrets:
+    get:
+      operationId: getApiTradingAccountsIdSecrets
+      tags:
+        - trading
+      summary: GET /api/trading/accounts/{id}/secrets
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/accounts/{id}/secrets
+      security:
+        - dashboardSession: []
+  /api/trading/accounts/{id}/seeds:
+    post:
+      operationId: postApiTradingAccountsIdSeeds
+      tags:
+        - trading
+      summary: POST /api/trading/accounts/{id}/seeds
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/trading/accounts/{id}/seeds
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/accounts/{id}/totp_secrets:
+    post:
+      operationId: postApiTradingAccountsIdTotpSecrets
+      tags:
+        - trading
+      summary: POST /api/trading/accounts/{id}/totp_secrets
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/trading/accounts/{id}/totp_secrets
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/api_keys/{id}:
+    delete:
+      operationId: deleteApiTradingApiKeysId
+      tags:
+        - trading
+      summary: DELETE /api/trading/api_keys/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: DELETE /api/trading/api_keys/{id}
+      security:
+        - dashboardSession: []
+    put:
+      operationId: putApiTradingApiKeysId
+      tags:
+        - trading
+      summary: PUT /api/trading/api_keys/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/trading/api_keys/{id}
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/bank_accounts/{id}:
+    delete:
+      operationId: deleteApiTradingBankAccountsId
+      tags:
+        - trading
+      summary: DELETE /api/trading/bank_accounts/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: DELETE /api/trading/bank_accounts/{id}
+      security:
+        - dashboardSession: []
+    put:
+      operationId: putApiTradingBankAccountsId
+      tags:
+        - trading
+      summary: PUT /api/trading/bank_accounts/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/trading/bank_accounts/{id}
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/passkey_credentials/{id}:
+    delete:
+      operationId: deleteApiTradingPasskeyCredentialsId
+      tags:
+        - trading
+      summary: DELETE /api/trading/passkey_credentials/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: DELETE /api/trading/passkey_credentials/{id}
+      security:
+        - dashboardSession: []
+    put:
+      operationId: putApiTradingPasskeyCredentialsId
+      tags:
+        - trading
+      summary: PUT /api/trading/passkey_credentials/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/trading/passkey_credentials/{id}
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/payment_methods:
+    get:
+      operationId: getApiTradingPaymentMethods
+      tags:
+        - trading
+      summary: GET /api/trading/payment_methods
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/payment_methods
+      security:
+        - dashboardSession: []
+  /api/trading/payment_methods/{id}:
+    delete:
+      operationId: deleteApiTradingPaymentMethodsId
+      tags:
+        - trading
+      summary: DELETE /api/trading/payment_methods/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: DELETE /api/trading/payment_methods/{id}
+      security:
+        - dashboardSession: []
+    put:
+      operationId: putApiTradingPaymentMethodsId
+      tags:
+        - trading
+      summary: PUT /api/trading/payment_methods/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/trading/payment_methods/{id}
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/payment_methods/{id}/aliases/promote:
+    post:
+      operationId: postApiTradingPaymentMethodsIdAliasesPromote
+      tags:
+        - trading
+      summary: POST /api/trading/payment_methods/{id}/aliases/promote
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/trading/payment_methods/{id}/aliases/promote
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/payment_methods/{id}/chat_templates:
+    get:
+      operationId: getApiTradingPaymentMethodsIdChatTemplates
+      tags:
+        - trading
+      summary: GET /api/trading/payment_methods/{id}/chat_templates
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/payment_methods/{id}/chat_templates
+      security:
+        - dashboardSession: []
+  /api/trading/payment_methods/{id}/chat_templates/{exchange}:
+    delete:
+      operationId: deleteApiTradingPaymentMethodsIdChatTemplatesExchange
+      tags:
+        - trading
+      summary: DELETE /api/trading/payment_methods/{id}/chat_templates/{exchange}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: exchange
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: DELETE /api/trading/payment_methods/{id}/chat_templates/{exchange}
+      security:
+        - dashboardSession: []
+    put:
+      operationId: putApiTradingPaymentMethodsIdChatTemplatesExchange
+      tags:
+        - trading
+      summary: PUT /api/trading/payment_methods/{id}/chat_templates/{exchange}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: exchange
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/trading/payment_methods/{id}/chat_templates/{exchange}
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/payment_methods/{id}/degrade-to-alias/{provider_id}:
+    post:
+      operationId: postApiTradingPaymentMethodsIdDegradeToAliasProviderId
+      tags:
+        - trading
+      summary: POST /api/trading/payment_methods/{id}/degrade-to-alias/{provider_id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: provider_id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/trading/payment_methods/{id}/degrade-to-alias/{provider_id}
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/seeds/{id}:
+    delete:
+      operationId: deleteApiTradingSeedsId
+      tags:
+        - trading
+      summary: DELETE /api/trading/seeds/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: DELETE /api/trading/seeds/{id}
+      security:
+        - dashboardSession: []
+    put:
+      operationId: putApiTradingSeedsId
+      tags:
+        - trading
+      summary: PUT /api/trading/seeds/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/trading/seeds/{id}
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/totp_secrets/{id}:
+    delete:
+      operationId: deleteApiTradingTotpSecretsId
+      tags:
+        - trading
+      summary: DELETE /api/trading/totp_secrets/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: DELETE /api/trading/totp_secrets/{id}
+      security:
+        - dashboardSession: []
+    put:
+      operationId: putApiTradingTotpSecretsId
+      tags:
+        - trading
+      summary: PUT /api/trading/totp_secrets/{id}
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/trading/totp_secrets/{id}
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/trading/wallet_addresses:
+    get:
+      operationId: getApiTradingWalletAddresses
+      tags:
+        - trading
+      summary: GET /api/trading/wallet_addresses
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trading/wallet_addresses
+      security:
+        - dashboardSession: []
+  /health:
+    get:
+      operationId: getHealth
+      tags:
+        - health
+      summary: GET /health
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        "503":
+          description: Core database tables are not ready
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /health
+      security: []
+  /ws/cex/hedge-stream:
+    get:
+      operationId: getWsCexHedgeStream
+      tags:
+        - raw
+      summary: GET /ws/cex/hedge-stream
+      responses:
+        "101":
+          description: WebSocket protocol upgrade
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /ws/cex/hedge-stream
+      x-raw-reason: The dashboard relays WebSocket frames bidirectionally.
+      security:
+        - dashboardSession: []
+components:
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/APIError"
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/APIError"
+    Conflict:
+      description: Request conflicts with the current provider or execution state
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/APIError"
+    BadGateway:
+      description: Upstream exchange or wallet request failed
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/APIError"
+    Unavailable:
+      description: Required controller dependency is not ready
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/APIError"
+  schemas:
+    APIError:
+      $ref: ../../commons/api/openapi/APIError.yaml
+    TradeMode:
+      type: string
+      enum:
+        - hedgefull_single_collateral
+        - hedgeless_double_collateral
+    CexPreTradeCheckRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - resolved_route
+      properties:
+        provider:
+          type: string
+        fiat_currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        required_capital:
+          type: number
+          exclusiveMinimum: 0
+        payment_method:
+          type: string
+        payment_methods:
+          type: array
+          items:
+            type: string
+        dex:
+          type: string
+        market_side:
+          type: string
+          enum:
+            - bid
+            - ask
+        settlement:
+          type: string
+          enum:
+            - onchain_direct
+            - onchain_hub
+            - onchain_swap
+        trade_mode:
+          $ref: "#/components/schemas/TradeMode"
+        hedge_venue:
+          type: string
+        required_btc_liquidity:
+          type: number
+          minimum: 0
+          description: >
+            Position BTC plus security deposit. Required for hedgeless on-chain liquidity-pool checks and for
+            Swap_main2lightning Lightning liquidity.
+        routing_fee_allowance_sat:
+          type: integer
+          minimum: 0
+        resolved_route:
+          $ref: "#/components/schemas/ResolvedRoute"
+    PreTradeCheckResult:
+      type: object
+      additionalProperties: false
+      required:
+        - name
+        - label
+        - passed
+      properties:
+        name:
+          type: string
+        label:
+          type: string
+        passed:
+          type: boolean
+        message:
+          type: string
+    PreTradeCheckReport:
+      type: object
+      additionalProperties: false
+      required:
+        - ok
+        - checks
+      properties:
+        ok:
+          type: boolean
+        checks:
+          type: array
+          items:
+            $ref: "#/components/schemas/PreTradeCheckResult"
+        lnd_withdraw_address:
+          type: string
+        resolved_payment_method:
+          type: string
+        lsp_healthy:
+          type: boolean
+        usable_inbound_sat:
+          type: integer
+        usable_outbound_sat:
+          type: integer
+        lightning_liquidity_source:
+          type: string
+          enum:
+            - own_channels
+            - lsp_channel
+          description: Channel policy evaluated for this Lightning route; omitted when the route does not need Lightning.
+        swap_required:
+          type: boolean
+        required_lightning_sat:
+          type: integer
+        swap_shortfall_sat:
+          type: integer
+        expected_lockup_sat:
+          type: integer
+        estimated_funding_fee_sat:
+          type: integer
+        quote_expires_at:
+          type: string
+          format: date-time
+        confirmed_onchain_sat:
+          type: integer
+        blocking_reason:
+          type: string
+    ResolvedRoute:
+      type: object
+      additionalProperties: false
+      required:
+        - config_version
+        - snapshot_revision
+        - resolved_at
+        - trade_mode
+        - target_direction
+        - market_side
+        - provider
+        - settlement
+        - needs_hub
+        - needs_lightning
+        - fiat_currency
+        - fiat_amount
+        - btc_amount
+        - required_capital
+        - required_btc_liquidity
+        - security_deposit_btc
+        - routing_fee_allowance_sat
+        - cex_withdrawal_fee_btc
+        - swap_safety_headroom_btc
+        - total_cost_btc
+        - total_cost_percent
+        - net_premium_percent
+        - cost_inputs
+      properties:
+        config_version:
+          type: integer
+        snapshot_revision:
+          type: integer
+        resolved_at:
+          type: string
+          format: date-time
+        trade_mode:
+          $ref: "#/components/schemas/TradeMode"
+        target_direction:
+          type: string
+        market_side:
+          type: string
+          enum:
+            - bid
+            - ask
+        provider:
+          type: string
+        hedge_venue:
+          type: string
+        hedge_side:
+          type: string
+        hedge_notional_btc:
+          type: number
+        leverage:
+          type: number
+        settlement:
+          type: string
+          enum:
+            - onchain_direct
+            - onchain_hub
+            - onchain_swap
+        needs_hub:
+          type: boolean
+        needs_lightning:
+          type: boolean
+        fiat_currency:
+          type: string
+        fiat_amount:
+          type: number
+        btc_amount:
+          type: number
+        required_capital:
+          type: number
+        required_btc_liquidity:
+          type: number
+        security_deposit_btc:
+          type: number
+        routing_fee_allowance_sat:
+          type: integer
+          minimum: 0
+        cex_withdrawal_fee_btc:
+          type: number
+          minimum: 0
+        swap_safety_headroom_btc:
+          type: number
+          minimum: 0
+        total_cost_btc:
+          type: number
+          minimum: 0
+        total_cost_percent:
+          type: number
+          minimum: 0
+        net_premium_percent:
+          type: number
+        cost_inputs:
+          $ref: "#/components/schemas/RouteCostInputs"
+    RouteCostInputs:
+      type: object
+      additionalProperties: false
+      required:
+        - reference_price
+        - fee_tier
+        - coupled_hedge
+        - spot_taker_fee_btc
+        - withdrawal_fee_btc
+        - hedge_open_fee_btc
+        - hedge_close_fee_btc
+        - projected_funding_fee_btc
+        - funding_cost_available
+        - dex_fee_btc
+        - miner_fee_btc
+        - conversion_fee_btc
+      properties:
+        reference_price:
+          type: number
+          exclusiveMinimum: 0
+        fee_tier:
+          type: string
+          enum:
+            - economic
+        coupled_hedge:
+          type: boolean
+        spot_taker_fee_btc:
+          type: number
+          minimum: 0
+        withdrawal_fee_btc:
+          type: number
+          minimum: 0
+        hedge_open_fee_btc:
+          type: number
+          minimum: 0
+        hedge_close_fee_btc:
+          type: number
+          minimum: 0
+        projected_funding_fee_btc:
+          type: number
+          minimum: 0
+        funding_cost_available:
+          type: boolean
+        dex_fee_btc:
+          type: number
+          minimum: 0
+        miner_fee_btc:
+          type: number
+          minimum: 0
+        conversion_fee_btc:
+          type: number
+          minimum: 0
+    CexTradeflowRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - provider
+        - market_side
+        - btc_amount
+        - fiat_currency
+        - required_capital
+      properties:
+        provider:
+          type: string
+        market_side:
+          type: string
+          enum:
+            - bid
+            - ask
+        btc_amount:
+          type: number
+          exclusiveMinimum: 0
+        fiat_currency:
+          type: string
+          minLength: 3
+          maxLength: 3
+        required_capital:
+          type: number
+          exclusiveMinimum: 0
+        required_btc_liquidity:
+          type: number
+          minimum: 0
+        security_deposit_btc:
+          type: number
+          minimum: 0
+        hedge_venue:
+          type: string
+        hedge_side:
+          type: string
+          enum:
+            - short
+            - long
+        hedge_notional_btc:
+          type: number
+          minimum: 0
+        leverage:
+          type: number
+          minimum: 0
+        offer_id:
+          type: string
+        dex:
+          type: string
+        fiat_amount:
+          type: number
+          minimum: 0
+        transaction_id:
+          type: integer
+          minimum: 1
+        selected_offer:
+          type: object
+          additionalProperties: true
+        payment_method:
+          type: string
+        payment_methods:
+          type: array
+          items:
+            type: string
+        trade_mode:
+          $ref: "#/components/schemas/TradeMode"
+        resolved_route:
+          $ref: "#/components/schemas/ResolvedRoute"
+        routing_fee_allowance_sat:
+          type: integer
+          minimum: 1
+        cex_withdrawal_fee_btc:
+          type: number
+          minimum: 0
+        swap_safety_headroom_btc:
+          type: number
+          minimum: 0
+    CexTradeflowResult:
+      type: object
+      additionalProperties: false
+      required:
+        - trade_mode
+      properties:
+        trade_mode:
+          $ref: "#/components/schemas/TradeMode"
+        spot_buy:
+          $ref: "#/components/schemas/CexSpotBuyResult"
+        hedge:
+          $ref: "#/components/schemas/CexHedgeOpenResult"
+        withdrawal:
+          $ref: "#/components/schemas/WithdrawalResult"
+        dex_funding:
+          $ref: "#/components/schemas/DEXFundingResult"
+        pool_refill:
+          $ref: "#/components/schemas/PoolRefillResult"
+        transaction_id:
+          type: integer
+          minimum: 1
+    FeeLine:
+      type: object
+      additionalProperties: false
+      required:
+        - asset
+        - amount
+      properties:
+        asset:
+          type: string
+        amount:
+          type: number
+    ExecutionDetail:
+      type: object
+      additionalProperties: false
+      required:
+        - filled_btc
+        - average_rate
+        - filled_fiat
+        - order_status
+      properties:
+        filled_btc:
+          type: number
+        average_rate:
+          type: number
+        filled_fiat:
+          type: number
+        fees:
+          type: array
+          items:
+            $ref: "#/components/schemas/FeeLine"
+        order_status:
+          type: string
+        poll_incomplete:
+          type: boolean
+    CexSpotBuyResult:
+      type: object
+      additionalProperties: false
+      required:
+        - provider
+        - pair
+        - side
+        - requested_btc
+        - order_id
+        - status
+        - submitted_at
+      properties:
+        provider:
+          type: string
+        pair:
+          type: string
+        side:
+          type: string
+        requested_btc:
+          type: number
+        order_id:
+          type: string
+        status:
+          type: string
+        submitted_at:
+          type: string
+          format: date-time
+        execution:
+          $ref: "#/components/schemas/ExecutionDetail"
+        raw: {}
+    CexHedgeOpenResult:
+      type: object
+      additionalProperties: false
+      required:
+        - venue
+        - instrument
+        - side
+        - btc_notional
+        - order_id
+        - status
+        - submitted_at
+      properties:
+        venue:
+          type: string
+        instrument:
+          type: string
+        side:
+          type: string
+        btc_notional:
+          type: number
+        order_id:
+          type: string
+        status:
+          type: string
+        submitted_at:
+          type: string
+          format: date-time
+        raw: {}
+    WithdrawalResult:
+      type: object
+      additionalProperties: false
+      required:
+        - provider
+        - withdrawal_id
+        - wallet_address
+        - amount_btc
+      properties:
+        provider:
+          type: string
+        withdrawal_id:
+          type: string
+        client_request_id:
+          type: string
+        wallet_address:
+          type: string
+        amount_btc:
+          type: number
+        cex_status:
+          type: string
+    DEXFundingResult:
+      type: object
+      additionalProperties: false
+      required:
+        - exchange
+        - method
+        - amount_btc
+        - status
+      properties:
+        exchange:
+          type: string
+        method:
+          type: string
+        amount_btc:
+          type: number
+        txid:
+          type: string
+        payment_hash:
+          type: string
+        destination:
+          type: string
+        status:
+          type: string
+    PoolRefillResult:
+      type: object
+      additionalProperties: false
+      required:
+        - target_btc
+        - status
+        - attempt
+      properties:
+        target_btc:
+          type: number
+        current_btc:
+          type: number
+        status:
+          type: string
+        attempt:
+          type: integer
+          minimum: 0
+    MMTransactionStatus:
+      type: object
+      additionalProperties: true
+      required:
+        - id
+        - status
+      properties:
+        id:
+          type: integer
+          minimum: 1
+        status:
+          type: string
+        trade_mode:
+          $ref: "#/components/schemas/TradeMode"
+        btc_pool_target_btc:
+          type: number
+        btc_required_liquidity:
+          type: number
+        btc_pool_refill_status:
+          type: string
+    WithdrawalTrackResult:
+      type: object
+      additionalProperties: false
+      required:
+        - provider
+        - withdrawal_id
+        - cex_status
+        - cex_status_code
+        - updated_at
+      properties:
+        provider:
+          type: string
+        withdrawal_id:
+          type: string
+        cex_status:
+          type: string
+        cex_status_code:
+          type: integer
+        tx_hash:
+          type: string
+        address:
+          type: string
+        amount_btc:
+          type: string
+        fee_btc:
+          type: number
+        updated_at:
+          type: string
+          format: date-time
+        mempool:
+          $ref: "#/components/schemas/MempoolTxStatus"
+    MempoolTxStatus:
+      type: object
+      additionalProperties: false
+      required:
+        - txid
+        - confirmed
+        - confirmations
+        - status_label
+      properties:
+        txid:
+          type: string
+        confirmed:
+          type: boolean
+        confirmations:
+          type: integer
+        block_height:
+          type: integer
+        status_label:
+          type: string
+    Health:
+      $ref: ../../commons/api/openapi/Health.yaml
+  securitySchemes:
+    dashboardSession:
+      type: apiKey
+      in: cookie
+      name: dex_session
+    internalSecret:
+      type: apiKey
+      in: header
+      name: X-Internal-Secret
+    webhookSecret:
+      type: apiKey
+      in: header
+      name: X-Webhook-Secret
+    bearerWebhook:
+      type: http
+      scheme: bearer
+    telegramSecret:
+      type: apiKey
+      in: header
+      name: X-Telegram-Bot-Api-Secret-Token
+tags:
+  - name: auth
+  - name: dashboard
+  - name: general-stats
+  - name: health
+  - name: ohlc
+  - name: past-offers
+  - name: past-order-stats
+  - name: past-profitable-orders
+  - name: payment-method-groups
+  - name: phone-push
+  - name: raw
+  - name: snapshot-log
+  - name: statistics
+  - name: stats
+  - name: trading

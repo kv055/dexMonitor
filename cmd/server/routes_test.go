@@ -8,7 +8,9 @@ import (
 
 func TestRegisterBackendRoutes(t *testing.T) {
 	mux := http.NewServeMux()
-	registerBackendRoutes(mux)
+	legacyMux := http.NewServeMux()
+	registerLegacyBackendRoutes(legacyMux)
+	registerOpenAPIRoutes(mux, legacyMux)
 
 	tests := []struct {
 		method  string

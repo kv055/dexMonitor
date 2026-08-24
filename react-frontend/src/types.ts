@@ -1036,7 +1036,8 @@ export interface CexSpotTrade {
 }
 
 // MM execution transport contracts are generated from
-// dexMmController/api/execution.openapi.yaml. Keep UI-only models handwritten here.
+// dexMmController/api/internal.openapi.yaml (mirrored through the monitor public
+// bundle). Keep UI-only models handwritten here.
 export type {
   CexHedgeOpenResult,
   CexPreTradeCheckRequest,

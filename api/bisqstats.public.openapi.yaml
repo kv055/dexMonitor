@@ -1,0 +1,91 @@
+openapi: 3.1.0
+info:
+  title: dexMonitor bisqstats HTTP API
+  version: 1.0.0
+  description: Handwritten source-of-truth contract for this runtime.
+  contact:
+    name: dexArbTrading maintainers
+    url: https://github.com/kv055/dexArbTrading
+servers:
+  - url: http://localhost:9997
+paths:
+  /api/trade-stats:
+    get:
+      operationId: getApiTradeStats
+      tags:
+        - trade-stats
+      summary: GET /api/trade-stats
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/trade-stats
+      security: []
+  /health:
+    get:
+      operationId: getHealth
+      tags:
+        - health
+      summary: GET /health
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Health"
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /health
+      security: []
+tags:
+  - name: health
+  - name: trade-stats
+components:
+  securitySchemes:
+    dashboardSession:
+      type: apiKey
+      in: cookie
+      name: dex_session
+    internalSecret:
+      type: apiKey
+      in: header
+      name: X-Internal-Secret
+    webhookSecret:
+      type: apiKey
+      in: header
+      name: X-Webhook-Secret
+    bearerWebhook:
+      type: http
+      scheme: bearer
+    telegramSecret:
+      type: apiKey
+      in: header
+      name: X-Telegram-Bot-Api-Secret-Token
+  schemas:
+    APIError:
+      $ref: ../../commons/api/openapi/APIError.yaml
+    Health:
+      $ref: ../../commons/api/openapi/Health.yaml

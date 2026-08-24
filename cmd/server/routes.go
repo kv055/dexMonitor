@@ -1,10 +1,65 @@
 package main
 
-import "net/http"
+import (
+	"net/http"
+
+	publicapi "dexmonitor/internal/api/gen/public"
+)
+
+// registerOpenAPIRoutes gives the generated strict handler ownership of every
+// normal JSON route. Raw proxy, download, and WebSocket transports are listed
+// explicitly below and are excluded from Go generation by the contract.
+func registerOpenAPIRoutes(mux *http.ServeMux, legacyMux *http.ServeMux) {
+	publicapi.RegisterLegacyStrictHandler(legacyMux, mux)
+	registerRawBackendRoutes(mux)
+}
+
+func registerRawBackendRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
+	mux.HandleFunc("GET /api/mm-controller/transactions/dex-pending-liquidity", handleMmControllerDexPendingLiquidity)
+	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
+	mux.HandleFunc("GET /api/mm-controller/lnd/wallet", handleMmControllerLNDWallet)
+	mux.HandleFunc("GET /api/mm-controller/lnd/wallet/state", handleMmControllerLNDWalletState)
+	mux.HandleFunc("GET /api/mm-controller/service-versions", handleMmControllerServiceVersions)
+	mux.HandleFunc("POST /api/mm-controller/lnd/wallet/init", handleMmControllerLNDWalletInit)
+	mux.HandleFunc("POST /api/mm-controller/lnd/addresses", handleMmControllerLNDCreateAddress)
+	mux.HandleFunc("GET /api/mm-controller/lnd/channel-presets", handleMmControllerLNDChannelPresets)
+	mux.HandleFunc("POST /api/mm-controller/lnd/channels/open", handleMmControllerLNDOpenChannel)
+	mux.HandleFunc("POST /api/mm-controller/lnd/channels/close", handleMmControllerLNDCloseChannel)
+	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel", handleMmControllerLSPChannel)
+	mux.HandleFunc("PUT /api/mm-controller/lnd/lsp-channel", handleMmControllerLSPChannel)
+	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel/status", handleMmControllerLSPChannelStatus)
+	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel/candidates", handleMmControllerLSPChannelCandidates)
+	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel/magma/info", handleMmControllerMagmaLSPInfo)
+	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel/magma/offers", handleMmControllerMagmaOffers)
+	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel/magma/orders", handleMmControllerMagmaLSPOrders)
+	mux.HandleFunc("POST /api/mm-controller/lnd/lsp-channel/magma/orders", handleMmControllerMagmaLSPOrders)
+	mux.HandleFunc("GET /api/mm-controller/lnd/lsp-channel/magma/orders/{id}", handleMmControllerMagmaLSPOrderByID)
+	mux.HandleFunc("POST /api/mm-controller/lnd/lsp-channel/magma/orders/{id}/pay", handleMmControllerMagmaLSPOrderPay)
+	mux.HandleFunc("GET /api/mm-controller/lnd/submarine-swaps", handleMmControllerSubmarineSwaps)
+	mux.HandleFunc("POST /api/mm-controller/cex/pre-trade-check", handleMmControllerCexPreTradeCheck)
+	mux.HandleFunc("POST /api/mm-controller/cex/tradeflow", handleMmControllerCexTradeflow)
+	mux.HandleFunc("GET /api/mm-controller/cex/withdrawal-track", handleMmControllerCexWithdrawalTrack)
+	mux.HandleFunc("GET /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
+	mux.HandleFunc("GET /api/mm-controller/bisq/payment-methods", handleMmControllerBisqPaymentMethods)
+	mux.HandleFunc("GET /api/mm-controller/bisq/payment-methods/{id}/form", handleMmControllerBisqPaymentMethodForm)
+	mux.HandleFunc("POST /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
+	mux.HandleFunc("DELETE /api/mm-controller/bisq/payment-accounts/{id}", handleMmControllerBisqPaymentAccountByID)
+	mux.HandleFunc("GET /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
+	mux.HandleFunc("PUT /api/mm-controller/telegram/config", handleMmControllerTelegramConfig)
+	mux.HandleFunc("GET /api/mm-controller/transactional-liquidity", handleMmControllerTransactionalLiquidity)
+	mux.HandleFunc("PUT /api/mm-controller/transactional-liquidity", handleMmControllerTransactionalLiquidity)
+	mux.HandleFunc("POST /api/mm-controller/telegram/pair", handleMmControllerTelegramPair)
+	mux.HandleFunc("POST /api/mm-controller/telegram/set-webhook", handleMmControllerTelegramSetWebhook)
+	mux.HandleFunc("POST /api/mm-controller/telegram/test", handleMmControllerTelegramTest)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/bisq-account-file", handleTradingAccountBisqAccountFile)
+	mux.HandleFunc("GET /api/trading/accounts/{id}/bisq-data-directory", handleTradingAccountBisqDataDirectory)
+	mux.HandleFunc("GET /ws/cex/hedge-stream", handleMmControllerHedgeStreamWS)
+}
 
 // registerBackendRoutes keeps the public HTTP contract in one place while
 // main remains responsible for dependency construction and server lifecycle.
-func registerBackendRoutes(mux *http.ServeMux) {
+func registerLegacyBackendRoutes(mux *http.ServeMux) {
 	registerAnalyticsRoutes(mux)
 	registerPaymentMethodRoutes(mux)
 	registerMMControllerRoutes(mux)

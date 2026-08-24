@@ -170,7 +170,8 @@ test('Net Min uses the precomputed minimum-volume scenario', async ({ page }) =>
 
   await gotoAndWaitForData(page);
   await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
-  await page.getByRole('combobox', { name: 'Premium mode' }).selectOption('net_min');
+  await jsClick(page.getByTitle(/Net full uses full order size/));
+  await page.getByRole('menuitemradio', { name: 'Net Min', exact: true }).click();
 
   const row = page.getByTestId('past-offers-row').first();
   await expect(row).toContainText('0,0200 BTC');

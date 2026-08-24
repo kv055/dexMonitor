@@ -1,5 +1,14 @@
 import { test, expect, gotoAndWaitForData, controlPanel, openControlPanel, jsClick, jsFill } from '../fixtures/base-fixture';
 
+async function selectMenuOption(
+  page: import('@playwright/test').Page,
+  trigger: import('@playwright/test').Locator,
+  option: string,
+) {
+  await jsClick(trigger);
+  await page.getByRole('menuitemradio', { name: option, exact: true }).click();
+}
+
 test.describe('ControlPanel (Insights filter sidebar)', () => {
   test.beforeEach(async ({ page }) => {
     await gotoAndWaitForData(page);
@@ -17,11 +26,13 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     // Shared between Live and Past mode
     await expect(label('Direction')).toBeVisible();
     await expect(label('Exchanges')).toBeVisible();
-    // Live-only
-    await expect(label('Payment')).toBeVisible();
+    await expect(label('Fiat')).toBeVisible();
     await expect(label('Premium')).toBeVisible();
     await expect(label('Range')).toBeVisible();
     await expect(label('Net profit EUR')).toBeVisible();
+    // Live-only
+    await expect(label('Reference source')).toBeVisible();
+    await expect(label('Payment methods')).toBeVisible();
   });
 
   test('view mode toggle swaps live-only for past-only controls', async ({ page }) => {
@@ -33,19 +44,21 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await expect(page.getByRole('heading', { name: 'Past Offers' })).toBeVisible();
     await expect(label('Timeframe')).toBeVisible();
     await expect(label('Premium mode')).toBeVisible();
-    await expect(cp.getByRole('combobox', { name: 'Premium mode' })).toHaveValue('net_full');
-    const payments = cp.getByRole('combobox', { name: 'Payments' });
-    await expect(payments).toHaveValue('settings');
-    await payments.selectOption('all');
-    await expect(payments).toHaveValue('all');
-    await expect(label('Payment')).toHaveCount(0);
+    await expect(cp.getByTitle(/Net full uses full order size/)).toContainText('Net Full');
+    const payments = cp.getByTitle('Show all methods, linked methods, or selected linked methods');
+    await expect(payments).toContainText('All methods');
+    await selectMenuOption(page, payments, 'Linked methods');
+    await expect(payments).toContainText('Linked methods');
+    await expect(label('Payment methods')).toBeVisible();
+    await expect(label('Reference source')).toHaveCount(0);
     await expect(label('Premium range')).toHaveCount(0);
     // Shared controls stay put
     await expect(label('Direction')).toBeVisible();
     await expect(label('Exchanges')).toBeVisible();
 
     await jsClick(page.getByRole('button', { name: 'Live Offers', exact: true }));
-    await expect(label('Payment')).toBeVisible();
+    await expect(label('Payment methods')).toBeVisible();
+    await expect(label('Reference source')).toBeVisible();
     await expect(label('Timeframe')).toHaveCount(0);
   });
 
@@ -53,7 +66,7 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     const cp = controlPanel(page);
     await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
 
-    const timeframe = cp.getByRole('combobox', { name: 'Timeframe' });
+    const timeframe = cp.getByTitle('Show offers closed within a preset window or a custom date range');
     const initialCustomRequest = page.waitForRequest(request => {
       if (new URL(request.url()).pathname !== '/api/dashboard/analytics') return false;
       const body = request.postDataJSON() as Record<string, unknown>;
@@ -61,7 +74,7 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
         && body.past_end_date === '2026-04-01'
         && typeof body.timezone === 'string';
     });
-    await timeframe.selectOption('custom');
+    await selectMenuOption(page, timeframe, 'Custom date range');
     const startDate = cp.getByRole('textbox', { name: 'Start date' });
     const endDate = cp.getByRole('textbox', { name: 'End date' });
     await expect(startDate).toHaveValue('2026-03-26');
@@ -85,7 +98,7 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
       const body = request.postDataJSON() as Record<string, unknown>;
       return !('past_start_date' in body) && !('past_end_date' in body) && !('timezone' in body);
     });
-    await timeframe.selectOption('24h');
+    await selectMenuOption(page, timeframe, 'Past 24h');
     await presetRequest;
   });
 
@@ -115,9 +128,9 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
 
   test('direction pills select a side', async ({ page }) => {
     const cp = controlPanel(page);
-    const buyPill = cp.getByRole('button', { name: 'Buy', exact: true });
-    await jsClick(buyPill);
-    await expect(buyPill).toHaveClass(/text-accent/);
+    const bidPill = cp.getByRole('button', { name: 'Bid', exact: true });
+    await jsClick(bidPill);
+    await expect(bidPill).toHaveClass(/text-accent/);
   });
 
   test('fiat switching reloads live and historical offers with the selected currency', async ({ page }) => {
@@ -131,14 +144,14 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
       const url = new URL(req.url());
       return url.pathname === '/api/past_offers' && url.searchParams.get('fiat') === 'USD';
     });
-    await fiat.selectOption('USD');
+    await selectMenuOption(page, fiat, 'USD');
     await Promise.all([liveRequest, pastRequest]);
-    await expect(fiat).toHaveValue('USD');
+    await expect(fiat).toContainText('USD');
     await expect(cp.getByText(/^BTC\/USD — Kraken$/)).toBeVisible();
 
     await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
     await expect(page.getByRole('heading', { name: 'Past Offers' })).toBeVisible();
-    await expect(cp.getByTitle('Show live and past offers quoted in this currency')).toHaveValue('USD');
+    await expect(cp.getByTitle('Show live and past offers quoted in this currency')).toContainText('USD');
   });
 
   test('exchange pills toggle exchanges on and off', async ({ page }) => {
@@ -153,23 +166,22 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await expect(bisqPill).not.toHaveClass(/line-through/);
   });
 
-  test('payment dropdown shows options and selection works', async ({ page }) => {
+  test('payment scope dropdown shows linked methods and selection works', async ({ page }) => {
     const cp = controlPanel(page);
-    await jsClick(cp.locator('button').filter({ hasText: 'All Payments' }));
-
-    // Wait for dropdown menu to render and choose the grouped payment option.
-    const sepaOption = page.locator('.absolute button').filter({ hasText: 'SEPA Instant' }).first();
-    await sepaOption.waitFor({ state: 'visible' });
-    await expect(page.locator('.absolute button').filter({ hasText: 'Revolut' }).first()).toBeVisible();
-
-    await sepaOption.click();
-    await expect(cp.locator('button').filter({ hasText: 'SEPA Instant' })).toBeVisible();
+    const payments = cp.getByTitle('Show all methods, linked methods, or selected linked methods');
+    await selectMenuOption(page, payments, 'Linked methods');
+    const revolut = cp.getByRole('checkbox', { name: 'Revolut', exact: true });
+    await expect(revolut).toBeVisible();
+    await revolut.check();
+    await expect(revolut).toBeChecked();
+    await expect(payments).toContainText('1 linked method');
   });
 
   test('premium range sliders accept values', async ({ page }) => {
     const cp = controlPanel(page);
     await jsClick(cp.getByRole('button', { name: '%', exact: true }));
     const minSlider = cp.getByRole('slider', { name: 'Premium % minimum' });
+    await expect(minSlider).toBeVisible();
     const maxSlider = cp.getByRole('slider', { name: 'Premium % maximum' });
     const max = Number(await maxSlider.getAttribute('max'));
     const nextMin = String(Math.min(300, max));
@@ -208,7 +220,9 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await cp.locator('button').filter({ hasText: '↺ Reset filters' }).click();
 
     await expect(cp.getByRole('button', { name: /Bisq v1/ })).not.toHaveClass(/line-through/);
-    await expect(minSlider).toHaveValue(initialMin);
+    await expect(cp.getByRole('slider', { name: 'Premium % minimum' })).toHaveCount(0);
+    await expect(cp.getByRole('button', { name: 'EUR', exact: true })).toHaveAttribute('aria-pressed', 'true');
+    await expect(cp.locator('span.uppercase').filter({ hasText: /^Net profit EUR$/ })).toBeVisible();
     await expect(cp.locator('button').filter({ hasText: 'Net Premium Full' })).toBeVisible();
   });
 

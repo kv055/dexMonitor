@@ -67,6 +67,12 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/mm-controller/transactions*', route =>
       route.fulfill({ json: { transactions: [], total: 0, limit: 20, offset: 0 } }),
     );
+    await page.route('**/api/mm-controller/lnd/submarine-swaps*', route =>
+      route.fulfill({ json: [] }),
+    );
+    await page.route('**/api/mm-controller/transactions/dex-pending-liquidity', route =>
+      route.fulfill({ json: { btc_value: 0, transaction_count: 0, statuses: [] } }),
+    );
 
     // Auth: the app calls /api/auth/me on mount and renders the login wall on
     // 401. Mock an authenticated user so the dashboard renders for every test.

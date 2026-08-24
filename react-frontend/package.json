@@ -5,8 +5,10 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "generate:api": "openapi-typescript ../../dexMmController/api/execution.openapi.yaml -o src/generated/mm-controller-api.ts",
-    "check:api-contract": "npm run generate:api && git diff --exit-code -- src/generated/mm-controller-api.ts",
+    "generate:api:monitor": "openapi-typescript ../../api-docs/specs/dex-monitor/public.openapi.yaml -o src/generated/monitor-api.ts",
+    "generate:api:unified": "openapi-typescript ../../api-docs/specs/dex-unified-api/public.openapi.yaml -o src/generated/unified-api.ts",
+    "generate:api": "npm run generate:api:monitor && npm run generate:api:unified",
+    "check:api-contract": "npm run generate:api && git diff --exit-code -- src/generated/monitor-api.ts src/generated/unified-api.ts",
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "test": "vitest run",

@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	bisqstatsapi "dexmonitor/internal/api/gen/bisqstats"
 	"dexmonitor/internal/bisqstats"
 )
 
@@ -20,15 +21,15 @@ func main() {
 	appDataDir := envOr("BISQ_APP_DATA_DIR", "/home/appuser/.local/share/Bisq")
 	reader := bisqstats.NewReader(bisqstats.DefaultDBDir(appDataDir))
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
+	legacyMux := http.NewServeMux()
+	legacyMux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, map[string]any{
 			"status":       "ok",
 			"generated_at": time.Now().UTC(),
 			"trades_file":  reader.ClosedTradesPath(),
 		})
 	})
-	mux.HandleFunc("GET /api/trade-stats", func(w http.ResponseWriter, r *http.Request) {
+	legacyMux.HandleFunc("GET /api/trade-stats", func(w http.ResponseWriter, r *http.Request) {
 		records, skipped, err := reader.ReadClosedTradeRecords()
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, err)
@@ -37,6 +38,8 @@ func main() {
 		resp := bisqstats.BuildResponse(records, skipped, reader.ClosedTradesPath(), parseQuery(r), time.Now().UTC())
 		writeJSON(w, resp)
 	})
+	mux := http.NewServeMux()
+	bisqstatsapi.RegisterLegacyStrictHandler(legacyMux, mux)
 
 	log.Printf("Starting Bisq stats API on http://127.0.0.1%s", addr)
 	if err := http.ListenAndServe(addr, cors(mux)); err != nil {

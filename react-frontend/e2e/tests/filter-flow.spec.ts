@@ -57,9 +57,9 @@ test.describe('Filter Flow — Cross-component integration', () => {
   test('direction filter shows only bids', async ({ page }) => {
     const panel = offersPanel(page);
 
-    // Default premiumOnly view has mostly buy (Bid) offers — select "Buy"
+    // Default premium-only view has mostly bid offers — select "Bid".
     await openControlPanel(page);
-    await jsClick(controlPanel(page).getByRole('button', { name: 'Buy', exact: true }));
+    await jsClick(controlPanel(page).getByRole('button', { name: 'Bid', exact: true }));
     await closeControlPanel(page);
     await page.waitForTimeout(200);
 
@@ -102,7 +102,12 @@ test.describe('Filter Flow — Cross-component integration', () => {
     const panel = offersPanel(page);
 
     await openControlPanel(page);
-    await selectDropdownOption(page, controlPanel(page).locator('button').filter({ hasText: 'All Payments' }), 'SEPA Instant');
+    const cp = controlPanel(page);
+    const paymentScope = cp.getByTitle('Show all methods, linked methods, or selected linked methods');
+    await selectDropdownOption(page, paymentScope, 'Linked methods');
+    const revolut = cp.getByRole('checkbox', { name: 'Revolut', exact: true });
+    await revolut.check();
+    await expect(revolut).toBeChecked();
     await closeControlPanel(page);
     await page.waitForTimeout(200);
 
@@ -112,7 +117,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
 
     for (let i = 0; i < count; i++) {
       const text = await paymentCells.nth(i).textContent();
-      expect(text?.trim()).toMatch(/SEPA/);
+      expect(text?.trim()).toMatch(/Revolut/);
     }
   });
 
@@ -125,7 +130,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
     expect(initialCount).toBeGreaterThan(0);
 
     // Filtering by direction narrows the list in place.
-    await jsClick(controlPanel(page).getByRole('button', { name: 'Buy', exact: true }));
+    await jsClick(controlPanel(page).getByRole('button', { name: 'Bid', exact: true }));
     await page.waitForTimeout(200);
 
     const sideCells = offerCells(insightsList, 1);
@@ -179,7 +184,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
 
     // Combine the exchange selection with a direction filter.
     await openControlPanel(page);
-    await jsClick(cp.getByRole('button', { name: 'Buy', exact: true }));
+    await jsClick(cp.getByRole('button', { name: 'Bid', exact: true }));
     await closeControlPanel(page);
     await page.waitForTimeout(200);
 
@@ -198,7 +203,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
     await enableOnlyExchange(page, /Bisq v1/);
     await page.waitForTimeout(100);
 
-    await jsClick(cp.getByRole('button', { name: 'Buy', exact: true }));
+    await jsClick(cp.getByRole('button', { name: 'Bid', exact: true }));
     await closeControlPanel(page);
     await page.waitForTimeout(200);
 

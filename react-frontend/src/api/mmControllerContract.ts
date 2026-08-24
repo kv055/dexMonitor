@@ -1,4 +1,4 @@
-import type { components } from '../generated/mm-controller-api';
+import type { components } from '../generated/monitor-api';
 
 type Schemas = components['schemas'];
 
