@@ -77,6 +77,17 @@ import type {
 import { useFilters } from '../hooks/useFilters';
 import { useOptionalCEXPermissions } from '../hooks/useCEXPermissions';
 import {
+  CollapsibleSection,
+  DetailTabsBar,
+  InfoRow,
+  InfoRowList,
+  SecretField,
+  SectionState,
+  StatTile,
+} from './accounts/AccountDetailPrimitives';
+import type { DetailTab } from './accounts/AccountDetailPrimitives';
+import { BisqWalletSection } from './accounts/BisqWalletSection';
+import {
   LND_WALLET_PROVIDER,
   TRADING_CATEGORIES,
   categoryRank,
@@ -4882,65 +4893,281 @@ export function TradingAccountsPanel() {
     const cexMainnetDeposit = pickMainnetDepositAddress(cexDepositSlice?.data ?? []);
     const cexDepositField = cexMainnetDeposit ? `cex-deposit:${cexMainnetDeposit.address}` : '';
     const cexBalanceSummary = formatCexBalanceSummary(cexBalancesSlice?.data);
+    const cexFeeExchange = isCexAccount(account)
+      ? cexPermissions?.exchanges.find(item =>
+          item.account_id === account.id || item.exchange.trim().toLowerCase() === account.provider.trim().toLowerCase(),
+        )
+      : undefined;
     const summaryView = buildAccountSummaryViewModel(account, paymentCatalogRows);
     const revealedCredentials = revealedCredentialsByAccount[account.id];
     const visibleCredentialFields = visibleCredentialFieldsByAccount[account.id] ?? {};
     const credentialsRevealing = revealingCredentialsByAccount[account.id] === true;
 
+    // --- Overview tab: status badges, stat tiles, and a structured field list.
+    const showCredentialRows = !isCexAccount(account)
+      && !isLndWalletProvider(account.provider)
+      && Boolean(account.email || account.password || account.phone || account.payment_tag);
+    const overview = (
+      <div className="grid gap-3">
+        {isPaymentAccount || summaryView.catalogLinked || summaryView.capabilityBadges.length > 0 ? (
+          <div className="flex flex-wrap gap-1.5">
+            {summaryView.catalogLinked ? (
+              <span className="rounded-full border border-green/40 bg-green/10 px-2 py-0.5 text-[0.68rem] font-medium text-green">
+                Linked
+              </span>
+            ) : isPaymentAccount ? (
+              <span className="rounded-full border border-red/40 bg-red/10 px-2 py-0.5 text-[0.68rem] font-medium text-red">
+                Unlinked
+              </span>
+            ) : null}
+            {summaryView.capabilityBadges.map(badge => (
+              <span key={badge} className="rounded-full border border-border px-2 py-0.5 text-[0.68rem] text-muted">
+                {badge}
+              </span>
+            ))}
+          </div>
+        ) : null}
+        {isCexAccount(account) ? <AggregatedPermissionsRow apiKeys={account.api_keys} /> : null}
+        {isPaymentAccount ? (
+          <fieldset className="grid gap-1.5" disabled={savingNotificationChannelsByAccount[account.id]}>
+            <legend className="text-[0.6rem] font-medium uppercase tracking-wider text-muted">
+              Incoming payment notification channels
+            </legend>
+            <div className="flex flex-wrap gap-1.5">
+              {([
+                ['push', 'Push endpoint'],
+                ['email', 'Email'],
+              ] as const).map(([channel, label]) => {
+                const checked = account.notification_channels?.includes(channel) ?? false;
+                return (
+                  <label
+                    key={channel}
+                    className={`inline-flex cursor-pointer items-center gap-1.5 rounded-full border px-2.5 py-1 text-[0.68rem] font-medium transition ${
+                      checked
+                        ? 'border-green/40 bg-green/10 text-green'
+                        : 'border-border bg-bg text-muted hover:border-accent/40 hover:text-text'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      className="sr-only"
+                      checked={checked}
+                      onChange={event => void setNotificationChannel(account, channel, event.target.checked)}
+                    />
+                    {checked ? '✓ ' : ''}{label}
+                  </label>
+                );
+              })}
+              {savingNotificationChannelsByAccount[account.id] ? (
+                <span className="self-center text-[0.65rem] text-muted">Saving…</span>
+              ) : null}
+            </div>
+            <span className="text-[0.65rem] text-muted">
+              Confirm each channel that can report an incoming payment for this account.
+            </span>
+          </fieldset>
+        ) : null}
+        <div className="grid grid-cols-2 gap-2 lg:grid-cols-3">
+          {!isPaymentAccount ? <StatTile label="Last check" value={formatDate(account.last_health_check)} /> : null}
+          {isBisq1Provider(account.provider) ? (
+            <StatTile label="Bisq 1" value={serviceVersions?.bisq1 || 'Unavailable'} tone={serviceVersions?.bisq1 ? 'good' : 'bad'} />
+          ) : null}
+          {isBisq2Provider(account.provider) ? (
+            <StatTile label="Bisq 2" value={serviceVersions?.bisq2 || 'Unavailable'} tone={serviceVersions?.bisq2 ? 'good' : 'bad'} />
+          ) : null}
+          {isLndWalletProvider(account.provider) ? (
+            <StatTile label="LND" value={serviceVersions?.lnd || 'Unavailable'} tone={serviceVersions?.lnd ? 'good' : 'bad'} />
+          ) : null}
+          {isCexAccount(account) ? (
+            <StatTile
+              label="Balances"
+              value={
+                cexBalancesSlice?.loading && !cexBalanceSummary
+                  ? 'Loading…'
+                  : cexBalancesSlice?.error && !cexBalanceSummary
+                    ? cexBalancesSlice.error
+                    : cexBalanceSummary || (cexBalancesSlice && !cexBalancesSlice.loading ? 'No balances returned.' : '—')
+              }
+            />
+          ) : null}
+          {isCexAccount(account) ? (
+            <StatTile
+              label="Spot taker fee"
+              value={
+                cexFeeExchange?.fee_snapshot?.spot_taker_fee_percent != null
+                  ? `${cexFeeExchange.fee_snapshot.spot_taker_fee_percent}%`
+                  : cexPermissions?.loading
+                    ? 'Loading…'
+                    : '—'
+              }
+            />
+          ) : null}
+          {isCexAccount(account) ? (
+            <StatTile
+              label="Deposit address"
+              value={
+                cexMainnetDeposit
+                  ? 'Ready'
+                  : cexDepositSlice?.loading
+                    ? 'Loading…'
+                    : cexDepositSlice && !cexDepositSlice.loading
+                      ? 'Not set'
+                      : '—'
+              }
+              tone={cexMainnetDeposit ? 'good' : cexDepositSlice && !cexDepositSlice.loading ? 'bad' : 'default'}
+            />
+          ) : null}
+        </div>
+        {showCredentialRows || isCexAccount(account) ? (
+          <InfoRowList>
+            {showCredentialRows ? (
+              <>
+                {account.email ? (
+                  <InfoRow label="Email">
+                    <SecretField
+                      value={revealedCredentials?.email}
+                      visible={visibleCredentialFields.email === true}
+                      revealing={credentialsRevealing}
+                      onToggle={() => void toggleCredentialReveal(account, 'email')}
+                      copyable
+                    />
+                  </InfoRow>
+                ) : null}
+                {account.password ? (
+                  <InfoRow label="Password">
+                    <SecretField
+                      value={revealedCredentials?.password}
+                      visible={visibleCredentialFields.password === true}
+                      revealing={credentialsRevealing}
+                      onToggle={() => void toggleCredentialReveal(account, 'password')}
+                      copyable
+                    />
+                  </InfoRow>
+                ) : null}
+                {account.phone ? (
+                  <InfoRow label="Phone">
+                    <SecretField
+                      value={revealedCredentials?.phone}
+                      visible={visibleCredentialFields.phone === true}
+                      revealing={credentialsRevealing}
+                      onToggle={() => void toggleCredentialReveal(account, 'phone')}
+                      copyable
+                    />
+                  </InfoRow>
+                ) : null}
+                {account.payment_tag ? (
+                  <InfoRow label="Payment Tag">
+                    <SecretField
+                      value={revealedCredentials?.payment_tag}
+                      visible={visibleCredentialFields.payment_tag === true}
+                      revealing={credentialsRevealing}
+                      onToggle={() => void toggleCredentialReveal(account, 'payment_tag')}
+                      copyable
+                    />
+                  </InfoRow>
+                ) : null}
+              </>
+            ) : null}
+            {isCexAccount(account) ? (
+              <InfoRow label="BTC deposit address (mainnet)">
+                {cexDepositSlice?.loading && !cexMainnetDeposit ? (
+                  <span className="text-muted">Loading…</span>
+                ) : cexDepositSlice?.error && !cexMainnetDeposit ? (
+                  <span className="text-red">{cexDepositSlice.error}</span>
+                ) : cexMainnetDeposit ? (
+                  <SecretField
+                    value={cexMainnetDeposit.address}
+                    visible={visibleAccountSecretsByAccount[account.id]?.[cexDepositField] === true}
+                    onToggle={() => toggleLocalSecretVisibility(account.id, cexDepositField)}
+                    copyable
+                  />
+                ) : cexDepositSlice && !cexDepositSlice.loading ? (
+                  <span className="text-muted">No BTC deposit address on this account yet.</span>
+                ) : (
+                  <span className="text-muted">—</span>
+                )}
+              </InfoRow>
+            ) : null}
+          </InfoRowList>
+        ) : null}
+      </div>
+    );
+
+    // --- Group the remaining sections into tabs by concern.
+    const securityChildren: ReactNode[] = [];
+    if (dexIdentity) {
+      const totpNode = renderTOTPSection(account);
+      if (totpNode) securityChildren.push(totpNode);
+      const passkeyNode = renderPasskeysSection(account);
+      if (passkeyNode) securityChildren.push(passkeyNode);
+    }
+    const seedsNode = renderSeedsSection(account);
+    if (seedsNode) securityChildren.push(seedsNode);
+    if (isBisqProvider(account.provider)) securityChildren.push(renderAccountFileSection(account));
+    if (!isLocalWallet && !isBankAccount(account) && account.category !== 'Fiat Transmitter') {
+      const apiKeyNode = renderAPIKeysSection(account);
+      if (apiKeyNode) securityChildren.push(apiKeyNode);
+    }
+
+    const methodChildren: ReactNode[] = [];
+    if (isBisq1Provider(account.provider)) {
+      const savedMethodsNode = renderSavedPaymentMethodsSection(account);
+      if (savedMethodsNode) methodChildren.push(savedMethodsNode);
+    }
+    const chatMethodsNode = chatExchangeForProvider(account.provider)
+      ? renderChatPaymentMethodsSection(account)
+      : null;
+    if (chatMethodsNode) methodChildren.push(chatMethodsNode);
+    const catalogNode = renderCatalogMethodsSection(account);
+    if (catalogNode) methodChildren.push(catalogNode);
+    const bankAccountsNode = renderBankAccountsSection(account);
+    if (bankAccountsNode) methodChildren.push(bankAccountsNode);
+
+    const exchangeChildren: ReactNode[] = [];
+    if (isCexAccount(account)) {
+      const withdrawalNode = renderCexWithdrawalAddressesSection(account);
+      if (withdrawalNode) exchangeChildren.push(withdrawalNode);
+      const feesNode = renderCexFeesSection(account);
+      if (feesNode) exchangeChildren.push(feesNode);
+      const hedgingNode = renderCexHedgingSection(account);
+      if (hedgingNode) exchangeChildren.push(hedgingNode);
+      const spotTradesNode = renderCexSpotTradesSection(account);
+      if (spotTradesNode) exchangeChildren.push(spotTradesNode);
+    }
+
+    const walletChildren: ReactNode[] = [];
+    if (isBisq1Provider(account.provider)) {
+      walletChildren.push(<BisqWalletSection key={account.id} />);
+    }
+    if (isLndWalletProvider(account.provider)) {
+      const backupNode = renderLNDBackupSection(account);
+      if (backupNode) walletChildren.push(backupNode);
+      const lightningNode = renderLightningManagementSection(account);
+      if (lightningNode) walletChildren.push(lightningNode);
+      const addressesNode = renderWalletAddressesSection(account);
+      if (addressesNode) walletChildren.push(addressesNode);
+    }
+
+    const tabs: DetailTab[] = [{ id: 'overview', label: 'Overview', content: overview }];
+    if (securityChildren.length > 0) {
+      tabs.push({ id: 'security', label: 'Security', content: <div className="grid gap-2">{securityChildren}</div> });
+    }
+    if (methodChildren.length > 0) {
+      tabs.push({ id: 'methods', label: 'Methods', content: <div className="grid gap-2">{methodChildren}</div> });
+    }
+    if (exchangeChildren.length > 0) {
+      tabs.push({ id: 'exchange', label: 'Exchange data', content: <div className="grid gap-2">{exchangeChildren}</div> });
+    }
+    if (walletChildren.length > 0) {
+      tabs.push({ id: 'wallet', label: 'Wallet', content: <div className="grid gap-2">{walletChildren}</div> });
+    }
+
     return (
       <AccountDetailPane
         account={account}
         summaryView={summaryView}
-        healthMessage={isPaymentCategory(account.category || 'Uncategorized') ? undefined : accountHealthMessage}
-        onDismissHealthMessage={isPaymentCategory(account.category || 'Uncategorized') ? undefined : () => dismissHealthMessage(account.id)}
-        onToggleActive={() => withReload(async () => {
-          const isPaymentAccount = isPaymentCategory(account.category || 'Uncategorized');
-          const catalogLinked = paymentCatalogRows.some(row => row.account_id === account.id);
-          const nextActive = !account.is_active;
-          if (isPaymentAccount && nextActive && !catalogLinked) {
-            throw new Error('Link a catalog method before activating this payment account');
-          }
-          await updateAccount(account.id, {
-            provider: account.provider,
-            category: account.category,
-            // The account list masks secrets. Keep them unchanged while updating
-            // only the activation flag.
-            email: '***',
-            password: '***',
-            phone: '***',
-            payment_tag: '***',
-            is_active: nextActive,
-          });
-        })}
-        actions={
-          <>
-            {!isPaymentCategory(account.category || 'Uncategorized') ? (
-              <button
-                type="button"
-                className={`${compactButtonCls} disabled:cursor-not-allowed disabled:opacity-50`}
-                disabled={!!checkingHealthByAccount[account.id]}
-                onClick={() => void triggerHealthCheck(account)}
-              >
-                {checkingHealthByAccount[account.id] ? 'Checking…' : 'Healthcheck'}
-              </button>
-            ) : null}
-            {!isEditingAccount && (showDexIdentitySections(account.provider) || isLndWalletProvider(account.provider)) ? (
-              <button type="button" className={compactButtonCls} onClick={() => startAccountEdit(account)}>
-                Edit
-              </button>
-            ) : null}
-            {!isLocalWalletProvider(account.provider) ? (
-              <button
-                type="button"
-                className={`${compactButtonCls} text-red`}
-                onClick={() => withReload(async () => { await deleteAccount(account.id); })}
-              >
-                Delete
-              </button>
-            ) : null}
-          </>
-        }
-        overview={
+        tabs={tabs}
+        editor={
           isEditingAccount ? (
             <AccountEditor
               value={editingAccount}

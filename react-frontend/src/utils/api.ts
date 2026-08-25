@@ -34,6 +34,9 @@ import type {
   BisqPaymentMethod,
   BisqPaymentAccountForm,
   BisqCreatePaymentAccountPayload,
+  BisqWalletBalances,
+  BisqWalletAddress,
+  BisqWalletTransaction,
   TransactionalLiquiditySettings,
   TransactionalLiquiditySource,
   TransactionalRoutingProfile,
@@ -396,5 +399,39 @@ export function createBisqPaymentAccount(payload: BisqCreatePaymentAccountPayloa
 export function deleteBisqPaymentAccount(id: string) {
   return request<{ ok: boolean }>(`/api/mm-controller/bisq/payment-accounts/${encodeURIComponent(id)}`, {
     method: 'DELETE',
+  });
+}
+
+// --- Bisq1 daemon wallet management ---
+
+export function fetchBisqWalletBalances() {
+  return request<BisqWalletBalances>('/api/mm-controller/bisq/wallet/balances');
+}
+
+export function fetchBisqWalletAddresses() {
+  return request<{ addresses: BisqWalletAddress[] }>('/api/mm-controller/bisq/wallet/addresses');
+}
+
+export function fetchBisqWalletTransactions() {
+  return request<{ transactions: BisqWalletTransaction[] }>('/api/mm-controller/bisq/wallet/transactions');
+}
+
+export function withdrawBisqWallet(payload: {
+  address: string;
+  amount_btc: string;
+  tx_fee_rate?: string;
+  memo?: string;
+  password?: string;
+}) {
+  return request<{ transaction: BisqWalletTransaction }>('/api/mm-controller/bisq/wallet/withdraw', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function unlockBisqWallet(password: string, timeoutSeconds = 300) {
+  return request<{ ok: boolean }>('/api/mm-controller/bisq/wallet/unlock', {
+    method: 'POST',
+    body: JSON.stringify({ password, timeout_seconds: timeoutSeconds }),
   });
 }

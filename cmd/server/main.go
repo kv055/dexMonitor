@@ -2520,6 +2520,31 @@ func handleMmControllerBisqPaymentAccountByID(w http.ResponseWriter, r *http.Req
 	forwardMMControllerJSON(w, r, "/api/bisq/payment-accounts/"+url.PathEscape(id))
 }
 
+// handleMmControllerBisqWalletBalances proxies the bisq1 wallet balance summary.
+func handleMmControllerBisqWalletBalances(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/bisq/wallet/balances")
+}
+
+// handleMmControllerBisqWalletAddresses proxies the bisq1 wallet funding addresses.
+func handleMmControllerBisqWalletAddresses(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/bisq/wallet/addresses")
+}
+
+// handleMmControllerBisqWalletTransactions proxies the bisq1 wallet transaction history.
+func handleMmControllerBisqWalletTransactions(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/bisq/wallet/transactions")
+}
+
+// handleMmControllerBisqWalletWithdraw proxies bisq1 wallet BTC withdrawals.
+func handleMmControllerBisqWalletWithdraw(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/bisq/wallet/withdraw")
+}
+
+// handleMmControllerBisqWalletUnlock proxies unlocking an encrypted bisq1 wallet.
+func handleMmControllerBisqWalletUnlock(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/bisq/wallet/unlock")
+}
+
 // handleMmControllerTelegramConfig proxies GET/PUT of the shared Telegram bot
 // configuration (token, chat_id, per-service webhook URLs) to dexMmController.
 func handleMmControllerTelegramConfig(w http.ResponseWriter, r *http.Request) {

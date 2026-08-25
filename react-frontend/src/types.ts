@@ -832,6 +832,46 @@ export interface BisqCreatePaymentAccountPayload {
   country_code?: string;
 }
 
+// --- Bisq1 daemon wallet (proxied via GET /api/mm-controller/bisq/wallet/*) ---
+
+export interface BisqBTCBalance {
+  available_sats: number;
+  reserved_sats: number;
+  total_available_sats: number;
+  locked_sats: number;
+}
+
+export interface BisqBSQBalance {
+  available_confirmed_sats: number;
+  unverified_sats: number;
+  unconfirmed_change_sats: number;
+  locked_for_voting_sats: number;
+  lockup_bonds_sats: number;
+  unlocking_bonds_sats: number;
+}
+
+export interface BisqWalletBalances {
+  btc?: BisqBTCBalance | null;
+  bsq?: BisqBSQBalance | null;
+}
+
+export interface BisqWalletAddress {
+  address: string;
+  balance_sats: number;
+  num_confirmations: number;
+  is_address_unused: boolean;
+}
+
+export interface BisqWalletTransaction {
+  tx_id: string;
+  input_sum_sats: number;
+  output_sum_sats: number;
+  fee_sats: number;
+  size_bytes: number;
+  is_pending: boolean;
+  memo?: string;
+}
+
 export interface PaymentMethodUpdatePayload {
   merge_regex: string | null;
   alias_list: string[];
