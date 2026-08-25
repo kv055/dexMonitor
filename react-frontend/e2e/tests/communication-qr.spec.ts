@@ -49,6 +49,9 @@ test('generates communication QR codes locally without third-party requests', as
       },
     }),
   );
+  await page.route('**/api/phone-push/setup/reveal', route =>
+    route.fulfill({ json: { shared_secret: 'test-shared-secret' } }),
+  );
 
   await gotoAndWaitForData(page);
   await page.getByRole('button', { name: 'Trading Accounts', exact: true }).click();
@@ -77,5 +80,14 @@ test('generates communication QR codes locally without third-party requests', as
   const pairingQr = panel.getByRole('img', { name: 'QR code to connect your Telegram bot' });
   await expect(pairingQr).toHaveAttribute('src', /^data:image\/png;base64,/);
   expect(await pairingQr.getAttribute('src')).not.toBe(botFatherQrSource);
+
+  const phoneSection = panel
+    .getByRole('heading', { name: 'Phone payment monitoring' })
+    .locator('xpath=ancestor::section');
+  const relayPairingQr = phoneSection.getByRole('img', { name: 'PushPush Relay app pairing QR code' });
+  await expect(relayPairingQr).toHaveCount(0);
+  await phoneSection.getByRole('button', { name: 'Reveal header secrets' }).click();
+  await expect(relayPairingQr).toHaveAttribute('src', /^data:image\/png;base64,/);
+
   expect(thirdPartyQrRequests).toEqual([]);
 });
