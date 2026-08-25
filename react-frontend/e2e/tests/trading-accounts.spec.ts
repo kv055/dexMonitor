@@ -13,6 +13,7 @@ async function openBisqPaymentAccountCreator(page: Page) {
   await panel.getByRole('button', { name: /^Trading/ }).click();
   const detail = panel.getByTestId('account-detail-pane').filter({ visible: true });
   await expect(detail).toContainText('Bisq');
+  await detail.getByTestId('account-detail-tab-methods').click();
   await detail.getByRole('button', { name: /Saved payment methods/ }).click();
   await expect(detail.getByLabel('Bisq 1 payment method')).toBeVisible();
   return detail;

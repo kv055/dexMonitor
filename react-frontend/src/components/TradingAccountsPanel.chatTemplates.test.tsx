@@ -81,6 +81,7 @@ describe('TradingAccountsPanel chat templates', () => {
     renderPanel();
     await user.click(await screen.findByRole('button', { name: /Trading/ }));
     await user.click(await screen.findByTestId('account-summary-card-1'));
+    await user.click(screen.getAllByTestId('account-detail-tab-methods')[0]);
     await user.click(screen.getAllByRole('button', { name: /Chat payment methods/ })[0]);
 
     expect((await screen.findAllByText('PayPal')).length).toBeGreaterThan(0);
@@ -93,6 +94,7 @@ describe('TradingAccountsPanel chat templates', () => {
     await waitFor(() => expect(mocks.updatePaymentMethodChatTemplate).toHaveBeenCalledWith(10, 'robosats', expect.anything()));
 
     await user.click(screen.getByTestId('account-summary-card-2'));
+    await user.click(screen.getAllByTestId('account-detail-tab-methods')[0]);
     await user.click((await screen.findAllByRole('button', { name: /Chat payment methods/ }))[0]);
     await waitFor(() => expect(screen.getAllByText('template active').length).toBeGreaterThan(0));
     expect(mocks.fetchPaymentMethodChatTemplates).toHaveBeenCalledWith(11);

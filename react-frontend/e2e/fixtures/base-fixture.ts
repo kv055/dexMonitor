@@ -326,6 +326,26 @@ export const test = base.extend<Fixtures>({
     await page.route('**/api/mm-controller/telegram/config', route =>
       route.fulfill({ json: MOCK_TELEGRAM_CONFIG }),
     );
+    // Without this guard the phone-push setup request falls through to a real
+    // local backend whose 401 triggers the app-wide auth:unauthorized logout.
+    await page.route('**/api/phone-push/setup/reveal', route =>
+      route.fulfill({ json: { shared_secret: 'mock-shared-secret' } }),
+    );
+    await page.route('**/api/phone-push/setup*', route =>
+      route.fulfill({
+        json: {
+          notify_url: 'http://localhost:8000/api/phone-push/notify',
+          heartbeat_url: 'http://localhost:8000/api/phone-push/heartbeat',
+          notify_credential_configured: true,
+          heartbeat_credential_configured: true,
+          online: true,
+          device_id: 'payment-phone',
+          last_seen: new Date(FIXED_TIME).toISOString(),
+          max_age_seconds: 900,
+          callback_history: [],
+        },
+      }),
+    );
     await page.route('**/api/statistics', route =>
       route.fulfill({
         json: MOCK_STATISTICS,

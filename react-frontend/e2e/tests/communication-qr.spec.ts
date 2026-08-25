@@ -84,10 +84,22 @@ test('generates communication QR codes locally without third-party requests', as
   const phoneSection = panel
     .getByRole('heading', { name: 'Phone payment monitoring' })
     .locator('xpath=ancestor::section');
+  const setupMethodTabs = phoneSection.getByRole('tablist', { name: 'Phone setup method' });
+  await expect(setupMethodTabs.getByRole('tab', { name: 'MacroDroid' })).toHaveAttribute('aria-selected', 'true');
+
   const relayPairingQr = phoneSection.getByRole('img', { name: 'PushPush Relay app pairing QR code' });
   await expect(relayPairingQr).toHaveCount(0);
-  await phoneSection.getByRole('button', { name: 'Reveal header secrets' }).click();
+  await setupMethodTabs.getByRole('tab', { name: 'PushPush Relay' }).click();
+  await expect(phoneSection.getByText('Pair the dedicated Android app in one scan.')).toBeVisible();
+  await expect(phoneSetupQr).toHaveCount(0);
+
+  await phoneSection.getByRole('button', { name: 'Reveal pairing QR' }).click();
   await expect(relayPairingQr).toHaveAttribute('src', /^data:image\/png;base64,/);
+  await phoneSection.getByRole('button', { name: 'Hide pairing QR' }).click();
+  await expect(relayPairingQr).toHaveCount(0);
+
+  await setupMethodTabs.getByRole('tab', { name: 'MacroDroid' }).click();
+  await expect(phoneSetupQr).toHaveAttribute('src', /^data:image\/png;base64,/);
 
   expect(thirdPartyQrRequests).toEqual([]);
 });

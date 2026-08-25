@@ -122,6 +122,18 @@ function formatDate(value: string | null | undefined) {
   return Number.isNaN(d.getTime()) ? value : d.toLocaleString();
 }
 
+function formatRelativeTime(value: string | null | undefined) {
+  if (!value) return null;
+  const ms = Date.now() - new Date(value).getTime();
+  if (!Number.isFinite(ms) || ms < 0) return null;
+  const minutes = Math.floor(ms / 60_000);
+  if (minutes < 1) return 'just now';
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return `${Math.floor(hours / 24)}d ago`;
+}
+
 function formatAccountHeaderDate(value: string | null | undefined) {
   if (!value) return '—';
   const d = new Date(value);
@@ -556,17 +568,22 @@ async function fetchCexSectionData(section: CexDataSectionKey, accountId: number
   }
 }
 
-function renderCexSectionMessage(loading: boolean, error: string | null, emptyMessage: string, hasData: boolean) {
-  if (loading && !hasData) {
-    return <div className="text-[0.65rem] text-muted px-1">Loading…</div>;
-  }
-  if (error) {
-    return <div className="text-[0.65rem] text-red px-1">{error}</div>;
-  }
-  if (!hasData) {
-    return <div className="text-[0.65rem] text-muted px-1">{emptyMessage}</div>;
-  }
-  return null;
+function renderCexSectionMessage(
+  loading: boolean,
+  error: string | null,
+  emptyMessage: string,
+  hasData: boolean,
+  onRetry?: () => void,
+) {
+  return (
+    <SectionState
+      loading={loading}
+      error={error}
+      emptyMessage={emptyMessage}
+      hasData={hasData}
+      onRetry={onRetry}
+    />
+  );
 }
 
 function renderHedgePositionCard(position: CexHedgePosition, label: string) {
@@ -701,6 +718,7 @@ type AccountSectionKey =
   | 'bisqPaymentMethods'
   | 'chatPaymentMethods'
   | 'catalogMethods'
+  | 'bankAccounts'
   | 'lndBackup'
   | 'lightningManagement'
   | 'walletAddresses'
@@ -849,7 +867,7 @@ type CexAccountSlice = {
 
 type CexCollapsibleSectionKey = 'cexHedging' | 'cexSpotTrades' | 'cexWithdrawalAddresses';
 type CexDataSectionKey = CexCollapsibleSectionKey | 'cexDepositAddresses' | 'cexBalances';
-type NewFormKey = 'totp' | 'passkeys' | 'seeds' | 'apiKeys';
+type NewFormKey = 'totp' | 'passkeys' | 'seeds' | 'apiKeys' | 'bankAccounts';
 
 interface TradingPanelUiState {
   expandedId: number | null;
@@ -1255,42 +1273,6 @@ function AccountEditor({
   );
 }
 
-function CollapsibleSection({
-  title,
-  count,
-  open,
-  onToggle,
-  actions,
-  children,
-}: {
-  title: string;
-  count?: number;
-  open: boolean;
-  onToggle: () => void;
-  actions?: ReactNode;
-  children: ReactNode;
-}) {
-  return (
-    <div className="rounded-md border border-border bg-surface overflow-hidden">
-      <div className="flex items-center gap-1.5 px-2 py-1.5">
-        <button
-          type="button"
-          className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
-          onClick={onToggle}
-        >
-          <span className="shrink-0 text-[0.6rem] text-muted">{open ? '▼' : '▶'}</span>
-          <span className="text-xs font-semibold text-text">{title}</span>
-          {count != null ? (
-            <span className="rounded-full border border-border px-1.5 py-0 text-[0.6rem] text-muted">{count}</span>
-          ) : null}
-        </button>
-        {actions ? <div className="flex shrink-0 items-center gap-1">{actions}</div> : null}
-      </div>
-      {open ? <div className="border-t border-border px-2 py-1.5 grid gap-1.5">{children}</div> : null}
-    </div>
-  );
-}
-
 function BackupField({
   title,
   meta,
@@ -1481,30 +1463,6 @@ function serviceVersionForAccount(account: TradingAccount, versions: ServiceVers
   return null;
 }
 
-function accountCredentialSummary(account: TradingAccount) {
-  const parts: string[] = [];
-  if (showDexIdentitySections(account.provider)) {
-    if (account.email) parts.push('Email stored');
-    if (account.password) parts.push('Password stored');
-    if (account.phone) parts.push('Phone stored');
-  }
-  if (isLndWalletProvider(account.provider)) {
-    parts.push(account.password ? 'Wallet password stored' : 'Wallet password missing');
-  }
-  if (account.api_keys.length > 0) {
-    parts.push(`${account.api_keys.length} API keys`);
-  }
-  if (account.totp_secrets.length > 0) {
-    parts.push(`${account.totp_secrets.length} TOTP`);
-  }
-  if (account.passkey_credentials.length > 0) {
-    parts.push(`${account.passkey_credentials.length} passkeys`);
-  }
-  if (account.seeds.length > 0) {
-    parts.push(`${account.seeds.length} seeds`);
-  }
-  return parts.length > 0 ? parts.join(' · ') : 'No stored credentials';
-}
 
 function AccountsToolbar({
   activeTab,
@@ -1750,97 +1708,229 @@ function AccountsList({
   );
 }
 
+function providerInitials(name: string) {
+  const words = name.split(/[\s_-]+/).filter(Boolean);
+  if (words.length === 0) return '?';
+  if (words.length === 1) return words[0].slice(0, 2).toUpperCase();
+  return (words[0][0] + words[1][0]).toUpperCase();
+}
+
+const detailHeaderTints: Record<string, string> = {
+  payment: 'from-green/15 via-green/5 to-transparent',
+  dex: 'from-purple/15 via-purple/5 to-transparent',
+  cex: 'from-amber-500/15 via-amber-500/5 to-transparent',
+  wallet: 'from-blue/15 via-blue/5 to-transparent',
+};
+
 function AccountDetailPane({
   account,
   summaryView,
-  actions,
+  tabs,
+  editor,
   healthMessage,
   onDismissHealthMessage,
   onToggleActive,
-  overview,
-  children,
+  onHealthCheck,
+  checkingHealth,
+  onEdit,
+  canEdit,
+  onDelete,
+  canDelete,
 }: {
   account: TradingAccount;
   summaryView: AccountSummaryViewModel;
-  actions: ReactNode;
+  tabs: DetailTab[];
+  editor?: ReactNode;
   healthMessage?: AccountHealthMessage;
   onDismissHealthMessage?: () => void;
   onToggleActive: () => void;
-  overview: ReactNode;
-  children: ReactNode;
+  onHealthCheck?: () => void;
+  checkingHealth?: boolean;
+  onEdit?: () => void;
+  canEdit?: boolean;
+  onDelete?: () => void;
+  canDelete?: boolean;
 }) {
+  const [activeTabId, setActiveTabId] = useState(tabs[0]?.id ?? 'overview');
+  const [actionsMenuOpen, setActionsMenuOpen] = useState(false);
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
   const isPaymentAccount = isPaymentCategory(account.category || 'Uncategorized');
   const healthMessageHealthy = healthMessage?.healthy === true;
   // Only linked payment accounts may be active; unlinked ones display as inactive.
   const canBeActive = !isPaymentAccount || summaryView.catalogLinked;
   const effectivelyActive = Boolean(account.is_active && canBeActive);
   const canToggleActive = canBeActive || account.is_active;
+  const family = isCexAccount(account)
+    ? 'cex'
+    : isLndWalletProvider(account.provider)
+      ? 'wallet'
+      : isPaymentAccount
+        ? 'payment'
+        : 'dex';
+  const tint = detailHeaderTints[family];
+  const activeTab = tabs.find(tab => tab.id === activeTabId) ?? tabs[0];
 
   return (
-    <div data-testid="account-detail-pane" className="rounded-lg border border-border bg-bg p-3">
-      <div className="flex flex-col gap-3 border-b border-border pb-3">
-        <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-          <div className="min-w-0">
-            <div className="flex flex-wrap items-center gap-2">
+    <div data-testid="account-detail-pane" className="overflow-hidden rounded-xl border border-border bg-bg shadow-sm">
+      <div className={`relative overflow-hidden border-b border-border bg-linear-to-r ${tint}`}>
+        <div className="pointer-events-none absolute -right-8 -top-12 h-28 w-28 rounded-full bg-white/5 blur-2xl" />
+        <div className="relative p-4 pb-3">
+          <div className="flex flex-wrap items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-border bg-surface text-sm font-bold text-accent">
+              {providerInitials(summaryView.providerName)}
+            </div>
+            <div className="min-w-0">
               <h4 className="text-base font-semibold text-text">{summaryView.providerName}</h4>
-              <span className="rounded-full border border-border px-2 py-0.5 text-[0.68rem] text-muted">
-                {summaryView.category}
-              </span>
-              {!isPaymentAccount ? <HealthBadge account={account} /> : null}
+              <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                <span className="rounded-full border border-border bg-surface px-2 py-0.5 text-[0.68rem] text-muted">
+                  {summaryView.category}
+                </span>
+                {!isPaymentAccount ? <HealthBadge account={account} /> : null}
+              </div>
             </div>
-            <div className="mt-2 text-[0.68rem] text-muted">
-              Created {summaryView.createdLabel} · Updated {summaryView.updatedLabel}
-            </div>
-          </div>
-          <div className="flex flex-wrap items-center gap-1.5">
-            {isPaymentAccount || isCexAccount(account) ? (
-              <>
+            <div className="ml-auto flex flex-wrap items-center gap-2">
+              {isPaymentAccount || isCexAccount(account) ? (
+                <>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={effectivelyActive}
+                    aria-label={`${effectivelyActive ? 'Deactivate' : 'Activate'} ${summaryView.providerName}`}
+                    title={
+                      isPaymentAccount && !summaryView.catalogLinked
+                        ? 'Link a catalog method before activating this payment account'
+                        : `${effectivelyActive ? 'Deactivate' : 'Activate'} ${isCexAccount(account) ? 'trading account' : 'payment method'}`
+                    }
+                    disabled={!canToggleActive}
+                    className={`relative inline-flex h-6 w-11 items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${effectivelyActive ? 'border-green/50 bg-green/20' : 'border-border bg-border/50'}`}
+                    onClick={onToggleActive}
+                  >
+                    <span className={`inline-block h-4 w-4 rounded-full bg-text transition-transform ${effectivelyActive ? 'translate-x-6' : 'translate-x-1'}`} />
+                  </button>
+                  <span className={`text-xs font-medium ${effectivelyActive ? 'text-green' : 'text-muted'}`}>{effectivelyActive ? 'Active' : 'Inactive'}</span>
+                </>
+              ) : null}
+              {onHealthCheck ? (
                 <button
                   type="button"
-                  role="switch"
-                  aria-checked={effectivelyActive}
-                  aria-label={`${effectivelyActive ? 'Deactivate' : 'Activate'} ${summaryView.providerName}`}
-                  title={
-                    isPaymentAccount && !summaryView.catalogLinked
-                      ? 'Link a catalog method before activating this payment account'
-                      : `${effectivelyActive ? 'Deactivate' : 'Activate'} ${isCexAccount(account) ? 'trading account' : 'payment method'}`
-                  }
-                  disabled={!canToggleActive}
-                  className={`relative inline-flex h-6 w-11 items-center rounded-full border transition disabled:cursor-not-allowed disabled:opacity-50 ${effectivelyActive ? 'border-green/50 bg-green/20' : 'border-border bg-border/50'}`}
-                  onClick={onToggleActive}
+                  className={compactPrimaryButtonCls}
+                  disabled={checkingHealth}
+                  onClick={onHealthCheck}
                 >
-                  <span className={`inline-block h-4 w-4 rounded-full bg-text transition-transform ${effectivelyActive ? 'translate-x-6' : 'translate-x-1'}`} />
+                  {checkingHealth ? 'Checking…' : 'Healthcheck'}
                 </button>
-                <span className={`text-xs ${effectivelyActive ? 'text-green' : 'text-muted'}`}>{effectivelyActive ? 'Active' : 'Inactive'}</span>
-              </>
-            ) : null}
-            {actions}
+              ) : null}
+              {canEdit && onEdit ? (
+                <button type="button" className={compactButtonCls} onClick={onEdit}>
+                  Edit
+                </button>
+              ) : null}
+              {canDelete && onDelete ? (
+                <div className="relative">
+                  <button
+                    type="button"
+                    aria-label="More actions"
+                    title="More actions"
+                    className="inline-flex h-7 w-7 items-center justify-center rounded-md border border-border bg-bg text-muted transition hover:bg-surface hover:text-text"
+                    onClick={() => setActionsMenuOpen(open => !open)}
+                  >
+                    <svg viewBox="0 0 24 24" fill="currentColor" className="h-4 w-4" aria-hidden="true">
+                      <circle cx="5" cy="12" r="1.6" />
+                      <circle cx="12" cy="12" r="1.6" />
+                      <circle cx="19" cy="12" r="1.6" />
+                    </svg>
+                  </button>
+                  {actionsMenuOpen ? (
+                    <>
+                      <button
+                        type="button"
+                        tabIndex={-1}
+                        aria-hidden="true"
+                        className="fixed inset-0 z-30 cursor-default"
+                        onClick={() => {
+                          setActionsMenuOpen(false);
+                          setConfirmingDelete(false);
+                        }}
+                      />
+                      <div className="absolute right-0 z-40 mt-1 w-48 rounded-lg border border-border bg-surface p-1 shadow-xl">
+                        {confirmingDelete ? (
+                          <div className="grid gap-1 p-1">
+                            <p className="text-[0.65rem] leading-relaxed text-muted">
+                              Delete this account permanently? This cannot be undone.
+                            </p>
+                            <button
+                              type="button"
+                              className="w-full rounded-md border border-red/40 bg-red/10 px-2 py-1 text-xs font-medium text-red transition hover:bg-red/20"
+                              onClick={() => {
+                                setActionsMenuOpen(false);
+                                setConfirmingDelete(false);
+                                onDelete();
+                              }}
+                            >
+                              Confirm delete
+                            </button>
+                            <button
+                              type="button"
+                              className={`${compactButtonCls} w-full`}
+                              onClick={() => setConfirmingDelete(false)}
+                            >
+                              Cancel
+                            </button>
+                          </div>
+                        ) : (
+                          <button
+                            type="button"
+                            className="w-full rounded-md px-2 py-1.5 text-left text-xs font-medium text-red transition hover:bg-red/10"
+                            onClick={() => setConfirmingDelete(true)}
+                          >
+                            Delete account…
+                          </button>
+                        )}
+                      </div>
+                    </>
+                  ) : null}
+                </div>
+              ) : null}
+            </div>
+          </div>
+          <div className="mt-2 text-[0.68rem] text-muted">
+            Created {summaryView.createdLabel} · Updated {summaryView.updatedLabel}
           </div>
         </div>
-        {!isPaymentAccount && healthMessage ? (
-          <div
-            className={`flex items-start gap-2 rounded-lg border px-3 py-2 ${
-              healthMessageHealthy ? 'border-green/30 bg-green/5' : 'border-red/30 bg-red/5'
-            }`}
-          >
-            <p className={`min-w-0 flex-1 text-xs leading-relaxed ${healthMessageHealthy ? 'text-green' : 'text-red'}`}>
-              {healthCheckDisplayMessage(healthMessage.message, healthMessage.keys, account.api_keys)}
-            </p>
-            {onDismissHealthMessage ? (
-              <button
-                type="button"
-                className={`${compactButtonCls} shrink-0 px-1.5 ${healthMessageHealthy ? 'text-green' : 'text-red'}`}
-                aria-label="Dismiss health check message"
-                onClick={onDismissHealthMessage}
-              >
-                ✕
-              </button>
-            ) : null}
-          </div>
-        ) : null}
-        <div className="rounded-lg border border-border bg-surface p-3">{overview}</div>
       </div>
-      <div className="mt-3 grid gap-2">{children}</div>
+      {!isPaymentAccount && healthMessage ? (
+        <div
+          className={`flex items-start gap-2 border-b border-border px-4 py-2 ${
+            healthMessageHealthy ? 'bg-green/5' : 'bg-red/5'
+          }`}
+        >
+          <p className={`min-w-0 flex-1 text-xs leading-relaxed ${healthMessageHealthy ? 'text-green' : 'text-red'}`}>
+            {healthCheckDisplayMessage(healthMessage.message, healthMessage.keys, account.api_keys)}
+          </p>
+          {onDismissHealthMessage ? (
+            <button
+              type="button"
+              className={`${compactButtonCls} shrink-0 px-1.5 ${healthMessageHealthy ? 'text-green' : 'text-red'}`}
+              aria-label="Dismiss health check message"
+              onClick={onDismissHealthMessage}
+            >
+              ✕
+            </button>
+          ) : null}
+        </div>
+      ) : null}
+      {editor ? (
+        <div className="border-b border-border bg-surface/40 p-3">{editor}</div>
+      ) : (
+        <>
+          {tabs.length > 1 ? (
+            <div className="border-b border-border px-3 pt-3">
+              <DetailTabsBar tabs={tabs} activeId={activeTab.id} onSelect={setActiveTabId} />
+            </div>
+          ) : null}
+          <div className="grid gap-2 p-3">{activeTab.content}</div>
+        </>
+      )}
     </div>
   );
 }
@@ -1958,6 +2048,7 @@ export function TradingAccountsPanel() {
     healthMessageByAccount,
   } = uiState;
 
+  const [detailDrawerOpen, setDetailDrawerOpen] = useState(false);
   const setExpandedId = useCallback((value: SetStateAction<number | null>) => {
     dispatchUi({ type: 'UPDATE', update: state => ({ ...state, expandedId: resolveState(value, state.expandedId) }) });
   }, []);
@@ -4262,16 +4353,16 @@ export function TradingAccountsPanel() {
   const renderBankAccountsSection = (account: TradingAccount) => {
     if (!isBankAccount(account)) return null;
     const draft = newBankAccountByAccount[account.id] ?? emptyBankAccountForm();
-    const showNew = !!showNewFormByAccount[account.id]?.seeds;
+    const showNew = !!showNewFormByAccount[account.id]?.bankAccounts;
     const draftIbanError = draft.iban.trim() ? ibanFormatError(draft.iban) : null;
     return (
       <CollapsibleSection
         title="Bank Accounts"
         count={account.bank_accounts.length}
-        open={!!openSectionsByAccount[account.id]?.seeds}
-        onToggle={() => toggleSection(account.id, 'seeds')}
+        open={!!openSectionsByAccount[account.id]?.bankAccounts}
+        onToggle={() => toggleSection(account.id, 'bankAccounts')}
         actions={
-          <button type="button" className={compactButtonCls} onClick={() => setShowNewForm(account.id, 'seeds', !showNew)}>
+          <button type="button" className={compactButtonCls} onClick={() => setShowNewForm(account.id, 'bankAccounts', !showNew)}>
             {showNew ? 'Cancel' : 'Add'}
           </button>
         }
@@ -4321,11 +4412,11 @@ export function TradingAccountsPanel() {
                 </div>
               ) : (
                 <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
-                  <div className="flex items-center gap-1"><span><span className="text-text">Owner:</span> {visibleBankFields[ownerField] ? bankSecrets?.owner_name : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleBankFields[ownerField] ? 'Hide account owner' : 'Show account owner'} onClick={() => void toggleAccountSecretReveal(account, ownerField)} disabled={revealingCredentialsByAccount[account.id] === true}>👁</button></div>
+                  <div className="flex items-center justify-between gap-2"><span className="text-text">Owner:</span><SecretField value={bankSecrets?.owner_name} visible={visibleBankFields[ownerField] === true} revealing={revealingCredentialsByAccount[account.id] === true} onToggle={() => void toggleAccountSecretReveal(account, ownerField)} copyable /></div>
                   {Object.keys(ba.details).map(detailKey => {
                     const detailField = `bank:${ba.id}:${detailKey}`;
                     const visible = visibleBankFields[detailField] === true;
-                    return <div key={detailKey} className="flex items-center gap-1"><span><span className="text-text">{detailKey.replace(/_/g, ' ')}:</span> {visible ? bankSecrets?.details[detailKey] : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visible ? `Hide ${detailKey}` : `Show ${detailKey}`} onClick={() => void toggleAccountSecretReveal(account, detailField)} disabled={revealingCredentialsByAccount[account.id] === true}>👁</button></div>;
+                    return <div key={detailField} className="flex items-center justify-between gap-2"><span className="capitalize text-text">{detailKey.replace(/_/g, ' ')}:</span><SecretField value={bankSecrets?.details[detailKey]} visible={visible} revealing={revealingCredentialsByAccount[account.id] === true} onToggle={() => void toggleAccountSecretReveal(account, detailField)} copyable /></div>;
                   })}
                   <div><span className="text-text">Currency:</span> {ba.currency}{ba.country ? ` · ${ba.country}` : ''}</div>
                   <div><span className="text-text">Active:</span> {ba.is_active ? 'Yes' : 'No'}</div>
@@ -4577,11 +4668,12 @@ export function TradingAccountsPanel() {
       <CollapsibleSection
         title="Hedging"
         count={activeCount + pastCount || undefined}
+        warn={!!slice?.error}
         open={open}
         onToggle={() => toggleCexSection(account, 'cexHedging')}
         actions={
           <button type="button" className={compactButtonCls} disabled={slice?.loading} onClick={() => void loadCexSection(account.id, 'cexHedging')}>
-            {slice?.loading ? '…' : 'Refresh'}
+            {slice?.loading ? 'Refreshing…' : 'Refresh'}
           </button>
         }
       >
@@ -4593,6 +4685,7 @@ export function TradingAccountsPanel() {
           slice?.error ?? null,
           'No hedge positions recorded yet.',
           !!positions && (positions.active.length > 0 || positions.past.length > 0),
+          () => void loadCexSection(account.id, 'cexHedging'),
         )}
         {positions ? (
           <div className="grid gap-2">
@@ -4626,15 +4719,16 @@ export function TradingAccountsPanel() {
       <CollapsibleSection
         title="Spot Market Transactions"
         count={trades.length || undefined}
+        warn={!!slice?.error}
         open={open}
         onToggle={() => toggleCexSection(account, 'cexSpotTrades')}
         actions={
           <button type="button" className={compactButtonCls} disabled={slice?.loading} onClick={() => void loadCexSection(account.id, 'cexSpotTrades')}>
-            {slice?.loading ? '…' : 'Refresh'}
+            {slice?.loading ? 'Refreshing…' : 'Refresh'}
           </button>
         }
       >
-        {renderCexSectionMessage(slice?.loading ?? false, slice?.error ?? null, 'No spot trades returned yet.', trades.length > 0)}
+        {renderCexSectionMessage(slice?.loading ?? false, slice?.error ?? null, 'No spot trades returned yet.', trades.length > 0, () => void loadCexSection(account.id, 'cexSpotTrades'))}
         {trades.length > 0 ? (
           <div className="grid gap-1.5 sm:grid-cols-2">
             {trades.map(trade => (
@@ -4661,18 +4755,19 @@ export function TradingAccountsPanel() {
       <CollapsibleSection
         title="Withdrawal addresses"
         count={addresses.length || undefined}
+        warn={!!slice?.error}
         open={open}
         onToggle={() => toggleCexSection(account, 'cexWithdrawalAddresses')}
         actions={
           <button type="button" className={compactButtonCls} disabled={slice?.loading} onClick={() => void loadCexSection(account.id, 'cexWithdrawalAddresses')}>
-            {slice?.loading ? '…' : 'Refresh'}
+            {slice?.loading ? 'Refreshing…' : 'Refresh'}
           </button>
         }
       >
         <p className="text-[0.65rem] text-muted leading-relaxed px-1">
           Whitelisted BTC withdrawal addresses saved on the exchange, fetched with the account API keys.
         </p>
-        {renderCexSectionMessage(slice?.loading ?? false, slice?.error ?? null, 'No whitelisted withdrawal addresses returned.', addresses.length > 0)}
+        {renderCexSectionMessage(slice?.loading ?? false, slice?.error ?? null, 'No whitelisted withdrawal addresses returned.', addresses.length > 0, () => void loadCexSection(account.id, 'cexWithdrawalAddresses'))}
         {addresses.length > 0 ? (
           <div className="grid">
             {addresses.map((entry, idx) => {
@@ -4680,12 +4775,12 @@ export function TradingAccountsPanel() {
               const addressVisible = visibleAccountSecretsByAccount[account.id]?.[addressField] === true;
               return <div
                 key={`${entry.address}-${idx}`}
-                className="flex flex-wrap items-baseline gap-x-1.5 px-1 py-0.5 text-[0.65rem] leading-tight border-b border-border/40 last:border-0"
+                className="flex flex-wrap items-center justify-between gap-x-1.5 gap-y-0.5 px-1 py-1.5 text-[0.65rem] leading-tight border-b border-border/40 last:border-0"
               >
                 {entry.label?.trim() ? (
                   <span className="max-w-[40%] truncate text-text" title={addressVisible ? entry.label : undefined}>{addressVisible ? entry.label : '••••••••'}</span>
                 ) : null}
-                <span className="inline-flex items-center gap-1 font-mono break-all text-muted"><span>{addressVisible ? entry.address : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={addressVisible ? 'Hide withdrawal address' : 'Show withdrawal address'} onClick={() => toggleLocalSecretVisibility(account.id, addressField)}>👁</button></span>
+                <SecretField value={entry.address} visible={addressVisible} onToggle={() => toggleLocalSecretVisibility(account.id, addressField)} copyable />
                 {entry.network ? <span className="text-muted/60">{entry.network}</span> : null}
                 {entry.tag ? <span className="text-muted/60">tag:{addressVisible ? entry.tag : '••••••••'}</span> : null}
                 {entry.whitelisted === false ? <span className="text-yellow">unverified</span> : null}
@@ -4704,22 +4799,32 @@ export function TradingAccountsPanel() {
     const snapshot = exchange?.fee_snapshot;
     const value = (entry: number | null | undefined) => entry == null ? '—' : `${entry}`;
     const dateValue = (entry: string | null | undefined) => entry ? formatDate(entry) : '—';
+    const fetchedAgo = formatRelativeTime(snapshot?.fetched_at);
+    const feesSummaryParts = [
+      snapshot?.stale ? 'stale' : null,
+      snapshot?.last_error ? 'refresh error' : null,
+      fetchedAgo ? `fetched ${fetchedAgo}` : null,
+    ].filter(Boolean);
     return (
       <CollapsibleSection
         title="Fees"
+        summary={feesSummaryParts.length > 0 ? feesSummaryParts.join(' · ') : undefined}
+        warn={Boolean(snapshot && (snapshot.stale || !snapshot.spot_available)) || Boolean(cexPermissions?.error)}
         open={!!openSectionsByAccount[account.id]?.cexFees}
         onToggle={() => toggleSection(account.id, 'cexFees')}
         actions={
           <button type="button" className={compactButtonCls} disabled={cexPermissions?.loading} onClick={() => reloadCEXPermissions?.()}>
-            {cexPermissions?.loading ? '…' : 'Refresh'}
+            {cexPermissions?.loading ? 'Refreshing…' : 'Refresh'}
           </button>
         }
       >
-        {cexPermissions?.loading && !snapshot ? <div className="text-[0.65rem] text-muted px-1">Loading…</div> : null}
-        {cexPermissions?.error ? <div className="text-[0.65rem] text-red px-1">{cexPermissions.error}</div> : null}
-        {!cexPermissions?.loading && !cexPermissions?.error && !snapshot ? (
-          <div className="text-[0.65rem] text-muted px-1">No persisted fee policy found.</div>
-        ) : null}
+        <SectionState
+          loading={cexPermissions?.loading ?? false}
+          error={cexPermissions?.error ?? null}
+          emptyMessage="No persisted fee policy found."
+          hasData={!!snapshot}
+          onRetry={() => reloadCEXPermissions?.()}
+        />
         {snapshot ? (
           <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
             <div><span className="text-text">Spot taker fee (%):</span> {value(snapshot.spot_taker_fee_percent)}</div>
@@ -4768,6 +4873,8 @@ export function TradingAccountsPanel() {
 
   const renderSelectedAccountDetail = (account: TradingAccount) => {
     const isEditingAccount = editingAccountId === account.id;
+    const isPaymentAccount = isPaymentCategory(account.category || 'Uncategorized');
+    const dexIdentity = showDexIdentitySections(account.provider);
     const isLocalWallet = isLocalWalletProvider(account.provider);
     const accountHealthMessage = healthMessageByAccount[account.id];
     const cexDepositSlice = cexDataByAccount[account.id]?.depositAddresses;
@@ -4855,142 +4962,35 @@ export function TradingAccountsPanel() {
                 })
               }
             />
-          ) : (
-            <div className="grid gap-3">
-              {isPaymentCategory(account.category || 'Uncategorized') || summaryView.catalogLinked || summaryView.capabilityBadges.length > 0 ? (
-                <div className="flex flex-wrap gap-1.5">
-                  {summaryView.catalogLinked ? (
-                    <span className="rounded-full border border-green/40 bg-green/10 px-2 py-0.5 text-[0.68rem] font-medium text-green">
-                      Linked
-                    </span>
-                  ) : isPaymentCategory(account.category || 'Uncategorized') ? (
-                    <span className="rounded-full border border-red/40 bg-red/10 px-2 py-0.5 text-[0.68rem] font-medium text-red">
-                      Unlinked
-                    </span>
-                  ) : null}
-                  {summaryView.capabilityBadges.map(badge => (
-                    <span key={badge} className="rounded-full border border-border px-2 py-0.5 text-[0.68rem] text-muted">
-                      {badge}
-                    </span>
-                  ))}
-                </div>
-              ) : null}
-              {isCexAccount(account) ? <AggregatedPermissionsRow apiKeys={account.api_keys} /> : null}
-              <div className="grid gap-2 text-xs text-muted sm:grid-cols-2 xl:grid-cols-3">
-                {isPaymentCategory(account.category || 'Uncategorized') ? (
-                  <fieldset
-                    className="grid gap-1 sm:col-span-2 xl:col-span-3"
-                    disabled={savingNotificationChannelsByAccount[account.id]}
-                  >
-                    <legend className="mb-1 text-text">Incoming payment notification channels</legend>
-                    <div className="flex flex-wrap gap-x-5 gap-y-2">
-                      {([
-                        ['push', 'Push endpoint'],
-                        ['email', 'Email'],
-                      ] as const).map(([channel, label]) => (
-                        <label key={channel} className="inline-flex cursor-pointer items-center gap-2">
-                          <input
-                            type="checkbox"
-                            checked={account.notification_channels?.includes(channel) ?? false}
-                            onChange={event => void setNotificationChannel(account, channel, event.target.checked)}
-                          />
-                          <span>{label} confirmed</span>
-                        </label>
-                      ))}
-                      {savingNotificationChannelsByAccount[account.id] ? (
-                        <span className="text-muted">Saving…</span>
-                      ) : null}
-                    </div>
-                    <span className="text-[0.65rem] text-muted">
-                      Confirm each channel that can report an incoming payment for this account.
-                    </span>
-                  </fieldset>
-                ) : null}
-                {!isPaymentCategory(account.category || 'Uncategorized') ? (
-                  <div>
-                    <span className="text-text">Last check:</span> {formatDate(account.last_health_check)}
-                  </div>
-                ) : null}
-                <div className="sm:col-span-2 xl:col-span-2">
-                  <span className="text-text">Credentials:</span> {accountCredentialSummary(account)}
-                </div>
-                {isBisq1Provider(account.provider) ? <div><span className="text-text">Bisq 1:</span> {serviceVersions?.bisq1 || 'Unavailable'}</div> : null}
-                {isBisq2Provider(account.provider) ? <div><span className="text-text">Bisq 2:</span> {serviceVersions?.bisq2 || 'Unavailable'}</div> : null}
-                {isLndWalletProvider(account.provider) ? <div><span className="text-text">LND:</span> {serviceVersions?.lnd || 'Unavailable'}</div> : null}
-                {!isCexAccount(account) && !isLndWalletProvider(account.provider) && (account.email || account.password || account.phone || account.payment_tag) ? (
-                  <>
-                    <div className="flex items-center gap-1">
-                      <span><span className="text-text">Email:</span> {visibleCredentialFields.email ? revealedCredentials?.email : (account.email ? '••••••••' : '—')}</span>
-                      {account.email ? <button type="button" className="text-muted hover:text-text" aria-label={visibleCredentialFields.email ? 'Hide email' : 'Show email'} onClick={() => void toggleCredentialReveal(account, 'email')} disabled={credentialsRevealing}>👁</button> : null}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span><span className="text-text">Password:</span> {visibleCredentialFields.password ? revealedCredentials?.password : (account.password ? '••••••••' : '—')}</span>
-                      {account.password ? <button type="button" className="text-muted hover:text-text" aria-label={visibleCredentialFields.password ? 'Hide password' : 'Show password'} onClick={() => void toggleCredentialReveal(account, 'password')} disabled={credentialsRevealing}>👁</button> : null}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span><span className="text-text">Phone:</span> {visibleCredentialFields.phone ? revealedCredentials?.phone : (account.phone ? '••••••••' : '—')}</span>
-                      {account.phone ? <button type="button" className="text-muted hover:text-text" aria-label={visibleCredentialFields.phone ? 'Hide phone' : 'Show phone'} onClick={() => void toggleCredentialReveal(account, 'phone')} disabled={credentialsRevealing}>👁</button> : null}
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <span><span className="text-text">Payment Tag:</span> {visibleCredentialFields.payment_tag ? revealedCredentials?.payment_tag : (account.payment_tag ? '••••••••' : '—')}</span>
-                      {account.payment_tag ? <button type="button" className="text-muted hover:text-text" aria-label={visibleCredentialFields.payment_tag ? 'Hide payment tag' : 'Show payment tag'} onClick={() => void toggleCredentialReveal(account, 'payment_tag')} disabled={credentialsRevealing}>👁</button> : null}
-                    </div>
-                  </>
-                ) : null}
-                {isCexAccount(account) ? (
-                  <>
-                    <div className="sm:col-span-2 xl:col-span-3">
-                      <span className="text-text">Deposit address:</span>{' '}
-                      {cexDepositSlice?.loading && !cexMainnetDeposit ? (
-                        <span>Loading…</span>
-                      ) : cexDepositSlice?.error && !cexMainnetDeposit ? (
-                        <span className="text-red">{cexDepositSlice.error}</span>
-                      ) : cexMainnetDeposit ? (
-                        <span className="inline-flex items-center gap-1"><span className="font-mono break-all text-text">{visibleAccountSecretsByAccount[account.id]?.[cexDepositField] ? cexMainnetDeposit.address : '••••••••'}</span><button type="button" className="text-muted hover:text-text" aria-label={visibleAccountSecretsByAccount[account.id]?.[cexDepositField] ? 'Hide deposit address' : 'Show deposit address'} onClick={() => toggleLocalSecretVisibility(account.id, cexDepositField)}>👁</button></span>
-                      ) : cexDepositSlice && !cexDepositSlice.loading ? (
-                        <span className="text-muted">No BTC deposit address on this account yet.</span>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </div>
-                    <div className="sm:col-span-2 xl:col-span-3">
-                      <span className="text-text">Balances:</span>{' '}
-                      {cexBalancesSlice?.loading && !cexBalanceSummary ? (
-                        <span>Loading…</span>
-                      ) : cexBalancesSlice?.error && !cexBalanceSummary ? (
-                        <span className="text-red">{cexBalancesSlice.error}</span>
-                      ) : cexBalanceSummary ? (
-                        <span className="text-text">{cexBalanceSummary}</span>
-                      ) : cexBalancesSlice && !cexBalancesSlice.loading ? (
-                        <span className="text-muted">No balances returned.</span>
-                      ) : (
-                        <span className="text-muted">—</span>
-                      )}
-                    </div>
-                  </>
-                ) : null}
-              </div>
-            </div>
-          )
+          ) : undefined
         }
-      >
-        {isBisqProvider(account.provider) ? renderAccountFileSection(account) : null}
-        {isBisq1Provider(account.provider) ? renderSavedPaymentMethodsSection(account) : null}
-        {chatExchangeForProvider(account.provider) ? renderChatPaymentMethodsSection(account) : null}
-        {showDexIdentitySections(account.provider) ? renderTOTPSection(account) : null}
-        {showDexIdentitySections(account.provider) ? renderPasskeysSection(account) : null}
-        {renderSeedsSection(account)}
-        {isLndWalletProvider(account.provider) ? renderLNDBackupSection(account) : null}
-        {isLndWalletProvider(account.provider) ? renderLightningManagementSection(account) : null}
-        {isLndWalletProvider(account.provider) ? renderWalletAddressesSection(account) : null}
-        {isCexAccount(account) ? renderCexWithdrawalAddressesSection(account) : null}
-        {isCexAccount(account) ? renderCexFeesSection(account) : null}
-        {isCexAccount(account) ? renderCexHedgingSection(account) : null}
-        {isCexAccount(account) ? renderCexSpotTradesSection(account) : null}
-        {renderCatalogMethodsSection(account)}
-        {renderBankAccountsSection(account)}
-        {!isLocalWallet && !isBankAccount(account) && account.category !== 'Fiat Transmitter' ? renderAPIKeysSection(account) : null}
-      </AccountDetailPane>
+        healthMessage={isPaymentAccount ? undefined : accountHealthMessage}
+        onDismissHealthMessage={isPaymentAccount ? undefined : () => dismissHealthMessage(account.id)}
+        onToggleActive={() => withReload(async () => {
+          const catalogLinked = paymentCatalogRows.some(row => row.account_id === account.id);
+          const nextActive = !account.is_active;
+          if (isPaymentAccount && nextActive && !catalogLinked) {
+            throw new Error('Link a catalog method before activating this payment account');
+          }
+          await updateAccount(account.id, {
+            provider: account.provider,
+            category: account.category,
+            // The account list masks secrets. Keep them unchanged while updating
+            // only the activation flag.
+            email: '***',
+            password: '***',
+            phone: '***',
+            payment_tag: '***',
+            is_active: nextActive,
+          });
+        })}
+        onHealthCheck={!isPaymentAccount ? () => void triggerHealthCheck(account) : undefined}
+        checkingHealth={checkingHealthByAccount[account.id] === true}
+        canEdit={!isEditingAccount && (dexIdentity || isLndWalletProvider(account.provider))}
+        onEdit={() => startAccountEdit(account)}
+        canDelete={!isLocalWallet}
+        onDelete={() => withReload(async () => { await deleteAccount(account.id); })}
+      />
     );
   };
 
@@ -5125,17 +5125,15 @@ export function TradingAccountsPanel() {
                   <AccountsList
                     groups={activeGroups}
                     selectedAccountId={expandedId}
-                    onSelectAccount={accountId => setExpandedId(accountId)}
+                    onSelectAccount={accountId => {
+                      setExpandedId(accountId);
+                      setDetailDrawerOpen(true);
+                    }}
                     onReorderPaymentAccounts={activeTab === 'payment' ? reorderPaymentAccountList : undefined}
                     serviceVersions={serviceVersions}
                     showCategoryDividers={activeTab !== 'payment'}
                     paymentCatalogRows={paymentCatalogRows}
                   />
-                  {selectedAccount ? (
-                    <div className="xl:hidden">
-                      {renderSelectedAccountDetail(selectedAccount)}
-                    </div>
-                  ) : null}
                 </div>
                 <div className="hidden xl:block xl:min-h-0 xl:overflow-y-auto xl:pl-1">
                   {selectedAccount ? (
@@ -5146,6 +5144,31 @@ export function TradingAccountsPanel() {
                     </div>
                   )}
                 </div>
+                {selectedAccount && detailDrawerOpen ? (
+                  <div className="fixed inset-0 z-50 xl:hidden" role="dialog" aria-modal="true">
+                    <button
+                      type="button"
+                      aria-label="Close account details"
+                      className="absolute inset-0 bg-black/60"
+                      onClick={() => setDetailDrawerOpen(false)}
+                    />
+                    <div className="absolute inset-y-0 right-0 flex w-full max-w-md flex-col border-l border-border bg-bg shadow-2xl">
+                      <div className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+                        <button
+                          type="button"
+                          className={compactButtonCls}
+                          onClick={() => setDetailDrawerOpen(false)}
+                        >
+                          ← Back to list
+                        </button>
+                        <span className="truncate text-xs font-semibold text-text">{selectedAccount ? buildAccountSummaryViewModel(selectedAccount, paymentCatalogRows).providerName : ''}</span>
+                      </div>
+                      <div className="min-h-0 flex-1 overflow-y-auto p-3">
+                        {renderSelectedAccountDetail(selectedAccount)}
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
           </div>

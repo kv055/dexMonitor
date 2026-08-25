@@ -155,6 +155,7 @@ export function PhonePushSetupSection() {
   const [setup, setSetup] = useState<PhonePushSetup | null>(null);
   const [secrets, setSecrets] = useState<PhonePushSecrets | null>(null);
   const [activeTab, setActiveTab] = useState<'setup' | 'status'>('setup');
+  const [setupMethod, setSetupMethod] = useState<'macrodroid' | 'relay'>('macrodroid');
   const [callbackHistoryFilter, setCallbackHistoryFilter] = useState<CallbackHistoryFilter>('all');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
@@ -223,7 +224,7 @@ PHONE SETTINGS
   }, [setup]);
 
   const pairingQrPayload = useMemo(() => {
-    if (!setup || !secrets) return '';
+    if (!setup || !secrets?.shared_secret) return '';
     return JSON.stringify({
       v: 1,
       type: 'pushpush-pairing',
@@ -333,74 +334,162 @@ PHONE SETTINGS
             </div>
 
             {activeTab === 'setup' ? (
-            <div className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start">
-              <div className="min-w-0">
-                <div className="flex items-end justify-between gap-3 border-b border-border">
-                  <div>
-                    <p className="text-[0.58rem] font-semibold uppercase tracking-[0.14em] text-blue">Setup guide</p>
-                    <p className="mt-0.5 text-[0.68rem] text-muted">Create the two MacroDroid macros on the phone.</p>
-                  </div>
+              <div className="mt-5">
+                <div
+                  role="tablist"
+                  aria-label="Phone setup method"
+                  className="grid grid-cols-2 rounded-lg border border-border/80 bg-bg/35 p-1"
+                >
+                  {([
+                    ['macrodroid', 'MacroDroid'],
+                    ['relay', 'PushPush Relay'],
+                  ] as const).map(([method, label]) => (
+                    <button
+                      key={method}
+                      id={`phone-setup-${method}-tab`}
+                      type="button"
+                      role="tab"
+                      aria-selected={setupMethod === method}
+                      aria-controls={`phone-setup-${method}-panel`}
+                      onClick={() => setSetupMethod(method)}
+                      className={`rounded-md px-3 py-2 text-[0.64rem] font-semibold transition ${
+                        setupMethod === method
+                          ? 'bg-surface text-blue shadow-sm ring-1 ring-blue/15'
+                          : 'text-muted hover:text-text'
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </div>
-                <SetupGuide
-                  setup={setup}
-                  secrets={secrets}
-                  busy={busy}
-                  onReveal={() => void reveal()}
-                />
-              </div>
 
-              <aside className="w-full rounded-xl border border-blue/20 bg-blue/5 p-3">
-                <div className="grid gap-3">
-                  <div className="overflow-hidden rounded-lg border border-white/80 bg-white p-2 shadow-sm">
-                    <LocalQrCode
-                      value={qrPayload}
-                      size={256}
-                      alt="Non-secret combined phone monitoring setup reference QR code"
-                      fallback="Use the connection details below instead."
-                      className="mx-auto aspect-square w-full"
-                    />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-[0.64rem] font-semibold text-text">MacroDroid setup reference</p>
-                      <span className="rounded bg-blue/10 px-1.5 py-0.5 text-[0.46rem] font-semibold uppercase tracking-wider text-blue">Guide QR</span>
+                {setupMethod === 'macrodroid' ? (
+                  <div
+                    id="phone-setup-macrodroid-panel"
+                    role="tabpanel"
+                    aria-labelledby="phone-setup-macrodroid-tab"
+                    className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start"
+                  >
+                    <div className="min-w-0">
+                      <div className="border-b border-border">
+                        <p className="text-[0.58rem] font-semibold uppercase tracking-[0.14em] text-blue">MacroDroid setup</p>
+                        <p className="mt-0.5 text-[0.68rem] text-muted">Create notification and heartbeat macros manually.</p>
+                      </div>
+                      <SetupGuide
+                        setup={setup}
+                        secrets={secrets}
+                        busy={busy}
+                        onReveal={() => void reveal()}
+                      />
                     </div>
-                    <p className="mt-1.5 text-[0.55rem] leading-relaxed text-muted">
-                      Scanning opens a plain-text setup guide with the live callback URLs, HTTP settings, MacroDroid Magic Text and five-minute heartbeat interval.
-                    </p>
-                    <p className="mt-2 text-[0.55rem] leading-relaxed text-muted">
-                      It does not configure MacroDroid automatically. Follow the guide to create the trigger, HTTP actions, banking-app filter and timer, then add the revealed secrets separately.
-                    </p>
-                     <p className="mt-2 text-[0.52rem] font-medium text-blue">No credentials are stored in this code.</p>
-                   </div>
-                 </div>
-                 {secrets && pairingQrPayload ? (
-                   <div className="grid gap-3">
-                     <div className="overflow-hidden rounded-lg border border-white/80 bg-white p-2 shadow-sm">
-                       <LocalQrCode
-                         value={pairingQrPayload}
-                         size={256}
-                         alt="PushPush Relay app pairing QR code"
-                         fallback="Use the connection details below instead."
-                         className="mx-auto aspect-square w-full"
-                       />
-                     </div>
-                     <div className="min-w-0">
-                       <div className="flex flex-wrap items-center gap-2">
-                         <p className="text-[0.64rem] font-semibold text-text">Relay app pairing</p>
-                         <span className="rounded bg-red/10 px-1.5 py-0.5 text-[0.46rem] font-semibold uppercase tracking-wider text-red">Secret inside</span>
-                       </div>
-                       <p className="mt-1.5 text-[0.55rem] leading-relaxed text-muted">
-                         Scan with the PushPush Relay Android app to pair it with this deployment in one step.
-                       </p>
-                       <p className="mt-2 text-[0.55rem] leading-relaxed text-muted">
-                         This code contains the shared callback secret. Reveal only while pairing and close it afterwards.
-                       </p>
-                     </div>
-                   </div>
-                 ) : null}
-               </aside>
-            </div>
+
+                    <aside className="w-full rounded-xl border border-blue/20 bg-blue/5 p-3">
+                      <div className="grid gap-3">
+                        <div className="overflow-hidden rounded-lg border border-white/80 bg-white p-2 shadow-sm">
+                          <LocalQrCode
+                            value={qrPayload}
+                            size={256}
+                            alt="Non-secret combined phone monitoring setup reference QR code"
+                            fallback="Use the connection details below instead."
+                            className="mx-auto aspect-square w-full"
+                          />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-[0.64rem] font-semibold text-text">MacroDroid setup reference</p>
+                            <span className="rounded bg-blue/10 px-1.5 py-0.5 text-[0.46rem] font-semibold uppercase tracking-wider text-blue">Guide QR</span>
+                          </div>
+                          <p className="mt-1.5 text-[0.55rem] leading-relaxed text-muted">
+                            Scanning opens a plain-text guide with the live callback URLs, HTTP settings, Magic Text and heartbeat interval.
+                          </p>
+                          <p className="mt-2 text-[0.52rem] font-medium text-blue">No credentials are stored in this code.</p>
+                        </div>
+                      </div>
+                    </aside>
+                  </div>
+                ) : (
+                  <div
+                    id="phone-setup-relay-panel"
+                    role="tabpanel"
+                    aria-labelledby="phone-setup-relay-tab"
+                    className="mt-5 grid gap-5 lg:grid-cols-[minmax(0,1fr)_17rem] lg:items-start"
+                  >
+                    <div className="min-w-0">
+                      <div className="border-b border-border">
+                        <p className="text-[0.58rem] font-semibold uppercase tracking-[0.14em] text-blue">PushPush Relay setup</p>
+                        <p className="mt-0.5 text-[0.68rem] text-muted">Pair the dedicated Android app in one scan.</p>
+                      </div>
+                      <ol className="mt-4">
+                        <Step number={1} title="Install and open PushPush Relay">
+                          Install the relay app on the payment phone, open it and choose the QR pairing flow.
+                        </Step>
+                        <Step number={2} title="Reveal and scan the pairing QR">
+                          The QR contains this deployment&apos;s callback URLs and shared secret. Reveal it only while the phone is ready to scan.
+                        </Step>
+                        <Step number={3} title="Grant notification access">
+                          Allow the app to read notifications from the banking apps you select, run in the background and ignore battery optimisation.
+                        </Step>
+                        <Step number={4} title="Confirm the phone comes online">
+                          The app starts sending heartbeats after pairing. The connection status above updates after the first successful heartbeat.
+                        </Step>
+                      </ol>
+                    </div>
+
+                    <aside className="w-full rounded-xl border border-blue/25 bg-blue/5 p-3">
+                      {pairingQrPayload ? (
+                        <div className="grid gap-3">
+                          <div className="overflow-hidden rounded-lg border border-white/80 bg-white p-2 shadow-sm">
+                            <LocalQrCode
+                              value={pairingQrPayload}
+                              size={256}
+                              alt="PushPush Relay app pairing QR code"
+                              fallback="Use the connection details below instead."
+                              className="mx-auto aspect-square w-full"
+                            />
+                          </div>
+                          <div>
+                            <div className="flex flex-wrap items-center gap-2">
+                              <p className="text-[0.64rem] font-semibold text-text">Ready to scan</p>
+                              <span className="rounded bg-red/10 px-1.5 py-0.5 text-[0.46rem] font-semibold uppercase tracking-wider text-red">Secret inside</span>
+                            </div>
+                            <p className="mt-1.5 text-[0.55rem] leading-relaxed text-muted">
+                              Scan this code with PushPush Relay. Do not share or save it.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => setSecrets(null)}
+                              className="mt-3 w-full rounded-md border border-red/25 bg-red/5 px-2.5 py-1.5 text-[0.6rem] font-semibold text-red transition hover:bg-red/10"
+                            >
+                              Hide pairing QR
+                            </button>
+                          </div>
+                        </div>
+                      ) : (
+                        <div className="grid min-h-64 place-items-center text-center">
+                          <div>
+                            <span className="mx-auto flex size-10 items-center justify-center rounded-full border border-blue/25 bg-surface text-lg text-blue" aria-hidden="true">⌁</span>
+                            <p className="mt-3 text-[0.68rem] font-semibold text-text">Pairing QR hidden</p>
+                            <p className="mt-1.5 text-[0.55rem] leading-relaxed text-muted">
+                              Reveal it when the relay app is open and ready to scan.
+                            </p>
+                            <button
+                              type="button"
+                              disabled={busy || !setup.notify_credential_configured}
+                              onClick={() => void reveal()}
+                              className="mt-3 rounded-md bg-blue px-3 py-1.5 text-[0.62rem] font-semibold text-white shadow-sm transition hover:brightness-110 disabled:opacity-50"
+                            >
+                              {busy ? 'Revealing…' : 'Reveal pairing QR'}
+                            </button>
+                            {!setup.notify_credential_configured ? (
+                              <p className="mt-2 text-[0.52rem] text-amber-600">Configure the shared callback secret first.</p>
+                            ) : null}
+                          </div>
+                        </div>
+                      )}
+                    </aside>
+                  </div>
+                )}
+              </div>
             ) : (
               <div className="mt-4">
                 <div className="flex flex-wrap items-center justify-between gap-2">
