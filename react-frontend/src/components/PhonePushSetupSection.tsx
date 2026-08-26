@@ -226,11 +226,12 @@ PHONE SETTINGS
   const pairingQrPayload = useMemo(() => {
     if (!setup || !secrets?.shared_secret) return '';
     return JSON.stringify({
-      v: 1,
+      v: 2,
       type: 'pushpush-pairing',
       notify_url: setup.notify_url,
       heartbeat_url: setup.heartbeat_url,
       secret: secrets.shared_secret,
+      payment_methods: setup.payment_methods ?? [],
     });
   }, [setup, secrets]);
 
@@ -424,7 +425,7 @@ PHONE SETTINGS
                           Install the relay app on the payment phone, open it and choose the QR pairing flow.
                         </Step>
                         <Step number={2} title="Reveal and scan the pairing QR">
-                          The QR contains this deployment&apos;s callback URLs and shared secret. Reveal it only while the phone is ready to scan.
+                          The QR contains this deployment&apos;s callback URLs, shared secret, and the linked+active payment methods. Reveal it only while the phone is ready to scan.
                         </Step>
                         <Step number={3} title="Grant notification access">
                           Allow the app to read notifications from the banking apps you select, run in the background and ignore battery optimisation.

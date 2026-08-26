@@ -2586,6 +2586,11 @@ type phonePushSetup struct {
 	HeartbeatStatusError          string                 `json:"heartbeat_status_error,omitempty"`
 	CallbackHistory               []phoneCallbackAttempt `json:"callback_history"`
 	CallbackHistoryError          string                 `json:"callback_history_error,omitempty"`
+	// PaymentMethods is the linked+active subset of the payment_methods
+	// catalog. It is embedded in the PushPush Relay pairing QR so the phone
+	// app knows which fiat rails are authorized without a second call.
+	PaymentMethods      []paymentmethods.LinkedActivePaymentMethod `json:"payment_methods"`
+	PaymentMethodsError string                                     `json:"payment_methods_error,omitempty"`
 }
 
 type phoneCallbackAttempt struct {
@@ -2682,8 +2687,20 @@ func phonePushCallbackHistory(ctx context.Context) ([]phoneCallbackAttempt, stri
 	return payload.Attempts, ""
 }
 
+// handlePhonePushSetup serves the pairing metadata plus the linked+active
+// payment methods that the frontend embeds into the PushPush Relay pairing QR.
 func handlePhonePushSetup(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, phonePushSetupMetadata(r))
+	setup := phonePushSetupMetadata(r)
+	methods, err := pmRepo.ListLinkedActive(r.Context())
+	if err != nil {
+		// A catalog failure must not take down the whole setup panel; the
+		// relay can still pair and the QR simply carries no payment methods.
+		setup.PaymentMethods = []paymentmethods.LinkedActivePaymentMethod{}
+		setup.PaymentMethodsError = "Linked payment methods are unavailable"
+	} else {
+		setup.PaymentMethods = methods
+	}
+	writeJSON(w, setup)
 }
 
 // handlePhonePushSetupReveal deliberately requires the authenticated /api

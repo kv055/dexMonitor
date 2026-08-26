@@ -40,6 +40,48 @@ type AdminRow struct {
 	UpdatedAt  string   `json:"updated_at"`
 }
 
+// LinkedActivePaymentMethod is a compact view of one payment_methods row that
+// is both linked to a saved payment account and active. It feeds the PushPush
+// Relay pairing QR payload, so it deliberately omits panel-only fields such as
+// merge_regex and match bookkeeping to keep the QR payload small.
+type LinkedActivePaymentMethod struct {
+	ID         int64    `json:"id"`
+	Name       string   `json:"name"`
+	Category   string   `json:"category"`
+	AliasList  []string `json:"alias_list"`
+	Sources    []string `json:"sources"`
+	Currencies []string `json:"currencies"`
+}
+
+// ListLinkedActive returns every payment method that is linked to a saved
+// payment account (is_linked is generated from account_id) and active — the
+// set of fiat rails the PushPush Relay phone app should treat as authorized.
+func (r *Repo) ListLinkedActive(ctx context.Context) ([]LinkedActivePaymentMethod, error) {
+	rows, err := r.DB.QueryContext(ctx, `
+		SELECT pm.id, pm.name, pm.category, pm.alias_list, pm.sources, pm.currencies
+		FROM payment_methods pm
+		WHERE pm.is_linked AND pm.is_active
+		ORDER BY pm.category, pm.priority DESC, pm.name`)
+	if err != nil {
+		return nil, fmt.Errorf("list linked active payment methods: %w", err)
+	}
+	defer rows.Close()
+
+	out := make([]LinkedActivePaymentMethod, 0)
+	for rows.Next() {
+		var row LinkedActivePaymentMethod
+		var aliases, sources, currencies commonpm.TextArray
+		if err := rows.Scan(&row.ID, &row.Name, &row.Category, &aliases, &sources, &currencies); err != nil {
+			return nil, fmt.Errorf("scan linked active payment method: %w", err)
+		}
+		row.AliasList = nonNilStrings(aliases)
+		row.Sources = nonNilStrings(sources)
+		row.Currencies = nonNilStrings(currencies)
+		out = append(out, row)
+	}
+	return out, rows.Err()
+}
+
 // UpdatePayload is the editable subset of a payment_methods row. Name,
 // match_order, is_linked, is_active, sources, and currencies are deliberately
 // not editable: renaming a method would orphan the names already stored in

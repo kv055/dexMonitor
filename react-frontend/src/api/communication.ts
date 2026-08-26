@@ -61,6 +61,15 @@ export interface PhoneCallbackAttempt {
   detail?: string;
 }
 
+export interface PairingPaymentMethod {
+  id: number;
+  name: string;
+  category: string;
+  alias_list: string[];
+  sources: string[];
+  currencies: string[];
+}
+
 export interface PhonePushSetup {
   notify_url: string;
   heartbeat_url: string;
@@ -73,6 +82,8 @@ export interface PhonePushSetup {
   heartbeat_status_error?: string;
   callback_history: PhoneCallbackAttempt[];
   callback_history_error?: string;
+  payment_methods: PairingPaymentMethod[];
+  payment_methods_error?: string;
 }
 
 export interface PhonePushSecrets {
