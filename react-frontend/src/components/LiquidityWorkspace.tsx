@@ -42,17 +42,35 @@ const ROUTING_PROFILE_OPTIONS: Array<{ value: TransactionalRoutingProfile; label
   { value: 'Swap_main2lightning', label: 'Swap' },
 ];
 
-const ROUTING_MATRIX_PROFILES: Record<TransactionalRoutingProfile, { route: string; requirement: string }> = {
-  Direct_main2main: { route: 'CEX → DEX wallet', requirement: 'Direct mainnet settlement' },
-  Hub_main2main: { route: 'CEX → Mainnet Hub → DEX wallet', requirement: 'Mainnet hub reserve available' },
-  Swap_main2lightning: { route: 'CEX → Lightning → DEX wallet', requirement: 'Lightning routing reserve available' },
+const HEDGEFULL_ROUTING_MATRIX_PROFILES: Record<TransactionalRoutingProfile, { route: string; requirement: string }> = {
+  Direct_main2main: { route: 'CEX → DEX wallet/contract', requirement: 'Direct mainnet settlement' },
+  Hub_main2main: { route: 'CEX → Mainnet Hub → DEX wallet/contract', requirement: 'Mainnet hub reserve available' },
+  Swap_main2lightning: { route: 'CEX → Lightning → DEX wallet/contract', requirement: 'Lightning routing reserve available' },
+};
+
+const HEDGELESS_ROUTING_MATRIX_PROFILES: Partial<Record<TransactionalRoutingProfile, { route: string; requirement: string }>> = {
+  Hub_main2main: { route: 'Pool → DEX wallet/contract → Pool refill', requirement: 'Mainnet hub reserve available' },
+  Swap_main2lightning: { route: 'Pool Lightning swap → DEX wallet/contract → Pool refill', requirement: 'Lightning routing reserve available' },
 };
 
 const DEFAULT_ROUTING_PROFILES: TransactionalRoutingProfile[] = ROUTING_PROFILE_OPTIONS.map(option => option.value);
 
-function normalizeSupportedRoutingProfiles(profiles?: string[] | null): TransactionalRoutingProfile[] {
-  const selected = DEFAULT_ROUTING_PROFILES.filter(profile => (profiles ?? []).includes(profile));
-  return selected.length > 0 ? selected : [...DEFAULT_ROUTING_PROFILES];
+function routingProfileOptions(tradeMode: TradeMode) {
+  return tradeMode === 'hedgeless_double_collateral'
+    ? ROUTING_PROFILE_OPTIONS.filter(option => option.value !== 'Direct_main2main')
+    : ROUTING_PROFILE_OPTIONS;
+}
+
+function normalizeSupportedRoutingProfiles(profiles: string[] | null | undefined, tradeMode: TradeMode): TransactionalRoutingProfile[] {
+  const availableProfiles = routingProfileOptions(tradeMode).map(option => option.value);
+  const selected = availableProfiles.filter(profile => (profiles ?? []).includes(profile));
+  return selected.length > 0 ? selected : availableProfiles;
+}
+
+function routingMatrixDetails(profile: TransactionalRoutingProfile, tradeMode: TradeMode): { route: string; requirement: string } {
+  return tradeMode === 'hedgeless_double_collateral'
+    ? HEDGELESS_ROUTING_MATRIX_PROFILES[profile] ?? HEDGEFULL_ROUTING_MATRIX_PROFILES[profile]
+    : HEDGEFULL_ROUTING_MATRIX_PROFILES[profile];
 }
 
 function swapRoutingEnabled(profiles: readonly string[]) {
@@ -407,7 +425,7 @@ export function LiquidityWorkspace() {
   const targetBTC = btcTarget != null ? formatBTC(btcTarget) : undefined;
   const lndTargetBTC = transactionalSettings?.trade_mode === 'hedgefull_single_collateral' ? formatBTC(0) : targetBTC;
   const routingProfiles = transactionalSettings
-    ? normalizeSupportedRoutingProfiles(transactionalSettings.supported_routing_profiles)
+    ? normalizeSupportedRoutingProfiles(transactionalSettings.supported_routing_profiles, transactionalSettings.trade_mode)
     : [];
   // Matches the four target cards: CEX fiat, Mainnet Hub BTC, Lightning BTC,
   // and DEX wallet BTC (currently zero).
@@ -473,7 +491,7 @@ export function LiquidityWorkspace() {
           trade_mode: settings.trade_mode,
           target_direction: settings.target_direction ?? 'bid',
           lightning_liquidity_source: settings.lightning_liquidity_source ?? 'own_channels',
-          supported_routing_profiles: normalizeSupportedRoutingProfiles(settings.supported_routing_profiles),
+          supported_routing_profiles: normalizeSupportedRoutingProfiles(settings.supported_routing_profiles, settings.trade_mode),
           fee_tier: settings.fee_tier ?? 'economic',
           coupled_hedge: settings.coupled_hedge ?? false,
         });
@@ -620,12 +638,12 @@ export function LiquidityWorkspace() {
         trade_mode: transactionalForm.trade_mode,
         target_direction: transactionalForm.target_direction,
         lightning_liquidity_source: transactionalForm.lightning_liquidity_source || 'own_channels',
-        supported_routing_profiles: transactionalForm.supported_routing_profiles,
+        supported_routing_profiles: normalizeSupportedRoutingProfiles(transactionalForm.supported_routing_profiles, transactionalForm.trade_mode),
         fee_tier: transactionalForm.fee_tier,
         coupled_hedge: transactionalForm.trade_mode === 'hedgefull_single_collateral' && transactionalForm.coupled_hedge,
       });
       setTransactionalSettings(updated);
-      setTransactionalForm(current => ({ ...current, amount_fiat: updated.amount_fiat == null ? '' : String(updated.amount_fiat), target_direction: updated.target_direction ?? 'bid', lightning_liquidity_source: updated.lightning_liquidity_source ?? 'own_channels', supported_routing_profiles: normalizeSupportedRoutingProfiles(updated.supported_routing_profiles), fee_tier: updated.fee_tier ?? 'economic', coupled_hedge: updated.coupled_hedge ?? false }));
+      setTransactionalForm(current => ({ ...current, amount_fiat: updated.amount_fiat == null ? '' : String(updated.amount_fiat), target_direction: updated.target_direction ?? 'bid', lightning_liquidity_source: updated.lightning_liquidity_source ?? 'own_channels', supported_routing_profiles: normalizeSupportedRoutingProfiles(updated.supported_routing_profiles, updated.trade_mode), fee_tier: updated.fee_tier ?? 'economic', coupled_hedge: updated.coupled_hedge ?? false }));
       setLightningPath(updated.lightning_liquidity_source ?? 'own_channels');
       setTransactionalNotice('Transactional liquidity targets saved.');
       setTransactionalEditing(false);
@@ -654,7 +672,7 @@ export function LiquidityWorkspace() {
         trade_mode: transactionalSettings.trade_mode,
         target_direction: transactionalSettings.target_direction ?? 'bid',
         lightning_liquidity_source: source,
-        supported_routing_profiles: normalizeSupportedRoutingProfiles(transactionalSettings.supported_routing_profiles),
+        supported_routing_profiles: normalizeSupportedRoutingProfiles(transactionalSettings.supported_routing_profiles, transactionalSettings.trade_mode),
         fee_tier: transactionalSettings.fee_tier ?? 'economic',
         coupled_hedge: transactionalSettings.coupled_hedge ?? false,
       });
@@ -662,7 +680,7 @@ export function LiquidityWorkspace() {
       setTransactionalForm(current => ({
         ...current,
         lightning_liquidity_source: updated.lightning_liquidity_source ?? source,
-        supported_routing_profiles: normalizeSupportedRoutingProfiles(updated.supported_routing_profiles),
+        supported_routing_profiles: normalizeSupportedRoutingProfiles(updated.supported_routing_profiles, updated.trade_mode),
         target_direction: updated.target_direction ?? 'bid',
         fee_tier: updated.fee_tier ?? 'economic',
         coupled_hedge: updated.coupled_hedge ?? false,
@@ -687,7 +705,7 @@ export function LiquidityWorkspace() {
         trade_mode: transactionalSettings.trade_mode,
         target_direction: transactionalSettings.target_direction ?? 'bid',
         lightning_liquidity_source: transactionalSettings.lightning_liquidity_source ?? 'own_channels',
-        supported_routing_profiles: normalizeSupportedRoutingProfiles(transactionalSettings.supported_routing_profiles),
+        supported_routing_profiles: normalizeSupportedRoutingProfiles(transactionalSettings.supported_routing_profiles, transactionalSettings.trade_mode),
         fee_tier: transactionalSettings.fee_tier ?? 'economic',
         coupled_hedge: transactionalSettings.coupled_hedge ?? false,
       });
@@ -702,7 +720,7 @@ export function LiquidityWorkspace() {
       const enabled = current.supported_routing_profiles.includes(profile);
       const next = enabled
         ? current.supported_routing_profiles.filter(item => item !== profile)
-        : normalizeSupportedRoutingProfiles([...current.supported_routing_profiles, profile]);
+        : normalizeSupportedRoutingProfiles([...current.supported_routing_profiles, profile], current.trade_mode);
       if (next.length === 0) return current;
       return { ...current, supported_routing_profiles: next };
     });
@@ -1535,13 +1553,13 @@ export function LiquidityWorkspace() {
               <p className="text-[0.62rem] text-muted mt-0.5">One fiat target translated into the required liquidity brackets.</p>
             </div>
             {transactionalLoading && <span className="text-[0.6rem] text-muted">Loading…</span>}
-            {!transactionalLoading && transactionalSettings && !transactionalEditing && <div className={`liquidity-target-summary${transactionalSettings.amount_source === 'custom' || !swapRoutingEnabled(normalizeSupportedRoutingProfiles(transactionalSettings.supported_routing_profiles)) ? ' is-compact' : ''}`}>
+            {!transactionalLoading && transactionalSettings && !transactionalEditing && <div className={`liquidity-target-summary${transactionalSettings.amount_source === 'custom' || !swapRoutingEnabled(routingProfiles) ? ' is-compact' : ''}`}>
               <div><span>Target</span><strong>{transactionalAmount != null ? formatFiatValue(transactionalAmount, transactionalSettings.fiat_currency) : 'Not configured'}</strong></div>
               {transactionalSettings.amount_source !== 'custom' && <div><span>Source</span><strong>Capped volume</strong></div>}
               <div><span>Mode</span><strong>{transactionalSettings.trade_mode === 'hedgeless_double_collateral' ? 'Hedgeless' : 'Hedgefull'}</strong></div>
               <div><span>Direction</span><strong className="capitalize">{transactionalSettings.target_direction ?? 'bid'}</strong></div>
-              {swapRoutingEnabled(normalizeSupportedRoutingProfiles(transactionalSettings.supported_routing_profiles)) && <div><span>Lightning</span><strong>{transactionalSettings.lightning_liquidity_source === 'lsp_channel' ? 'LSP Collateral' : 'Own Collateral'}</strong></div>}
-              <div><span>Routing</span><strong>{formatRoutingProfiles(normalizeSupportedRoutingProfiles(transactionalSettings.supported_routing_profiles))}</strong></div>
+              {swapRoutingEnabled(routingProfiles) && <div><span>Lightning</span><strong>{transactionalSettings.lightning_liquidity_source === 'lsp_channel' ? 'LSP Collateral' : 'Own Collateral'}</strong></div>}
+              <div><span>Routing</span><strong>{formatRoutingProfiles(routingProfiles)}</strong></div>
               <div><span>Fees</span><strong>{transactionalSettings.trade_mode === 'hedgefull_single_collateral' ? `Economic · ${transactionalSettings.coupled_hedge ? 'coupled hedge' : 'independent hedge'}` : 'Economic'}</strong></div>
               <button type="button" onClick={() => { setTransactionalEditing(true); setTransactionalNotice(null); }}>Edit</button>
             </div>}
@@ -1555,7 +1573,15 @@ export function LiquidityWorkspace() {
             </label>
             <label>
               <span>Mode</span>
-              <select aria-label="Trade mode" value={transactionalForm.trade_mode} onChange={event => setTransactionalForm(current => ({ ...current, trade_mode: event.target.value as TradeMode, coupled_hedge: event.target.value === 'hedgefull_single_collateral' ? current.coupled_hedge : false }))}>
+              <select aria-label="Trade mode" value={transactionalForm.trade_mode} onChange={event => setTransactionalForm(current => {
+                const tradeMode = event.target.value as TradeMode;
+                return {
+                  ...current,
+                  trade_mode: tradeMode,
+                  coupled_hedge: tradeMode === 'hedgefull_single_collateral' ? current.coupled_hedge : false,
+                  supported_routing_profiles: normalizeSupportedRoutingProfiles(current.supported_routing_profiles, tradeMode),
+                };
+              })}>
                 {TRADE_MODE_OPTIONS.map(option => <option key={option.value} value={option.value}>{option.label}</option>)}
               </select>
             </label>
@@ -1576,7 +1602,7 @@ export function LiquidityWorkspace() {
             <div className="liquidity-target-routing">
               <span>Routing</span>
               <div className="liquidity-target-routing__toggles" role="group" aria-label="Supported routing profiles">
-                {ROUTING_PROFILE_OPTIONS.map(option => {
+                {routingProfileOptions(transactionalForm.trade_mode).map(option => {
                   const selected = transactionalForm.supported_routing_profiles.includes(option.value);
                   return (
                     <button
@@ -1657,7 +1683,7 @@ export function LiquidityWorkspace() {
             <div className="routing-matrix__profiles" aria-label="Available routing profiles">
               {routingProfiles.map(profile => {
                 const option = ROUTING_PROFILE_OPTIONS.find(item => item.value === profile);
-                const details = ROUTING_MATRIX_PROFILES[profile];
+                const details = routingMatrixDetails(profile, transactionalSettings.trade_mode);
                 const status = routingProfileStatus[profile];
                 return <article key={profile} className={`routing-matrix__profile ${status.ready ? 'is-ready' : 'is-blocked'}`}>
                   <span className="routing-matrix__profile-status" role="img" aria-label={status.ready ? `${option?.label ?? profile} requirements met` : `${option?.label ?? profile} requirements not met`} title={status.ready ? 'Requirements met' : 'Requirements not met'}>{status.ready ? '✓' : '×'}</span>

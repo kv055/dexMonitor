@@ -12,6 +12,7 @@ interface MmTransaction {
   cex: string;
   dex: string;
   status: string;
+  status_reason?: string | null;
   total_transaction_pnl: number;
   premium_over_cex_price_to_break_even_prediction: number;
   created_at: string;
@@ -26,12 +27,19 @@ interface MmTransactionListResponse {
 }
 
 const STATUS_LABELS: Record<string, string> = {
-  FiatToCexInitiated: 'Fiat to CEX',
-  FiatToCexArrived: 'At CEX',
-  CexTradeSucessfull: 'CEX trade',
+  TransactionNeedsReview: 'Transaction review',
+  CexTradeflowStarted: 'CEX trade started',
+  HedgeFailedNeedsReview: 'Hedge review',
+  CexTradeflowNeedsReview: 'CEX trade review',
+  HedgelessTradeStarted: 'Hedgeless started',
+  HedgelessPreparationFailed: 'Preparation failed',
+  LiquidityPreparationNeedsReview: 'Liquidity review',
+  HedgelessFundingInitiated: 'DEX funding started',
+  HedgelessFundingNeedsReview: 'DEX funding review',
+  DexTakenFundingNeedsReview: 'Taken funding review',
+  CexTradeSuccessful: 'CEX trade',
   CexCryptoWithdrawalInitiated: 'Withdrawal started',
   CexCryptoWithdrawalArrived: 'Withdrawal arrived',
-  DexPositionOpen: 'DEX open',
   DexPositionTaken: 'DEX taken',
   DexFiatHasArrived: 'Fiat arrived',
   DexPositionReleased: 'Released',
@@ -40,7 +48,8 @@ const STATUS_LABELS: Record<string, string> = {
 function statusTone(status: string) {
   if (status === 'DexPositionReleased') return 'text-green border-green/30 bg-green/8';
   if (status === 'DexPositionTaken' || status === 'DexFiatHasArrived') return 'text-blue border-blue/30 bg-blue/8';
-  if (status === 'CexTradeSucessfull' || status === 'CexCryptoWithdrawalArrived') return 'text-accent border-accent/30 bg-[rgba(247,147,26,0.08)]';
+  if (status.endsWith('NeedsReview') || status.endsWith('Failed')) return 'text-red border-red/30 bg-red/8';
+  if (status === 'CexTradeSuccessful' || status === 'CexCryptoWithdrawalArrived') return 'text-accent border-accent/30 bg-[rgba(247,147,26,0.08)]';
   return 'text-muted border-border bg-bg/30';
 }
 
@@ -144,6 +153,12 @@ export function MmTransactionsLog() {
                 </span>
                 <span className="text-muted">Updated</span>
                 <span className="text-text">{updated.day} {updated.time}</span>
+                {entry.status_reason && (
+                  <>
+                    <span className="text-muted">Status reason</span>
+                    <span className="text-red break-words">{entry.status_reason}</span>
+                  </>
+                )}
               </div>
             )}
           </div>

@@ -1,10 +1,15 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { apiFetch } from '../api/client';
 import { buildLiveOffersSearch, type MarketRequestParams } from '../shared/marketParams';
+import type { paths as UnifiedApiPaths } from '../generated/unified-api';
 import type { Offer } from '../types';
 
 const POLL_INTERVAL_MS = 15_000;
 const RECONNECT_DELAY_MS = 5_000;
+
+type LiveOffersContractResponse = UnifiedApiPaths['/api/live_offers']['get']['responses'][200]['content']['application/json'];
+const LIVE_OFFERS_RESPONSE_IS_ARRAY: LiveOffersContractResponse extends readonly unknown[] ? true : false = true;
+void LIVE_OFFERS_RESPONSE_IS_ARRAY;
 
 const defaultParams: MarketRequestParams = {
   hours: '24',

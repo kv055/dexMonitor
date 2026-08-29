@@ -30,10 +30,14 @@ test.describe('Live offers list', () => {
 
   test('opens and closes the live offer breakdown', async ({ page }) => {
     await offersPanel(page).getByTestId('live-offers-row').first().click();
-    await expect(page.getByTestId('live-offer-detail')).toBeVisible();
-    await expect(page.getByText('Trade cost breakdown').first()).toBeVisible();
-    await expect(page.getByText('Total cost').first()).toBeVisible();
-    await expect(page.getByText('Net premium').first()).toBeVisible();
+    const detail = page.getByTestId('live-offer-detail');
+    await expect(detail).toBeVisible();
+    await expect(detail.getByRole('region', { name: 'Decision summary' })).toBeVisible();
+    await expect(detail.getByRole('region', { name: 'Trade economics' })).toBeVisible();
+    await expect(detail.getByText('Total costs', { exact: true })).toBeVisible();
+    await expect(detail.getByText('Gross DEX premium', { exact: true })).toBeVisible();
+    await expect(detail.getByText('Net profit', { exact: true }).first()).toBeVisible();
+    await expect(detail.getByText(/^Capital allocation/)).toBeVisible();
 
     await jsClick(page.getByRole('button', { name: 'Close live offer details' }));
     await expect(page.getByTestId('live-offer-detail')).not.toBeVisible();
@@ -45,6 +49,24 @@ test.describe('Live offers list', () => {
     await row.focus();
     await row.press('Enter');
     await expect(page.getByTestId('live-offer-detail')).toBeVisible();
+  });
+
+  test('stacks supporting economics below the cost table on narrow screens', async ({ page }) => {
+    await offersPanel(page).getByTestId('live-offers-row').first().click();
+    const detail = page.getByTestId('live-offer-detail');
+    const economics = detail.getByRole('region', { name: 'Trade economics' });
+    const supporting = detail.getByRole('complementary', { name: 'Capital requirements' });
+
+    const [wideEconomics, wideSupporting] = await Promise.all([economics.boundingBox(), supporting.boundingBox()]);
+    expect(wideEconomics).not.toBeNull();
+    expect(wideSupporting).not.toBeNull();
+    expect(wideSupporting!.x).toBeGreaterThan(wideEconomics!.x + wideEconomics!.width - 2);
+
+    await page.setViewportSize({ width: 800, height: 1200 });
+    const [narrowEconomics, narrowSupporting] = await Promise.all([economics.boundingBox(), supporting.boundingBox()]);
+    expect(narrowEconomics).not.toBeNull();
+    expect(narrowSupporting).not.toBeNull();
+    expect(narrowSupporting!.y).toBeGreaterThan(narrowEconomics!.y + narrowEconomics!.height - 2);
   });
 
   test('shows the empty state when filters exclude every offer', async ({ page }) => {

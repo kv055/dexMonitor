@@ -147,7 +147,17 @@ export interface paths {
 }
 export type webhooks = Record<string, never>;
 export interface components {
-    schemas: never;
+    schemas: {
+        /** @description Enriched live DEX offer returned by the unified routing book. */
+        LiveOffer: {
+            [key: string]: unknown;
+        };
+        LifecyclePoint: {
+            time: string;
+            price: number;
+            net_premium_pct?: number | null;
+        };
+    };
     responses: never;
     parameters: never;
     requestBodies: never;
@@ -247,9 +257,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["LiveOffer"][];
                 };
             };
             /** @description Error response */
@@ -283,9 +291,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["LifecyclePoint"][];
                 };
             };
             /** @description Error response */

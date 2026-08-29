@@ -937,25 +937,30 @@ function formatRange(minLabel: string, maxLabel: string): string | null {
   return `up to ${maxLabel}`;
 }
 
-function PastOfferMetric({ label, value, detail, hint }: { label: ReactNode; value: string; detail?: string; hint?: string }) {
+function PastOfferMetric({ label, value, detail, hint, className = 'min-w-[6rem] flex-1' }: {
+  label: ReactNode;
+  value: string;
+  detail?: string;
+  hint?: string;
+  className?: string;
+}) {
   return (
-    <div className="min-w-0">
-      <dt className="mb-1 flex items-center gap-1.5 text-[0.58rem] font-semibold uppercase tracking-widest text-muted">{label}</dt>
-      <dd className="min-w-0 truncate text-[0.72rem] font-medium text-text mono-nums tabular-nums" title={hint ?? value}>
+    <div className={`min-w-0 ${className}`}>
+      <dt className="mb-0.5 flex items-center gap-1.5 text-[0.55rem] font-semibold uppercase tracking-widest text-muted">{label}</dt>
+      <dd className="min-w-0 break-words text-[0.68rem] font-medium leading-snug text-text mono-nums tabular-nums" title={hint ?? value}>
         {value}
+        {detail && <span className="font-normal text-muted"> · {detail}</span>}
       </dd>
-      {detail && <dd className="mt-0.5 truncate text-[0.62rem] text-muted mono-nums tabular-nums">{detail}</dd>}
     </div>
   );
 }
 
-function PastOfferOverview({ order, offer, fiat, timezone, amountUnit, onAmountUnitChange }: {
+function PastOfferOverview({ order, offer, fiat, timezone, amountUnit }: {
   order: PastProfitableOrder;
   offer: Offer;
   fiat: string;
   timezone: string;
   amountUnit: SizeUnit;
-  onAmountUnitChange: (unit: SizeUnit) => void;
 }) {
   const raw = order.offer;
   const offerPrice = getOfferPrice(offer);
@@ -977,34 +982,29 @@ function PastOfferOverview({ order, offer, fiat, timezone, amountUnit, onAmountU
       : fmtFiat(refPrice == null ? null : avgObservedBtc * refPrice, fiat);
 
   return (
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5">
-        <PastOfferMetric label="Internal ID" value={String(order.id)} />
-        <PastOfferMetric label="Payment" value={order.payment_methods?.join(', ') || '—'} />
+      <dl className="contents">
+        <PastOfferMetric label="Payment" value={order.payment_methods?.join(', ') || '—'} className="min-w-[5rem] flex-[0.7]" />
         <PastOfferMetric
           label="Observed"
           value={`${formatTime(firstSeen, timezone)} – ${formatTime(lastSeen, timezone)}`}
           detail={`${formatDuration(firstSeen, lastSeen)}${getPriceType(offer) ? ` · ${getPriceType(offer)} price` : ''}`}
+          className="min-w-[10rem] flex-[1.4]"
         />
-        {order.observation_count != null && order.observation_count > 0 && (
-          <PastOfferMetric
-            label="History"
-            value={`${order.observation_count.toLocaleString('de-DE')} snapshots`}
-            detail="Basis for the historical averages"
-          />
-        )}
         {(offerPrice > 0 || refPrice != null) && (
           <PastOfferMetric
-            label="Prices"
+            label="Offer / reference"
             value={offerPrice > 0 ? fmtFiat(offerPrice, fiat) : '—'}
-            detail={refPrice != null ? `${fmtFiat(refPrice, fiat)} reference` : undefined}
+            detail={refPrice != null ? `ref ${fmtFiat(refPrice, fiat)}` : undefined}
+            className="min-w-[8rem] flex-1"
           />
         )}
         {volumeRange != null && (
           <PastOfferMetric
-            label={<><span>Volume</span><UnitToggle fiat={fiat} unit={amountUnit} onChange={onAmountUnitChange} /></>}
+            label="Volume"
             value={volumeRange}
             detail={averageVolume != null ? `${averageVolume} average` : undefined}
             hint="Offered range and lifecycle average while the offer was live"
+            className="min-w-[7rem] flex-1"
           />
         )}
       </dl>
@@ -1034,33 +1034,24 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
     : effectiveMode === 'min'
       ? order.analysis.min_volume
       : order.analysis.full_volume;
-  const estimateNote = scenario?.cost_policy === 'historical_route_fixed_transfer_recomputed_size_proportional'
-    ? 'Capped-size estimate: uses the historical route and recalculates size-dependent costs.'
+  const snapshotBasis = order.observation_count != null && order.observation_count > 0
+    ? ` Based on ${order.observation_count.toLocaleString('de-DE')} snapshots from the observed lifecycle.`
+    : '';
+  const snapshotLabel = order.observation_count != null && order.observation_count > 0
+    ? ` · ${order.observation_count.toLocaleString('de-DE')} snapshots`
+    : '';
+  const estimateContext = scenario?.cost_policy === 'historical_route_fixed_transfer_recomputed_size_proportional'
+    ? { label: `Capped-size estimate${snapshotLabel}`, detail: `Uses the historical route and recalculates size-dependent costs.${snapshotBasis}` }
     : scenario?.cost_policy === 'historical_min_volume'
-      ? 'Minimum-size estimate: uses the offer’s minimum executable volume and historical route.'
+      ? { label: `Minimum-size estimate${snapshotLabel}`, detail: `Uses the offer’s minimum executable volume and historical route.${snapshotBasis}` }
       : scenario?.cost_policy === 'historical_persisted'
-        ? 'Historical average: pricing, costs, and profit use the offer’s observed lifecycle snapshots.'
-        : null;
+        ? { label: `Historical average${snapshotLabel}`, detail: `Pricing, costs, and profit use the offer’s observed lifecycle snapshots.${snapshotBasis}` }
+        : { label: `Historical offer${snapshotLabel}`, detail: snapshotBasis.trim() || null };
 
   return (
     <div data-testid="past-offer-detail" className="flex flex-col gap-3">
       {costBreakdown ? (
         <div className="flex flex-col gap-3">
-          {(hasCappedScenario(offer) || hasMinScenario(offer)) && (
-            <SizeToggle
-              mode={effectiveMode}
-              onModeChange={onScenarioModeChange}
-              fullBtc={getDisplayCostBreakdown(offer, 'full')?.btc_amount ?? getBtcMax(offer)}
-              cappedBtc={getCappedTradeSizeBtc(offer)}
-              minBtc={getMinTradeSizeBtc(offer)}
-              refPrice={refPrice}
-            />
-          )}
-          {estimateNote && (
-            <p className="rounded-md border border-border bg-bg px-2.5 py-2 text-[0.65rem] text-muted">
-              {estimateNote}
-            </p>
-          )}
           <CostBreakdownPanel
             bd={costBreakdown}
             abortCost={getDisplayAbortCost(offer, effectiveMode)}
@@ -1068,31 +1059,43 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
             netPremiumPct={getNetPremiumPercent(offer, effectiveMode)}
             refPrice={refPrice}
             offerPrice={offerPrice}
-            basicInformation={<PastOfferOverview
+            toolbar={(hasCappedScenario(offer) || hasMinScenario(offer)) ? (
+              <SizeToggle
+                mode={effectiveMode}
+                onModeChange={onScenarioModeChange}
+                fullBtc={getDisplayCostBreakdown(offer, 'full')?.btc_amount ?? getBtcMax(offer)}
+                cappedBtc={getCappedTradeSizeBtc(offer)}
+                minBtc={getMinTradeSizeBtc(offer)}
+                refPrice={refPrice}
+              />
+            ) : undefined}
+            overview={<PastOfferOverview
               order={order}
               offer={offer}
               fiat={order.pricing.fiat_currency || 'EUR'}
               timezone={timezone}
               amountUnit={amountUnit}
-              onAmountUnitChange={setAmountUnit}
             />}
-            wideLayout
+            contextLabel={estimateContext.label}
+            contextDetail={estimateContext.detail}
+            contextId={order.id}
             amountUnit={amountUnit}
             onAmountUnitChange={setAmountUnit}
           />
         </div>
       ) : (
         <>
-          <section aria-label="Basic information">
-            <div className="border-b border-border/70 pb-2 text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Basic information</div>
-            <div className="pt-3"><PastOfferOverview
+          <section aria-label="Offer information" className="flex flex-col gap-2">
+            <div className="border-b border-border/70 pb-2 text-[0.63rem] font-medium text-text">
+              Historical offer <span className="text-muted">· ID {order.id}</span>
+            </div>
+            <PastOfferOverview
               order={order}
               offer={offer}
               fiat={order.pricing.fiat_currency || 'EUR'}
               timezone={timezone}
               amountUnit={amountUnit}
-              onAmountUnitChange={setAmountUnit}
-            /></div>
+            />
           </section>
           <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
         </>
@@ -1111,39 +1114,37 @@ const LIVE_SORT_DEFAULTS: Record<LiveSortColumn, SortDir> = {
   first_seen: 'desc', age: 'desc', size: 'desc', net_profit: 'desc',
 };
 
-function LiveOfferOverview({ offer, fiat, amountUnit, onAmountUnitChange, children }: {
+function LiveOfferOverview({ offer, fiat, amountUnit }: {
   offer: Offer;
   fiat: string;
   amountUnit: SizeUnit;
-  onAmountUnitChange: (unit: SizeUnit) => void;
-  children?: ReactNode;
 }) {
   const offerPrice = getOfferPrice(offer);
   const refPrice = getRefPrice(offer);
   const fiatRange = formatRange(fmtFiat(getFiatMin(offer), fiat), fmtFiat(getFiatMax(offer), fiat));
   const btcRange = formatRange(fmtBTC(getBtcMin(offer)), fmtBTC(getBtcMax(offer)));
 
-  return (<>
-      <dl className="grid grid-cols-2 gap-x-4 gap-y-2.5">
-        <PastOfferMetric label="Offer ID" value={offer.offer_id || String(offer.id)} />
-        <PastOfferMetric label="Payment" value={offer.payment_methods?.join(', ') || '—'} />
+  return (
+      <dl className="contents">
+        <PastOfferMetric label="Payment" value={offer.payment_methods?.join(', ') || '—'} className="min-w-[5rem] flex-[0.7]" />
         {(offerPrice > 0 || refPrice != null) && (
           <PastOfferMetric
-            label="Prices"
+            label="Offer / reference"
             value={offerPrice > 0 ? fmtFiat(offerPrice, fiat) : '—'}
-            detail={refPrice != null ? `${fmtFiat(refPrice, fiat)} reference` : undefined}
+            detail={refPrice != null ? `ref ${fmtFiat(refPrice, fiat)}` : undefined}
+            className="min-w-[8rem] flex-1"
           />
         )}
         {(amountUnit === 'btc' ? btcRange : fiatRange) != null && (
           <PastOfferMetric
-            label={<><span>Volume</span><UnitToggle fiat={fiat} unit={amountUnit} onChange={onAmountUnitChange} /></>}
+            label="Volume"
             value={amountUnit === 'btc' ? btcRange! : fiatRange!}
             hint="Offer volume limits"
+            className="min-w-[7rem] flex-1"
           />
         )}
       </dl>
-      {children}
-  </>);
+  );
 }
 
 function TradeModeToggle({ mode, onChange, hasHedgeless, hedgefullAvailable = true }: {
@@ -1173,8 +1174,8 @@ function TradeModeToggle({ mode, onChange, hasHedgeless, hedgefullAvailable = tr
     </button>
   );
   return (
-    <div className="flex items-center justify-between gap-2 rounded-md border border-border bg-bg px-2.5 py-2">
-      <span className="text-muted shrink-0 text-[0.62rem] uppercase tracking-wide">Trade mode</span>
+    <div className="flex items-center gap-1.5 self-start">
+      <span className="shrink-0 text-[0.58rem] uppercase tracking-wide text-muted">Mode</span>
       <span className="inline-flex items-center rounded border border-border bg-surface/70 p-0.5">
         {btn('hedgefull_single_collateral', 'Hedgefull', !hedgefullAvailable)}
         {btn('hedgeless_double_collateral', 'Hedgeless')}
@@ -1192,10 +1193,10 @@ function ManualRouteControls({ options, selection, onChange, isAsk, hideHedge = 
 }) {
   const selectClass = 'min-w-0 rounded border border-border bg-surface px-1.5 py-1 text-[0.62rem] text-text';
   return (
-    <div className="mt-3 border-t border-border/70 pt-3">
-      <p className="text-[0.62rem] font-medium text-text">Manual route analysis</p>
-      <p className="mt-0.5 text-[0.58rem] leading-snug text-muted">Overrides spot/hedge for this offer’s estimate, trade tracing, and pre-trade checks. Live ranking still uses the auto route.</p>
-      <div className="mt-2.5 grid gap-2">
+    <details className="border-b border-border/70 pb-1.5 text-[0.62rem]">
+      <summary className="cursor-pointer text-muted hover:text-text">Route analysis overrides</summary>
+      <p className="mt-1 text-[0.58rem] leading-snug text-muted">Overrides this estimate and pre-trade checks; live ranking keeps the automatic route.</p>
+      <div className={`mt-1.5 grid gap-2 ${hideHedge ? '' : 'sm:grid-cols-2'}`}>
         <label className="grid gap-0.5 text-[0.58rem] text-muted">Spot CEX{isAsk ? '' : ' + withdrawal'}
           <select className={selectClass} value={selection.spot} onChange={event => onChange({ ...selection, spot: event.target.value })}>
             <option value="auto">Auto (cheapest)</option>
@@ -1215,7 +1216,7 @@ function ManualRouteControls({ options, selection, onChange, isAsk, hideHedge = 
           </label>
         )}
       </div>
-    </div>
+    </details>
   );
 }
 
@@ -1254,32 +1255,6 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
     <div data-testid="live-offer-detail" className="flex flex-col gap-3">
       {displayedBreakdown ? (
         <div className="flex flex-col gap-3">
-          {(hasCappedScenario(offer) || hasMinScenario(offer)) && (
-            <SizeToggle
-              mode={effectiveMode}
-              onModeChange={onScenarioModeChange}
-              fullBtc={getDisplayCostBreakdown(offer, 'full')?.btc_amount ?? getBtcMax(offer)}
-              cappedBtc={getCappedTradeSizeBtc(offer)}
-              minBtc={getMinTradeSizeBtc(offer)}
-              refPrice={getRefPrice(offer)}
-            />
-          )}
-          <TradeModeToggle
-            mode={tradeMode}
-            onChange={onTradeModeChange}
-            hasHedgeless={showTradeModeToggle}
-            hedgefullAvailable={hedgeAvailable}
-          />
-          {routeUnavailable && (
-            <div
-              role="status"
-              data-testid="route-unavailable-notice"
-              className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2"
-            >
-              <p className="text-[0.7rem] font-semibold text-amber-600">{routeUnavailable.title}</p>
-              <p className="mt-0.5 text-[0.65rem] leading-snug text-muted">{routeUnavailable.detail}</p>
-            </div>
-          )}
           <CostBreakdownPanel
             bd={displayedBreakdown}
             abortCost={displayedAbortCost}
@@ -1289,8 +1264,29 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
             offerPrice={getOfferPrice(offer)}
             costsUnavailable={!!routeUnavailable}
             showCapitalAndAbort={!routeUnavailable}
-            basicInformation={
-              <LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} onAmountUnitChange={setAmountUnit}>
+            toolbar={<>
+              {(hasCappedScenario(offer) || hasMinScenario(offer)) && (
+              <SizeToggle
+                mode={effectiveMode}
+                onModeChange={onScenarioModeChange}
+                fullBtc={getDisplayCostBreakdown(offer, 'full')?.btc_amount ?? getBtcMax(offer)}
+                cappedBtc={getCappedTradeSizeBtc(offer)}
+                minBtc={getMinTradeSizeBtc(offer)}
+                refPrice={getRefPrice(offer)}
+              />
+              )}
+              <TradeModeToggle
+                mode={tradeMode}
+                onChange={onTradeModeChange}
+                hasHedgeless={showTradeModeToggle}
+                hedgefullAvailable={hedgeAvailable}
+              />
+            </>}
+            overview={<LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} />}
+            contextLabel="Live offer"
+            contextId={offer.offer_id || offer.id}
+            routeControls={(
+              <>
                 {options ? (
                   <ManualRouteControls
                     options={options}
@@ -1300,18 +1296,29 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
                     hideHedge={tradeMode === 'hedgeless_double_collateral'}
                   />
                 ) : null}
-              </LiveOfferOverview>
-            }
-            wideLayout
+                {routeUnavailable && (
+                  <div
+                    role="status"
+                    data-testid="route-unavailable-notice"
+                    className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2"
+                  >
+                    <p className="text-[0.7rem] font-semibold text-amber-600">{routeUnavailable.title}</p>
+                    <p className="mt-0.5 text-[0.65rem] leading-snug text-muted">{routeUnavailable.detail}</p>
+                  </div>
+                )}
+              </>
+            )}
             amountUnit={amountUnit}
             onAmountUnitChange={setAmountUnit}
           />
         </div>
       ) : (
         <>
-          <section aria-label="Basic information">
-            <div className="border-b border-border/70 pb-2 text-muted uppercase text-[0.62rem] tracking-widest font-semibold">Basic information</div>
-            <div className="pt-3"><LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} onAmountUnitChange={setAmountUnit} /></div>
+          <section aria-label="Offer information" className="flex flex-col gap-2">
+            <div className="border-b border-border/70 pb-2 text-[0.63rem] font-medium text-text">
+              Live offer <span className="text-muted">· ID {offer.offer_id || offer.id}</span>
+            </div>
+            <LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} />
           </section>
           <div className="text-muted text-[0.75rem]">No cost breakdown available for this offer.</div>
         </>

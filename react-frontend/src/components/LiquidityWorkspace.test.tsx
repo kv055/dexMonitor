@@ -266,12 +266,15 @@ describe('LiquidityWorkspace', () => {
     expect(screen.getAllByText('0 BTC')).toHaveLength(4);
     expect(screen.queryByText('no LND pool required')).toBeNull();
     expect(screen.getAllByText('0 BTC')).toHaveLength(4);
+    expect(screen.getByText('CEX → DEX wallet/contract')).toBeTruthy();
+    expect(screen.getByText('CEX → Mainnet Hub → DEX wallet/contract')).toBeTruthy();
+    expect(screen.getByText('CEX → Lightning → DEX wallet/contract')).toBeTruthy();
   });
 
-  it('shows the routing matrix totals and only the enabled profiles', async () => {
+  it('shows only Hub and Swap with pool-funded descriptions in hedgeless mode', async () => {
     vi.mocked(fetchTransactionalLiquiditySettings).mockResolvedValueOnce(liquiditySettings({
       trade_mode: 'hedgeless_double_collateral',
-      supported_routing_profiles: ['Direct_main2main', 'Swap_main2lightning'],
+      supported_routing_profiles: [...ALL_ROUTING_PROFILES],
     }));
 
     renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'bid', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
@@ -284,10 +287,12 @@ describe('LiquidityWorkspace', () => {
     expect(within(requirements).getByText('300 EUR')).toBeTruthy();
     expect(within(requirements).getByText('100 EUR')).toBeTruthy();
     expect(within(requirements).getByText('0.004 BTC')).toBeTruthy();
-    expect(screen.getByText('CEX → DEX wallet')).toBeTruthy();
-    expect(screen.getByText('CEX → Lightning → DEX wallet')).toBeTruthy();
-    expect(screen.queryByText('CEX → Mainnet Hub → DEX wallet')).toBeNull();
-    expect(screen.getByRole('img', { name: 'Direct requirements met' })).toBeTruthy();
+    expect(screen.getByText('Hub · Swap')).toBeTruthy();
+    expect(screen.queryByText('CEX → DEX wallet/contract')).toBeNull();
+    expect(screen.getByText('Pool → DEX wallet/contract → Pool refill')).toBeTruthy();
+    expect(screen.getByText('Pool Lightning swap → DEX wallet/contract → Pool refill')).toBeTruthy();
+    expect(screen.queryByRole('img', { name: /Direct requirements/ })).toBeNull();
+    expect(screen.getByRole('img', { name: 'Hub requirements met' })).toBeTruthy();
     expect(screen.getByRole('img', { name: 'Swap requirements met' })).toBeTruthy();
   });
 
@@ -302,10 +307,11 @@ describe('LiquidityWorkspace', () => {
 
     renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'bid', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
 
-    for (const profile of ['Direct', 'Hub', 'Swap']) {
+    for (const profile of ['Hub', 'Swap']) {
       const indicator = await screen.findByRole('img', { name: `${profile} requirements not met` });
       expect(indicator.closest('article')?.classList.contains('is-blocked')).toBe(true);
     }
+    expect(screen.queryByRole('img', { name: /Direct requirements/ })).toBeNull();
   });
 
   it('switches to hedgeless mode and uses the fiat target converted to BTC for LND and Lightning', async () => {
@@ -318,8 +324,14 @@ describe('LiquidityWorkspace', () => {
 
     await screen.findByText('EUR 100');
     await user.click(screen.getByRole('button', { name: 'Edit' }));
+    expect(screen.getByRole('button', { name: 'Direct routing' })).toBeTruthy();
     await user.selectOptions(screen.getByLabelText('Trade mode'), 'hedgeless_double_collateral');
+    expect(screen.queryByRole('button', { name: 'Direct routing' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({
+      trade_mode: 'hedgeless_double_collateral',
+      supported_routing_profiles: ['Hub_main2main', 'Swap_main2lightning'],
+    }));
     expect(await screen.findAllByText('0.002 BTC')).toHaveLength(2);
     expect(screen.queryByText('fiat target in BTC')).toBeNull();
   });

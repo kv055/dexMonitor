@@ -9,24 +9,95 @@ import (
 	"testing"
 )
 
-func TestLegacyStrictServerRejectsContractViolation(t *testing.T) {
-	server, err := newLegacyStrictServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte("null"))
-	}))
-	if err != nil {
-		t.Fatalf("newLegacyStrictServer() error = %v", err)
+func TestLegacyStrictServerRejectsContractViolationForEveryJSONSuccess(t *testing.T) {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+		status int
+	}{
+		{name: "postApiAuthLogin", method: "POST", path: "/api/auth/login", status: 200},
+		{name: "postApiAuthLogout", method: "POST", path: "/api/auth/logout", status: 200},
+		{name: "getApiAuthMe", method: "GET", path: "/api/auth/me", status: 200},
+		{name: "postApiAuthRegister", method: "POST", path: "/api/auth/register", status: 200},
+		{name: "getApiAuthRegistrationAvailable", method: "GET", path: "/api/auth/registration_available", status: 200},
+		{name: "postApiDashboardAnalytics", method: "POST", path: "/api/dashboard/analytics", status: 200},
+		{name: "getApiGeneralStatsLifetimes", method: "GET", path: "/api/general_stats/lifetimes", status: 200},
+		{name: "getApiGeneralStatsOverview", method: "GET", path: "/api/general_stats/overview", status: 200},
+		{name: "getApiGeneralStatsPastPremiums", method: "GET", path: "/api/general_stats/past_premiums", status: 200},
+		{name: "getApiGeneralStatsPaymentMethods", method: "GET", path: "/api/general_stats/payment_methods", status: 200},
+		{name: "getApiOhlc", method: "GET", path: "/api/ohlc", status: 200},
+		{name: "getApiPastOffers", method: "GET", path: "/api/past_offers", status: 200},
+		{name: "getApiPastOffersIdLifecycle", method: "GET", path: "/api/past_offers/1/lifecycle", status: 200},
+		{name: "getApiPastOrderStats", method: "GET", path: "/api/past_order_stats", status: 200},
+		{name: "getApiPastProfitableOrders", method: "GET", path: "/api/past_profitable_orders", status: 200},
+		{name: "getApiPaymentMethodGroups", method: "GET", path: "/api/payment_method_groups", status: 200},
+		{name: "getApiPhonePushSetup", method: "GET", path: "/api/phone-push/setup", status: 200},
+		{name: "postApiPhonePushSetupReveal", method: "POST", path: "/api/phone-push/setup/reveal", status: 200},
+		{name: "getApiSnapshotLog", method: "GET", path: "/api/snapshot-log", status: 200},
+		{name: "getApiSnapshotLogId", method: "GET", path: "/api/snapshot-log/1", status: 200},
+		{name: "postApiStatistics", method: "POST", path: "/api/statistics", status: 200},
+		{name: "getApiStats", method: "GET", path: "/api/stats", status: 200},
+		{name: "getApiTradingAccounts", method: "GET", path: "/api/trading/accounts", status: 200},
+		{name: "postApiTradingAccounts", method: "POST", path: "/api/trading/accounts", status: 200},
+		{name: "putApiTradingAccountsPriorities", method: "PUT", path: "/api/trading/accounts/priorities", status: 200},
+		{name: "deleteApiTradingAccountsId", method: "DELETE", path: "/api/trading/accounts/1", status: 200},
+		{name: "putApiTradingAccountsId", method: "PUT", path: "/api/trading/accounts/1", status: 200},
+		{name: "postApiTradingAccountsIdApiKeys", method: "POST", path: "/api/trading/accounts/1/api_keys", status: 200},
+		{name: "postApiTradingAccountsIdBankAccounts", method: "POST", path: "/api/trading/accounts/1/bank_accounts", status: 200},
+		{name: "getApiTradingAccountsIdCexBalances", method: "GET", path: "/api/trading/accounts/1/cex/balances", status: 200},
+		{name: "getApiTradingAccountsIdCexDepositAddresses", method: "GET", path: "/api/trading/accounts/1/cex/deposit-addresses", status: 200},
+		{name: "getApiTradingAccountsIdCexHedgePositions", method: "GET", path: "/api/trading/accounts/1/cex/hedge-positions", status: 200},
+		{name: "getApiTradingAccountsIdCexSpotTrades", method: "GET", path: "/api/trading/accounts/1/cex/spot-trades", status: 200},
+		{name: "getApiTradingAccountsIdCexWithdrawalAddresses", method: "GET", path: "/api/trading/accounts/1/cex/withdrawal-addresses", status: 200},
+		{name: "getApiTradingAccountsIdCredentials", method: "GET", path: "/api/trading/accounts/1/credentials", status: 200},
+		{name: "postApiTradingAccountsIdHealthCheck", method: "POST", path: "/api/trading/accounts/1/health_check", status: 200},
+		{name: "postApiTradingAccountsIdPasskeyCredentials", method: "POST", path: "/api/trading/accounts/1/passkey_credentials", status: 200},
+		{name: "getApiTradingAccountsIdSecrets", method: "GET", path: "/api/trading/accounts/1/secrets", status: 200},
+		{name: "postApiTradingAccountsIdSeeds", method: "POST", path: "/api/trading/accounts/1/seeds", status: 200},
+		{name: "postApiTradingAccountsIdTotpSecrets", method: "POST", path: "/api/trading/accounts/1/totp_secrets", status: 200},
+		{name: "deleteApiTradingApiKeysId", method: "DELETE", path: "/api/trading/api_keys/1", status: 200},
+		{name: "putApiTradingApiKeysId", method: "PUT", path: "/api/trading/api_keys/1", status: 200},
+		{name: "deleteApiTradingBankAccountsId", method: "DELETE", path: "/api/trading/bank_accounts/1", status: 200},
+		{name: "putApiTradingBankAccountsId", method: "PUT", path: "/api/trading/bank_accounts/1", status: 200},
+		{name: "deleteApiTradingPasskeyCredentialsId", method: "DELETE", path: "/api/trading/passkey_credentials/1", status: 200},
+		{name: "putApiTradingPasskeyCredentialsId", method: "PUT", path: "/api/trading/passkey_credentials/1", status: 200},
+		{name: "getApiTradingPaymentMethods", method: "GET", path: "/api/trading/payment_methods", status: 200},
+		{name: "deleteApiTradingPaymentMethodsId", method: "DELETE", path: "/api/trading/payment_methods/1", status: 200},
+		{name: "putApiTradingPaymentMethodsId", method: "PUT", path: "/api/trading/payment_methods/1", status: 200},
+		{name: "postApiTradingPaymentMethodsIdAliasesPromote", method: "POST", path: "/api/trading/payment_methods/1/aliases/promote", status: 200},
+		{name: "getApiTradingPaymentMethodsIdChatTemplates", method: "GET", path: "/api/trading/payment_methods/1/chat_templates", status: 200},
+		{name: "deleteApiTradingPaymentMethodsIdChatTemplatesExchange", method: "DELETE", path: "/api/trading/payment_methods/1/chat_templates/1", status: 200},
+		{name: "putApiTradingPaymentMethodsIdChatTemplatesExchange", method: "PUT", path: "/api/trading/payment_methods/1/chat_templates/1", status: 200},
+		{name: "postApiTradingPaymentMethodsIdDegradeToAliasProviderId", method: "POST", path: "/api/trading/payment_methods/1/degrade-to-alias/1", status: 200},
+		{name: "deleteApiTradingSeedsId", method: "DELETE", path: "/api/trading/seeds/1", status: 200},
+		{name: "putApiTradingSeedsId", method: "PUT", path: "/api/trading/seeds/1", status: 200},
+		{name: "deleteApiTradingTotpSecretsId", method: "DELETE", path: "/api/trading/totp_secrets/1", status: 200},
+		{name: "putApiTradingTotpSecretsId", method: "PUT", path: "/api/trading/totp_secrets/1", status: 200},
+		{name: "getApiTradingWalletAddresses", method: "GET", path: "/api/trading/wallet_addresses", status: 200},
+		{name: "getHealth", method: "GET", path: "/health", status: 200},
 	}
-	request := httptest.NewRequest("POST", "/api/auth/login", nil)
-	response := httptest.NewRecorder()
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			server, err := newLegacyStrictServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(test.status)
+				_, _ = w.Write([]byte("null"))
+			}))
+			if err != nil {
+				t.Fatalf("newLegacyStrictServer() error = %v", err)
+			}
+			request := httptest.NewRequest(test.method, test.path, nil)
+			response := httptest.NewRecorder()
 
-	err = server.serveLegacy(response, &legacyRequest{request: request})
-	if err == nil || !strings.Contains(err.Error(), "violates generated OpenAPI contract") {
-		t.Fatalf("serveLegacy() error = %v, want contract violation", err)
-	}
-	if response.Body.Len() != 0 || response.Header().Get("Content-Type") != "" {
-		t.Fatalf("invalid response leaked to client: headers = %v, body = %q", response.Header(), response.Body.String())
+			err = server.serveLegacy(response, &legacyRequest{request: request})
+			if err == nil || !strings.Contains(err.Error(), "violates generated OpenAPI contract") {
+				t.Fatalf("serveLegacy() error = %v, want contract violation", err)
+			}
+			if response.Body.Len() != 0 || response.Header().Get("Content-Type") != "" {
+				t.Fatalf("invalid response leaked to client: headers = %v, body = %q", response.Header(), response.Body.String())
+			}
+		})
 	}
 }
 
