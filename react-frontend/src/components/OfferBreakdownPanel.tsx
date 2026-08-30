@@ -56,6 +56,22 @@ const CONGESTION_COLOR: Record<string, string> = {
   high: 'text-red',
 };
 
+function formatVenueName(name?: string | null): string {
+  const venue = (name ?? '').trim().replaceAll('_', ' ');
+  return !venue || venue === '—' ? '' : venue;
+}
+
+function FeeVenueLabel({ label, venue }: { label: string; venue?: string }) {
+  if (!venue) return <>{label}</>;
+  return (
+    <>
+      {label}
+      <span className="px-1 text-border">|</span>
+      <span className="text-text">{venue}</span>
+    </>
+  );
+}
+
 function Badge({ label, colorCls }: { label: string; colorCls?: string }) {
   return (
     <span className={`text-[0.6rem] px-1.5 py-px rounded-full border border-border bg-bg capitalize ${colorCls ?? 'text-muted'}`}>
@@ -413,7 +429,7 @@ export function CapitalRequiredSection({ capital, flat = false, heading = 'Capit
   const fiatCollateral = capital.fiat_collateral ?? capital.spot_notional;
 
   return (
-    <div className={`${flat ? 'border-t border-border pt-2.5' : 'rounded-lg border border-blue/30 bg-blue/5 px-3 py-2.5'} flex flex-col gap-1.5 text-[0.72rem]`}>
+    <div className={`${flat ? '' : 'rounded-lg border border-blue/30 bg-blue/5 px-3 py-2.5'} flex flex-col gap-1.5 text-[0.72rem]`}>
       <div className="flex items-center justify-between gap-2">
         <span className="text-muted uppercase text-[0.62rem] tracking-widest font-semibold">
           {heading}{isHedgeless ? ' · hedgeless' : ''}
@@ -488,7 +504,9 @@ export function CostBreakdownPanel({
   contextDetail,
   contextId,
   toolbar,
+  tradeModeToggle,
   routeControls,
+  routeNotice,
   showCapitalAndAbort = true,
   amountUnit: controlledAmountUnit,
   onAmountUnitChange,
@@ -500,15 +518,19 @@ export function CostBreakdownPanel({
   netPremiumPct: number | null;
   refPrice: number | null;
   offerPrice?: number | null;
-  /** Compact offer metadata displayed between route context and decision summary. */
+  /** Compact offer metadata displayed in the left-hand offer summary panel. */
   overview?: React.ReactNode;
   contextLabel?: string;
   contextDetail?: string | null;
   contextId?: string | number | null;
-  /** Scenario and trade-mode controls rendered inline with the effective route. */
+  /** Size-scenario controls rendered in the offer header. */
   toolbar?: React.ReactNode;
+  /** Hedgefull/Hedgeless switch rendered next to the Trade economics heading. */
+  tradeModeToggle?: React.ReactNode;
   /** Live-only controls that override the effective route used by the estimate. */
   routeControls?: React.ReactNode;
+  /** Warning shown when no CEX route could be priced. */
+  routeNotice?: React.ReactNode;
   // Live offers show these in the Trade Tracing panel's Preview tab instead
   // (where the trader is actually about to act on them); past offers have no
   // Trade Tracing panel, so they keep showing both here.
@@ -519,7 +541,7 @@ export function CostBreakdownPanel({
   costsUnavailable?: boolean;
 }) {
 	const { filters } = useFilters();
-	type BreakdownRow = { label: string; btc: number; pct: number; expandable?: 'network' | 'hedge' };
+	type BreakdownRow = { label: string; venue?: string; btc: number; pct: number; expandable?: 'network' | 'hedge' };
   const [networkFeeOpen, setNetworkFeeOpen] = useState(false);
   const [hedgeFeeOpen, setHedgeFeeOpen] = useState(false);
   const [internalAmountUnit, setInternalAmountUnit] = useState<'btc' | 'fiat'>('fiat');
@@ -531,13 +553,26 @@ export function CostBreakdownPanel({
   const isAsk = bd.trade_direction === 'ask';
   const numTxs = bd.num_network_txs ?? (isAsk ? 1 : 2);
   const networkFeeLabel = `Network routing cost${numTxs > 1 ? ` ×${numTxs} txs` : ''}`;
+  const routeCex = formatVenueName(bd.route_cex);
+  const routeDex = formatVenueName(bd.route_dex);
+  const routeMethodLabels: Record<string, string> = {
+    onchain_direct: 'direct on-chain',
+    onchain_hub: 'on-chain via hub wallet',
+    onchain_swap: 'submarine swap',
+    Direct_main2main: 'direct main→main',
+    Hub_main2main: 'hub main→main',
+    Swap_main2lightning: 'swap main→lightning',
+  };
+  const rawMethod = bd.routing_profile || bd.route_method || bd.network_fee_method || '';
+  const routeMethod = formatVenueName(routeMethodLabels[rawMethod] || rawMethod);
 
   const withdrawalRows: BreakdownRow[] = !isAsk
-    ? [{ label: 'CEX withdrawal', btc: bd.withdrawal_fee_btc, pct: bd.withdrawal_fee_pct }]
+    ? [{ label: 'CEX withdrawal', venue: routeCex, btc: bd.withdrawal_fee_btc, pct: bd.withdrawal_fee_pct }]
     : [];
   const hedgeRows: BreakdownRow[] = bd.hedge.fee_sum_btc > 0
     ? [{
-      label: `Hedge cost${bd.hedge.venue ? ` (${bd.hedge.venue.replace('_', ' ')})` : ''}`,
+      label: 'Hedge cost',
+      venue: formatVenueName(bd.hedge.venue),
       btc: bd.hedge.fee_sum_btc,
       pct: bd.hedge.fee_sum_pct,
       expandable: 'hedge',
@@ -550,24 +585,12 @@ export function CostBreakdownPanel({
   const routingTotalPct = bd.routing_fee_sum_pct ?? (bd.network_fee_pct + conversionPct);
 
   const rows: BreakdownRow[] = [
-    { label: 'CEX taker fee', btc: bd.cex_taker_fee_btc, pct: bd.cex_taker_fee_pct },
+    { label: 'CEX taker fee', venue: routeCex, btc: bd.cex_taker_fee_btc, pct: bd.cex_taker_fee_pct },
     ...withdrawalRows,
-    { label: networkFeeLabel, btc: routingTotalBTC, pct: routingTotalPct, ...(hasNetworkFeeDetail ? { expandable: 'network' as const } : {}) },
+    { label: networkFeeLabel, venue: routeMethod, btc: routingTotalBTC, pct: routingTotalPct, ...(hasNetworkFeeDetail ? { expandable: 'network' as const } : {}) },
     ...hedgeRows,
-    { label: 'DEX platform fee', btc: bd.dex_fee_btc, pct: bd.dex_fee_pct },
+    { label: 'DEX platform fee', venue: routeDex, btc: bd.dex_fee_btc, pct: bd.dex_fee_pct },
   ];
-  const routeCex = bd.route_cex || '—';
-  const routeDex = bd.route_dex || '—';
-  const routeMethodLabels: Record<string, string> = {
-    onchain_direct: 'direct on-chain',
-    onchain_hub: 'on-chain via hub wallet',
-    onchain_swap: 'submarine swap',
-    Direct_main2main: 'direct main→main',
-    Hub_main2main: 'hub main→main',
-    Swap_main2lightning: 'swap main→lightning',
-  };
-  const rawMethod = bd.routing_profile || bd.route_method || bd.network_fee_method || '';
-  const routeMethod = routeMethodLabels[rawMethod] || rawMethod || '—';
   const profitPct = costsUnavailable ? null : (bd.estimated_profit_pct ?? netPremiumPct);
   const profitBtc = costsUnavailable
     ? null
@@ -589,6 +612,7 @@ export function CostBreakdownPanel({
   const hasCapital = showCapitalAndAbort && !!bd.capital && bd.capital.total_fiat > 0;
   const hasAbortCost = showCapitalAndAbort && !!abortCost && abortCost.btc_amount > 0;
   const hasSupportingColumn = hasCapital || hasAbortCost;
+  const hasRightColumn = hasSupportingColumn || !!routeControls;
   const amountButton = (unit: 'fiat' | 'btc', label: string) => (
     <button
       type="button"
@@ -600,69 +624,74 @@ export function CostBreakdownPanel({
     </button>
   );
 
+  const summaryRow = (label: string, value: React.ReactNode, valueCls = 'text-text') => (
+    <div className="flex items-start justify-between gap-3">
+      <span className="shrink-0 text-[0.58rem] font-semibold uppercase tracking-widest text-muted">{label}</span>
+      <span className={`min-w-0 text-right text-[0.68rem] font-semibold mono-nums ${valueCls}`}>{value}</span>
+    </div>
+  );
+  const panelClass = 'min-w-0 rounded-lg border border-border/70 bg-bg/30 px-3 py-2.5';
+
   return (
     <div className="flex flex-col gap-3 text-[0.72rem]">
-      <header className="flex flex-wrap items-center justify-between gap-x-4 gap-y-1.5 border-b border-border/70 pb-1.5 pr-8">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className={`shrink-0 rounded px-1.5 py-0.5 text-[0.6rem] font-semibold ${isAsk ? 'bg-orange-900/30 text-orange-400' : 'bg-blue-900/30 text-blue-400'}`}>
-            {isAsk ? 'Ask side' : 'Bid side'}
-          </span>
-          <span className="truncate font-medium text-text">{routeCex} → {routeDex}</span>
-          <span className="truncate text-accent">· {routeMethod}</span>
-          {toolbar}
-        </div>
-        <div className="flex shrink-0 items-center gap-2">
-          <span className="inline-flex items-center rounded border border-border bg-bg/70 p-0.5">
-            {amountButton('fiat', filters.fiat)}
-            {amountButton('btc', 'BTC')}
-          </span>
-          {(contextLabel || contextId != null) && (
-            <div className="text-right text-[0.63rem] font-medium text-text" title={contextDetail ?? undefined}>
-              {contextLabel}
-              {contextId != null && <span className="text-muted"> · ID {contextId}</span>}
+      {routeNotice}
+
+      <div className={`grid items-start gap-4 pr-8 ${hasRightColumn
+        ? 'lg:grid-cols-[minmax(13rem,0.7fr)_minmax(0,1.05fr)_minmax(14rem,0.6fr)]'
+        : 'lg:grid-cols-[minmax(13rem,0.7fr)_minmax(0,1.4fr)]'}`}
+      >
+        <section aria-label="Decision summary" className={`${panelClass} flex flex-col gap-2.5`}>
+          <header className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[0.6rem] font-semibold ${isAsk ? 'bg-orange-900/30 text-orange-400' : 'bg-blue-900/30 text-blue-400'}`}>
+                {isAsk ? 'Ask side' : 'Bid side'}
+              </span>
+              <span className="inline-flex items-center rounded border border-border bg-bg/70 p-0.5">
+                {amountButton('fiat', filters.fiat)}
+                {amountButton('btc', 'BTC')}
+              </span>
             </div>
-          )}
-        </div>
-      </header>
-
-      {routeControls}
-
-      <section aria-label="Decision summary" className="flex flex-wrap items-start gap-x-4 gap-y-2 border-b border-border/70 pb-2">
-        {overview}
-        <div className="min-w-[6rem] flex-1">
-          <div className="text-[0.58rem] font-semibold uppercase tracking-widest text-muted">Estimated profit</div>
-          <div className={`mt-0.5 text-[0.78rem] font-bold mono-nums ${profitCls}`}>
-            {profitBtc == null
+            {(contextLabel || contextId != null) && (
+              <div className="text-[0.63rem] font-medium text-text" title={contextDetail ?? undefined}>
+                {contextLabel}
+                {contextId != null && <span className="text-muted"> · ID {contextId}</span>}
+              </div>
+            )}
+            {toolbar}
+          </header>
+          {overview}
+          <div className="flex flex-col gap-2 border-t border-border/70 pt-2.5">
+          {summaryRow(
+            'Estimated profit',
+            profitBtc == null
               ? '—'
               : amountUnit === 'btc'
                 ? `${fmtSignedBtc(profitBtc)} BTC`
-                : fmtFiatAmount(fiatValue(profitBtc), filters.fiat)}
+                : fmtFiatAmount(fiatValue(profitBtc), filters.fiat),
+            profitCls,
+          )}
+          {summaryRow('Return', profitPct != null ? fmtPct(profitPct) : '—', profitCls)}
+          {summaryRow(
+            'Trade value',
+            amountUnit === 'btc' ? `${fmt8(bd.btc_amount)} BTC` : formatFiat(tradeValueFiat, filters.fiat),
+          )}
+          {summaryRow(
+            'Capital required',
+            capitalTotal != null && capitalTotal > 0 ? formatFiat(capitalTotal, filters.fiat) : '—',
+          )}
           </div>
-        </div>
-        <div className="min-w-[4.5rem] flex-[0.7]">
-          <div className="text-[0.58rem] font-semibold uppercase tracking-widest text-muted">Return</div>
-          <div className={`mt-0.5 text-[0.75rem] font-semibold mono-nums ${profitCls}`}>{profitPct != null ? fmtPct(profitPct) : '—'}</div>
-        </div>
-        <div className="min-w-[6rem] flex-1">
-          <div className="text-[0.58rem] font-semibold uppercase tracking-widest text-muted">Trade value</div>
-          <div className="mt-0.5 text-[0.75rem] font-semibold text-text mono-nums">
-            {amountUnit === 'btc' ? `${fmt8(bd.btc_amount)} BTC` : formatFiat(tradeValueFiat, filters.fiat)}
-          </div>
-        </div>
-        <div className="min-w-[7rem] flex-1">
-          <div className="text-[0.58rem] font-semibold uppercase tracking-widest text-muted">Capital required</div>
-          <div className="mt-0.5 text-[0.75rem] font-semibold text-text mono-nums">
-            {capitalTotal != null && capitalTotal > 0 ? formatFiat(capitalTotal, filters.fiat) : '—'}
-          </div>
-        </div>
-      </section>
+        </section>
 
-      <div className={`grid items-start gap-4 ${hasSupportingColumn ? 'lg:grid-cols-[minmax(0,1.7fr)_minmax(15rem,0.75fr)]' : ''}`}>
-        <section aria-label="Trade economics" className="min-w-0">
+        <section aria-label="Trade economics" className={panelClass}>
           <table className="w-full">
         <thead>
           <tr className="border-b border-border">
-            <th className="text-left text-muted font-semibold pb-1.5 pr-3 text-[0.62rem] uppercase tracking-widest">Trade economics</th>
+            <th className="text-left text-muted font-semibold pb-1.5 pr-3 text-[0.62rem] uppercase tracking-widest">
+              <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 font-normal normal-case tracking-normal">
+                <span className="font-semibold uppercase tracking-widest">Trade economics</span>
+                {tradeModeToggle}
+              </span>
+            </th>
             <th className="text-right font-normal pb-1.5 text-[0.63rem]">
               <span className="inline-flex items-center rounded border border-border bg-bg/70 p-0.5">
                 <button type="button" aria-pressed={tableUnit === 'fiat'} onClick={() => setTableUnit('fiat')}
@@ -694,10 +723,10 @@ export function CostBreakdownPanel({
                   <td className="pr-3 py-1 text-muted rounded-l">
                     {isExpandable ? (
                       <span className="flex items-center gap-1.5">
-                        {r.label}
+                        <FeeVenueLabel label={r.label} venue={r.venue} />
                         <span className={`text-[0.6rem] text-muted transition-transform duration-150 inline-block ${(isNetworkFee ? networkFeeOpen : hedgeFeeOpen) ? 'rotate-180' : ''}`}>▾</span>
                       </span>
-                    ) : r.label}
+                    ) : <FeeVenueLabel label={r.label} venue={r.venue} />}
                   </td>
                   <td className="py-1 text-right text-text mono-nums rounded-r">{tableValue(r.btc, r.pct)}</td>
                   <td className="py-1 pl-3 text-right text-muted mono-nums">{fmtPct(r.pct)}</td>
@@ -732,16 +761,27 @@ export function CostBreakdownPanel({
           </table>
         </section>
 
-        {hasSupportingColumn && <aside aria-label="Capital requirements" className="flex min-w-0 flex-col gap-2">
-          {hasCapital && (
-            <CapitalRequiredSection capital={bd.capital} flat heading="Capital allocation" showTotal={false} />
-          )}
-          {hasAbortCost && (
-            <div className="border-t border-border pt-2.5">
-              <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
-            </div>
-          )}
-        </aside>}
+        {hasRightColumn && (
+          <div className="flex min-w-0 flex-col gap-4">
+            {hasSupportingColumn && (
+              <aside aria-label="Capital requirements" className={`${panelClass} flex flex-col gap-2`}>
+                {hasCapital && (
+                  <CapitalRequiredSection capital={bd.capital} flat heading="Capital allocation" showTotal={false} />
+                )}
+                {hasAbortCost && (
+                  <div className="border-t border-border pt-2.5">
+                    <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
+                  </div>
+                )}
+              </aside>
+            )}
+            {routeControls && (
+              <section aria-label="Route analysis overrides" className={panelClass}>
+                {routeControls}
+              </section>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );

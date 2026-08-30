@@ -70,7 +70,9 @@ export default defineConfig({
   plugins: [react(), tailwindcss()],
   server: {
     proxy: {
-      '/ws/live_offers':        quietWsProxy('ws://localhost:5010'),
+      // The unified API compares the WebSocket Origin with Host. Preserve the
+      // browser-facing localhost:5173 host so legitimate dev connections pass.
+      '/ws/live_offers':        { ...quietWsProxy('ws://localhost:5010'), changeOrigin: false },
       '/api/live_offers':       'http://localhost:5010',
       '/api/trade_cost_config': 'http://localhost:5010',
       '/api/cex_permissions': 'http://localhost:5010',

@@ -937,19 +937,18 @@ function formatRange(minLabel: string, maxLabel: string): string | null {
   return `up to ${maxLabel}`;
 }
 
-function PastOfferMetric({ label, value, detail, hint, className = 'min-w-[6rem] flex-1' }: {
+function PastOfferMetric({ label, value, detail, hint }: {
   label: ReactNode;
   value: string;
   detail?: string;
   hint?: string;
-  className?: string;
 }) {
   return (
-    <div className={`min-w-0 ${className}`}>
-      <dt className="mb-0.5 flex items-center gap-1.5 text-[0.55rem] font-semibold uppercase tracking-widest text-muted">{label}</dt>
-      <dd className="min-w-0 break-words text-[0.68rem] font-medium leading-snug text-text mono-nums tabular-nums" title={hint ?? value}>
+    <div className="flex items-start justify-between gap-3">
+      <dt className="shrink-0 text-[0.58rem] font-semibold uppercase tracking-widest text-muted">{label}</dt>
+      <dd className="min-w-0 text-right text-[0.68rem] font-medium leading-snug text-text mono-nums tabular-nums" title={hint ?? value}>
         {value}
-        {detail && <span className="font-normal text-muted"> · {detail}</span>}
+        {detail && <div className="font-normal text-muted">{detail}</div>}
       </dd>
     </div>
   );
@@ -982,20 +981,18 @@ function PastOfferOverview({ order, offer, fiat, timezone, amountUnit }: {
       : fmtFiat(refPrice == null ? null : avgObservedBtc * refPrice, fiat);
 
   return (
-      <dl className="contents">
-        <PastOfferMetric label="Payment" value={order.payment_methods?.join(', ') || '—'} className="min-w-[5rem] flex-[0.7]" />
+      <dl className="flex flex-col gap-2">
+        <PastOfferMetric label="Payment" value={order.payment_methods?.join(', ') || '—'} />
         <PastOfferMetric
           label="Observed"
           value={`${formatTime(firstSeen, timezone)} – ${formatTime(lastSeen, timezone)}`}
           detail={`${formatDuration(firstSeen, lastSeen)}${getPriceType(offer) ? ` · ${getPriceType(offer)} price` : ''}`}
-          className="min-w-[10rem] flex-[1.4]"
         />
         {(offerPrice > 0 || refPrice != null) && (
           <PastOfferMetric
             label="Offer / reference"
             value={offerPrice > 0 ? fmtFiat(offerPrice, fiat) : '—'}
             detail={refPrice != null ? `ref ${fmtFiat(refPrice, fiat)}` : undefined}
-            className="min-w-[8rem] flex-1"
           />
         )}
         {volumeRange != null && (
@@ -1004,7 +1001,6 @@ function PastOfferOverview({ order, offer, fiat, timezone, amountUnit }: {
             value={volumeRange}
             detail={averageVolume != null ? `${averageVolume} average` : undefined}
             hint="Offered range and lifecycle average while the offer was live"
-            className="min-w-[7rem] flex-1"
           />
         )}
       </dl>
@@ -1125,14 +1121,13 @@ function LiveOfferOverview({ offer, fiat, amountUnit }: {
   const btcRange = formatRange(fmtBTC(getBtcMin(offer)), fmtBTC(getBtcMax(offer)));
 
   return (
-      <dl className="contents">
-        <PastOfferMetric label="Payment" value={offer.payment_methods?.join(', ') || '—'} className="min-w-[5rem] flex-[0.7]" />
+      <dl className="flex flex-col gap-2">
+        <PastOfferMetric label="Payment" value={offer.payment_methods?.join(', ') || '—'} />
         {(offerPrice > 0 || refPrice != null) && (
           <PastOfferMetric
             label="Offer / reference"
             value={offerPrice > 0 ? fmtFiat(offerPrice, fiat) : '—'}
             detail={refPrice != null ? `ref ${fmtFiat(refPrice, fiat)}` : undefined}
-            className="min-w-[8rem] flex-1"
           />
         )}
         {(amountUnit === 'btc' ? btcRange : fiatRange) != null && (
@@ -1140,7 +1135,6 @@ function LiveOfferOverview({ offer, fiat, amountUnit }: {
             label="Volume"
             value={amountUnit === 'btc' ? btcRange! : fiatRange!}
             hint="Offer volume limits"
-            className="min-w-[7rem] flex-1"
           />
         )}
       </dl>
@@ -1174,9 +1168,9 @@ function TradeModeToggle({ mode, onChange, hasHedgeless, hedgefullAvailable = tr
     </button>
   );
   return (
-    <div className="flex items-center gap-1.5 self-start">
+    <div className="flex items-center gap-1.5">
       <span className="shrink-0 text-[0.58rem] uppercase tracking-wide text-muted">Mode</span>
-      <span className="inline-flex items-center rounded border border-border bg-surface/70 p-0.5">
+      <span role="group" aria-label="Trade mode" className="inline-flex items-center rounded border border-border bg-surface/70 p-0.5">
         {btn('hedgefull_single_collateral', 'Hedgefull', !hedgefullAvailable)}
         {btn('hedgeless_double_collateral', 'Hedgeless')}
       </span>
@@ -1193,10 +1187,10 @@ function ManualRouteControls({ options, selection, onChange, isAsk, hideHedge = 
 }) {
   const selectClass = 'min-w-0 rounded border border-border bg-surface px-1.5 py-1 text-[0.62rem] text-text';
   return (
-    <details className="border-b border-border/70 pb-1.5 text-[0.62rem]">
-      <summary className="cursor-pointer text-muted hover:text-text">Route analysis overrides</summary>
-      <p className="mt-1 text-[0.58rem] leading-snug text-muted">Overrides this estimate and pre-trade checks; live ranking keeps the automatic route.</p>
-      <div className={`mt-1.5 grid gap-2 ${hideHedge ? '' : 'sm:grid-cols-2'}`}>
+    <div className="flex flex-col gap-2 text-[0.62rem]">
+      <div className="text-[0.62rem] font-semibold uppercase tracking-widest text-muted">Route analysis overrides</div>
+      <p className="text-[0.58rem] leading-snug text-muted">Overrides this estimate and pre-trade checks; live ranking keeps the automatic route.</p>
+      <div className="grid gap-2">
         <label className="grid gap-0.5 text-[0.58rem] text-muted">Spot CEX{isAsk ? '' : ' + withdrawal'}
           <select className={selectClass} value={selection.spot} onChange={event => onChange({ ...selection, spot: event.target.value })}>
             <option value="auto">Auto (cheapest)</option>
@@ -1216,7 +1210,7 @@ function ManualRouteControls({ options, selection, onChange, isAsk, hideHedge = 
           </label>
         )}
       </div>
-    </details>
+    </div>
   );
 }
 
@@ -1264,8 +1258,7 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
             offerPrice={getOfferPrice(offer)}
             costsUnavailable={!!routeUnavailable}
             showCapitalAndAbort={!routeUnavailable}
-            toolbar={<>
-              {(hasCappedScenario(offer) || hasMinScenario(offer)) && (
+            toolbar={(hasCappedScenario(offer) || hasMinScenario(offer)) ? (
               <SizeToggle
                 mode={effectiveMode}
                 onModeChange={onScenarioModeChange}
@@ -1274,40 +1267,37 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
                 minBtc={getMinTradeSizeBtc(offer)}
                 refPrice={getRefPrice(offer)}
               />
-              )}
+            ) : undefined}
+            tradeModeToggle={
               <TradeModeToggle
                 mode={tradeMode}
                 onChange={onTradeModeChange}
                 hasHedgeless={showTradeModeToggle}
                 hedgefullAvailable={hedgeAvailable}
               />
-            </>}
+            }
             overview={<LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} />}
             contextLabel="Live offer"
             contextId={offer.offer_id || offer.id}
-            routeControls={(
-              <>
-                {options ? (
-                  <ManualRouteControls
-                    options={options}
-                    selection={manualSelection}
-                    onChange={onManualSelectionChange}
-                    isAsk={displayedBreakdown.trade_direction === 'ask'}
-                    hideHedge={tradeMode === 'hedgeless_double_collateral'}
-                  />
-                ) : null}
-                {routeUnavailable && (
-                  <div
-                    role="status"
-                    data-testid="route-unavailable-notice"
-                    className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2"
-                  >
-                    <p className="text-[0.7rem] font-semibold text-amber-600">{routeUnavailable.title}</p>
-                    <p className="mt-0.5 text-[0.65rem] leading-snug text-muted">{routeUnavailable.detail}</p>
-                  </div>
-                )}
-              </>
-            )}
+            routeControls={options ? (
+              <ManualRouteControls
+                options={options}
+                selection={manualSelection}
+                onChange={onManualSelectionChange}
+                isAsk={displayedBreakdown.trade_direction === 'ask'}
+                hideHedge={tradeMode === 'hedgeless_double_collateral'}
+              />
+            ) : undefined}
+            routeNotice={routeUnavailable ? (
+              <div
+                role="status"
+                data-testid="route-unavailable-notice"
+                className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2.5 py-2"
+              >
+                <p className="text-[0.7rem] font-semibold text-amber-600">{routeUnavailable.title}</p>
+                <p className="mt-0.5 text-[0.65rem] leading-snug text-muted">{routeUnavailable.detail}</p>
+              </div>
+            ) : undefined}
             amountUnit={amountUnit}
             onAmountUnitChange={setAmountUnit}
           />
