@@ -69,14 +69,44 @@ export function getSellerRatingScore(offer: Offer): number | null {
   return score;
 }
 
-/** True only for a confirmed normalized score of exactly 0 — not "no rating". */
+/** True only for a confirmed-bad score of exactly 0 (banned / wrecked feedback).
+ * Unrated, unstaked Bisq 2, RoboSats bond-only, and leftover stake_bonded rows
+ * are not hidden. */
 export function hasZeroTrustScore(offer: Offer): boolean {
   const confidence = offer.seller_rating_confidence;
-  if (confidence == null || confidence === 'unavailable') {
+  if (
+    confidence !== 'account_signing' &&
+    confidence !== 'feedback_new' &&
+    confidence !== 'feedback_verified'
+  ) {
     return false;
   }
   const score = getSellerRatingScore(offer);
   return score === 0;
+}
+
+/** Taker-facing security deposit / fidelity bond as a fraction (e.g. 0.03). */
+export function getSecurityDepositPct(offer: Offer): number | null {
+  const candidates = [
+    offer.analysis?.full_volume?.capital?.security_deposit_pct,
+    offer.analysis?.capped_volume?.capital?.security_deposit_pct,
+    offer.analysis?.min_volume?.capital?.security_deposit_pct,
+  ];
+  for (const value of candidates) {
+    if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+      return value;
+    }
+  }
+  return null;
+}
+
+/** Bond fraction to show in the reputation column (RoboSats or leftover stake_bonded). */
+export function getReputationBondPct(offer: Offer): number | null {
+  const confidence = offer.seller_rating_confidence;
+  if (offer.exchange !== 'robosats' && confidence !== 'stake_bonded') {
+    return null;
+  }
+  return getSecurityDepositPct(offer);
 }
 
 // Which precomputed trade-size scenario to read: the offer's full size, the

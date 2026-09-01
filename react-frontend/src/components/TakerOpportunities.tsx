@@ -24,6 +24,7 @@ import {
   getPriceType,
   getRawPremiumPercent,
   getRefPrice,
+  getReputationBondPct,
   getTradeSizeBtc,
   hasCappedScenario,
   hasMinScenario,
@@ -1492,7 +1493,7 @@ function LiveOffersList({ offers, observedLiveCount, fiat, timezone, loading, ch
                 <TradeRowMetric value={premium == null ? '—' : `${premium.toFixed(1)}%`} valueClassName={premiumClass(premium)} />
                 <span className="min-w-0 truncate font-medium text-text" title={offer.payment_methods?.join(', ') || 'Unknown method'}>{offer.payment_methods?.join(', ') || 'Unknown method'}</span>
                 <TradeRowMetric value={formatDateTimeLabel(getFirstSeen(offer) ?? '', timezone)} />
-                <span className="min-w-0 truncate"><SellerRatingBadge score={offer.seller_rating_score} confidence={offer.seller_rating_confidence} compact /></span>
+                <span className="min-w-0 truncate"><SellerRatingBadge score={offer.seller_rating_score} confidence={offer.seller_rating_confidence} compact bondPct={getReputationBondPct(offer)} /></span>
                 <TradeRowMetric value={formatDuration(getFirstSeen(offer), new Date().toISOString())} />
                 <TradeRowMetric value={sizeUnit === 'btc' ? fmtBTC(tradeSize) : fmtFiat(tradeSize != null && getRefPrice(offer) != null ? tradeSize * getRefPrice(offer)! : null, fiat)} />
                 <TradeRowMetric value={netProfitUnit === 'btc' ? fmtBTC(netProfitBtc) : fmtFiat(netProfitFiat, fiat)} valueClassName="text-green" />

@@ -133,6 +133,16 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await expect(bidPill).toHaveClass(/text-accent/);
   });
 
+  test('fiat dropdown rows show live raw-premium offer counts', async ({ page }) => {
+    const cp = controlPanel(page);
+    const fiat = cp.getByTitle('Show live and past offers quoted in this currency');
+    await jsClick(fiat);
+    await expect(page.getByRole('menuitemradio', { name: 'EUR', exact: true })).toBeVisible();
+    await expect(page.getByTestId('fiat-raw-premium-count-EUR')).toHaveText('10');
+    await expect(page.getByTestId('fiat-raw-premium-count-USD')).toHaveText('4');
+    await expect(page.getByTestId('fiat-raw-premium-count-AUD')).toHaveText('0');
+  });
+
   test('fiat switching reloads live and historical offers with the selected currency', async ({ page }) => {
     const cp = controlPanel(page);
     const fiat = cp.getByTitle('Show live and past offers quoted in this currency');

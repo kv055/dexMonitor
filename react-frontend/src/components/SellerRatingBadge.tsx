@@ -11,7 +11,7 @@ const CONFIDENCE_LABELS: Record<SellerRatingConfidence, string> = {
   unavailable: 'No rating available',
 };
 
-// Short tag rendered next to the score when there is room.
+// Short tag rendered next to the score, including in compact table cells.
 const CONFIDENCE_SHORT: Record<SellerRatingConfidence, string> = {
   feedback_verified: 'feedback',
   feedback_new: 'new',
@@ -21,25 +21,81 @@ const CONFIDENCE_SHORT: Record<SellerRatingConfidence, string> = {
   unavailable: 'n/a',
 };
 
-// Colour band by score, reusing the translucent-pill style of ExchangeTag.
-function scoreClass(score: number): string {
-  if (score >= 70) return 'bg-[#1a3a2a99] text-green';
-  if (score >= 40) return 'bg-[#3a2a1a99] text-accent';
-  return 'bg-[#3a1a1a99] text-red';
+const CLASS_GREEN = 'bg-[#1a3a2a99] text-green';
+const CLASS_AMBER = 'bg-[#3a2a1a99] text-accent';
+const CLASS_RED = 'bg-[#3a1a1a99] text-red';
+const CLASS_BOND = 'bg-[#2a1a3a99] text-purple';
+
+/** Methodology-aware colour bands. feedback_new is never green. */
+export function sellerRatingScoreClass(score: number, confidence: SellerRatingConfidence): string {
+  switch (confidence) {
+    case 'feedback_new':
+      return score < 40 ? CLASS_RED : CLASS_AMBER;
+    case 'feedback_verified':
+      if (score >= 75) return CLASS_GREEN;
+      if (score >= 50) return CLASS_AMBER;
+      return CLASS_RED;
+    case 'account_signing':
+      if (score === 0) return CLASS_RED;
+      if (score < 45) return CLASS_AMBER;
+      return CLASS_GREEN;
+    case 'reputation_bonded':
+      if (score >= 72) return CLASS_GREEN;
+      if (score >= 50) return CLASS_AMBER;
+      return CLASS_RED;
+    default:
+      if (score >= 70) return CLASS_GREEN;
+      if (score >= 40) return CLASS_AMBER;
+      return CLASS_RED;
+  }
+}
+
+/** Formats a deposit/bond fraction (0.03) or percent (3) as "3% bond". */
+export function formatBondChip(fraction: number): string {
+  const pct = fraction <= 1 ? fraction * 100 : fraction;
+  const rounded = pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10;
+  return `${rounded}% bond`;
+}
+
+export function shouldShowBondChip(
+  score: number | null | undefined,
+  confidence: SellerRatingConfidence,
+  bondPct?: number | null,
+): boolean {
+  if (confidence === 'stake_bonded') return true;
+  if (score != null && Number.isFinite(score)) return false;
+  return bondPct != null && Number.isFinite(bondPct) && bondPct > 0;
 }
 
 interface Props {
   score?: number | null;
   confidence?: SellerRatingConfidence | null;
-  // compact hides the methodology tag (for tight table cells).
+  // compact still shows the methodology tag (table cells); kept for call-site compat.
   compact?: boolean;
   // withLabel appends the full methodology label (for detail panels).
   withLabel?: boolean;
+  // Taker-facing fidelity bond as a fraction (e.g. 0.03), for RoboSats / leftover stake_bonded.
+  bondPct?: number | null;
 }
 
-export function SellerRatingBadge({ score, confidence, compact, withLabel }: Props) {
+export function SellerRatingBadge({ score, confidence, compact, withLabel, bondPct }: Props) {
   const conf = confidence ?? 'unavailable';
   const label = CONFIDENCE_LABELS[conf] ?? 'Unknown';
+
+  if (shouldShowBondChip(score, conf, bondPct)) {
+    const text = bondPct != null && bondPct > 0 ? formatBondChip(bondPct) : 'bond';
+    return (
+      <span className="inline-flex items-center gap-1" title={`${text} · ${label}`}>
+        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-xl text-[0.7rem] font-semibold ${CLASS_BOND}`}>
+          {text}
+          {!compact && (
+            <span className="text-[0.55rem] uppercase opacity-70 font-normal">{CONFIDENCE_SHORT.stake_bonded}</span>
+          )}
+        </span>
+        {withLabel && <span className="text-[0.6rem] uppercase tracking-wide text-muted">{label}</span>}
+      </span>
+    );
+  }
 
   if (score == null) {
     return (
@@ -53,11 +109,9 @@ export function SellerRatingBadge({ score, confidence, compact, withLabel }: Pro
   const title = `${rounded}/100 · ${label}`;
   return (
     <span className="inline-flex items-center gap-1" title={title}>
-      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-xl text-[0.7rem] font-semibold ${scoreClass(score)}`}>
+      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-xl text-[0.7rem] font-semibold ${sellerRatingScoreClass(score, conf)}`}>
         {rounded}
-        {!compact && (
-          <span className="text-[0.55rem] uppercase opacity-70 font-normal">{CONFIDENCE_SHORT[conf]}</span>
-        )}
+        <span className="text-[0.55rem] uppercase opacity-70 font-normal">{CONFIDENCE_SHORT[conf]}</span>
       </span>
       {withLabel && <span className="text-[0.6rem] uppercase tracking-wide text-muted">{label}</span>}
     </span>

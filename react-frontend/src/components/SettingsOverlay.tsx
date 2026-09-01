@@ -269,7 +269,7 @@ export function SettingsOverlay({
               <div className="min-w-0">
                 <h3 className="text-xs font-medium">Seller Trust Score</h3>
                 <p className="mt-0.5 text-[0.65rem] text-muted leading-tight">
-                  Hide score-0 makers from the current monitor view (respects premium, direction, and other active filters). Offers with no rating signal are unaffected.
+                  Hide banned and confirmed-low makers (score 0 from account signing or peer feedback). Unrated, unstaked, and RoboSats bond-only offers stay visible.
                 </p>
               </div>
               <button
@@ -284,7 +284,7 @@ export function SettingsOverlay({
                 {hideZeroTrustScore
                   ? `Hiding ${zeroTrustHiddenCount}`
                   : zeroTrustHiddenCount > 0
-                    ? `Show all (${zeroTrustHiddenCount} score 0)`
+                    ? `Show all (${zeroTrustHiddenCount} high-risk)`
                     : 'Show all'}
               </button>
             </div>

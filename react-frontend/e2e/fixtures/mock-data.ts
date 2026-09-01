@@ -142,6 +142,19 @@ function offer(
   };
 }
 
+export const MOCK_LIVE_OFFER_FIAT_COUNTS = {
+  raw_premium: {
+    EUR: 10,
+    USD: 4,
+    GBP: 2,
+    AUD: 0,
+    CHF: 1,
+    SEK: 0,
+    NOK: 0,
+    CAD: 0,
+  },
+};
+
 export const MOCK_LIVE_OFFERS = [
   // ── PremiumOnly-passing offers ──
   // Buy direction with positive premium (user sells on DEX at premium)

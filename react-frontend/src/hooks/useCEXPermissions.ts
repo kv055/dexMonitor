@@ -37,15 +37,31 @@ export interface CEXPermissionExchange {
     futures_funding_fee_percent?: number | null;
     futures_funding_interval_seconds?: number | null;
     spot_available: boolean;
+	ask_available?: boolean;
+	bid_available?: boolean;
     hedge_available: boolean;
     stale: boolean;
     fetched_at?: string | null;
     last_attempted_at?: string | null;
     last_error?: string;
+	spot?: CEXFeeComponentStatus;
+	withdrawal?: CEXFeeComponentStatus;
+	hedge?: CEXFeeComponentStatus;
   };
   policy: CEXPolicy;
   spot: CEXAvailability;
   hedge: CEXAvailability;
+}
+
+export interface CEXFeeComponentStatus {
+  available: boolean;
+  stale: boolean;
+  fetched_at?: string | null;
+  last_attempted_at?: string | null;
+  last_error?: string;
+  source?: string;
+  observed_fee_btc?: number | null;
+  observed_at?: string | null;
 }
 
 export interface CEXPermissionsContextValue {

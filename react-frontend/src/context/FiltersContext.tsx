@@ -125,7 +125,7 @@ export function FiltersProvider({ offers, loading, groups, hideZeroTrustScore, c
     return (o: Offer) => o.payment_methods?.includes(filters.payment) ?? false;
   }, [filters.payment, groups]);
 
-  // Score-0 offers in the current monitor view (premium, direction, etc.) — not the raw feed.
+  // Confirmed-bad (score-0 feedback / banned) offers in the current monitor view.
   const zeroTrustHiddenCount = useMemo(() => {
     const monitorFiltered = applyOfferFilters(baseOffers, filters, paymentFilterFn);
     return monitorFiltered.filter(hasZeroTrustScore).length;

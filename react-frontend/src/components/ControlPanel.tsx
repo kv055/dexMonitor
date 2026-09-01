@@ -1,5 +1,6 @@
 import { useState, useRef, useEffect, useMemo } from 'react';
 import { useFilters } from '../hooks/useFilters';
+import { useLiveFiatRawPremiumCounts } from '../hooks/useLiveOffers';
 import { useTimezone } from '../hooks/useTimezone';
 import type { Offer, PremiumFilterMode } from '../types';
 import { formatTimeOnly } from '../utils/formatters';
@@ -272,7 +273,7 @@ export function PaymentDropdown({ value, onChange, inputCls, containerRef }: Pay
 
 interface FilterSelectDropdownProps {
   value: string;
-  options: { value: string; label: string }[];
+  options: { value: string; label: string; count?: number }[];
   onChange: (value: string) => void;
   inputCls: string;
   title: string;
@@ -305,15 +306,17 @@ function FilterSelectDropdown({ value, options, onChange, inputCls, title }: Fil
         <span className="ml-auto text-[0.65rem] text-muted">▾</span>
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-full min-w-36 overflow-hidden rounded-md border border-border bg-surface shadow-lg" role="menu">
+        <div className="absolute left-0 top-full z-50 mt-1 w-full min-w-40 overflow-hidden rounded-md border border-border bg-surface shadow-lg" role="menu">
           {options.map(option => {
             const active = option.value === value;
+            const count = option.count;
             return (
               <button
                 key={option.value}
                 type="button"
                 role="menuitemradio"
                 aria-checked={active}
+                aria-label={option.label}
                 className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors ${active ? 'bg-accent/15 text-accent' : 'text-text hover:bg-bg'}`}
                 onClick={() => {
                   onChange(option.value);
@@ -321,7 +324,21 @@ function FilterSelectDropdown({ value, options, onChange, inputCls, title }: Fil
                 }}
               >
                 <span className="w-3 text-center">{active ? '✓' : ''}</span>
-                {option.label}
+                <span className="min-w-0 flex-1 truncate">{option.label}</span>
+                {count != null && (
+                  <span
+                    data-testid={`fiat-raw-premium-count-${option.value}`}
+                    aria-hidden="true"
+                    title={`${count} live offer${count === 1 ? '' : 's'} with a raw premium`}
+                    className={`rounded-full border px-1.5 py-0.5 text-[0.62rem] font-semibold tabular-nums mono-nums ${
+                      count > 0
+                        ? 'border-accent/40 bg-accent/10 text-accent'
+                        : 'border-border bg-bg/40 text-muted'
+                    }`}
+                  >
+                    {count}
+                  </span>
+                )}
               </button>
             );
           })}
@@ -661,6 +678,7 @@ interface LiveOfferFiltersProps {
  */
 export function SharedOfferFilters({ scope }: { scope: 'live' | 'past' }) {
   const { filters, setFilters } = useFilters();
+  const rawPremiumCounts = useLiveFiatRawPremiumCounts();
 
   return (
     <div className="flex flex-col gap-3 min-w-0">
@@ -669,7 +687,11 @@ export function SharedOfferFilters({ scope }: { scope: 'live' | 'past' }) {
         <FilterSelectDropdown
           value={filters.fiat}
           onChange={fiat => setFilters({ fiat })}
-          options={FIAT_OPTIONS.map(currency => ({ value: currency, label: currency }))}
+          options={FIAT_OPTIONS.map(currency => ({
+            value: currency,
+            label: currency,
+            count: rawPremiumCounts[currency] ?? 0,
+          }))}
           inputCls={controlCls}
           title="Show live and past offers quoted in this currency"
         />

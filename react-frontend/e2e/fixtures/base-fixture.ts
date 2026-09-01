@@ -2,6 +2,7 @@ import { test as base, expect, type Page, type Locator } from '@playwright/test'
 import {
   FIXED_TIME,
   MOCK_LIVE_OFFERS,
+  MOCK_LIVE_OFFER_FIAT_COUNTS,
   MOCK_LIVE_OFFER_LIFECYCLES,
   MOCK_PAST_OFFERS,
   MOCK_PAST_OFFER_LIFECYCLES,
@@ -100,6 +101,9 @@ export const test = base.extend<Fixtures>({
       const id = Number(new URL(route.request().url()).pathname.match(/\/api\/live_offers\/(\d+)\/lifecycle$/)?.[1]);
       return route.fulfill({ json: MOCK_LIVE_OFFER_LIFECYCLES[id] ?? [] });
     });
+    await page.route('**/api/live_offers/counts*', route =>
+      route.fulfill({ json: MOCK_LIVE_OFFER_FIAT_COUNTS }),
+    );
     await page.route('**/api/live_offers*', route =>
       route.fulfill({ json: MOCK_LIVE_OFFERS }),
     );

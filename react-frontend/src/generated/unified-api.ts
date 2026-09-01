@@ -64,6 +64,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/live_offers/counts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Live offer counts by fiat
+         * @description Counts currently live offers that have a positive raw premium, grouped by fiat currency.
+         */
+        get: operations["getApiLiveOffersCounts"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/live_offers/{id}/lifecycle": {
         parameters: {
             query?: never;
@@ -258,6 +278,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["LiveOffer"][];
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    getApiLiveOffersCounts: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        raw_premium: {
+                            [key: string]: number;
+                        };
+                    };
                 };
             };
             /** @description Error response */

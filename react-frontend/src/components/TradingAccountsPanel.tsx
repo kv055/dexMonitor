@@ -4809,10 +4809,18 @@ export function TradingAccountsPanel() {
     );
     const snapshot = exchange?.fee_snapshot;
     const value = (entry: number | null | undefined) => entry == null ? '—' : `${entry}`;
+    const percentValue = (entry: number | null | undefined) => entry == null ? '—' : `${entry * 100}`;
     const dateValue = (entry: string | null | undefined) => entry ? formatDate(entry) : '—';
     const fetchedAgo = formatRelativeTime(snapshot?.fetched_at);
+	const feeComponents = [
+	  ['spot', snapshot?.spot],
+	  ['withdrawal', snapshot?.withdrawal],
+	  ['hedge', snapshot?.hedge],
+	] as const;
+	const hasComponentStatus = feeComponents.some(([, status]) => status != null);
+	const staleComponents = feeComponents.filter(([, status]) => status?.stale).map(([name]) => name);
     const feesSummaryParts = [
-      snapshot?.stale ? 'stale' : null,
+	  staleComponents.length > 0 ? `${staleComponents.join('/')} stale` : (!hasComponentStatus && snapshot?.stale ? 'stale' : null),
       snapshot?.last_error ? 'refresh error' : null,
       fetchedAgo ? `fetched ${fetchedAgo}` : null,
     ].filter(Boolean);
@@ -4820,7 +4828,7 @@ export function TradingAccountsPanel() {
       <CollapsibleSection
         title="Fees"
         summary={feesSummaryParts.length > 0 ? feesSummaryParts.join(' · ') : undefined}
-        warn={Boolean(snapshot && (snapshot.stale || !snapshot.spot_available)) || Boolean(cexPermissions?.error)}
+		warn={Boolean(snapshot && (staleComponents.length > 0 || !(snapshot.ask_available ?? snapshot.spot_available) || !(snapshot.bid_available ?? snapshot.spot_available))) || Boolean(cexPermissions?.error)}
         open={!!openSectionsByAccount[account.id]?.cexFees}
         onToggle={() => toggleSection(account.id, 'cexFees')}
         actions={
@@ -4838,21 +4846,32 @@ export function TradingAccountsPanel() {
         />
         {snapshot ? (
           <div className="grid gap-1 text-xs text-muted sm:grid-cols-2">
-            <div><span className="text-text">Spot taker fee (%):</span> {value(snapshot.spot_taker_fee_percent)}</div>
+            <div><span className="text-text">Spot taker fee (%):</span> {percentValue(snapshot.spot_taker_fee_percent)}</div>
             <div><span className="text-text">Withdrawal fee (BTC):</span> {value(snapshot.withdrawal_fee_btc)}</div>
-            <div><span className="text-text">Futures open taker fee (%):</span> {value(snapshot.futures_open_taker_fee_percent)}</div>
-            <div><span className="text-text">Futures close taker fee (%):</span> {value(snapshot.futures_close_taker_fee_percent)}</div>
-            <div><span className="text-text">Futures funding fee (%):</span> {value(snapshot.futures_funding_fee_percent)}</div>
+            <div><span className="text-text">Futures open taker fee (%):</span> {percentValue(snapshot.futures_open_taker_fee_percent)}</div>
+            <div><span className="text-text">Futures close taker fee (%):</span> {percentValue(snapshot.futures_close_taker_fee_percent)}</div>
+            <div><span className="text-text">Futures funding fee (%):</span> {percentValue(snapshot.futures_funding_fee_percent)}</div>
             <div><span className="text-text">Futures funding interval (seconds):</span> {value(snapshot.futures_funding_interval_seconds)}</div>
             <div><span className="text-text">Fees fetched at:</span> {dateValue(snapshot.fetched_at)}</div>
             <div><span className="text-text">Fees last attempted at:</span> {dateValue(snapshot.last_attempted_at)}</div>
-            {snapshot.stale ? (
+			<div><span className="text-text">Ask pricing:</span> {(snapshot.ask_available ?? snapshot.spot_available) ? 'ready' : 'unavailable'}</div>
+			<div><span className="text-text">Bid pricing:</span> {(snapshot.bid_available ?? snapshot.spot_available) ? 'ready' : 'unavailable'}</div>
+			{snapshot.withdrawal?.source ? <div><span className="text-text">Withdrawal source:</span> {snapshot.withdrawal.source}</div> : null}
+			{feeComponents.map(([name, status]) => status?.stale || status?.last_error ? (
+			  <div key={name} className={`break-words sm:col-span-2 ${status.last_error ? 'text-red' : 'text-amber-600'}`}>
+				<span className="capitalize">{name}</span>: {status.last_error || `stale — last fetched ${dateValue(status.fetched_at)}`}
+			  </div>
+			) : null)}
+            {!hasComponentStatus && snapshot.stale ? (
               <div className="text-amber-600 sm:col-span-2">
                 Fees are stale — the last successful fetch is older than 1h.
               </div>
             ) : null}
-            {!snapshot.spot_available ? (
-              <div className="text-red sm:col-span-2">No verified spot/withdrawal fee snapshot for this exchange.</div>
+			{!(snapshot.ask_available ?? snapshot.spot_available) ? (
+			  <div className="text-red sm:col-span-2">Ask pricing is unavailable: no verified spot fee component.</div>
+			) : null}
+			{!(snapshot.bid_available ?? snapshot.spot_available) ? (
+			  <div className="text-red sm:col-span-2">Bid pricing is unavailable: no verified withdrawal reserve.</div>
             ) : null}
             {snapshot.last_error ? (
               <div className="break-words text-red sm:col-span-2">
@@ -4995,7 +5014,7 @@ export function TradingAccountsPanel() {
               label="Spot taker fee"
               value={
                 cexFeeExchange?.fee_snapshot?.spot_taker_fee_percent != null
-                  ? `${cexFeeExchange.fee_snapshot.spot_taker_fee_percent}%`
+			  ? `${cexFeeExchange.fee_snapshot.spot_taker_fee_percent * 100}%`
                   : cexPermissions?.loading
                     ? 'Loading…'
                     : '—'

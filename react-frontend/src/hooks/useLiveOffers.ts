@@ -11,6 +11,33 @@ type LiveOffersContractResponse = UnifiedApiPaths['/api/live_offers']['get']['re
 const LIVE_OFFERS_RESPONSE_IS_ARRAY: LiveOffersContractResponse extends readonly unknown[] ? true : false = true;
 void LIVE_OFFERS_RESPONSE_IS_ARRAY;
 
+type LiveOfferFiatCountsResponse = UnifiedApiPaths['/api/live_offers/counts']['get']['responses'][200]['content']['application/json'];
+
+export function useLiveFiatRawPremiumCounts() {
+  const [counts, setCounts] = useState<Record<string, number>>({});
+
+  useEffect(() => {
+    let cancelled = false;
+    const load = async () => {
+      try {
+        const data = await apiFetch<LiveOfferFiatCountsResponse>('/api/live_offers/counts');
+        if (!cancelled) setCounts(data.raw_premium ?? {});
+      } catch (error) {
+        console.error('[LiveOffers] fiat count error', error);
+        if (!cancelled) setCounts({});
+      }
+    };
+    void load();
+    const timer = setInterval(load, POLL_INTERVAL_MS);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
+  return counts;
+}
+
 const defaultParams: MarketRequestParams = {
   hours: '24',
   cex: 'kraken',
