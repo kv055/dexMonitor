@@ -1,12 +1,8 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import {
-  formatBondChip,
-  SellerRatingBadge,
-  sellerRatingScoreClass,
-  shouldShowBondChip,
-} from './SellerRatingBadge';
+import { SellerRatingBadge } from './SellerRatingBadge';
+import { formatBondChip, sellerRatingScoreClass, shouldShowBondChip } from './sellerRating';
 
 describe('sellerRatingScoreClass', () => {
   it('never paints feedback_new green', () => {
