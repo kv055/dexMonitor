@@ -644,7 +644,9 @@ func TestPastOfferCappedAnalysisKeepsStoredRouteAndFixedTransferCosts(t *testing
 	assertFloat(t, capped.Costs.DexFee.BTC, 0.0001)
 	assertFloat(t, capped.Costs.Hedge.OpenFeeBTC, 0.00005)
 	assertFloat(t, capped.Costs.Hedge.CloseFeeBTC, 0.0001)
-	assertFloat(t, capped.Costs.Hedge.FundingFeeBTC, 0.00015)
+	// Stored transfer is 42 minutes; funding is the 0.003 rate prorated over
+	// an 8-hour venue interval at the capped 0.05 BTC size, then Round8.
+	assertFloat(t, capped.Costs.Hedge.FundingFeeBTC, 0.00001313)
 	if capped.Costs.Hedge.TransferMinutes != 42 {
 		t.Fatalf("hedge transfer minutes = %d, want 42", capped.Costs.Hedge.TransferMinutes)
 	}
