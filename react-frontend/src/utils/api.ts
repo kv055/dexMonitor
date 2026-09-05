@@ -1,9 +1,6 @@
 import type {
   CexBalancesResponse,
-  CexDepositAddress,
-  CexWithdrawalAddress,
   CexHedgePositionsResponse,
-  CexSpotTrade,
   LNDCloseChannelResult,
   LNDCreateAddressResult,
   LNDOpenChannelResult,
@@ -43,6 +40,7 @@ import type {
   DexPendingLiquidity,
 } from '../types';
 import { fetchResponse, request } from '../api/client';
+import type { ApiJson } from '../api/openapi';
 export { apiFetch, apiPost, apiPostWithHeaders } from '../api/client';
 export type { ApiResponseWithHeaders } from '../api/client';
 
@@ -296,11 +294,11 @@ export function payMagmaLSPOrder(id: string, feeLimitSat?: number) {
 export function fetchSubmarineSwaps(){return request<SubmarineSwapRecord[]>('/api/mm-controller/lnd/submarine-swaps?limit=20')}
 
 export function fetchCexDepositAddresses(accountId: number) {
-  return request<CexDepositAddress[]>(`/api/trading/accounts/${accountId}/cex/deposit-addresses`);
+  return request<ApiJson<'getApiTradingAccountsIdCexDepositAddresses'>>(`/api/trading/accounts/${accountId}/cex/deposit-addresses`);
 }
 
 export function fetchCexWithdrawalAddresses(accountId: number) {
-  return request<CexWithdrawalAddress[]>(`/api/trading/accounts/${accountId}/cex/withdrawal-addresses`);
+  return request<ApiJson<'getApiTradingAccountsIdCexWithdrawalAddresses'>>(`/api/trading/accounts/${accountId}/cex/withdrawal-addresses`);
 }
 
 export function fetchCexBalances(accountId: number) {
@@ -312,7 +310,7 @@ export function fetchCexHedgePositions(accountId: number) {
 }
 
 export function fetchCexSpotTrades(accountId: number, limit = 50) {
-  return request<CexSpotTrade[]>(`/api/trading/accounts/${accountId}/cex/spot-trades?limit=${limit}`);
+  return request<ApiJson<'getApiTradingAccountsIdCexSpotTrades'>>(`/api/trading/accounts/${accountId}/cex/spot-trades?limit=${limit}`);
 }
 
 export function fetchPaymentMethods() {

@@ -15,3 +15,6 @@ export type CexHedgeOpenResult = Schemas['CexHedgeOpenResult'];
 export type MMTransactionStatus = Schemas['MMTransactionStatus'];
 export type WithdrawalTrackResult = Schemas['WithdrawalTrackResult'];
 export type MempoolTxStatus = Schemas['MempoolTxStatus'];
+export type CexDepositAddress = Schemas['CexDepositAddress'];
+export type CexWithdrawalAddress = Schemas['CexWithdrawalAddress'];
+export type CexSpotTrade = Schemas['CexSpotTrade'];

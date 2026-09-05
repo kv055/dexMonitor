@@ -1013,23 +1013,6 @@ export interface Filters {
   fiat: string;
 }
 
-export interface CexDepositAddress {
-  asset: string;
-  network: string;
-  address: string;
-  tag?: string;
-  method?: string;
-}
-
-export interface CexWithdrawalAddress {
-  asset: string;
-  network: string;
-  address: string;
-  tag?: string;
-  label?: string;
-  whitelisted?: boolean;
-}
-
 export interface CexAssetBalance {
   asset: string;
   available: number;
@@ -1064,26 +1047,17 @@ export interface CexHedgePositionsResponse {
   past: CexHedgePosition[];
 }
 
-export interface CexSpotTrade {
-  trade_id: string;
-  trading_pair: string;
-  trade_type: string;
-  price: number;
-  amount: number;
-  fee: number;
-  fee_asset?: string;
-  timestamp: string;
-}
-
-// MM execution transport contracts are generated from
-// dexMmController/api/internal.openapi.yaml (mirrored through the monitor public
-// bundle). Keep UI-only models handwritten here.
+// CEX list item types and MM execution transport contracts are generated from
+// the shared OpenAPI schemas. Keep UI-only models handwritten here.
 export type {
+  CexDepositAddress,
   CexHedgeOpenResult,
   CexPreTradeCheckRequest,
   CexSpotBuyResult,
+  CexSpotTrade,
   CexTradeflowRequest,
   CexTradeflowResult,
+  CexWithdrawalAddress,
   ExecutionDetail,
   FeeLine,
   MempoolTxStatus,

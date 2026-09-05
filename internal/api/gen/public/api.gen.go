@@ -23,6 +23,40 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// CexDepositAddress defines model for CexDepositAddress.
+type CexDepositAddress struct {
+	Address              string                 `json:"address"`
+	Asset                string                 `json:"asset"`
+	Method               *string                `json:"method,omitempty"`
+	Network              string                 `json:"network"`
+	Tag                  *string                `json:"tag,omitempty"`
+	AdditionalProperties map[string]interface{} `json:"-"`
+}
+
+// CexSpotTrade defines model for CexSpotTrade.
+type CexSpotTrade struct {
+	Amount               float32                `json:"amount"`
+	Fee                  float32                `json:"fee"`
+	FeeAsset             *string                `json:"fee_asset,omitempty"`
+	Price                float32                `json:"price"`
+	Timestamp            string                 `json:"timestamp"`
+	TradeId              string                 `json:"trade_id"`
+	TradeType            string                 `json:"trade_type"`
+	TradingPair          string                 `json:"trading_pair"`
+	AdditionalProperties map[string]interface{} `json:"-"`
+}
+
+// CexWithdrawalAddress defines model for CexWithdrawalAddress.
+type CexWithdrawalAddress struct {
+	Address              string                 `json:"address"`
+	Asset                string                 `json:"asset"`
+	Label                *string                `json:"label,omitempty"`
+	Network              string                 `json:"network"`
+	Tag                  *string                `json:"tag,omitempty"`
+	Whitelisted          *bool                  `json:"whitelisted,omitempty"`
+	AdditionalProperties map[string]interface{} `json:"-"`
+}
+
 // Health defines model for Health.
 type Health struct {
 	Checks               *map[string]interface{} `json:"checks,omitempty"`
@@ -173,6 +207,424 @@ type PutApiTradingSeedsIdJSONRequestBody PutApiTradingSeedsIdJSONBody
 
 // PutApiTradingTotpSecretsIdJSONRequestBody defines body for PutApiTradingTotpSecretsId for application/json ContentType.
 type PutApiTradingTotpSecretsIdJSONRequestBody PutApiTradingTotpSecretsIdJSONBody
+
+// Getter for additional properties for CexDepositAddress. Returns the specified
+// element and whether it was found
+func (a CexDepositAddress) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for CexDepositAddress
+func (a *CexDepositAddress) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for CexDepositAddress to handle AdditionalProperties
+func (a *CexDepositAddress) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["address"]; found {
+		err = json.Unmarshal(raw, &a.Address)
+		if err != nil {
+			return fmt.Errorf("error reading 'address': %w", err)
+		}
+		delete(object, "address")
+	}
+
+	if raw, found := object["asset"]; found {
+		err = json.Unmarshal(raw, &a.Asset)
+		if err != nil {
+			return fmt.Errorf("error reading 'asset': %w", err)
+		}
+		delete(object, "asset")
+	}
+
+	if raw, found := object["method"]; found {
+		err = json.Unmarshal(raw, &a.Method)
+		if err != nil {
+			return fmt.Errorf("error reading 'method': %w", err)
+		}
+		delete(object, "method")
+	}
+
+	if raw, found := object["network"]; found {
+		err = json.Unmarshal(raw, &a.Network)
+		if err != nil {
+			return fmt.Errorf("error reading 'network': %w", err)
+		}
+		delete(object, "network")
+	}
+
+	if raw, found := object["tag"]; found {
+		err = json.Unmarshal(raw, &a.Tag)
+		if err != nil {
+			return fmt.Errorf("error reading 'tag': %w", err)
+		}
+		delete(object, "tag")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for CexDepositAddress to handle AdditionalProperties
+func (a CexDepositAddress) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["address"], err = json.Marshal(a.Address)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'address': %w", err)
+	}
+
+	object["asset"], err = json.Marshal(a.Asset)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'asset': %w", err)
+	}
+
+	if a.Method != nil {
+		object["method"], err = json.Marshal(a.Method)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'method': %w", err)
+		}
+	}
+
+	object["network"], err = json.Marshal(a.Network)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'network': %w", err)
+	}
+
+	if a.Tag != nil {
+		object["tag"], err = json.Marshal(a.Tag)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'tag': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for CexSpotTrade. Returns the specified
+// element and whether it was found
+func (a CexSpotTrade) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for CexSpotTrade
+func (a *CexSpotTrade) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for CexSpotTrade to handle AdditionalProperties
+func (a *CexSpotTrade) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["amount"]; found {
+		err = json.Unmarshal(raw, &a.Amount)
+		if err != nil {
+			return fmt.Errorf("error reading 'amount': %w", err)
+		}
+		delete(object, "amount")
+	}
+
+	if raw, found := object["fee"]; found {
+		err = json.Unmarshal(raw, &a.Fee)
+		if err != nil {
+			return fmt.Errorf("error reading 'fee': %w", err)
+		}
+		delete(object, "fee")
+	}
+
+	if raw, found := object["fee_asset"]; found {
+		err = json.Unmarshal(raw, &a.FeeAsset)
+		if err != nil {
+			return fmt.Errorf("error reading 'fee_asset': %w", err)
+		}
+		delete(object, "fee_asset")
+	}
+
+	if raw, found := object["price"]; found {
+		err = json.Unmarshal(raw, &a.Price)
+		if err != nil {
+			return fmt.Errorf("error reading 'price': %w", err)
+		}
+		delete(object, "price")
+	}
+
+	if raw, found := object["timestamp"]; found {
+		err = json.Unmarshal(raw, &a.Timestamp)
+		if err != nil {
+			return fmt.Errorf("error reading 'timestamp': %w", err)
+		}
+		delete(object, "timestamp")
+	}
+
+	if raw, found := object["trade_id"]; found {
+		err = json.Unmarshal(raw, &a.TradeId)
+		if err != nil {
+			return fmt.Errorf("error reading 'trade_id': %w", err)
+		}
+		delete(object, "trade_id")
+	}
+
+	if raw, found := object["trade_type"]; found {
+		err = json.Unmarshal(raw, &a.TradeType)
+		if err != nil {
+			return fmt.Errorf("error reading 'trade_type': %w", err)
+		}
+		delete(object, "trade_type")
+	}
+
+	if raw, found := object["trading_pair"]; found {
+		err = json.Unmarshal(raw, &a.TradingPair)
+		if err != nil {
+			return fmt.Errorf("error reading 'trading_pair': %w", err)
+		}
+		delete(object, "trading_pair")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for CexSpotTrade to handle AdditionalProperties
+func (a CexSpotTrade) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["amount"], err = json.Marshal(a.Amount)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'amount': %w", err)
+	}
+
+	object["fee"], err = json.Marshal(a.Fee)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'fee': %w", err)
+	}
+
+	if a.FeeAsset != nil {
+		object["fee_asset"], err = json.Marshal(a.FeeAsset)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'fee_asset': %w", err)
+		}
+	}
+
+	object["price"], err = json.Marshal(a.Price)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'price': %w", err)
+	}
+
+	object["timestamp"], err = json.Marshal(a.Timestamp)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'timestamp': %w", err)
+	}
+
+	object["trade_id"], err = json.Marshal(a.TradeId)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'trade_id': %w", err)
+	}
+
+	object["trade_type"], err = json.Marshal(a.TradeType)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'trade_type': %w", err)
+	}
+
+	object["trading_pair"], err = json.Marshal(a.TradingPair)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'trading_pair': %w", err)
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
+
+// Getter for additional properties for CexWithdrawalAddress. Returns the specified
+// element and whether it was found
+func (a CexWithdrawalAddress) Get(fieldName string) (value interface{}, found bool) {
+	if a.AdditionalProperties != nil {
+		value, found = a.AdditionalProperties[fieldName]
+	}
+	return
+}
+
+// Setter for additional properties for CexWithdrawalAddress
+func (a *CexWithdrawalAddress) Set(fieldName string, value interface{}) {
+	if a.AdditionalProperties == nil {
+		a.AdditionalProperties = make(map[string]interface{})
+	}
+	a.AdditionalProperties[fieldName] = value
+}
+
+// Override default JSON handling for CexWithdrawalAddress to handle AdditionalProperties
+func (a *CexWithdrawalAddress) UnmarshalJSON(b []byte) error {
+	object := make(map[string]json.RawMessage)
+	err := json.Unmarshal(b, &object)
+	if err != nil {
+		return err
+	}
+
+	if raw, found := object["address"]; found {
+		err = json.Unmarshal(raw, &a.Address)
+		if err != nil {
+			return fmt.Errorf("error reading 'address': %w", err)
+		}
+		delete(object, "address")
+	}
+
+	if raw, found := object["asset"]; found {
+		err = json.Unmarshal(raw, &a.Asset)
+		if err != nil {
+			return fmt.Errorf("error reading 'asset': %w", err)
+		}
+		delete(object, "asset")
+	}
+
+	if raw, found := object["label"]; found {
+		err = json.Unmarshal(raw, &a.Label)
+		if err != nil {
+			return fmt.Errorf("error reading 'label': %w", err)
+		}
+		delete(object, "label")
+	}
+
+	if raw, found := object["network"]; found {
+		err = json.Unmarshal(raw, &a.Network)
+		if err != nil {
+			return fmt.Errorf("error reading 'network': %w", err)
+		}
+		delete(object, "network")
+	}
+
+	if raw, found := object["tag"]; found {
+		err = json.Unmarshal(raw, &a.Tag)
+		if err != nil {
+			return fmt.Errorf("error reading 'tag': %w", err)
+		}
+		delete(object, "tag")
+	}
+
+	if raw, found := object["whitelisted"]; found {
+		err = json.Unmarshal(raw, &a.Whitelisted)
+		if err != nil {
+			return fmt.Errorf("error reading 'whitelisted': %w", err)
+		}
+		delete(object, "whitelisted")
+	}
+
+	if len(object) != 0 {
+		a.AdditionalProperties = make(map[string]interface{})
+		for fieldName, fieldBuf := range object {
+			var fieldVal interface{}
+			err := json.Unmarshal(fieldBuf, &fieldVal)
+			if err != nil {
+				return fmt.Errorf("error unmarshaling field %s: %w", fieldName, err)
+			}
+			a.AdditionalProperties[fieldName] = fieldVal
+		}
+	}
+	return nil
+}
+
+// Override default JSON handling for CexWithdrawalAddress to handle AdditionalProperties
+func (a CexWithdrawalAddress) MarshalJSON() ([]byte, error) {
+	var err error
+	object := make(map[string]json.RawMessage)
+
+	object["address"], err = json.Marshal(a.Address)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'address': %w", err)
+	}
+
+	object["asset"], err = json.Marshal(a.Asset)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'asset': %w", err)
+	}
+
+	if a.Label != nil {
+		object["label"], err = json.Marshal(a.Label)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'label': %w", err)
+		}
+	}
+
+	object["network"], err = json.Marshal(a.Network)
+	if err != nil {
+		return nil, fmt.Errorf("error marshaling 'network': %w", err)
+	}
+
+	if a.Tag != nil {
+		object["tag"], err = json.Marshal(a.Tag)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'tag': %w", err)
+		}
+	}
+
+	if a.Whitelisted != nil {
+		object["whitelisted"], err = json.Marshal(a.Whitelisted)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling 'whitelisted': %w", err)
+		}
+	}
+
+	for fieldName, field := range a.AdditionalProperties {
+		object[fieldName], err = json.Marshal(field)
+		if err != nil {
+			return nil, fmt.Errorf("error marshaling '%s': %w", fieldName, err)
+		}
+	}
+	return json.Marshal(object)
+}
 
 // Getter for additional properties for Health. Returns the specified
 // element and whether it was found
@@ -2334,7 +2786,7 @@ type GetApiGeneralStatsPastPremiumsResponseObject interface {
 	VisitGetApiGeneralStatsPastPremiumsResponse(w http.ResponseWriter) error
 }
 
-type GetApiGeneralStatsPastPremiums200JSONResponse map[string]interface{}
+type GetApiGeneralStatsPastPremiums200JSONResponse []map[string]interface{}
 
 func (response GetApiGeneralStatsPastPremiums200JSONResponse) VisitGetApiGeneralStatsPastPremiumsResponse(w http.ResponseWriter) error {
 
@@ -2386,7 +2838,7 @@ type GetApiGeneralStatsPaymentMethodsResponseObject interface {
 	VisitGetApiGeneralStatsPaymentMethodsResponse(w http.ResponseWriter) error
 }
 
-type GetApiGeneralStatsPaymentMethods200JSONResponse map[string]interface{}
+type GetApiGeneralStatsPaymentMethods200JSONResponse []map[string]interface{}
 
 func (response GetApiGeneralStatsPaymentMethods200JSONResponse) VisitGetApiGeneralStatsPaymentMethodsResponse(w http.ResponseWriter) error {
 
@@ -3493,7 +3945,7 @@ type GetApiTradingAccountsIdCexDepositAddressesResponseObject interface {
 	VisitGetApiTradingAccountsIdCexDepositAddressesResponse(w http.ResponseWriter) error
 }
 
-type GetApiTradingAccountsIdCexDepositAddresses200JSONResponse map[string]interface{}
+type GetApiTradingAccountsIdCexDepositAddresses200JSONResponse []CexDepositAddress
 
 func (response GetApiTradingAccountsIdCexDepositAddresses200JSONResponse) VisitGetApiTradingAccountsIdCexDepositAddressesResponse(w http.ResponseWriter) error {
 
@@ -3599,7 +4051,7 @@ type GetApiTradingAccountsIdCexSpotTradesResponseObject interface {
 	VisitGetApiTradingAccountsIdCexSpotTradesResponse(w http.ResponseWriter) error
 }
 
-type GetApiTradingAccountsIdCexSpotTrades200JSONResponse map[string]interface{}
+type GetApiTradingAccountsIdCexSpotTrades200JSONResponse []CexSpotTrade
 
 func (response GetApiTradingAccountsIdCexSpotTrades200JSONResponse) VisitGetApiTradingAccountsIdCexSpotTradesResponse(w http.ResponseWriter) error {
 
@@ -3652,7 +4104,7 @@ type GetApiTradingAccountsIdCexWithdrawalAddressesResponseObject interface {
 	VisitGetApiTradingAccountsIdCexWithdrawalAddressesResponse(w http.ResponseWriter) error
 }
 
-type GetApiTradingAccountsIdCexWithdrawalAddresses200JSONResponse map[string]interface{}
+type GetApiTradingAccountsIdCexWithdrawalAddresses200JSONResponse []CexWithdrawalAddress
 
 func (response GetApiTradingAccountsIdCexWithdrawalAddresses200JSONResponse) VisitGetApiTradingAccountsIdCexWithdrawalAddressesResponse(w http.ResponseWriter) error {
 
@@ -7081,52 +7533,55 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"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",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

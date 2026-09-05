@@ -2120,6 +2120,37 @@ export interface components {
         } & {
             [key: string]: unknown;
         };
+        CexDepositAddress: {
+            asset: string;
+            network: string;
+            address: string;
+            tag?: string;
+            method?: string;
+        } & {
+            [key: string]: unknown;
+        };
+        CexSpotTrade: {
+            trade_id: string;
+            trading_pair: string;
+            trade_type: string;
+            fee_asset?: string;
+            timestamp: string;
+            price: number;
+            amount: number;
+            fee: number;
+        } & {
+            [key: string]: unknown;
+        };
+        CexWithdrawalAddress: {
+            asset: string;
+            network: string;
+            address: string;
+            tag?: string;
+            label?: string;
+            whitelisted?: boolean;
+        } & {
+            [key: string]: unknown;
+        };
     };
     responses: {
         /** @description Invalid request */
@@ -2488,7 +2519,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
-                    };
+                    }[];
                 };
             };
             /** @description Error response */
@@ -2522,7 +2553,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
-                    };
+                    }[];
                 };
             };
             /** @description Error response */
@@ -3199,7 +3230,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
-                    };
+                    }[];
                 };
             };
             /** @description Error response */
@@ -3267,7 +3298,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
-                    };
+                    }[];
                 };
             };
             /** @description Error response */
@@ -3301,7 +3332,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
-                    };
+                    }[];
                 };
             };
             /** @description Error response */
@@ -3475,7 +3506,7 @@ export interface operations {
                 content: {
                     "application/json": {
                         [key: string]: unknown;
-                    };
+                    }[];
                 };
             };
             /** @description Error response */
@@ -4784,9 +4815,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CexDepositAddress"][];
                 };
             };
             /** @description Error response */
@@ -4856,9 +4885,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CexSpotTrade"][];
                 };
             };
             /** @description Error response */
@@ -4892,9 +4919,7 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content: {
-                    "application/json": {
-                        [key: string]: unknown;
-                    };
+                    "application/json": components["schemas"]["CexWithdrawalAddress"][];
                 };
             };
             /** @description Error response */
