@@ -45,6 +45,8 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await expect(label('Timeframe')).toBeVisible();
     await expect(label('Premium mode')).toBeVisible();
     await expect(cp.getByTitle(/Net full uses full order size/)).toContainText('Net Full');
+    await expect(label('Premium')).toHaveCount(0);
+    await expect(cp.locator('button').filter({ hasText: 'Net Premium Full' })).toHaveCount(0);
     const payments = cp.getByTitle('Show all methods, linked methods, or selected linked methods');
     await expect(payments).toContainText('All methods');
     await selectMenuOption(page, payments, 'Linked methods');
@@ -59,6 +61,8 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await jsClick(page.getByRole('button', { name: 'Live Offers', exact: true }));
     await expect(label('Payment methods')).toBeVisible();
     await expect(label('Reference source')).toBeVisible();
+    await expect(label('Premium')).toBeVisible();
+    await expect(cp.locator('button').filter({ hasText: 'Net Premium Full' })).toBeVisible();
     await expect(label('Timeframe')).toHaveCount(0);
   });
 

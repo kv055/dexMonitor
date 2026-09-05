@@ -477,8 +477,8 @@ export function PaymentMethodsPanel() {
                       </div>
 
                       {categoryPickerId === row.id && (
-                        <div className="mt-2 flex items-end gap-1.5">
-                          <label className="flex flex-1 flex-col gap-1 text-[0.68rem] text-muted">
+                        <div className="mt-2 flex max-w-sm items-end gap-1.5">
+                          <label className="flex min-w-0 flex-1 flex-col gap-1 text-[0.68rem] text-muted">
                             Assign category
                             <select
                               className={compactInputCls}
@@ -496,8 +496,8 @@ export function PaymentMethodsPanel() {
                       )}
 
                       {aliasPickerId === row.id && (
-                        <div className="mt-2 flex items-end gap-1.5">
-                          <label className="flex flex-1 flex-col gap-1 text-[0.68rem] text-muted">
+                        <div className="mt-2 flex max-w-md items-end gap-1.5">
+                          <label className="flex min-w-0 flex-1 flex-col gap-1 text-[0.68rem] text-muted">
                             Add to provider
                             <select
                               className={compactInputCls}
@@ -525,8 +525,8 @@ export function PaymentMethodsPanel() {
                       )}
 
                       {editingId === row.id && draft && (
-                        <div className="mt-2 flex flex-col gap-2 rounded-md border border-border bg-surface p-2">
-                          <label className="flex flex-col gap-1 text-[0.68rem] text-muted">
+                        <div className="mt-2 grid grid-cols-1 gap-2.5 rounded-md border border-border bg-surface p-2.5 md:grid-cols-6">
+                          <label className="flex min-w-0 flex-col gap-1 text-[0.68rem] text-muted md:col-span-2">
                             Category
                             <select
                               className={compactInputCls}
@@ -538,7 +538,7 @@ export function PaymentMethodsPanel() {
                               ))}
                             </select>
                           </label>
-                          <label className="flex flex-col gap-1 text-[0.68rem] text-muted">
+                          <label className="flex min-w-0 flex-col gap-1 text-[0.68rem] text-muted md:col-span-4">
                             Merge regex (raw offer labels matching this become “{row.name}”)
                             <input
                               className={`${compactInputCls} font-mono`}
@@ -547,13 +547,12 @@ export function PaymentMethodsPanel() {
                               placeholder="(?i)^(?:paypal|pay pal)$"
                             />
                           </label>
-                          <div className="flex flex-col gap-1 text-[0.68rem] text-muted">
+                          <div className="flex min-w-0 flex-col gap-1 text-[0.68rem] text-muted md:col-span-2">
                             <span>Sources (DEXes)</span>
                             <p className="text-[0.62rem] text-muted">
-                              DEX venues where this payment method has been observed so far.
-                              Updated by the snapshot service — not editable here.
+                              Observed DEX venues. Snapshot-owned — not editable here.
                             </p>
-                            <div className="flex flex-wrap gap-1.5 rounded-md border border-border bg-bg px-2 py-2">
+                            <div className="flex min-h-10 flex-wrap content-start gap-1.5 rounded-md border border-border bg-bg px-2 py-1.5">
                               {(row.sources?.length ?? 0) > 0 ? (
                                 row.sources.map(source => (
                                   <span
@@ -568,13 +567,12 @@ export function PaymentMethodsPanel() {
                               )}
                             </div>
                           </div>
-                          <div className="flex flex-col gap-1 text-[0.68rem] text-muted">
+                          <div className="flex min-w-0 flex-col gap-1 text-[0.68rem] text-muted md:col-span-2">
                             <span>Currencies</span>
                             <p className="text-[0.62rem] text-muted">
-                              Fiat currencies where this payment method has been observed so far.
-                              Updated by the snapshot service — not editable here.
+                              Observed fiat. Snapshot-owned — not editable here.
                             </p>
-                            <div className="flex flex-wrap gap-1.5 rounded-md border border-border bg-bg px-2 py-2">
+                            <div className="flex min-h-10 flex-wrap content-start gap-1.5 rounded-md border border-border bg-bg px-2 py-1.5">
                               {(row.currencies?.length ?? 0) > 0 ? (
                                 row.currencies.map(currency => (
                                   <span
@@ -589,10 +587,10 @@ export function PaymentMethodsPanel() {
                               )}
                             </div>
                           </div>
-                          <div className="flex flex-col gap-1 text-[0.68rem] text-muted">
+                          <div className="flex min-w-0 flex-col gap-1 text-[0.68rem] text-muted md:col-span-2">
                             <span>Aliases</span>
                             <p className="text-[0.62rem] text-muted">
-                              Exact offer labels that should be treated as “{row.name}”. Save changes before making an alias a payment method.
+                              Exact offer labels treated as “{row.name}”. Save before promoting an alias.
                             </p>
                             <div className="flex gap-1.5">
                               <input
@@ -609,7 +607,7 @@ export function PaymentMethodsPanel() {
                               />
                               <button
                                 type="button"
-                                className={compactPrimaryButtonCls}
+                                className={`${compactPrimaryButtonCls} shrink-0`}
                                 onClick={addAlias}
                                 disabled={aliasInput.trim() === ''}
                               >
@@ -631,7 +629,7 @@ export function PaymentMethodsPanel() {
                                           ? 'Save your changes before creating a payment method from an alias'
                                           : 'Create a separate payment method from this alias'}
                                       >
-                                        Promote to payment method
+                                        Promote
                                       </button>
                                       <button
                                         type="button"
@@ -651,31 +649,35 @@ export function PaymentMethodsPanel() {
                               </p>
                             )}
                           </div>
-                          {rowError && <p className="text-[0.68rem] text-red">{rowError}</p>}
-                          {!row.is_linked && (
-                            <p className="text-[0.62rem] text-muted">
-                              Not linked — assign a payment solution under Accounts Management → payment accounts.
-                            </p>
-                          )}
-                          <div className="flex items-center gap-1.5">
-                            <button
-                              type="button"
-                              className={compactPrimaryButtonCls}
-                              onClick={() => void saveDraft(row.id)}
-                              disabled={saving}
-                            >
-                              {saving ? 'Saving…' : 'Save'}
-                            </button>
-                            {row.category === 'Others' && !row.is_active && (
+                          <div className="flex flex-col gap-1.5 md:col-span-6 md:flex-row md:items-center md:justify-between">
+                            <div className="min-w-0">
+                              {rowError && <p className="text-[0.68rem] text-red">{rowError}</p>}
+                              {!row.is_linked && (
+                                <p className="text-[0.62rem] text-muted">
+                                  Not linked — assign a payment solution under Accounts Management → payment accounts.
+                                </p>
+                              )}
+                            </div>
+                            <div className="flex shrink-0 items-center gap-1.5">
                               <button
                                 type="button"
-                                className={compactButtonCls}
-                                onClick={() => void removeRow(row.id)}
+                                className={compactPrimaryButtonCls}
+                                onClick={() => void saveDraft(row.id)}
                                 disabled={saving}
                               >
-                                Delete
+                                {saving ? 'Saving…' : 'Save'}
                               </button>
-                            )}
+                              {row.category === 'Others' && !row.is_active && (
+                                <button
+                                  type="button"
+                                  className={compactButtonCls}
+                                  onClick={() => void removeRow(row.id)}
+                                  disabled={saving}
+                                >
+                                  Delete
+                                </button>
+                              )}
+                            </div>
                           </div>
                         </div>
                       )}

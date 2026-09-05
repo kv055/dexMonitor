@@ -1,6 +1,6 @@
 import { lazy, Suspense, useCallback, useDeferredValue, useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent, type ReactNode } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
-import type { ManualRouteOptions, Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCompact, PremiumFilterMode, TakerOpportunityMode, TradeMode } from '../types';
+import type { ManualRouteOptions, Offer, PastOrderStats, PastProfitableOrder, PastProfitableOrderCompact, TakerOpportunityMode, TradeMode } from '../types';
 import { useFilters } from '../hooks/useFilters';
 import { useTimezone } from '../hooks/useTimezone';
 import { useTemporaryChartVisibility } from '../hooks/useTemporaryChartVisibility';
@@ -157,12 +157,6 @@ function orderDurationMinutes(order: DisplayOrder): number {
 
 function orderPremiumPercent(order: DisplayOrder): number | null {
   return order.pricing.avg_premium_percent ?? order.pricing.raw_premium_percent ?? null;
-}
-
-function orderPremiumMetric(order: DisplayOrder, mode: PremiumFilterMode): number | null {
-  if (mode === 'raw') return orderPremiumPercent(order);
-  const scenarioMode: TakerOpportunityMode = mode === 'net_capped' ? 'net_capped' : 'net_full';
-  return orderScenarioSummary(order, scenarioMode).netPercent;
 }
 
 function orderScenarioSummary(order: DisplayOrder, mode: TakerOpportunityMode) {
@@ -1697,16 +1691,6 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       return [] as DisplayOrder[];
     }
     let list = deferredOrders.filter(order => displayOrderProfitable(order, mode));
-    if (liveFilters.rangeMetric === 'premium') {
-      const premiumMin = parseFloat(liveFilters.premiumMin);
-      const premiumMax = parseFloat(liveFilters.premiumMax);
-      if (!Number.isNaN(premiumMin)) {
-        list = list.filter(order => (orderPremiumMetric(order, liveFilters.premiumMode) ?? 0) >= premiumMin);
-      }
-      if (!Number.isNaN(premiumMax)) {
-        list = list.filter(order => (orderPremiumMetric(order, liveFilters.premiumMode) ?? 0) <= premiumMax);
-      }
-    }
     if (liveFilters.paymentScope === 'linked' && linkedPaymentMethods != null) {
       const allowed = liveFilters.selectedLinkedPaymentMethods.length === 0
         ? linkedPaymentMethods
@@ -1718,7 +1702,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       list = list.filter(order => order.payment_methods?.some(method => allowed.has(method)) ?? false);
     }
     return list;
-  }, [scenarioDataPending, deferredOrders, mode, liveFilters.paymentScope, liveFilters.selectedLinkedPaymentMethods, linkedPaymentMethods, linkedPaymentMethodOptions, liveFilters.rangeMetric, liveFilters.premiumMin, liveFilters.premiumMax, liveFilters.premiumMode]);
+  }, [scenarioDataPending, deferredOrders, mode, liveFilters.paymentScope, liveFilters.selectedLinkedPaymentMethods, linkedPaymentMethods, linkedPaymentMethodOptions]);
 
   // Capped mode is only meaningful when the global Max Position Size is set.
   const capAvailable = maxFiatLimit != null && maxFiatLimit > 0;

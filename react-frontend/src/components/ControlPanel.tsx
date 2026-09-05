@@ -524,58 +524,6 @@ export function DualRangeFilter({
   );
 }
 
-function PastPremiumRange() {
-  const { filters, setFilters, offersForPremiumRange } = useFilters();
-  const bounds = useMemo(() => {
-    const premiums = offersForPremiumRange
-      .filter(offer => !isOfferLive(offer))
-      .map(offer => getPremiumMetricValue(offer, filters.premiumMode))
-      .filter((value): value is number => value != null && Number.isFinite(value));
-    if (premiums.length === 0) return null;
-    return {
-      min: Math.floor(Math.min(...premiums) * 100),
-      max: Math.ceil(Math.max(...premiums) * 100),
-    };
-  }, [offersForPremiumRange, filters.premiumMode]);
-
-  useEffect(() => {
-    if (filters.rangeMetric !== 'premium') {
-      setFilters({ rangeMetric: 'premium' });
-      return;
-    }
-    if (bounds == null) return;
-    if (filters.premiumMin === '' || filters.premiumMax === '') {
-      setFilters({
-        premiumMin: (bounds.min / 100).toFixed(2),
-        premiumMax: (bounds.max / 100).toFixed(2),
-      });
-    }
-  }, [bounds, filters.rangeMetric, filters.premiumMin, filters.premiumMax, setFilters]);
-
-  if (bounds == null) {
-    return null;
-  }
-
-  const min = bounds.min;
-  const max = Math.max(bounds.max, min + 1);
-  const parsedMin = parseFloat(filters.premiumMin);
-  const parsedMax = parseFloat(filters.premiumMax);
-  const currentMin = Math.max(min, Math.min(Math.round((Number.isNaN(parsedMin) ? min / 100 : parsedMin) * 100), max));
-  const currentMax = Math.max(currentMin, Math.min(Math.round((Number.isNaN(parsedMax) ? max / 100 : parsedMax) * 100), max));
-
-  return (
-    <DualRangeFilter
-      label="Premium range"
-      description="Filter past offers by premium percentage"
-      min={min}
-      max={max}
-      value={[currentMin, currentMax]}
-      onChange={([nextMin, nextMax]) => setFilters({ premiumMin: (nextMin / 100).toFixed(2), premiumMax: (nextMax / 100).toFixed(2) })}
-      formatValue={cents => `${(cents / 100).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}%`}
-    />
-  );
-}
-
 function LiveNetProfitRange() {
   const { filters, setFilters, offersForProfitRange, offersForPremiumRange } = useFilters();
   const metric = filters.rangeMetric;
@@ -673,8 +621,8 @@ interface LiveOfferFiltersProps {
 }
 
 /**
- * Filters shared by Live and Past Insights views. Kept in a fixed order so
- * switching Live ↔ Past does not jump Fiat / Premium / Range around.
+ * Filters shared by Live and Past Insights views. Premium category + range
+ * stay live-only; Past uses its own Premium mode selector instead.
  */
 export function SharedOfferFilters({ scope }: { scope: 'live' | 'past' }) {
   const { filters, setFilters } = useFilters();
@@ -697,25 +645,28 @@ export function SharedOfferFilters({ scope }: { scope: 'live' | 'past' }) {
         />
       </div>
 
-      <div className="flex flex-col gap-1">
-        <span className={labelCls}>Premium</span>
-        <PremiumModeDropdown
-          value={filters.premiumMode}
-          premiumOnly={filters.premiumOnly}
-          onChange={(v, premiumOnly) => setFilters({ premiumMode: v, ...(premiumOnly == null ? {} : { premiumOnly }) })}
-          inputCls={controlCls}
-          scope={scope}
-        />
-      </div>
-
-      {scope === 'live' ? <LiveNetProfitRange /> : <PastPremiumRange />}
+      {scope === 'live' && (
+        <>
+          <div className="flex flex-col gap-1">
+            <span className={labelCls}>Premium</span>
+            <PremiumModeDropdown
+              value={filters.premiumMode}
+              premiumOnly={filters.premiumOnly}
+              onChange={(v, premiumOnly) => setFilters({ premiumMode: v, ...(premiumOnly == null ? {} : { premiumOnly }) })}
+              inputCls={controlCls}
+              scope="live"
+            />
+          </div>
+          <LiveNetProfitRange />
+        </>
+      )}
     </div>
   );
 }
 
 /**
  * Live-only filter controls (reference CEX, payment methods, refresh). Shared
- * Fiat / Premium / Range live in SharedOfferFilters above this block.
+ * Fiat plus live Premium / Range live in SharedOfferFilters above this block.
  */
 export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersProps) {
   const { filters, setFilters } = useFilters();
@@ -751,9 +702,9 @@ export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersP
 }
 
 /**
- * Past-only payment-scope control. Fiat / Premium / Range live in
- * SharedOfferFilters; timeframe / duration / profit / size mode stay in the
- * Insights sidebar below this block.
+ * Past-only payment-scope control. Fiat lives in SharedOfferFilters;
+ * timeframe / duration / profit / size mode stay in the Insights sidebar
+ * below this block.
  */
 function PaymentMethodScopeDropdown() {
   const { filters, setFilters, linkedPaymentMethodOptions } = useFilters();
