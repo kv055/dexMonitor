@@ -4,7 +4,7 @@ import {
   isDefaultWindow,
   isZoomedWindow,
   translateWindow,
-} from './OfferLifecyclePremiumChart';
+} from './OfferLifecyclePremiumChartMath';
 
 const bounds = { min: 0, max: 10 };
 

@@ -581,12 +581,14 @@ export function LiquidityWorkspace() {
     return () => { active = false; };
   }, [lightningPath, magmaOffersReload]);
 
+  const magmaOrderId = magmaOrder?.id;
+  const magmaOrderState = magmaOrder?.order_state;
   useEffect(() => {
-    if (!magmaOrder || ['COMPLETED', 'FAILED'].includes(magmaOrder.order_state)) return;
+    if (!magmaOrderId || magmaOrderState == null || ['COMPLETED', 'FAILED'].includes(magmaOrderState)) return;
     let active = true;
     const poll = async () => {
       try {
-        const next = await fetchMagmaLSPOrder(magmaOrder.id);
+        const next = await fetchMagmaLSPOrder(magmaOrderId);
         if (!active || !next?.id) return;
         setMagmaOrder(next);
         if (next.order_state === 'COMPLETED') {
@@ -604,7 +606,7 @@ export function LiquidityWorkspace() {
     void poll();
     const interval = window.setInterval(() => { void poll(); }, 5000);
     return () => { active = false; window.clearInterval(interval); };
-  }, [magmaOrder?.id, magmaOrder?.order_state]);
+  }, [magmaOrderId, magmaOrderState]);
 
   useEffect(() => {
     let active = true;
