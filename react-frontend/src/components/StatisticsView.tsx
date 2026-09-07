@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useStatistics } from '../hooks/useStatistics';
 import { useMarketRequestParams } from '../hooks/useMarketRequestParams';
 import { LoadingSpinner } from './LoadingSpinner';
-import { OfferLifecyclePremiumChart } from './OfferLifecyclePremiumChart';
+import { OfferPremiumScatterChart, type PremiumScatterDimension } from './OfferLifecyclePremiumChart';
 import {
   ExchangesCard,
   LifetimeCard,
@@ -41,6 +41,7 @@ export function StatisticsView() {
   const { params, ready } = useMarketRequestParams();
   const { data, loading, error, cacheState, builtAt, load } = useStatistics();
   const [mode, setMode] = useState<StatisticsMode>('live');
+  const [scatterDimension, setScatterDimension] = useState<PremiumScatterDimension>('lifecycle');
 
   useEffect(() => {
     if (!ready) return;
@@ -180,7 +181,12 @@ export function StatisticsView() {
             ))}
           </div>
         </div>
-        <OfferLifecyclePremiumChart key={mode} points={lifecyclePoints} />
+        <OfferPremiumScatterChart
+          key={`${mode}-${scatterDimension}`}
+          points={lifecyclePoints}
+          dimension={scatterDimension}
+          onDimensionChange={setScatterDimension}
+        />
         <div className="grid grid-cols-1 gap-1.5 md:grid-cols-2 xl:grid-cols-3 lg:flex-1 lg:min-h-0 auto-rows-fr">
           {cards}
         </div>

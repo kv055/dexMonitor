@@ -910,8 +910,9 @@ export interface GeneralStatsPremiumSummaryData {
   avg_bid_premium_pct: number | null;
 }
 
-// One offer in the lifecycle/premium bubble chart. Live lifecycles run from
-// first_seen to now; past lifecycles run from first_seen to last_seen.
+// One offer in the lifecycle/premium and volume/premium bubble charts. Live
+// lifecycles run from first_seen to now; past lifecycles run from first_seen
+// to last_seen. Volume is the offered BTC size used as an axis or bubble area.
 export interface OfferLifecyclePremiumPoint {
   lifecycle_hours: number;
   premium_rate_pct: number;

@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type PointerEvent, type WheelEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, type PointerEvent, type WheelEvent } from 'react';
 import {
   BubbleController,
   Chart as ChartJS,
@@ -19,72 +19,294 @@ interface OfferBubble extends BubbleDataPoint {
   offer: OfferLifecyclePremiumPoint;
 }
 
-interface OfferLifecyclePremiumChartProps {
-  points: OfferLifecyclePremiumPoint[];
-}
-
 type AxisKey = 'x' | 'y';
 
-interface AxisDrag {
+interface AxisWindow {
+  min: number;
+  max: number;
+}
+
+interface AxisZoomDrag {
+  kind: 'zoom';
   axis: AxisKey;
   startCoordinate: number;
   startMin: number;
   startMax: number;
 }
 
-function formatLifecycle(hours: number): string {
-  if (hours < 1) return `${Math.max(0, Math.round(hours * 60))}m`;
-  if (hours < 48) return `${hours.toFixed(hours < 10 ? 1 : 0)}h`;
-  return `${(hours / 24).toFixed(hours < 240 ? 1 : 0)}d`;
+interface AxisPanDrag {
+  kind: 'pan-axis';
+  axis: AxisKey;
+  startCoordinate: number;
+  start: AxisWindow;
 }
 
-function buildBubbles(points: OfferLifecyclePremiumPoint[], maxVolume: number): OfferBubble[] {
+interface PlotPanDrag {
+  kind: 'pan';
+  startX: number;
+  startY: number;
+  start: Record<AxisKey, AxisWindow>;
+}
+
+type ChartDrag = AxisZoomDrag | AxisPanDrag | PlotPanDrag;
+
+export function isZoomedWindow(window: AxisWindow, bounds: AxisWindow): boolean {
+  return window.max - window.min < (bounds.max - bounds.min) * 0.995;
+}
+
+export function isDefaultWindow(window: AxisWindow, bounds: AxisWindow): boolean {
+  const span = Math.max(bounds.max - bounds.min, Number.EPSILON);
+  const epsilon = span * 0.005;
+  return Math.abs(window.min - bounds.min) <= epsilon && Math.abs(window.max - bounds.max) <= epsilon;
+}
+
+export function expandPanBounds(data: AxisWindow): AxisWindow {
+  const span = Math.max(data.max - data.min, Number.EPSILON);
+  const overscroll = Math.max(span, Math.abs(data.max), Math.abs(data.min));
+  return {
+    min: Math.min(data.min, 0) - overscroll,
+    max: Math.max(data.max, 0) + overscroll,
+  };
+}
+
+export function translateWindow(
+  source: AxisWindow,
+  bounds: AxisWindow,
+  valueShift: number,
+): AxisWindow {
+  let nextMin = source.min + valueShift;
+  let nextMax = source.max + valueShift;
+  if (nextMin < bounds.min) {
+    nextMax += bounds.min - nextMin;
+    nextMin = bounds.min;
+  }
+  if (nextMax > bounds.max) {
+    nextMin -= nextMax - bounds.max;
+    nextMax = bounds.max;
+  }
+  return {
+    min: Math.max(bounds.min, nextMin),
+    max: Math.min(bounds.max, nextMax),
+  };
+}
+
+export type PremiumScatterDimension = 'lifecycle' | 'volume';
+
+interface DimensionConfig {
+  title: string;
+  subtitle: string;
+  ariaLabel: string;
+  emptyMessage: string;
+  xTitle: string;
+  xValue: (point: OfferLifecyclePremiumPoint) => number;
+  formatX: (value: number) => string;
+  xFullMaxFloor: number;
+  xMinimumSpanFloor: number;
+  sizeValue: (point: OfferLifecyclePremiumPoint) => number;
+  sizeFloor: number;
+}
+
+function formatLifecycle(hours: number): string {
+  const sign = hours < 0 ? '-' : '';
+  const abs = Math.abs(hours);
+  if (abs < 1) return `${sign}${Math.round(abs * 60)}m`;
+  if (abs < 48) return `${sign}${abs.toFixed(abs < 10 ? 1 : 0)}h`;
+  return `${sign}${(abs / 24).toFixed(abs < 240 ? 1 : 0)}d`;
+}
+
+function formatVolume(btc: number): string {
+  if (btc === 0) return '0';
+  const sign = btc < 0 ? '-' : '';
+  const abs = Math.abs(btc);
+  const formatted = abs >= 10
+    ? abs.toFixed(1)
+    : abs >= 1
+      ? abs.toFixed(2)
+      : abs >= 0.01
+        ? abs.toFixed(3)
+        : abs.toFixed(5);
+  return `${sign}${formatted.replace(/0+$/, '').replace(/\.$/, '')}`;
+}
+
+const DIMENSIONS: Record<PremiumScatterDimension, DimensionConfig> = {
+  lifecycle: {
+    title: 'Lifecycle vs premium',
+    subtitle: 'Bubble area represents offered BTC volume',
+    ariaLabel: 'Scatter bubble chart of offer lifecycle length by premium rate, sized by BTC volume',
+    emptyMessage: 'No positive-premium offers with lifecycle and volume data in this window.',
+    xTitle: 'Offer lifecycle length',
+    xValue: point => point.lifecycle_hours,
+    formatX: formatLifecycle,
+    xFullMaxFloor: 1,
+    xMinimumSpanFloor: 1 / 60,
+    sizeValue: point => point.volume_btc,
+    sizeFloor: 1e-8,
+  },
+  volume: {
+    title: 'Volume vs premium',
+    subtitle: 'Bubble area represents offer lifecycle length',
+    ariaLabel: 'Scatter bubble chart of offered BTC volume by premium rate, sized by lifecycle length',
+    emptyMessage: 'No positive-premium offers with volume and premium data in this window.',
+    xTitle: 'Offered BTC volume',
+    xValue: point => point.volume_btc,
+    formatX: formatVolume,
+    xFullMaxFloor: 0.01,
+    xMinimumSpanFloor: 1e-4,
+    sizeValue: point => point.lifecycle_hours,
+    sizeFloor: 1 / 60,
+  },
+};
+
+function ChartDimensionDropdown({
+  value,
+  onChange,
+}: {
+  value: PremiumScatterDimension;
+  onChange: (value: PremiumScatterDimension) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative">
+      <button
+        type="button"
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        aria-label="Offer scatter chart"
+        onClick={() => setOpen(current => !current)}
+        className="flex items-center gap-1.5 text-[0.7rem] uppercase tracking-widest font-semibold text-muted hover:text-text transition-colors"
+      >
+        {DIMENSIONS[value].title}
+        <span className="text-[0.65rem] text-muted">▾</span>
+      </button>
+      {open && (
+        <div
+          role="listbox"
+          aria-label="Offer scatter chart"
+          className="absolute left-0 top-full z-20 mt-1 min-w-52 overflow-hidden rounded-md border border-border bg-surface shadow-lg"
+        >
+          {(Object.keys(DIMENSIONS) as PremiumScatterDimension[]).map(key => {
+            const active = key === value;
+            return (
+              <button
+                key={key}
+                type="button"
+                role="option"
+                aria-selected={active}
+                className={`flex w-full px-2.5 py-1.5 text-left text-xs transition-colors ${
+                  active ? 'bg-accent/15 text-accent' : 'text-text hover:bg-bg'
+                }`}
+                onClick={() => {
+                  onChange(key);
+                  setOpen(false);
+                }}
+              >
+                {DIMENSIONS[key].title}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function buildBubbles(
+  points: OfferLifecyclePremiumPoint[],
+  maxSize: number,
+  dimension: DimensionConfig,
+): OfferBubble[] {
   return points.map(point => ({
-    x: point.lifecycle_hours,
+    x: dimension.xValue(point),
     y: point.premium_rate_pct,
-    // Radius uses the square root so bubble area, rather than diameter, tracks volume.
-    r: Math.max(3, 18 * Math.sqrt(point.volume_btc / maxVolume)),
+    // Radius uses the square root so bubble area, rather than diameter, tracks the size metric.
+    r: Math.max(3, 18 * Math.sqrt(dimension.sizeValue(point) / maxSize)),
     offer: point,
   }));
 }
 
-export function OfferLifecyclePremiumChart({ points }: OfferLifecyclePremiumChartProps) {
+export function OfferPremiumScatterChart({
+  points,
+  dimension: dimensionKey,
+  onDimensionChange,
+}: {
+  points: OfferLifecyclePremiumPoint[];
+  dimension: PremiumScatterDimension;
+  onDimensionChange?: (dimension: PremiumScatterDimension) => void;
+}) {
+  const dimension = DIMENSIONS[dimensionKey];
   const chartRef = useRef<ChartJS<'bubble', OfferBubble[]>>(null);
-  const dragRef = useRef<AxisDrag | null>(null);
+  const viewRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<ChartDrag | null>(null);
   const [zoomedAxes, setZoomedAxes] = useState({ x: false, y: false });
   const positivePoints = points.filter(point => point.premium_rate_pct > 0);
-  const maxVolume = Math.max(...positivePoints.map(point => point.volume_btc), 1e-8);
-  const maxLifecycle = Math.max(...positivePoints.map(point => point.lifecycle_hours), 1);
+  const maxSize = Math.max(...positivePoints.map(point => dimension.sizeValue(point)), dimension.sizeFloor);
+  const maxX = Math.max(...positivePoints.map(point => dimension.xValue(point)), 0);
   const minPremium = Math.min(...positivePoints.map(point => point.premium_rate_pct), 0);
   const maxPremium = Math.max(...positivePoints.map(point => point.premium_rate_pct), 1);
   const premiumPadding = Math.max((maxPremium - minPremium) * 0.08, 0.05);
   const fullBounds = {
-    x: { min: 0, max: Math.max(maxLifecycle * 1.08, 1) },
+    x: { min: 0, max: Math.max(maxX * 1.08, dimension.xFullMaxFloor) },
     y: { min: Math.max(0, minPremium - premiumPadding), max: maxPremium + premiumPadding },
+  };
+  const panBounds = {
+    x: expandPanBounds(fullBounds.x),
+    y: expandPanBounds(fullBounds.y),
   };
   const livePoints = positivePoints.filter(point => point.is_live);
   const pastPoints = positivePoints.filter(point => !point.is_live);
 
-  const resetAxisZoom = (axis: AxisKey) => {
+  const publishView = () => {
+    const chart = chartRef.current;
+    if (!chart || !viewRef.current) return;
+    viewRef.current.dataset.chartView = JSON.stringify({
+      x: { min: chart.scales.x.min, max: chart.scales.x.max },
+      y: { min: chart.scales.y.min, max: chart.scales.y.max },
+    });
+  };
+
+  const syncViewFlags = () => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const next = {
+      x: !isDefaultWindow({ min: chart.scales.x.min, max: chart.scales.x.max }, fullBounds.x),
+      y: !isDefaultWindow({ min: chart.scales.y.min, max: chart.scales.y.max }, fullBounds.y),
+    };
+    setZoomedAxes(current => (current.x === next.x && current.y === next.y) ? current : next);
+  };
+
+  const writeAxisWindow = (axis: AxisKey, window: AxisWindow) => {
     const chart = chartRef.current;
     const axisOptions = chart?.options.scales?.[axis];
     if (!chart || !axisOptions) return;
-    axisOptions.min = fullBounds[axis].min;
-    axisOptions.max = fullBounds[axis].max;
+    axisOptions.min = window.min;
+    axisOptions.max = window.max;
+  };
+
+  const resetAxisZoom = (axis: AxisKey) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    writeAxisWindow(axis, fullBounds[axis]);
     chart.update('none');
+    publishView();
     setZoomedAxes(current => ({ ...current, [axis]: false }));
   };
 
   const resetView = () => {
     const chart = chartRef.current;
     if (!chart) return;
-    for (const axis of ['x', 'y'] as const) {
-      const axisOptions = chart.options.scales?.[axis];
-      if (!axisOptions) continue;
-      axisOptions.min = fullBounds[axis].min;
-      axisOptions.max = fullBounds[axis].max;
-    }
+    for (const axis of ['x', 'y'] as const) writeAxisWindow(axis, fullBounds[axis]);
     chart.update('none');
+    publishView();
     setZoomedAxes({ x: false, y: false });
   };
 
@@ -96,12 +318,12 @@ export function OfferLifecyclePremiumChart({ points }: OfferLifecyclePremiumChar
     focalRatio = 0.5,
   ) => {
     const chart = chartRef.current;
-    const axisOptions = chart?.options.scales?.[axis];
-    if (!chart || !axisOptions) return;
+    if (!chart) return;
 
     const { min: fullMin, max: fullMax } = fullBounds[axis];
+    const { min: panMin, max: panMax } = panBounds[axis];
     const currentSpan = sourceMax - sourceMin;
-    const minimumSpan = Math.max(fullMax / 100, 1 / 60);
+    const minimumSpan = Math.max(fullMax / 100, axis === 'x' ? dimension.xMinimumSpanFloor : 1 / 60);
     const nextSpan = Math.max(currentSpan * factor, minimumSpan);
 
     if (factor > 1 && nextSpan >= fullMax - fullMin) {
@@ -112,19 +334,50 @@ export function OfferLifecyclePremiumChart({ points }: OfferLifecyclePremiumChar
     const anchor = sourceMin + currentSpan * focalRatio;
     let nextMin = anchor - nextSpan * focalRatio;
     let nextMax = anchor + nextSpan * (1 - focalRatio);
-    if (nextMin < fullMin) {
-      nextMax += fullMin - nextMin;
-      nextMin = fullMin;
+    if (nextMin < panMin) {
+      nextMax += panMin - nextMin;
+      nextMin = panMin;
     }
-    if (nextMax > fullMax) {
-      nextMin -= nextMax - fullMax;
-      nextMax = fullMax;
+    if (nextMax > panMax) {
+      nextMin -= nextMax - panMax;
+      nextMax = panMax;
     }
 
-    axisOptions.min = Math.max(fullMin, nextMin);
-    axisOptions.max = Math.min(fullMax, nextMax);
+    writeAxisWindow(axis, {
+      min: Math.max(panMin, nextMin),
+      max: Math.min(panMax, nextMax),
+    });
     chart.update('none');
+    publishView();
     setZoomedAxes(current => ({ ...current, [axis]: true }));
+  };
+
+  const applyAxisPan = (
+    axis: AxisKey,
+    source: AxisWindow,
+    valueShift: number,
+  ) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    writeAxisWindow(axis, translateWindow(source, panBounds[axis], valueShift));
+    chart.update('none');
+    publishView();
+    syncViewFlags();
+  };
+
+  const applyPlotPan = (start: Record<AxisKey, AxisWindow>, dx: number, dy: number) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const { width, height } = chart.chartArea;
+    if (width > 0) {
+      writeAxisWindow('x', translateWindow(start.x, panBounds.x, -(dx / width) * (start.x.max - start.x.min)));
+    }
+    if (height > 0) {
+      writeAxisWindow('y', translateWindow(start.y, panBounds.y, (dy / height) * (start.y.max - start.y.min)));
+    }
+    chart.update('none');
+    publishView();
+    syncViewFlags();
   };
 
   const zoomAxis = (axis: AxisKey, factor: number, focalRatio = 0.5) => {
@@ -133,12 +386,24 @@ export function OfferLifecyclePremiumChart({ points }: OfferLifecyclePremiumChar
     applyAxisZoom(axis, scale.min, scale.max, factor, focalRatio);
   };
 
+  // Wheel over an axis zooms that axis; wheel over the plot zooms both toward
+  // the cursor. Dragging an axis at the default view scales it; once the view
+  // has moved, dragging that axis or the plot pans, including past zero.
+
   const axisAtPosition = (x: number, y: number): AxisKey | null => {
     const chartArea = chartRef.current?.chartArea;
     if (!chartArea) return null;
     if (y >= chartArea.bottom && x >= chartArea.left && x <= chartArea.right) return 'x';
-    if (x <= chartArea.left && y >= chartArea.top && y <= chartArea.bottom) return 'y';
+    // Include the axis line and a sliver of the plot so the y scale is as easy
+    // to grab as the x labels below the chart.
+    if (x <= chartArea.left + 12 && y >= chartArea.top && y <= chartArea.bottom) return 'y';
     return null;
+  };
+
+  const insidePlot = (x: number, y: number): boolean => {
+    const chartArea = chartRef.current?.chartArea;
+    if (!chartArea) return false;
+    return x >= chartArea.left && x <= chartArea.right && y >= chartArea.top && y <= chartArea.bottom;
   };
 
   const handleWheelZoom = (event: WheelEvent<HTMLDivElement>) => {
@@ -148,36 +413,81 @@ export function OfferLifecyclePremiumChart({ points }: OfferLifecyclePremiumChar
     const cursorX = event.clientX - canvasRect.left;
     const cursorY = event.clientY - canvasRect.top;
     const pointedAxis = axisAtPosition(cursorX, cursorY);
-    const insidePlot = cursorX >= chart.chartArea.left && cursorX <= chart.chartArea.right
-      && cursorY >= chart.chartArea.top && cursorY <= chart.chartArea.bottom;
-    if (!pointedAxis && !insidePlot) return;
+    if (!pointedAxis && !insidePlot(cursorX, cursorY)) return;
 
     event.preventDefault();
-    const axis = pointedAxis ?? 'x';
-    const focalRatio = axis === 'x'
-      ? (cursorX - chart.chartArea.left) / chart.chartArea.width
-      : (chart.chartArea.bottom - cursorY) / chart.chartArea.height;
-    zoomAxis(axis, event.deltaY < 0 ? 0.8 : 1.25, Math.min(1, Math.max(0, focalRatio)));
+    const xScale = chart.scales.x;
+    if (Math.abs(event.deltaX) > Math.abs(event.deltaY)) {
+      if (xScale && chart.chartArea.width > 0) {
+        const span = xScale.max - xScale.min;
+        applyAxisPan('x', { min: xScale.min, max: xScale.max }, (event.deltaX / chart.chartArea.width) * span);
+      }
+      return;
+    }
+
+    const factor = event.deltaY < 0 ? 0.8 : 1.25;
+    const clampRatio = (value: number) => Math.min(1, Math.max(0, value));
+    if (pointedAxis) {
+      const focalRatio = pointedAxis === 'x'
+        ? (cursorX - chart.chartArea.left) / chart.chartArea.width
+        : (chart.chartArea.bottom - cursorY) / chart.chartArea.height;
+      zoomAxis(pointedAxis, factor, clampRatio(focalRatio));
+      return;
+    }
+
+    zoomAxis('x', factor, clampRatio((cursorX - chart.chartArea.left) / chart.chartArea.width));
+    zoomAxis('y', factor, clampRatio((chart.chartArea.bottom - cursorY) / chart.chartArea.height));
   };
 
   const handlePointerDown = (event: PointerEvent<HTMLDivElement>) => {
     const chart = chartRef.current;
     if (!chart) return;
+    if ((event.target as HTMLElement).closest('button')) return;
     const rect = chart.canvas.getBoundingClientRect();
     const x = event.clientX - rect.left;
     const y = event.clientY - rect.top;
     const axis = axisAtPosition(x, y);
     const scale = axis ? chart.scales[axis] : null;
-    if (!axis || !scale) return;
 
-    dragRef.current = {
-      axis,
-      startCoordinate: axis === 'x' ? event.clientX : event.clientY,
-      startMin: scale.min,
-      startMax: scale.max,
-    };
+    if (axis && scale) {
+      const window = { min: scale.min, max: scale.max };
+      if (!isDefaultWindow(window, fullBounds[axis])) {
+        dragRef.current = {
+          kind: 'pan-axis',
+          axis,
+          startCoordinate: axis === 'x' ? event.clientX : event.clientY,
+          start: window,
+        };
+        chart.canvas.style.cursor = 'grabbing';
+      } else {
+        dragRef.current = {
+          kind: 'zoom',
+          axis,
+          startCoordinate: axis === 'x' ? event.clientX : event.clientY,
+          startMin: scale.min,
+          startMax: scale.max,
+        };
+        chart.canvas.style.cursor = axis === 'x' ? 'ew-resize' : 'ns-resize';
+      }
+    } else if (insidePlot(x, y)) {
+      const xScale = chart.scales.x;
+      const yScale = chart.scales.y;
+      if (!xScale || !yScale) return;
+      dragRef.current = {
+        kind: 'pan',
+        startX: event.clientX,
+        startY: event.clientY,
+        start: {
+          x: { min: xScale.min, max: xScale.max },
+          y: { min: yScale.min, max: yScale.max },
+        },
+      };
+      chart.canvas.style.cursor = 'grabbing';
+    } else {
+      return;
+    }
+
     event.currentTarget.setPointerCapture(event.pointerId);
-    chart.canvas.style.cursor = axis === 'x' ? 'ew-resize' : 'ns-resize';
     event.preventDefault();
   };
 
@@ -185,22 +495,46 @@ export function OfferLifecyclePremiumChart({ points }: OfferLifecyclePremiumChar
     const chart = chartRef.current;
     if (!chart) return;
     const drag = dragRef.current;
-    if (drag) {
+    if (drag?.kind === 'zoom') {
       const coordinate = drag.axis === 'x' ? event.clientX : event.clientY;
-      const delta = coordinate - drag.startCoordinate;
-      applyAxisZoom(drag.axis, drag.startMin, drag.startMax, Math.exp(delta / 150));
+      applyAxisZoom(drag.axis, drag.startMin, drag.startMax, Math.exp((coordinate - drag.startCoordinate) / 150));
+      return;
+    }
+    if (drag?.kind === 'pan-axis') {
+      const pixelSpan = drag.axis === 'x' ? chart.chartArea.width : chart.chartArea.height;
+      if (pixelSpan <= 0) return;
+      const pixelDelta = (drag.axis === 'x' ? event.clientX : event.clientY) - drag.startCoordinate;
+      const span = drag.start.max - drag.start.min;
+      const valueShift = drag.axis === 'x'
+        ? -(pixelDelta / pixelSpan) * span
+        : (pixelDelta / pixelSpan) * span;
+      applyAxisPan(drag.axis, drag.start, valueShift);
+      return;
+    }
+    if (drag?.kind === 'pan') {
+      applyPlotPan(drag.start, event.clientX - drag.startX, event.clientY - drag.startY);
       return;
     }
 
     const rect = chart.canvas.getBoundingClientRect();
-    const axis = axisAtPosition(event.clientX - rect.left, event.clientY - rect.top);
-    chart.canvas.style.cursor = axis === 'x' ? 'ew-resize' : axis === 'y' ? 'ns-resize' : 'default';
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    const axis = axisAtPosition(x, y);
+    if (axis) {
+      const hovered = chart.scales[axis];
+      const atDefault = hovered == null || isDefaultWindow({ min: hovered.min, max: hovered.max }, fullBounds[axis]);
+      chart.canvas.style.cursor = atDefault ? (axis === 'x' ? 'ew-resize' : 'ns-resize') : 'grab';
+      return;
+    }
+    chart.canvas.style.cursor = insidePlot(x, y) ? 'grab' : 'default';
   };
 
   const handlePointerUp = (event: PointerEvent<HTMLDivElement>) => {
     if (!dragRef.current) return;
     dragRef.current = null;
-    event.currentTarget.releasePointerCapture(event.pointerId);
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+      event.currentTarget.releasePointerCapture(event.pointerId);
+    }
     if (chartRef.current) chartRef.current.canvas.style.cursor = 'default';
   };
 
@@ -208,20 +542,20 @@ export function OfferLifecyclePremiumChart({ points }: OfferLifecyclePremiumChar
     datasets: [
       ...(livePoints.length > 0 ? [{
         label: 'Live offers',
-        data: buildBubbles(livePoints, maxVolume),
+        data: buildBubbles(livePoints, maxSize, dimension),
         backgroundColor: 'rgba(247, 147, 26, 0.62)',
         borderColor: '#f7931a',
         borderWidth: 1,
       }] : []),
       ...(pastPoints.length > 0 ? [{
         label: 'Past offers',
-        data: buildBubbles(pastPoints, maxVolume),
+        data: buildBubbles(pastPoints, maxSize, dimension),
         backgroundColor: 'rgba(88, 166, 255, 0.52)',
         borderColor: '#58a6ff',
         borderWidth: 1,
       }] : []),
     ],
-  }), [livePoints, maxVolume, pastPoints]);
+  }), [dimension, livePoints, maxSize, pastPoints]);
 
   const options = useMemo<ChartOptions<'bubble'>>(() => ({
     responsive: true,
@@ -263,19 +597,18 @@ export function OfferLifecyclePremiumChart({ points }: OfferLifecyclePremiumChar
     },
     scales: {
       x: {
-        beginAtZero: true,
         min: fullBounds.x.min,
         max: fullBounds.x.max,
         grid: { color: 'rgba(139, 148, 158, 0.15)' },
         border: { color: 'rgba(139, 148, 158, 0.3)' },
         ticks: {
           color: '#8b949e',
-          callback: value => formatLifecycle(Number(value)),
+          callback: value => dimension.formatX(Number(value)),
           font: { size: 10 },
         },
         title: {
           display: true,
-          text: 'Offer lifecycle length',
+          text: dimension.xTitle,
           color: '#8b949e',
           font: { size: 10, weight: 500 },
         },
@@ -298,16 +631,20 @@ export function OfferLifecyclePremiumChart({ points }: OfferLifecyclePremiumChar
         },
       },
     },
-  }), [fullBounds.x.max, fullBounds.x.min, fullBounds.y.max, fullBounds.y.min, livePoints.length, pastPoints.length]);
+  }), [dimension, fullBounds.x.max, fullBounds.x.min, fullBounds.y.max, fullBounds.y.min, livePoints.length, pastPoints.length]);
 
   return (
     <div className="bg-bg/40 border border-border rounded-lg p-3 flex flex-col gap-2 min-h-[20rem]">
       <div className="flex items-baseline justify-between gap-2">
         <div>
-          <h3 className="text-[0.7rem] uppercase tracking-widest font-semibold text-muted">
-            Lifecycle vs premium
-          </h3>
-          <p className="text-[0.65rem] text-muted mt-0.5">Bubble area represents offered BTC volume</p>
+          {onDimensionChange ? (
+            <ChartDimensionDropdown value={dimensionKey} onChange={onDimensionChange} />
+          ) : (
+            <h3 className="text-[0.7rem] uppercase tracking-widest font-semibold text-muted">
+              {dimension.title}
+            </h3>
+          )}
+          <p className="text-[0.65rem] text-muted mt-0.5">{dimension.subtitle}</p>
         </div>
         <span className="text-[0.65rem] text-muted tabular-nums mono-nums">
           {positivePoints.length} {positivePoints.length === 1 ? 'offer' : 'offers'}
@@ -315,19 +652,22 @@ export function OfferLifecyclePremiumChart({ points }: OfferLifecyclePremiumChar
       </div>
       {positivePoints.length > 0 ? (
         <div
-          className="relative flex-1 min-h-[16rem]"
+          ref={viewRef}
+          data-testid={`offer-premium-chart-${dimensionKey}`}
+          className="relative flex-1 min-h-[16rem] touch-none"
           onWheel={handleWheelZoom}
           onPointerDown={handlePointerDown}
           onPointerMove={handlePointerMove}
           onPointerUp={handlePointerUp}
           onPointerCancel={handlePointerUp}
+          onLostPointerCapture={handlePointerUp}
         >
           <Bubble
             ref={chartRef}
             data={data}
             options={options}
             role="img"
-            aria-label="Scatter bubble chart of offer lifecycle length by premium rate, sized by BTC volume"
+            aria-label={dimension.ariaLabel}
           />
           {(zoomedAxes.x || zoomedAxes.y) && (
             <button
@@ -342,9 +682,17 @@ export function OfferLifecyclePremiumChart({ points }: OfferLifecyclePremiumChar
         </div>
       ) : (
         <div className="flex flex-1 min-h-[16rem] items-center justify-center text-sm text-muted">
-          No positive-premium offers with lifecycle and volume data in this window.
+          {dimension.emptyMessage}
         </div>
       )}
     </div>
   );
+}
+
+export function OfferLifecyclePremiumChart({ points }: { points: OfferLifecyclePremiumPoint[] }) {
+  return <OfferPremiumScatterChart points={points} dimension="lifecycle" />;
+}
+
+export function OfferVolumePremiumChart({ points }: { points: OfferLifecyclePremiumPoint[] }) {
+  return <OfferPremiumScatterChart points={points} dimension="volume" />;
 }
