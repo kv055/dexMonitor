@@ -1842,6 +1842,8 @@ func NormalizeProvider(value string) string {
 		return "HodlHodl"
 	case "peach", "peach bitcoin", "peachbitcoin":
 		return "Peach"
+	case "mostro":
+		return "mostro"
 	case "kraken":
 		return "Kraken"
 	case "coinbase":

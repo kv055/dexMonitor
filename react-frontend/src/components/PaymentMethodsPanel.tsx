@@ -17,7 +17,7 @@ const CATEGORIES = ['Cash', 'Bank', 'Fiat Transmitter', 'Gift Cards', 'Crypto', 
 
 // DEX offer slugs for payment_methods.sources — must match offers.exchange /
 // payment_methods_sources_allowed_check.
-const DEX_SOURCES = ['bisq', 'bisq2', 'hodlhodl', 'robosats', 'peachbitcoin'] as const;
+const DEX_SOURCES = ['bisq', 'bisq2', 'hodlhodl', 'robosats', 'peachbitcoin', 'mostro'] as const;
 
 // Enabled fiat codes for payment_methods.currencies — mirrors commons/fiat.Enabled.
 const FIAT_CURRENCIES = ['EUR', 'USD', 'GBP', 'AUD', 'CHF', 'SEK', 'NOK', 'CAD'] as const;
@@ -28,6 +28,7 @@ const SOURCE_LABELS: Record<(typeof DEX_SOURCES)[number], string> = {
   hodlhodl: 'HodlHodl',
   robosats: 'RoboSats',
   peachbitcoin: 'Peach',
+  mostro: 'Mostro',
 };
 
 const compactInputCls =

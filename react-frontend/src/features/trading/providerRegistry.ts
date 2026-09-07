@@ -18,6 +18,7 @@ export const PROVIDER_DEFINITIONS: ProviderDefinition[] = [
   { value: 'Bisq2', label: 'Bisq2', category: 'DEX', creatable: false },
   { value: 'Robosats', label: 'RoboSats', category: 'DEX', creatable: true },
   { value: 'Peach', label: 'Peach Bitcoin', category: 'DEX', creatable: true },
+  { value: 'mostro', label: 'Mostro', category: 'DEX', creatable: false },
   { value: 'Kraken', label: 'Kraken', category: 'CEX', creatable: true },
   { value: 'Coinbase', label: 'Coinbase', category: 'CEX', creatable: true },
   { value: 'Binance', label: 'Binance', category: 'CEX', creatable: true },

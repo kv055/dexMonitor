@@ -610,6 +610,7 @@ function exchangeFilterLabel(name: string): string {
   if (name === 'hodlhodl') return 'HodlHodl';
   if (name === 'robosats') return 'RoboSats';
   if (name === 'peachbitcoin') return 'Peach';
+  if (name === 'mostro') return 'Mostro';
   return name;
 }
 

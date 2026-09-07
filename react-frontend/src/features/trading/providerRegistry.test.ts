@@ -12,6 +12,7 @@ import {
 describe('trading provider registry', () => {
   it('normalizes labels and categories from one registry', () => {
     expect(providerLabel('robosats')).toBe('RoboSats');
+    expect(providerLabel('mostro')).toBe('Mostro');
     expect(providerCategoryFor('kraken')).toBe('CEX');
     expect(groupedCreatableProviders('CEX')[0].providers.map(provider => provider.value)).toContain('Kraken');
   });

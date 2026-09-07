@@ -6,6 +6,7 @@ export const EXCHANGE_COLORS: Record<string, string> = {
   bisq: '#f7931a',
   bisq2: '#58a6ff',
   peachbitcoin: '#FF6B35',
+  mostro: '#2dd4bf',
 };
 
 const DEFAULT_EXCHANGE_COLOR = '#8b949e';
