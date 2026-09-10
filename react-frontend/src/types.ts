@@ -915,16 +915,18 @@ export interface GeneralStatsPremiumSummaryData {
   avg_bid_premium_pct: number | null;
 }
 
-// One offer in the lifecycle/premium, volume/premium, and deposit/premium
+// One offer in the lifecycle/premium, volume/premium, and counterparty-deposit
 // bubble charts. Live lifecycles run from first_seen to now; past lifecycles
 // run from first_seen to last_seen. Volume is the offered BTC size used as an
-// axis or bubble area. CounterpartyStakeBTC is the maker's lock; omit/null
-// when the venue has none (those offers are dropped from the deposit chart).
+// axis or bubble area. CounterpartyStakeBTC/Pct are the maker's lock; omit/null
+// when the venue has none (those offers are dropped from the matching deposit
+// chart).
 export interface OfferLifecyclePremiumPoint {
   lifecycle_hours: number;
   premium_rate_pct: number;
   volume_btc: number;
   counterparty_stake_btc?: number | null;
+  counterparty_stake_pct?: number | null;
   exchange: string;
   direction: OfferDirection;
   is_live: boolean;

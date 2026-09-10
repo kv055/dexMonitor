@@ -764,7 +764,7 @@ export const MOCK_STATISTICS = {
       avg_bid_premium_pct: -1.6,
     },
     offer_lifecycle_points: [
-      { lifecycle_hours: 0.5, premium_rate_pct: 1.2, volume_btc: 0.01, counterparty_stake_btc: 0.0045, exchange: 'robosats', direction: 'ask', is_live: true },
+      { lifecycle_hours: 0.5, premium_rate_pct: 1.2, volume_btc: 0.01, counterparty_stake_btc: 0.0045, counterparty_stake_pct: 0.03, exchange: 'robosats', direction: 'ask', is_live: true },
       { lifecycle_hours: 8, premium_rate_pct: -0.8, volume_btc: 0.08, exchange: 'hodlhodl', direction: 'bid', is_live: true },
     ],
   },
@@ -805,7 +805,7 @@ export const MOCK_STATISTICS = {
       },
     },
     offer_lifecycle_points: [
-      { lifecycle_hours: 2, premium_rate_pct: 2.1, volume_btc: 0.02, counterparty_stake_btc: 0.003, exchange: 'robosats', direction: 'ask', is_live: false },
+      { lifecycle_hours: 2, premium_rate_pct: 2.1, volume_btc: 0.02, counterparty_stake_btc: 0.003, counterparty_stake_pct: 0.03, exchange: 'robosats', direction: 'ask', is_live: false },
       { lifecycle_hours: 36, premium_rate_pct: 3.4, volume_btc: 0.2, exchange: 'hodlhodl', direction: 'ask', is_live: false },
     ],
   },

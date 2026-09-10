@@ -51,7 +51,7 @@ interface PlotPanDrag {
 
 type ChartDrag = AxisZoomDrag | AxisPanDrag | PlotPanDrag;
 
-export type PremiumScatterDimension = 'lifecycle' | 'volume' | 'deposit';
+export type PremiumScatterDimension = 'lifecycle' | 'volume' | 'depositBtc' | 'depositPct';
 
 interface DimensionConfig {
   title: string;
@@ -73,6 +73,26 @@ function formatLifecycle(hours: number): string {
   if (abs < 1) return `${sign}${Math.round(abs * 60)}m`;
   if (abs < 48) return `${sign}${abs.toFixed(abs < 10 ? 1 : 0)}h`;
   return `${sign}${(abs / 24).toFixed(abs < 240 ? 1 : 0)}d`;
+}
+
+function formatPercentAxis(pct: number): string {
+  const formatted = pct >= 10 ? pct.toFixed(0) : pct.toFixed(1);
+  return `${formatted.replace(/0+$/, '').replace(/\.$/, '')}%`;
+}
+
+function formatStoredDepositPct(fraction: number): string {
+  return formatPercentAxis(fraction <= 1 ? fraction * 100 : fraction);
+}
+
+function depositBtcValue(point: OfferLifecyclePremiumPoint): number {
+  const stake = point.counterparty_stake_btc;
+  return typeof stake === 'number' && Number.isFinite(stake) && stake > 0 ? stake : Number.NaN;
+}
+
+function depositPctValue(point: OfferLifecyclePremiumPoint): number {
+  const stake = point.counterparty_stake_pct;
+  if (typeof stake !== 'number' || !Number.isFinite(stake) || stake <= 0) return Number.NaN;
+  return stake <= 1 ? stake * 100 : stake;
 }
 
 function formatVolume(btc: number): string {
@@ -116,19 +136,29 @@ const DIMENSIONS: Record<PremiumScatterDimension, DimensionConfig> = {
     sizeValue: point => point.lifecycle_hours,
     sizeFloor: 1 / 60,
   },
-  deposit: {
-    title: 'Counterparty deposit vs premium',
+  depositBtc: {
+    title: 'Counterparty deposit (BTC) vs premium',
     subtitle: 'Bubble area represents offered BTC volume',
     ariaLabel: 'Scatter bubble chart of counterparty deposit in BTC by premium rate, sized by BTC volume',
-    emptyMessage: 'No positive-premium offers with a counterparty deposit in this window.',
+    emptyMessage: 'No positive-premium offers with a counterparty deposit in BTC in this window.',
     xTitle: 'Counterparty deposit (BTC)',
-    xValue: point => {
-      const stake = point.counterparty_stake_btc;
-      return typeof stake === 'number' && Number.isFinite(stake) && stake > 0 ? stake : Number.NaN;
-    },
+    xValue: depositBtcValue,
     formatX: formatVolume,
     xFullMaxFloor: 0.001,
     xMinimumSpanFloor: 1e-6,
+    sizeValue: point => point.volume_btc,
+    sizeFloor: 1e-8,
+  },
+  depositPct: {
+    title: 'Counterparty deposit (%) vs premium',
+    subtitle: 'Bubble area represents offered BTC volume',
+    ariaLabel: 'Scatter bubble chart of counterparty deposit percent by premium rate, sized by BTC volume',
+    emptyMessage: 'No positive-premium offers with a counterparty deposit percent in this window.',
+    xTitle: 'Counterparty deposit (%)',
+    xValue: depositPctValue,
+    formatX: formatPercentAxis,
+    xFullMaxFloor: 5,
+    xMinimumSpanFloor: 0.1,
     sizeValue: point => point.volume_btc,
     sizeFloor: 1e-8,
   },
@@ -169,7 +199,7 @@ function ChartDimensionDropdown({
         <div
           role="listbox"
           aria-label="Offer scatter chart"
-          className="absolute left-0 top-full z-20 mt-1 min-w-52 overflow-hidden rounded-md border border-border bg-surface shadow-lg"
+          className="absolute left-0 top-full z-20 mt-1 min-w-72 overflow-hidden rounded-md border border-border bg-surface shadow-lg"
         >
           {(Object.keys(DIMENSIONS) as PremiumScatterDimension[]).map(key => {
             const active = key === value;
@@ -577,8 +607,11 @@ export function OfferPremiumScatterChart({
               `Lifecycle: ${formatLifecycle(point.lifecycle_hours)}`,
               `Premium: ${point.premium_rate_pct.toFixed(2)}%`,
               `Volume: ${formatVolume(point.volume_btc)} BTC`,
-              ...(typeof point.counterparty_stake_btc === 'number' && point.counterparty_stake_btc > 0
-                ? [`Counterparty deposit: ${formatVolume(point.counterparty_stake_btc)} BTC`]
+              ...(Number.isFinite(depositBtcValue(point))
+                ? [`Counterparty deposit (BTC): ${formatVolume(point.counterparty_stake_btc as number)}`]
+                : []),
+              ...(Number.isFinite(depositPctValue(point))
+                ? [`Counterparty deposit (%): ${formatStoredDepositPct(point.counterparty_stake_pct as number)}`]
                 : []),
             ];
           },

@@ -80,12 +80,15 @@ type pastStatistics struct {
 // LifecycleHours is an offer's current age for live offers and its completed
 // first-seen-to-last-seen lifetime for past offers. VolumeBTC is the offered
 // maximum volume (falling back to the best persisted size when unavailable).
-// CounterpartyStakeBTC is the maker's lock in BTC; nil when the venue has none.
+// CounterpartyStakeBTC and CounterpartyStakePct are the maker's lock; nil when
+// the venue has none. The frontend drops those offers from the matching
+// deposit scatter charts.
 type offerLifecyclePremiumPoint struct {
 	LifecycleHours       float64  `json:"lifecycle_hours"`
 	PremiumRatePct       float64  `json:"premium_rate_pct"`
 	VolumeBTC            float64  `json:"volume_btc"`
 	CounterpartyStakeBTC *float64 `json:"counterparty_stake_btc,omitempty"`
+	CounterpartyStakePct *float64 `json:"counterparty_stake_pct,omitempty"`
 	Exchange             string   `json:"exchange"`
 	Direction            string   `json:"direction"`
 	IsLive               bool     `json:"is_live"`
@@ -169,7 +172,8 @@ SELECT
 	best_route_cex,
 	routing_profile,
 	routing_fee_detail,
-	counterparty_stake_btc
+	counterparty_stake_btc,
+	counterparty_stake_pct
 FROM offers
 WHERE last_seen >= ?
 ORDER BY last_seen DESC
@@ -280,6 +284,9 @@ func buildOfferLifecyclePremiumPoints(
 		}
 		if stake := offerFloatPtrPreserveZero(offer, "counterparty_stake_btc"); stake != nil && *stake > 0 && !math.IsNaN(*stake) && !math.IsInf(*stake, 0) {
 			point.CounterpartyStakeBTC = stake
+		}
+		if stakePct := offerFloatPtrPreserveZero(offer, "counterparty_stake_pct"); stakePct != nil && *stakePct > 0 && !math.IsNaN(*stakePct) && !math.IsInf(*stakePct, 0) {
+			point.CounterpartyStakePct = stakePct
 		}
 		if isLive {
 			live = append(live, point)
