@@ -24,7 +24,7 @@ import {
   getPriceType,
   getRawPremiumPercent,
   getRefPrice,
-  getReputationBondPct,
+  getCounterpartyStakePct,
   getTradeSizeBtc,
   hasCappedScenario,
   hasMinScenario,
@@ -47,7 +47,7 @@ import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
 import { DualRangeFilter, LiveOfferFilters, PastOfferFilters, SharedOfferFilters } from './ControlPanel';
 import { DepthChart } from './DepthChart';
-import { SellerRatingBadge } from './SellerRatingBadge';
+import { CounterpartyStakeBadge, SellerRatingBadge } from './SellerRatingBadge';
 
 const TradeTracingPanel = lazy(() => import('./TradeTracingPanel').then(module => ({ default: module.TradeTracingPanel })));
 
@@ -1097,7 +1097,7 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
 }
 
 const LIVE_OFFERS_GRID_COLS =
-  'grid min-w-[45rem] grid-cols-[minmax(7rem,0.85fr)_minmax(2.75rem,0.3fr)_minmax(4rem,0.45fr)_minmax(8rem,1fr)_minmax(5.25rem,0.6fr)_minmax(4.5rem,0.5fr)_minmax(5.75rem,0.75fr)_minmax(5.75rem,0.75fr)_minmax(6.5rem,0.85fr)_1.25rem_1.25rem] items-center gap-2 sm:min-w-[58rem] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(2.75rem,0.3fr)_minmax(4rem,0.4fr)_minmax(8rem,1fr)_minmax(5.25rem,0.6fr)_minmax(4.5rem,0.5fr)_minmax(5.75rem,0.75fr)_minmax(5.75rem,0.75fr)_minmax(6.5rem,0.85fr)_1.25rem_1.25rem] lg:min-w-0 lg:w-full lg:grid-cols-[minmax(0,0.5fr)_minmax(0,0.26fr)_minmax(0,0.38fr)_minmax(0,0.75fr)_minmax(0,0.62fr)_minmax(0,0.45fr)_minmax(0,0.5fr)_minmax(0,0.72fr)_minmax(0,0.9fr)_1.25rem_1.25rem] sm:gap-3';
+  'grid min-w-[50rem] grid-cols-[minmax(7rem,0.85fr)_minmax(2.75rem,0.3fr)_minmax(4rem,0.45fr)_minmax(8rem,1fr)_minmax(5.25rem,0.6fr)_minmax(4rem,0.45fr)_minmax(4.25rem,0.5fr)_minmax(5.75rem,0.75fr)_minmax(5.75rem,0.75fr)_minmax(6.5rem,0.85fr)_1.25rem_1.25rem] items-center gap-2 sm:min-w-[64rem] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(2.75rem,0.3fr)_minmax(4rem,0.4fr)_minmax(8rem,1fr)_minmax(5.25rem,0.6fr)_minmax(4rem,0.45fr)_minmax(4.25rem,0.5fr)_minmax(5.75rem,0.75fr)_minmax(5.75rem,0.75fr)_minmax(6.5rem,0.85fr)_1.25rem_1.25rem] lg:min-w-0 lg:w-full lg:grid-cols-[minmax(0,0.5fr)_minmax(0,0.26fr)_minmax(0,0.38fr)_minmax(0,0.75fr)_minmax(0,0.62fr)_minmax(0,0.42fr)_minmax(0,0.42fr)_minmax(0,0.5fr)_minmax(0,0.72fr)_minmax(0,0.9fr)_1.25rem_1.25rem] sm:gap-3';
 
 type LiveSortColumn = 'exchange' | 'direction' | 'premium' | 'payment_method' | 'first_seen' | 'age' | 'size' | 'net_profit';
 
@@ -1433,7 +1433,8 @@ function LiveOffersList({ offers, observedLiveCount, fiat, timezone, loading, ch
         <SortHeaderButton label="Premium" column="premium" sort={sort} onSort={handleSort} />
         <SortHeaderButton label="Payment method" column="payment_method" sort={sort} onSort={handleSort} />
         <SortHeaderButton label="First seen" column="first_seen" sort={sort} onSort={handleSort} />
-        <span className={headerClass}>Reputation</span>
+        <span className={headerClass} title="Maker reputation score">Reputation</span>
+        <span className={headerClass} title="Counterparty security deposit / bond">Stake</span>
         <SortHeaderButton label="Age" column="age" sort={sort} onSort={handleSort} />
         <span className={`${headerClass} flex items-center gap-1`}><SortHeaderButton label="Size" column="size" sort={sort} onSort={handleSort} fitContent /><UnitToggle fiat={fiat} unit={sizeUnit} onChange={setSizeUnit} /></span>
         <span className={`${headerClass} flex items-center gap-1`}><SortHeaderButton label="Net profit" column="net_profit" sort={sort} onSort={handleSort} fitContent /><UnitToggle fiat={fiat} unit={netProfitUnit} onChange={setNetProfitUnit} /></span>
@@ -1488,7 +1489,8 @@ function LiveOffersList({ offers, observedLiveCount, fiat, timezone, loading, ch
                 <TradeRowMetric value={premium == null ? '—' : `${premium.toFixed(1)}%`} valueClassName={premiumClass(premium)} />
                 <span className="min-w-0 truncate font-medium text-text" title={offer.payment_methods?.join(', ') || 'Unknown method'}>{offer.payment_methods?.join(', ') || 'Unknown method'}</span>
                 <TradeRowMetric value={formatDateTimeLabel(getFirstSeen(offer) ?? '', timezone)} />
-                <span className="min-w-0 truncate"><SellerRatingBadge score={offer.seller_rating_score} confidence={offer.seller_rating_confidence} compact bondPct={getReputationBondPct(offer)} /></span>
+                <span className="min-w-0 truncate"><SellerRatingBadge score={offer.seller_rating_score} confidence={offer.seller_rating_confidence} compact /></span>
+                <span className="min-w-0 truncate"><CounterpartyStakeBadge pct={getCounterpartyStakePct(offer)} /></span>
                 <TradeRowMetric value={formatDuration(getFirstSeen(offer), new Date().toISOString())} />
                 <TradeRowMetric value={sizeUnit === 'btc' ? fmtBTC(tradeSize) : fmtFiat(tradeSize != null && getRefPrice(offer) != null ? tradeSize * getRefPrice(offer)! : null, fiat)} />
                 <TradeRowMetric value={netProfitUnit === 'btc' ? fmtBTC(netProfitBtc) : fmtFiat(netProfitFiat, fiat)} valueClassName="text-green" />

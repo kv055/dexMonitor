@@ -1,7 +1,7 @@
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it } from 'vitest';
 
-import { SellerRatingBadge } from './SellerRatingBadge';
+import { CounterpartyStakeBadge, SellerRatingBadge } from './SellerRatingBadge';
 import { formatBondChip, sellerRatingScoreClass, shouldShowBondChip } from './sellerRating';
 
 describe('sellerRatingScoreClass', () => {
@@ -23,17 +23,17 @@ describe('sellerRatingScoreClass', () => {
 });
 
 describe('formatBondChip', () => {
-  it('formats a 3% fraction', () => {
-    expect(formatBondChip(0.03)).toBe('3% bond');
+  it('formats a 3% fraction as counterparty stake', () => {
+    expect(formatBondChip(0.03)).toBe('3% stake');
   });
 });
 
 describe('shouldShowBondChip', () => {
-  it('shows leftover stake_bonded and nil-score deposits', () => {
-    expect(shouldShowBondChip(50, 'stake_bonded', 0.03)).toBe(true);
-    expect(shouldShowBondChip(null, 'unavailable', 0.03)).toBe(true);
-    expect(shouldShowBondChip(80, 'feedback_verified', 0.03)).toBe(false);
-    expect(shouldShowBondChip(null, 'unavailable', null)).toBe(false);
+  it('shows a stake chip whenever a positive maker lock is present', () => {
+    expect(shouldShowBondChip(0.03)).toBe(true);
+    expect(shouldShowBondChip(0.15)).toBe(true);
+    expect(shouldShowBondChip(null)).toBe(false);
+    expect(shouldShowBondChip(0)).toBe(false);
   });
 });
 
@@ -44,13 +44,25 @@ describe('SellerRatingBadge', () => {
     expect(screen.getByText('new')).toBeTruthy();
   });
 
-  it('renders a bond chip instead of a fake 0–100 for RoboSats', () => {
+  it('renders a stake chip instead of a fake 0–100 for RoboSats', () => {
     render(<SellerRatingBadge score={null} confidence="unavailable" compact bondPct={0.03} />);
-    expect(screen.getByText('3% bond')).toBeTruthy();
+    expect(screen.getByText('3% stake')).toBeTruthy();
   });
 
-  it('renders an em dash when there is no score and no bond', () => {
+  it('renders an em dash when there is no score and no stake', () => {
     render(<SellerRatingBadge score={null} confidence="unavailable" compact />);
     expect(screen.getByTitle('No rating available').textContent).toContain('—');
+  });
+});
+
+describe('CounterpartyStakeBadge', () => {
+  it('renders the maker lock percentage', () => {
+    render(<CounterpartyStakeBadge pct={0.05} />);
+    expect(screen.getByText('5% stake')).toBeTruthy();
+  });
+
+  it('renders an em dash when the venue has no lock', () => {
+    render(<CounterpartyStakeBadge pct={null} />);
+    expect(screen.getByTitle('No counterparty stake').textContent).toContain('—');
   });
 });

@@ -26,6 +26,10 @@ test.describe('Statistics', () => {
     await page.getByRole('option', { name: 'Volume vs premium' }).click();
     await expect(page.getByRole('img', { name: /offered btc volume by premium rate/i })).toBeVisible();
     await page.getByRole('button', { name: 'Offer scatter chart' }).click();
+    await page.getByRole('option', { name: 'Counterparty deposit vs premium' }).click();
+    await expect(page.getByRole('img', { name: /counterparty deposit in BTC by premium rate/i })).toBeVisible();
+    await expect(page.getByText('1 offer', { exact: true })).toHaveCount(1);
+    await page.getByRole('button', { name: 'Offer scatter chart' }).click();
     await page.getByRole('option', { name: 'Lifecycle vs premium' }).click();
     await expect(page.getByRole('img', { name: /offer lifecycle length by premium rate/i })).toBeVisible();
     const lifecycleChart = page.getByRole('img', { name: /offer lifecycle length by premium rate/i });
@@ -107,5 +111,9 @@ test.describe('Statistics', () => {
     await expect(page.getByRole('heading', { name: 'All Offers', exact: true })).toBeVisible();
     await expect(page.getByText('46 in last 168h (live + past)')).toBeVisible();
     await expect(page.getByText('3 offers', { exact: true })).toHaveCount(1);
+    await page.getByRole('button', { name: 'Offer scatter chart' }).click();
+    await page.getByRole('option', { name: 'Counterparty deposit vs premium' }).click();
+    await expect(page.getByRole('img', { name: /counterparty deposit in BTC by premium rate/i })).toBeVisible();
+    await expect(page.getByText('2 offers', { exact: true })).toHaveCount(1);
   });
 });

@@ -100,13 +100,13 @@ export function getSecurityDepositPct(offer: Offer): number | null {
   return null;
 }
 
-/** Bond fraction to show in the reputation column (RoboSats or leftover stake_bonded). */
-export function getReputationBondPct(offer: Offer): number | null {
-  const confidence = offer.seller_rating_confidence;
-  if (offer.exchange !== 'robosats' && confidence !== 'stake_bonded') {
-    return null;
+/** Maker's lock as a fraction of trade size. Null when the venue has no stake. */
+export function getCounterpartyStakePct(offer: Offer): number | null {
+  const value = offer.counterparty_stake_pct;
+  if (typeof value === 'number' && Number.isFinite(value) && value > 0) {
+    return value;
   }
-  return getSecurityDepositPct(offer);
+  return null;
 }
 
 // Which precomputed trade-size scenario to read: the offer's full size, the

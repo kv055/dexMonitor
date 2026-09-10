@@ -79,7 +79,9 @@ CREATE TABLE offers (
     price_type TEXT,
     best_route_cex TEXT,
     routing_profile TEXT,
-    security_deposit_pct REAL
+    security_deposit_pct REAL,
+    counterparty_stake_btc REAL,
+    counterparty_stake_pct REAL
 );
 
 CREATE TABLE order_lifecycle (

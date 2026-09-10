@@ -3,6 +3,7 @@ import type { SellerRatingConfidence } from '../types';
 const CLASS_GREEN = 'bg-[#1a3a2a99] text-green';
 const CLASS_AMBER = 'bg-[#3a2a1a99] text-accent';
 const CLASS_RED = 'bg-[#3a1a1a99] text-red';
+export const CLASS_STAKE = 'bg-[#2a1a3a99] text-purple';
 
 /** Methodology-aware colour bands. feedback_new is never green. */
 export function sellerRatingScoreClass(score: number, confidence: SellerRatingConfidence): string {
@@ -28,19 +29,13 @@ export function sellerRatingScoreClass(score: number, confidence: SellerRatingCo
   }
 }
 
-/** Formats a deposit/bond fraction (0.03) or percent (3) as "3% bond". */
+/** Formats a counterparty-stake fraction (0.03) or percent (3) as "3% stake". */
 export function formatBondChip(fraction: number): string {
   const pct = fraction <= 1 ? fraction * 100 : fraction;
   const rounded = pct >= 10 ? Math.round(pct) : Math.round(pct * 10) / 10;
-  return `${rounded}% bond`;
+  return `${rounded}% stake`;
 }
 
-export function shouldShowBondChip(
-  score: number | null | undefined,
-  confidence: SellerRatingConfidence,
-  bondPct?: number | null,
-): boolean {
-  if (confidence === 'stake_bonded') return true;
-  if (score != null && Number.isFinite(score)) return false;
+export function shouldShowBondChip(bondPct?: number | null): boolean {
   return bondPct != null && Number.isFinite(bondPct) && bondPct > 0;
 }

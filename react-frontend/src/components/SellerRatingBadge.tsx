@@ -1,5 +1,5 @@
 import type { SellerRatingConfidence } from '../types';
-import { formatBondChip, sellerRatingScoreClass, shouldShowBondChip } from './sellerRating';
+import { CLASS_STAKE, formatBondChip, sellerRatingScoreClass, shouldShowBondChip } from './sellerRating';
 
 // Human-readable description of each normalization methodology, shown on hover
 // so a bond-derived proxy is never mistaken for verified peer feedback.
@@ -22,8 +22,6 @@ const CONFIDENCE_SHORT: Record<SellerRatingConfidence, string> = {
   unavailable: 'n/a',
 };
 
-const CLASS_BOND = 'bg-[#2a1a3a99] text-purple';
-
 interface Props {
   score?: number | null;
   confidence?: SellerRatingConfidence | null;
@@ -31,30 +29,17 @@ interface Props {
   compact?: boolean;
   // withLabel appends the full methodology label (for detail panels).
   withLabel?: boolean;
-  // Taker-facing fidelity bond as a fraction (e.g. 0.03), for RoboSats / leftover stake_bonded.
+  // Maker's lock as a fraction (e.g. 0.03), shown independently of the score.
   bondPct?: number | null;
 }
 
 export function SellerRatingBadge({ score, confidence, compact, withLabel, bondPct }: Props) {
   const conf = confidence ?? 'unavailable';
   const label = CONFIDENCE_LABELS[conf] ?? 'Unknown';
+  const showStake = shouldShowBondChip(bondPct);
+  const showScore = score != null && Number.isFinite(score);
 
-  if (shouldShowBondChip(score, conf, bondPct)) {
-    const text = bondPct != null && bondPct > 0 ? formatBondChip(bondPct) : 'bond';
-    return (
-      <span className="inline-flex items-center gap-1" title={`${text} · ${label}`}>
-        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-xl text-[0.7rem] font-semibold ${CLASS_BOND}`}>
-          {text}
-          {!compact && (
-            <span className="text-[0.55rem] uppercase opacity-70 font-normal">{CONFIDENCE_SHORT.stake_bonded}</span>
-          )}
-        </span>
-        {withLabel && <span className="text-[0.6rem] uppercase tracking-wide text-muted">{label}</span>}
-      </span>
-    );
-  }
-
-  if (score == null) {
+  if (!showScore && !showStake) {
     return (
       <span className="text-muted text-[0.7rem]" title={label}>
         —{withLabel ? <span className="ml-1 text-[0.6rem] uppercase tracking-wide">{label}</span> : null}
@@ -62,15 +47,49 @@ export function SellerRatingBadge({ score, confidence, compact, withLabel, bondP
     );
   }
 
-  const rounded = Math.round(score);
-  const title = `${rounded}/100 · ${label}`;
+  const rounded = showScore ? Math.round(score) : null;
+  const stakeText = showStake && bondPct != null ? formatBondChip(bondPct) : null;
+  const titleParts = [
+    rounded != null ? `${rounded}/100 · ${label}` : null,
+    stakeText != null ? `${stakeText} · Counterparty stake` : null,
+  ].filter(Boolean);
+
   return (
-    <span className="inline-flex items-center gap-1" title={title}>
-      <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-xl text-[0.7rem] font-semibold ${sellerRatingScoreClass(score, conf)}`}>
-        {rounded}
-        <span className="text-[0.55rem] uppercase opacity-70 font-normal">{CONFIDENCE_SHORT[conf]}</span>
-      </span>
+    <span className="inline-flex items-center gap-1" title={titleParts.join(' · ')}>
+      {showScore && score != null && (
+        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-xl text-[0.7rem] font-semibold ${sellerRatingScoreClass(score, conf)}`}>
+          {rounded}
+          <span className="text-[0.55rem] uppercase opacity-70 font-normal">{CONFIDENCE_SHORT[conf]}</span>
+        </span>
+      )}
+      {stakeText != null && (
+        <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-xl text-[0.7rem] font-semibold ${CLASS_STAKE}`}>
+          {stakeText}
+          {!compact && (
+            <span className="text-[0.55rem] uppercase opacity-70 font-normal">stake</span>
+          )}
+        </span>
+      )}
       {withLabel && <span className="text-[0.6rem] uppercase tracking-wide text-muted">{label}</span>}
+    </span>
+  );
+}
+
+export function CounterpartyStakeBadge({ pct }: { pct: number | null }) {
+  if (!shouldShowBondChip(pct) || pct == null) {
+    return (
+      <span className="text-muted text-[0.7rem]" title="No counterparty stake">
+        —
+      </span>
+    );
+  }
+  const text = formatBondChip(pct);
+  return (
+    <span
+      className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-xl text-[0.7rem] font-semibold ${CLASS_STAKE}`}
+      title={`${text} · Counterparty stake`}
+    >
+      {text}
     </span>
   );
 }

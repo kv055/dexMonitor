@@ -51,7 +51,7 @@ interface PlotPanDrag {
 
 type ChartDrag = AxisZoomDrag | AxisPanDrag | PlotPanDrag;
 
-export type PremiumScatterDimension = 'lifecycle' | 'volume';
+export type PremiumScatterDimension = 'lifecycle' | 'volume' | 'deposit';
 
 interface DimensionConfig {
   title: string;
@@ -115,6 +115,22 @@ const DIMENSIONS: Record<PremiumScatterDimension, DimensionConfig> = {
     xMinimumSpanFloor: 1e-4,
     sizeValue: point => point.lifecycle_hours,
     sizeFloor: 1 / 60,
+  },
+  deposit: {
+    title: 'Counterparty deposit vs premium',
+    subtitle: 'Bubble area represents offered BTC volume',
+    ariaLabel: 'Scatter bubble chart of counterparty deposit in BTC by premium rate, sized by BTC volume',
+    emptyMessage: 'No positive-premium offers with a counterparty deposit in this window.',
+    xTitle: 'Counterparty deposit (BTC)',
+    xValue: point => {
+      const stake = point.counterparty_stake_btc;
+      return typeof stake === 'number' && Number.isFinite(stake) && stake > 0 ? stake : Number.NaN;
+    },
+    formatX: formatVolume,
+    xFullMaxFloor: 0.001,
+    xMinimumSpanFloor: 1e-6,
+    sizeValue: point => point.volume_btc,
+    sizeFloor: 1e-8,
   },
 };
 
@@ -181,6 +197,16 @@ function ChartDimensionDropdown({
   );
 }
 
+export function selectPremiumScatterPoints(
+  points: OfferLifecyclePremiumPoint[],
+  dimensionKey: PremiumScatterDimension,
+): OfferLifecyclePremiumPoint[] {
+  const dimension = DIMENSIONS[dimensionKey];
+  return points.filter(point => (
+    point.premium_rate_pct > 0 && Number.isFinite(dimension.xValue(point))
+  ));
+}
+
 function buildBubbles(
   points: OfferLifecyclePremiumPoint[],
   maxSize: number,
@@ -209,11 +235,11 @@ export function OfferPremiumScatterChart({
   const viewRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<ChartDrag | null>(null);
   const [zoomedAxes, setZoomedAxes] = useState({ x: false, y: false });
-  const positivePoints = points.filter(point => point.premium_rate_pct > 0);
-  const maxSize = Math.max(...positivePoints.map(point => dimension.sizeValue(point)), dimension.sizeFloor);
-  const maxX = Math.max(...positivePoints.map(point => dimension.xValue(point)), 0);
-  const minPremium = Math.min(...positivePoints.map(point => point.premium_rate_pct), 0);
-  const maxPremium = Math.max(...positivePoints.map(point => point.premium_rate_pct), 1);
+  const chartPoints = selectPremiumScatterPoints(points, dimensionKey);
+  const maxSize = Math.max(...chartPoints.map(point => dimension.sizeValue(point)), dimension.sizeFloor);
+  const maxX = Math.max(...chartPoints.map(point => dimension.xValue(point)), 0);
+  const minPremium = Math.min(...chartPoints.map(point => point.premium_rate_pct), 0);
+  const maxPremium = Math.max(...chartPoints.map(point => point.premium_rate_pct), 1);
   const premiumPadding = Math.max((maxPremium - minPremium) * 0.08, 0.05);
   const fullBounds = {
     x: { min: 0, max: Math.max(maxX * 1.08, dimension.xFullMaxFloor) },
@@ -223,8 +249,8 @@ export function OfferPremiumScatterChart({
     x: expandPanBounds(fullBounds.x),
     y: expandPanBounds(fullBounds.y),
   };
-  const livePoints = positivePoints.filter(point => point.is_live);
-  const pastPoints = positivePoints.filter(point => !point.is_live);
+  const livePoints = chartPoints.filter(point => point.is_live);
+  const pastPoints = chartPoints.filter(point => !point.is_live);
 
   const publishView = () => {
     const chart = chartRef.current;
@@ -369,7 +395,7 @@ export function OfferPremiumScatterChart({
 
   const handleWheelZoom = (event: WheelEvent<HTMLDivElement>) => {
     const chart = chartRef.current;
-    if (!chart || positivePoints.length === 0) return;
+    if (!chart || chartPoints.length === 0) return;
     const canvasRect = chart.canvas.getBoundingClientRect();
     const cursorX = event.clientX - canvasRect.left;
     const cursorY = event.clientY - canvasRect.top;
@@ -550,7 +576,10 @@ export function OfferPremiumScatterChart({
             return [
               `Lifecycle: ${formatLifecycle(point.lifecycle_hours)}`,
               `Premium: ${point.premium_rate_pct.toFixed(2)}%`,
-              `Volume: ${point.volume_btc.toFixed(8).replace(/0+$/, '').replace(/\.$/, '')} BTC`,
+              `Volume: ${formatVolume(point.volume_btc)} BTC`,
+              ...(typeof point.counterparty_stake_btc === 'number' && point.counterparty_stake_btc > 0
+                ? [`Counterparty deposit: ${formatVolume(point.counterparty_stake_btc)} BTC`]
+                : []),
             ];
           },
         },
@@ -608,10 +637,10 @@ export function OfferPremiumScatterChart({
           <p className="text-[0.65rem] text-muted mt-0.5">{dimension.subtitle}</p>
         </div>
         <span className="text-[0.65rem] text-muted tabular-nums mono-nums">
-          {positivePoints.length} {positivePoints.length === 1 ? 'offer' : 'offers'}
+          {chartPoints.length} {chartPoints.length === 1 ? 'offer' : 'offers'}
         </span>
       </div>
-      {positivePoints.length > 0 ? (
+      {chartPoints.length > 0 ? (
         <div
           ref={viewRef}
           data-testid={`offer-premium-chart-${dimensionKey}`}

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Offer } from '../types';
-import { getReputationBondPct, getSellerRatingScore, hasZeroTrustScore } from './offerAccess';
+import { getCounterpartyStakePct, getSellerRatingScore, hasZeroTrustScore } from './offerAccess';
 
 function baseOffer(overrides: Partial<Offer> = {}): Offer {
   return {
@@ -48,11 +48,15 @@ describe('hasZeroTrustScore', () => {
   });
 });
 
-describe('getReputationBondPct', () => {
-  const withDeposit = (exchange: string, pct: number, confidence: Offer['seller_rating_confidence'] = 'unavailable'): Offer =>
-    baseOffer({
-      exchange,
-      seller_rating_confidence: confidence,
+describe('getCounterpartyStakePct', () => {
+  it('returns the maker lock for RoboSats and Bisq 1', () => {
+    expect(getCounterpartyStakePct(baseOffer({ exchange: 'robosats', counterparty_stake_pct: 0.03 }))).toBe(0.03);
+    expect(getCounterpartyStakePct(baseOffer({ exchange: 'bisq', counterparty_stake_pct: 0.05 }))).toBe(0.05);
+  });
+
+  it('ignores taker security deposits and missing axes', () => {
+    expect(getCounterpartyStakePct(baseOffer({
+      exchange: 'bisq',
       analysis: {
         full_volume: {
           trade_size_btc: 0.01,
@@ -60,33 +64,23 @@ describe('getReputationBondPct', () => {
           route: { cex: 'kraken', settlement: 'onchain' },
           premium: {},
           profit: {},
-          costs: {} as Offer['analysis'] extends { full_volume: { costs: infer C } } ? C : never,
+          costs: {} as never,
           capital: {
             btc_amount: 0.01,
             btc_price: 60000,
             spot_notional: 600,
             hedge_collateral: 0,
-            security_deposit_pct: pct,
-            security_deposit_side: 'taker',
-            security_deposit_btc: 0.0003,
-            security_deposit_fiat: 18,
-            total_fiat: 618,
+            security_deposit_pct: 0.15,
+            security_deposit_side: 'buyer',
+            security_deposit_btc: 0.0015,
+            security_deposit_fiat: 90,
+            total_fiat: 690,
             deposit_estimated: false,
           },
         },
       } as NonNullable<Offer['analysis']>,
-    });
-
-  it('returns the RoboSats deposit fraction', () => {
-    expect(getReputationBondPct(withDeposit('robosats', 0.03))).toBe(0.03);
-  });
-
-  it('returns leftover stake_bonded deposits on any venue', () => {
-    expect(getReputationBondPct(withDeposit('hodlhodl', 0.03, 'stake_bonded'))).toBe(0.03);
-  });
-
-  it('does not surface Bisq deposits as a reputation bond', () => {
-    expect(getReputationBondPct(withDeposit('bisq', 0.15, 'unavailable'))).toBeNull();
+    }))).toBeNull();
+    expect(getCounterpartyStakePct(baseOffer({ exchange: 'hodlhodl' }))).toBeNull();
   });
 });
 

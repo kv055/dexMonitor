@@ -34,7 +34,8 @@ func TestBuildOfferLifecyclePremiumPointsUsesAgeForLiveAndLifetimeForPast(t *tes
 	offers := []map[string]any{
 		{
 			"exchange": "robosats", "direction": "ask", "avg_premium_pct": 2.5,
-			"btc_max": 0.15, "first_seen": now.Add(-90 * time.Minute),
+			"btc_max": 0.15, "counterparty_stake_btc": 0.0045,
+			"first_seen": now.Add(-90 * time.Minute),
 			"last_seen": now.Add(-10 * time.Minute), "is_live": true,
 		},
 		{
@@ -64,6 +65,12 @@ func TestBuildOfferLifecyclePremiumPointsUsesAgeForLiveAndLifetimeForPast(t *tes
 	}
 	if past[0].VolumeBTC != 0.4 || past[0].PremiumRatePct != -1.25 || past[0].IsLive {
 		t.Fatalf("unexpected past point: %#v", past[0])
+	}
+	if live[0].CounterpartyStakeBTC == nil || *live[0].CounterpartyStakeBTC != 0.0045 {
+		t.Fatalf("live counterparty stake = %v, want 0.0045 BTC", live[0].CounterpartyStakeBTC)
+	}
+	if past[0].CounterpartyStakeBTC != nil {
+		t.Fatalf("past counterparty stake = %v, want nil when the venue has no lock", past[0].CounterpartyStakeBTC)
 	}
 }
 
