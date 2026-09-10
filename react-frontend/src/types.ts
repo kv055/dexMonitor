@@ -364,6 +364,11 @@ export interface Offer {
   seller_rating_score?: number | null;
   seller_rating_confidence?: SellerRatingConfidence | null;
   seller_rating_raw?: Record<string, unknown> | null;
+  seller_rating_signals?: Record<string, unknown> | null;
+  // Maker's lock as a fraction of trade size (e.g. 0.03). Null when the venue
+  // has no counterparty stake.
+  counterparty_stake_btc?: number | null;
+  counterparty_stake_pct?: number | null;
 }
 
 export type SellerRatingConfidence =
@@ -910,15 +915,18 @@ export interface GeneralStatsPremiumSummaryData {
   avg_bid_premium_pct: number | null;
 }
 
-// One offer in the lifecycle/premium and volume/premium bubble charts. Live
-// lifecycles run from first_seen to now; past lifecycles run from first_seen
-// to last_seen. Volume is the offered BTC size used as an axis or bubble area.
+// One offer in the lifecycle/premium, volume/premium, and deposit/premium
+// bubble charts. Live lifecycles run from first_seen to now; past lifecycles
+// run from first_seen to last_seen. Volume is the offered BTC size used as an
+// axis or bubble area. CounterpartyStakeBTC is the maker's lock; omit/null
+// when the venue has none (those offers are dropped from the deposit chart).
 export interface OfferLifecyclePremiumPoint {
   lifecycle_hours: number;
   premium_rate_pct: number;
   volume_btc: number;
+  counterparty_stake_btc?: number | null;
   exchange: string;
-	direction: OfferDirection;
+  direction: OfferDirection;
   is_live: boolean;
 }
 

@@ -87,7 +87,8 @@ SELECT
 	avg_net_premium_pct, avg_estimated_profit_btc, avg_estimated_profit_fiat, avg_btc_amount,
 	avg_min_trade_cost_pct, avg_min_trade_cost_btc, avg_min_net_premium_pct,
 	avg_min_estimated_profit_btc, avg_min_estimated_profit_fiat, avg_min_btc_amount, min_volume_analyzed,
-	price_type, best_route_cex, routing_profile, routing_fee_detail, security_deposit_pct
+	price_type, best_route_cex, routing_profile, routing_fee_detail, security_deposit_pct,
+	counterparty_stake_btc, counterparty_stake_pct
 FROM offers
 WHERE last_seen >= ?
 ORDER BY last_seen DESC
@@ -3484,6 +3485,9 @@ func buildOfferTablePayload(o map[string]any) map[string]any {
 		"seller_rating_score":           offerFloatPtrPreserveZero(o, "seller_rating_score"),
 		"seller_rating_confidence":      nilIfEmpty(offerString(o, "seller_rating_confidence")),
 		"seller_rating_raw":             offerRawJSON(o, "seller_rating_raw"),
+		"seller_rating_signals":         offerRawJSON(o, "seller_rating_signals"),
+		"counterparty_stake_btc":        offerFloatPtr(o, "counterparty_stake_btc"),
+		"counterparty_stake_pct":        offerFloatPtr(o, "counterparty_stake_pct"),
 	}
 }
 
