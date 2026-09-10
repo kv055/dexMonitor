@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { selectPremiumScatterPoints } from './OfferLifecyclePremiumChart';
+import { selectPremiumScatterPoints } from './OfferLifecyclePremiumChartMath';
 import type { OfferLifecyclePremiumPoint } from '../types';
 
 const points: OfferLifecyclePremiumPoint[] = [

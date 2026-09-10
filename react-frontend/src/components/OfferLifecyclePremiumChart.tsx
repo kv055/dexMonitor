@@ -13,11 +13,17 @@ import {
 import { Bubble } from 'react-chartjs-2';
 import type { OfferLifecyclePremiumPoint } from '../types';
 import {
+  depositBtcValue,
+  depositPctValue,
   expandPanBounds,
   isDefaultWindow,
+  selectPremiumScatterPoints,
   translateWindow,
   type AxisWindow,
+  type PremiumScatterDimension,
 } from './OfferLifecyclePremiumChartMath';
+
+export type { PremiumScatterDimension };
 
 ChartJS.register(BubbleController, LinearScale, PointElement, Tooltip, Legend);
 
@@ -51,8 +57,6 @@ interface PlotPanDrag {
 
 type ChartDrag = AxisZoomDrag | AxisPanDrag | PlotPanDrag;
 
-export type PremiumScatterDimension = 'lifecycle' | 'volume' | 'depositBtc' | 'depositPct';
-
 interface DimensionConfig {
   title: string;
   subtitle: string;
@@ -82,17 +86,6 @@ function formatPercentAxis(pct: number): string {
 
 function formatStoredDepositPct(fraction: number): string {
   return formatPercentAxis(fraction <= 1 ? fraction * 100 : fraction);
-}
-
-function depositBtcValue(point: OfferLifecyclePremiumPoint): number {
-  const stake = point.counterparty_stake_btc;
-  return typeof stake === 'number' && Number.isFinite(stake) && stake > 0 ? stake : Number.NaN;
-}
-
-function depositPctValue(point: OfferLifecyclePremiumPoint): number {
-  const stake = point.counterparty_stake_pct;
-  if (typeof stake !== 'number' || !Number.isFinite(stake) || stake <= 0) return Number.NaN;
-  return stake <= 1 ? stake * 100 : stake;
 }
 
 function formatVolume(btc: number): string {
@@ -225,16 +218,6 @@ function ChartDimensionDropdown({
       )}
     </div>
   );
-}
-
-export function selectPremiumScatterPoints(
-  points: OfferLifecyclePremiumPoint[],
-  dimensionKey: PremiumScatterDimension,
-): OfferLifecyclePremiumPoint[] {
-  const dimension = DIMENSIONS[dimensionKey];
-  return points.filter(point => (
-    point.premium_rate_pct > 0 && Number.isFinite(dimension.xValue(point))
-  ));
 }
 
 function buildBubbles(
