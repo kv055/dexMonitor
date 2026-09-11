@@ -132,15 +132,15 @@ test.describe('OHLC live offer price paths', () => {
     await revealChartOffers(page);
 
     // The table must now show ALL live offers, including non-premium ones
-    // (mock offers 8, 9 and 13 have a negative net premium).
+    // (mock offers 8, 9 and 13 have a negative net premium; 18/19 are Bisq 2).
     await expect
       .poll(async () => offersPanel(page).getByTestId('live-offers-row').count())
-      .toBe(13);
+      .toBe(15);
 
     // …but the chart must only plot the ones with a positive premium.
     await expect
       .poll(async () => (await getOfferPaths(page)).map(p => p.id).sort((a, b) => a - b))
-      .toEqual([1, 2, 3, 4, 5, 6, 7, 10, 11, 12]);
+      .toEqual([1, 2, 3, 4, 5, 6, 7, 10, 11, 12, 18, 19]);
   });
 
   test('falls back to price stubs when the live lifecycle endpoint fails', async ({ page }) => {

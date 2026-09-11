@@ -58,6 +58,7 @@ test.describe('Live offers list', () => {
     await expect(detail.getByText(/^(Bid|Ask) side$/)).toBeVisible();
     await expect(detail.getByText('Total costs', { exact: true })).toHaveCount(0);
     await expect(detail.getByText('Spot notional (CEX buy)')).toHaveCount(0);
+    await expect(detail.getByText('Fiat collateral (CEX)')).toHaveCount(0);
 
     await jsClick(detail.getByRole('tab', { name: 'Trade economics' }));
     await expect(detail.getByRole('tabpanel', { name: 'Trade economics' })).toBeVisible();
@@ -68,7 +69,9 @@ test.describe('Live offers list', () => {
 
     await jsClick(detail.getByRole('tab', { name: 'Capital allocation' }));
     await expect(detail.getByRole('tabpanel', { name: 'Capital allocation' })).toBeVisible();
-    await expect(detail.getByText('Spot notional (CEX buy)')).toBeVisible();
+    // Mock CEX hedge is unavailable, so live detail defaults to hedgeless capital labels.
+    await expect(detail.getByText('Fiat collateral (CEX)')).toBeVisible();
+    await expect(detail.getByText('BTC liquidity pool')).toBeVisible();
     await expect(detail.getByText('Total costs', { exact: true })).toHaveCount(0);
 
     await jsClick(detail.getByRole('tab', { name: 'Risk' }));
@@ -87,9 +90,9 @@ test.describe('Live offers list', () => {
     await closeControlPanel(page);
 
     const panel = offersPanel(page);
-    await expect(panel.getByText('72')).toBeVisible();
-    await expect(panel.getByText('reputation')).toBeVisible();
-    await expect(panel.getByText('unstaked')).toBeVisible();
+    await expect(panel.getByTitle(/72\/100 · Bonded reputation score/)).toBeVisible();
+    await expect(panel.getByText('reputation', { exact: true })).toBeVisible();
+    await expect(panel.getByText('unstaked', { exact: true })).toBeVisible();
     await expect(panel.getByText('0★')).toBeVisible();
   });
 

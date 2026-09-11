@@ -136,12 +136,16 @@ test.describe('Taker opportunities', () => {
     await page.getByRole('button', { name: 'dex Monitor' }).click();
     await page.getByRole('button', { name: /Bisq v1 Bid/ }).click();
 
-    const hedgeless = page.getByRole('button', { name: 'Hedgeless' });
+    const detail = page.getByTestId('live-offer-detail');
+    await expect(detail).toBeVisible();
+    await detail.getByRole('tab', { name: 'Trade economics' }).click();
+
+    const hedgeless = detail.getByRole('button', { name: 'Hedgeless' });
     await expect(hedgeless).toBeVisible();
     await hedgeless.click();
 
     await expect(hedgeless).toHaveAttribute('aria-pressed', 'true');
-    await expect(page.getByTestId('live-offer-detail')).toBeVisible();
+    await expect(detail).toBeVisible();
     expect(pageErrors).toEqual([]);
   });
 });
