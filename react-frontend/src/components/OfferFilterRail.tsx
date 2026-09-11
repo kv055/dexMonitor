@@ -6,7 +6,7 @@ import { LiveOfferFilters, PastOfferFilters, SharedOfferFilters } from './Contro
 export type OfferFilterRailScope = 'live' | 'past' | 'all';
 export type DirectionFilter = 'both' | 'bid' | 'ask';
 
-export function exchangeFilterLabel(name: string): string {
+function exchangeFilterLabel(name: string): string {
   if (name === 'bisq') return 'Bisq v1';
   if (name === 'bisq2') return 'Bisq v2';
   if (name === 'hodlhodl') return 'HodlHodl';
@@ -24,7 +24,7 @@ interface PillGroupProps {
   onChange: (v: string) => void;
 }
 
-export function PillGroup({ label, description, options, selected, onChange }: PillGroupProps) {
+function PillGroup({ label, description, options, selected, onChange }: PillGroupProps) {
   const base = 'rounded border px-2 py-0.5 text-[0.7rem] font-medium transition-colors';
   const active = 'border-accent/60 bg-accent/10 text-accent';
   const inactive = 'border-border bg-bg/40 text-muted hover:text-text';
@@ -61,7 +61,7 @@ interface ExchangeFilterGroupProps {
   onDisableAll: () => void;
 }
 
-export function ExchangeFilterGroup({
+function ExchangeFilterGroup({
   label,
   description,
   exchanges,

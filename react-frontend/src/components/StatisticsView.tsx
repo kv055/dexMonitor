@@ -133,7 +133,10 @@ export function StatisticsView({ lastUpdatedAt = '' }: { lastUpdatedAt?: string 
   const [selectedTimeframe, setSelectedTimeframe] = useState('24h');
   const [customStartDate, setCustomStartDate] = useState('');
   const [customEndDate, setCustomEndDate] = useState('');
-  const [durationRange, setDurationRange] = useState<[number, number] | null>(null);
+  const [durationSelection, setDurationSelection] = useState<{
+    key: string;
+    range: [number, number];
+  } | null>(null);
   const [referenceNow] = useState(() => new Date());
   const railScope: OfferFilterRailScope = mode === 'shared' ? 'all' : mode;
   const applyPastWindow = mode !== 'live';
@@ -181,20 +184,19 @@ export function StatisticsView({ lastUpdatedAt = '' }: { lastUpdatedAt?: string 
   }, [data, mode]);
 
   const durationBounds = useMemo(() => durationBoundsFromPoints(durationSourcePoints), [durationSourcePoints]);
-
-  useEffect(() => {
-    if (!durationBounds.hasData) {
-      setDurationRange(null);
-      return;
+  const durationBoundsKey = durationBounds.hasData
+    ? `${durationBounds.min}:${durationBounds.max}`
+    : 'none';
+  const durationRange = useMemo<[number, number] | null>(() => {
+    if (!durationBounds.hasData) return null;
+    if (durationSelection?.key === durationBoundsKey) {
+      const [lo, hi] = durationSelection.range;
+      const clampedLo = Math.max(durationBounds.min, Math.min(lo, durationBounds.max));
+      const clampedHi = Math.max(clampedLo, Math.min(hi, durationBounds.max));
+      return [clampedLo, clampedHi];
     }
-    setDurationRange(current => {
-      if (current == null) return [durationBounds.min, durationBounds.max];
-      const lo = Math.max(durationBounds.min, Math.min(current[0], durationBounds.max));
-      const hi = Math.max(lo, Math.min(current[1], durationBounds.max));
-      if (current[0] === lo && current[1] === hi) return current;
-      return [lo, hi];
-    });
-  }, [durationBounds]);
+    return [durationBounds.min, durationBounds.max];
+  }, [durationBounds, durationBoundsKey, durationSelection]);
 
   const customDateMax = dateInputValue(referenceNow);
   const changeTimeframe = useCallback((timeframe: string) => {
@@ -476,7 +478,7 @@ export function StatisticsView({ lastUpdatedAt = '' }: { lastUpdatedAt?: string 
                   min={durationBounds.min}
                   max={durationBounds.max}
                   value={durationRange ?? [durationBounds.min, durationBounds.max]}
-                  onChange={setDurationRange}
+                  onChange={range => setDurationSelection({ key: durationBoundsKey, range })}
                   formatValue={formatDurationMinutes}
                   disabled={!durationBounds.hasData || durationRange == null}
                   disabledMessage="No duration data in this window"
@@ -501,9 +503,7 @@ export function StatisticsView({ lastUpdatedAt = '' }: { lastUpdatedAt?: string 
               setSelectedTimeframe('24h');
               setCustomStartDate('');
               setCustomEndDate('');
-              if (durationBounds.hasData) {
-                setDurationRange([durationBounds.min, durationBounds.max]);
-              }
+              setDurationSelection(null);
               try {
                 const raw = localStorage.getItem('dex-insights-filters');
                 if (!raw) return;
