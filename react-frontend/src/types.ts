@@ -732,7 +732,7 @@ export interface PastProfitableOrder {
   summary: PastProfitableOrderSummary;
   analysis: LiveOfferAnalysis;
   observation_count?: number;
-  offer: Record<string, string | number | boolean | null>;
+  offer: Record<string, unknown>;
 }
 
 export interface PastProfitableOrderCompact {

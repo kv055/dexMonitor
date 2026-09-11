@@ -54,6 +54,15 @@ describe('selectPremiumScatterPoints', () => {
     expect(selectPremiumScatterPoints(points, 'volume')).toHaveLength(3);
   });
 
+  it('includes non-premium offers when the Insights category asks for them', () => {
+    expect(selectPremiumScatterPoints(points, 'lifecycle', true).map(point => point.exchange)).toEqual([
+      'robosats',
+      'hodlhodl',
+      'bisq',
+      'bisq',
+    ]);
+  });
+
   it('omits null and non-positive counterparty deposits from both deposit charts', () => {
     expect(selectPremiumScatterPoints(points, 'depositBtc').map(point => point.exchange)).toEqual([
       'robosats',

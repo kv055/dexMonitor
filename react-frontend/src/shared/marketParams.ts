@@ -64,3 +64,69 @@ export function buildAnalyticsBody(params: MarketRequestParams, sections?: strin
     } : {}),
   };
 }
+
+export interface StatisticsOfferFilters {
+  direction?: string;
+  excludedExchanges?: string[];
+  includePaymentMethods?: string[];
+  paymentScope?: 'all' | 'linked';
+  premiumMode?: string;
+  premiumOnly?: boolean;
+  rangeMetric?: string;
+  profitMin?: number;
+  profitMax?: number;
+  premiumMin?: number;
+  premiumMax?: number;
+  pastRange?: AnalyticsPastRange;
+  refresh?: boolean;
+}
+
+export interface StatisticsRequestBody extends AnalyticsRequestBody {
+  direction?: string;
+  excluded_exchanges?: string[];
+  include_payment_methods?: string[];
+  payment_scope?: string;
+  premium_mode?: string;
+  premium_only?: boolean;
+  range_metric?: string;
+  profit_min?: number;
+  profit_max?: number;
+  premium_min?: number;
+  premium_max?: number;
+  refresh?: boolean;
+}
+
+function optionalNumber(value: string | undefined): number | undefined {
+  if (value == null || value === '') return undefined;
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
+}
+
+export function buildStatisticsBody(
+  params: MarketRequestParams,
+  filters: StatisticsOfferFilters,
+): StatisticsRequestBody {
+  return {
+    ...buildAnalyticsBody(params, undefined, filters.pastRange),
+    ...(filters.direction ? { direction: filters.direction } : {}),
+    ...(filters.excludedExchanges && filters.excludedExchanges.length > 0
+      ? { excluded_exchanges: filters.excludedExchanges }
+      : {}),
+    ...(filters.includePaymentMethods
+      ? { include_payment_methods: filters.includePaymentMethods }
+      : {}),
+    ...(filters.paymentScope === 'linked' ? { payment_scope: 'linked' } : {}),
+    ...(filters.premiumMode ? { premium_mode: filters.premiumMode } : {}),
+    ...(filters.premiumOnly != null ? { premium_only: filters.premiumOnly } : {}),
+    ...(filters.rangeMetric ? { range_metric: filters.rangeMetric } : {}),
+    ...(filters.profitMin != null ? { profit_min: filters.profitMin } : {}),
+    ...(filters.profitMax != null ? { profit_max: filters.profitMax } : {}),
+    ...(filters.premiumMin != null ? { premium_min: filters.premiumMin } : {}),
+    ...(filters.premiumMax != null ? { premium_max: filters.premiumMax } : {}),
+    ...(filters.refresh ? { refresh: true } : {}),
+  };
+}
+
+export function parseFilterNumber(value: string): number | undefined {
+  return optionalNumber(value);
+}

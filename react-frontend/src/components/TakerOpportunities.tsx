@@ -45,7 +45,8 @@ import { useCEXPermissions } from '../hooks/useCEXPermissions';
 import { CostBreakdownPanel, SizeToggle, type SizeMode } from './OfferBreakdownPanel';
 import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
-import { DualRangeFilter, LiveOfferFilters, PastOfferFilters, SharedOfferFilters } from './ControlPanel';
+import { CustomDateRangeFilter, DualRangeFilter, SelectGroup } from './ControlPanel';
+import { OfferFilterRail, type DirectionFilter } from './OfferFilterRail';
 import { DepthChart } from './DepthChart';
 import { CounterpartyStakeBadge, SellerRatingBadge } from './SellerRatingBadge';
 
@@ -111,7 +112,6 @@ function timeframeHours(timeframe: string): number {
   }
 }
 
-type DirectionFilter = 'both' | 'bid' | 'ask';
 
 function pickScenario(order: PastProfitableOrder, mode: TakerOpportunityMode) {
   // In capped mode, always use the server-computed capped scenario when present.
@@ -570,223 +570,6 @@ function computeFilteredSummary(orders: DisplayOrder[], mode: TakerOpportunityMo
   };
 }
 
-interface PillGroupProps {
-  label: string;
-  description: string;
-  options: { value: string; label: string; disabled?: boolean; title?: string }[];
-  selected: string;
-  onChange: (v: string) => void;
-}
-
-function PillGroup({ label, description, options, selected, onChange }: PillGroupProps) {
-  const base = 'rounded border px-2 py-0.5 text-[0.7rem] font-medium transition-colors';
-  const active = 'border-accent/60 bg-accent/10 text-accent';
-  const inactive = 'border-border bg-bg/40 text-muted hover:text-text';
-  const disabledCls = 'border-border bg-bg/40 text-muted opacity-40 cursor-not-allowed';
-  return (
-    <div className="flex flex-col gap-1">
-      <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
-      <div className="flex flex-wrap items-center gap-1">
-        {options.map(o => (
-          <button
-            key={o.value}
-            type="button"
-            title={o.title ?? description}
-            disabled={o.disabled}
-            onClick={() => { if (!o.disabled) onChange(o.value); }}
-            className={`${base} ${o.disabled ? disabledCls : selected === o.value ? active : inactive}`}
-          >
-            {o.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function exchangeFilterLabel(name: string): string {
-  if (name === 'bisq') return 'Bisq v1';
-  if (name === 'bisq2') return 'Bisq v2';
-  if (name === 'hodlhodl') return 'HodlHodl';
-  if (name === 'robosats') return 'RoboSats';
-  if (name === 'peachbitcoin') return 'Peach';
-  if (name === 'mostro') return 'Mostro';
-  return name;
-}
-
-interface ExchangeFilterGroupProps {
-  label: string;
-  description: string;
-  exchanges: string[];
-  counts: Record<string, number>;
-  disabled: Set<string>;
-  onToggle: (exchange: string) => void;
-  onEnableAll: () => void;
-  onDisableAll: () => void;
-}
-
-function ExchangeFilterGroup({
-  label,
-  description,
-  exchanges,
-  counts,
-  disabled,
-  onToggle,
-  onEnableAll,
-  onDisableAll,
-}: ExchangeFilterGroupProps) {
-  const base = 'rounded border px-2 py-0.5 text-[0.7rem] font-medium transition-colors';
-  const enabledCls = 'border-accent/60 bg-accent/10 text-accent';
-  const disabledCls = 'border-border bg-bg/40 text-muted line-through opacity-60 hover:opacity-80';
-
-  return (
-    <div className="flex flex-col gap-1">
-      <div className="flex items-center justify-between gap-2">
-        <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
-        {exchanges.length > 0 && (
-          <div className="flex items-center gap-1.5">
-            <button type="button" onClick={onEnableAll} className="text-[0.6rem] font-medium text-muted hover:text-accent">
-              All
-            </button>
-            <button type="button" onClick={onDisableAll} className="text-[0.6rem] font-medium text-muted hover:text-accent">
-              None
-            </button>
-          </div>
-        )}
-      </div>
-      {exchanges.length === 0 ? (
-        <span className="text-[0.7rem] text-muted">No exchanges in this window</span>
-      ) : (
-        <div className="flex flex-wrap items-center gap-1" title={description}>
-          {exchanges.map(exchange => {
-            const isEnabled = !disabled.has(exchange);
-            return (
-              <button
-                key={exchange}
-                type="button"
-                onClick={() => onToggle(exchange)}
-                className={`${base} ${isEnabled ? enabledCls : disabledCls}`}
-              >
-                {exchangeFilterLabel(exchange)}
-                <span className="ml-1 text-[0.65rem] opacity-70">{counts[exchange] ?? 0}</span>
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-interface SelectGroupProps {
-  label: string;
-  description: string;
-  options: { value: string; label: string; disabled?: boolean; title?: string }[];
-  selected: string;
-  onChange: (v: string) => void;
-}
-
-function SelectGroup({ label, description, options, selected, onChange }: SelectGroupProps) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  const activeOption = options.find(option => option.value === selected) ?? options[0];
-
-  useEffect(() => {
-    const closeOnOutsideClick = (event: MouseEvent) => {
-      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', closeOnOutsideClick);
-    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
-  }, []);
-
-  return (
-    <div ref={ref} className="relative flex flex-col gap-1">
-      <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
-      <button
-        type="button"
-        title={description}
-        aria-haspopup="menu"
-        aria-expanded={open}
-        onClick={() => setOpen(value => !value)}
-        className="flex w-full items-center rounded border border-border bg-bg/60 px-2 py-1.5 text-left text-[0.75rem] font-medium text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
-      >
-        <span className="truncate">{activeOption.label}</span>
-        <span className="ml-auto text-[0.65rem] text-muted">▾</span>
-      </button>
-      {open && (
-        <div className="absolute left-0 top-full z-50 mt-1 w-full min-w-44 overflow-hidden rounded-md border border-border bg-surface shadow-lg" role="menu">
-          {options.map(option => {
-            const active = option.value === selected;
-            return (
-              <button
-                key={option.value}
-                type="button"
-                role="menuitemradio"
-                aria-checked={active}
-                disabled={option.disabled}
-                title={option.title}
-                className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors ${
-                  option.disabled
-                    ? 'cursor-not-allowed text-muted/45'
-                    : active
-                      ? 'bg-accent/15 text-accent hover:bg-accent/20'
-                      : 'text-text hover:bg-bg'
-                }`}
-                onClick={() => {
-                  if (option.disabled) return;
-                  onChange(option.value);
-                  setOpen(false);
-                }}
-              >
-                <span className="w-3 text-center">{active ? '✓' : ''}</span>
-                {option.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function CustomDateRangeFilter({ startDate, endDate, maxDate, loading, onStartDateChange, onEndDateChange }: {
-  startDate: string;
-  endDate: string;
-  maxDate: string;
-  loading: boolean;
-  onStartDateChange: (value: string) => void;
-  onEndDateChange: (value: string) => void;
-}) {
-  return (
-    <fieldset className="flex flex-col gap-1" title="Show offers closed within an inclusive custom date range">
-      <legend className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">Custom date range{loading ? ' · Loading…' : ''}</legend>
-      <label className="flex flex-col gap-0.5 text-[0.65rem] text-muted">
-        Start date
-        <input
-          type="date"
-          aria-label="Start date"
-          value={startDate}
-          max={endDate || maxDate}
-          onChange={event => onStartDateChange(event.target.value)}
-          className="w-full rounded border border-border bg-bg/60 px-2 py-1 text-[0.75rem] text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
-        />
-      </label>
-      <label className="flex flex-col gap-0.5 text-[0.65rem] text-muted">
-        End date
-        <input
-          type="date"
-          aria-label="End date"
-          value={endDate}
-          min={startDate || undefined}
-          max={maxDate}
-          onChange={event => onEndDateChange(event.target.value)}
-          className="w-full rounded border border-border bg-bg/60 px-2 py-1 text-[0.75rem] text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
-        />
-      </label>
-    </fieldset>
-  );
-}
-
 const PROFITABLE_TRADES_GRID_COLS =
   'grid min-w-[40rem] grid-cols-[minmax(7rem,0.85fr)_minmax(2.75rem,0.3fr)_minmax(4rem,0.45fr)_minmax(8rem,1fr)_minmax(5.5rem,0.75fr)_minmax(6.75rem,0.95fr)_1.25rem_1.25rem] items-center gap-2 sm:min-w-[48rem] sm:grid-cols-[minmax(7rem,0.75fr)_minmax(2.75rem,0.3fr)_minmax(4rem,0.4fr)_minmax(8rem,1fr)_minmax(5.25rem,0.6fr)_minmax(5.75rem,0.75fr)_minmax(6.5rem,0.85fr)_1.25rem_1.25rem] lg:min-w-0 lg:w-full lg:grid-cols-[minmax(0,0.55fr)_minmax(0,0.28fr)_minmax(0,0.42fr)_minmax(0,0.85fr)_minmax(0,0.65fr)_minmax(0,0.65fr)_minmax(0,0.55fr)_minmax(0,0.95fr)_minmax(0,1.15fr)_1.25rem_1.25rem] sm:gap-3';
 
@@ -919,7 +702,7 @@ function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUni
   );
 }
 
-function offerNumber(raw: Record<string, string | number | boolean | null>, key: string): number | null {
+function offerNumber(raw: Record<string, unknown>, key: string): number | null {
   const value = raw[key];
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
@@ -1073,6 +856,7 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
             contextId={order.id}
             amountUnit={amountUnit}
             onAmountUnitChange={setAmountUnit}
+            offer={offer}
           />
         </div>
       ) : (
@@ -1296,6 +1080,7 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
             ) : undefined}
             amountUnit={amountUnit}
             onAmountUnitChange={setAmountUnit}
+            offer={offer}
           />
         </div>
       ) : (
@@ -1489,7 +1274,7 @@ function LiveOffersList({ offers, observedLiveCount, fiat, timezone, loading, ch
                 <TradeRowMetric value={premium == null ? '—' : `${premium.toFixed(1)}%`} valueClassName={premiumClass(premium)} />
                 <span className="min-w-0 truncate font-medium text-text" title={offer.payment_methods?.join(', ') || 'Unknown method'}>{offer.payment_methods?.join(', ') || 'Unknown method'}</span>
                 <TradeRowMetric value={formatDateTimeLabel(getFirstSeen(offer) ?? '', timezone)} />
-                <span className="min-w-0 truncate"><SellerRatingBadge score={offer.seller_rating_score} confidence={offer.seller_rating_confidence} compact /></span>
+                <span className="min-w-0 truncate"><SellerRatingBadge score={offer.seller_rating_score} confidence={offer.seller_rating_confidence} raw={offer.seller_rating_raw} compact /></span>
                 <span className="min-w-0 truncate"><CounterpartyStakeBadge pct={getCounterpartyStakePct(offer)} /></span>
                 <TradeRowMetric value={formatDuration(getFirstSeen(offer), new Date().toISOString())} />
                 <TradeRowMetric value={sizeUnit === 'btc' ? fmtBTC(tradeSize) : fmtFiat(tradeSize != null && getRefPrice(offer) != null ? tradeSize * getRefPrice(offer)! : null, fiat)} />
@@ -1519,7 +1304,6 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     setSelectedOfferKey,
     loading,
     filters: liveFilters,
-    refPrice,
     setFilters,
     resetFilters: resetLiveFilters,
     isChartOfferVisible: isChartOfferVisibleInScope,
@@ -1568,7 +1352,6 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const [liveTradeMode, setLiveTradeMode] = useState<TradeMode>(defaultLiveTradeMode);
   const [liveScenarioMode, setLiveScenarioMode] = useState<SizeMode>('full');
   const [manualRouteSelection, setManualRouteSelection] = useState<ManualRouteSelection>(DEFAULT_MANUAL_ROUTE_SELECTION);
-  const [filtersCollapsed, setFiltersCollapsed] = useState(false);
   const [chartCollapsed, setChartCollapsed] = useState(false);
   const [depthCollapsed, setDepthCollapsed] = useState(false);
 
@@ -1669,18 +1452,32 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     setManualRouteSelection(DEFAULT_MANUAL_ROUTE_SELECTION);
   }, [selectedOfferKey, hedgeVenueAvailable]);
 
-  // The sidebar's Direction/Exchanges controls are shared between Live and Past
-  // mode: push the persisted selection into the global FiltersContext once so
-  // the live offers list and OHLC overlays match the sidebar from the start.
+  // Direction/Exchanges live in FiltersContext so Stats and Insights share them.
+  // Hydrate context from this page's persisted sidebar once, but do not clobber
+  // values the Statistics rail already applied in this session.
   const sharedFiltersSyncedRef = useRef(false);
   useEffect(() => {
     if (sharedFiltersSyncedRef.current) return;
     sharedFiltersSyncedRef.current = true;
+    if (liveFilters.direction || liveFilters.excludedExchanges.length > 0) {
+      setDirectionFilter(liveFilters.direction === 'bid' || liveFilters.direction === 'ask' ? liveFilters.direction : 'both');
+      setDisabledExchanges(liveFilters.excludedExchanges);
+      return;
+    }
     setFilters({
       direction: directionFilter === 'both' ? '' : directionFilter,
       excludedExchanges: disabledExchanges,
     });
-  }, [setFilters, directionFilter, disabledExchanges]);
+  }, [setFilters, directionFilter, disabledExchanges, liveFilters.direction, liveFilters.excludedExchanges]);
+
+  const sharedDirectionKey = `${liveFilters.direction}|${liveFilters.excludedExchanges.join(',')}`;
+  const previousSharedDirectionKeyRef = useRef(sharedDirectionKey);
+  useEffect(() => {
+    if (previousSharedDirectionKeyRef.current === sharedDirectionKey) return;
+    previousSharedDirectionKeyRef.current = sharedDirectionKey;
+    setDirectionFilter(liveFilters.direction === 'bid' || liveFilters.direction === 'ask' ? liveFilters.direction : 'both');
+    setDisabledExchanges(liveFilters.excludedExchanges);
+  }, [sharedDirectionKey, liveFilters.direction, liveFilters.excludedExchanges]);
 
   const cappedOffersPending = cappedLoading && detailedOrders.length === 0;
   const scenarioDataPending = mode !== 'net_full' && cappedOffersPending;
@@ -2182,165 +1979,106 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
         </div>
       </div>
       <div className="flex flex-1 min-h-0 flex-col gap-3 lg:flex-row">
-        {filtersCollapsed ? (
-          <button
-            type="button"
-            aria-label="Show Insights filters"
-            aria-expanded={false}
-            onClick={() => setFiltersCollapsed(false)}
-            className="shrink-0 rounded-lg border border-border bg-bg/20 px-2 py-3 text-[0.68rem] font-semibold uppercase tracking-wide text-muted transition-colors hover:bg-surface hover:text-text lg:w-9 lg:[writing-mode:vertical-rl] lg:rotate-180"
-          >
-            Filters ▸
-          </button>
-        ) : (
-        <aside aria-label="Insights filters" className="flex shrink-0 flex-col gap-3 rounded-lg border border-border bg-bg/20 p-3 lg:w-48 xl:w-56 lg:overflow-y-auto">
-          <div className="flex items-center justify-between gap-2">
-            <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">Filters</span>
-            <button
-              type="button"
-              aria-label="Hide Insights filters"
-              aria-expanded={true}
-              onClick={() => setFiltersCollapsed(true)}
-              className="rounded border border-border bg-surface px-1.5 py-0.5 text-[0.75rem] leading-none text-muted transition-colors hover:text-text"
-              title="Hide filters"
-            >
-              ◂
-            </button>
-          </div>
-          <div
-            className="flex items-center justify-between gap-2 rounded-md border border-border bg-surface/60 px-2.5 py-1.5"
-            title="Current CEX reference price"
-          >
-            <span className="text-[0.65rem] uppercase tracking-wide text-muted">
-              BTC/{liveFilters.fiat} — {liveFilters.cex.charAt(0).toUpperCase() + liveFilters.cex.slice(1)}
-            </span>
-            <span className={`text-[0.8rem] font-semibold tabular-nums mono-nums ${refPrice != null ? 'text-text' : 'text-muted'}`}>
-              {refPrice != null ? fmtFiat(refPrice, liveFilters.fiat) : '—'}
-            </span>
-          </div>
-          <PillGroup
-            label="Direction"
-            description="Filter the offers list by offer side (applies to live and past offers)"
-            options={[
-              { value: 'both', label: 'Both' },
-              { value: 'bid', label: 'Bid' },
-              { value: 'ask', label: 'Ask' },
-            ]}
-            selected={directionFilter}
-            onChange={v => changeDirectionFilter(v as DirectionFilter)}
-          />
-          <ExchangeFilterGroup
-            label="Exchanges"
-            description="Click to include or exclude DEX exchanges from the offers list (applies to live and past offers)"
-            exchanges={activeExchangeFilter.exchanges}
-            counts={activeExchangeFilter.counts}
-            disabled={disabledExchangeSet}
-            onToggle={toggleExchangeFilter}
-            onEnableAll={() => applyDisabledExchanges([])}
-            onDisableAll={() => applyDisabledExchanges([...activeExchangeFilter.exchanges])}
-          />
-          <SharedOfferFilters scope={viewMode} />
-          {viewMode === 'live' && (
-            <LiveOfferFilters onRefresh={onRefreshLive} lastUpdatedAt={lastUpdatedAt} />
+        <OfferFilterRail
+          scope={viewMode}
+          directionFilter={directionFilter}
+          onDirectionChange={changeDirectionFilter}
+          exchanges={activeExchangeFilter.exchanges}
+          exchangeCounts={activeExchangeFilter.counts}
+          disabledExchanges={disabledExchanges}
+          onToggleExchange={toggleExchangeFilter}
+          onEnableAllExchanges={() => applyDisabledExchanges([])}
+          onDisableAllExchanges={() => applyDisabledExchanges([...activeExchangeFilter.exchanges])}
+          onRefresh={onRefreshLive}
+          lastUpdatedAt={lastUpdatedAt}
+          onReset={resetFilters}
+          extra={(
+            <>
+              <SelectGroup
+                label="Timeframe"
+                description="Show offers closed within a preset window or a custom date range"
+                options={[
+                  ...((activeStats ?? stats)?.timeframes ?? []).map(r => ({ value: r.timeframe, label: labelForTimeframe(r.timeframe) })),
+                  { value: CUSTOM_TIMEFRAME, label: 'Custom date range' },
+                ]}
+                selected={selectedTimeframe}
+                onChange={changeTimeframe}
+              />
+              {selectedTimeframe === CUSTOM_TIMEFRAME && (
+                <CustomDateRangeFilter
+                  startDate={customStartDate}
+                  endDate={customEndDate}
+                  maxDate={customDateMax}
+                  loading={customRangeLoading}
+                  onStartDateChange={changeCustomStartDate}
+                  onEndDateChange={setCustomEndDate}
+                />
+              )}
+              <DualRangeFilter
+                label="Duration"
+                description="Filter profitable trades by how long the offer was live"
+                min={durationBounds.min}
+                max={durationBounds.max}
+                value={durationRange ?? [durationBounds.min, durationBounds.max]}
+                onChange={setDurationRange}
+                formatValue={formatDurationMinutes}
+                disabled={!durationBounds.hasData || durationRange == null}
+                disabledMessage="No duration data in this window"
+              />
+              <DualRangeFilter
+                label={`Net profit ${fiat}`}
+                description="Filter profitable trades by net profit per order in fiat"
+                min={profitFiatBounds.minCents}
+                max={profitFiatBounds.sliderMaxCents}
+                value={profitFiatRangeCents ?? [profitFiatBounds.minCents, profitFiatBounds.maxCents]}
+                onChange={setProfitFiatRangeCents}
+                formatValue={value => fmtFiat(profitFiatFromCents(value), fiat)}
+                disabled={!profitFiatBounds.hasData || profitFiatRangeCents == null}
+                disabledMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No profit data in this window'}
+              />
+              <SelectGroup
+                label="Premium mode"
+                description="Net full uses full order size. Net capped applies your max fiat position limit where needed."
+                options={[
+                  { value: 'net_full', label: 'Net Full' },
+                  {
+                    value: 'net_capped',
+                    label: maxFiatLimit != null && maxFiatLimit > 0 ? `Net Capped ${fmtFiat(maxFiatLimit, fiat)}` : 'Net Capped',
+                    disabled: !cappedModeAvailable,
+                    title: !capAvailable
+                      ? 'Set a Max Position Size (Fiat) in Settings to enable capped mode'
+                      : cappedOffersPending
+                        ? 'Capped offers are still loading'
+                        : undefined,
+                  },
+                  {
+                    value: 'net_min',
+                    label: 'Net Min',
+                    title: 'Use each offer’s minimum executable volume',
+                  },
+                ]}
+                selected={mode}
+                onChange={v => setMode(v as TakerOpportunityMode)}
+              />
+            </>
           )}
-          {viewMode === 'past' && (
-          <>
-          <PastOfferFilters />
-          <SelectGroup
-            label="Timeframe"
-            description="Show offers closed within a preset window or a custom date range"
-            options={[
-              ...((activeStats ?? stats)?.timeframes ?? []).map(r => ({ value: r.timeframe, label: labelForTimeframe(r.timeframe) })),
-              { value: CUSTOM_TIMEFRAME, label: 'Custom date range' },
-            ]}
-            selected={selectedTimeframe}
-            onChange={changeTimeframe}
-          />
-          {selectedTimeframe === CUSTOM_TIMEFRAME && (
-            <CustomDateRangeFilter
-              startDate={customStartDate}
-              endDate={customEndDate}
-              maxDate={customDateMax}
-              loading={customRangeLoading}
-              onStartDateChange={changeCustomStartDate}
-              onEndDateChange={setCustomEndDate}
-            />
-          )}
-          <DualRangeFilter
-            label="Duration"
-            description="Filter profitable trades by how long the offer was live"
-            min={durationBounds.min}
-            max={durationBounds.max}
-            value={durationRange ?? [durationBounds.min, durationBounds.max]}
-            onChange={setDurationRange}
-            formatValue={formatDurationMinutes}
-            disabled={!durationBounds.hasData || durationRange == null}
-            disabledMessage="No duration data in this window"
-          />
-          <DualRangeFilter
-            label={`Net profit ${fiat}`}
-            description="Filter profitable trades by net profit per order in fiat"
-            min={profitFiatBounds.minCents}
-            max={profitFiatBounds.sliderMaxCents}
-            value={profitFiatRangeCents ?? [profitFiatBounds.minCents, profitFiatBounds.maxCents]}
-            onChange={setProfitFiatRangeCents}
-            formatValue={value => fmtFiat(profitFiatFromCents(value), fiat)}
-            disabled={!profitFiatBounds.hasData || profitFiatRangeCents == null}
-            disabledMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No profit data in this window'}
-          />
-          <SelectGroup
-            label="Premium mode"
-            description="Net full uses full order size. Net capped applies your max fiat position limit where needed."
-            options={[
-              { value: 'net_full', label: 'Net Full' },
-              {
-                value: 'net_capped',
-                label: maxFiatLimit != null && maxFiatLimit > 0 ? `Net Capped ${fmtFiat(maxFiatLimit, fiat)}` : 'Net Capped',
-                disabled: !cappedModeAvailable,
-                title: !capAvailable
-                  ? 'Set a Max Position Size (Fiat) in Settings to enable capped mode'
-                  : cappedOffersPending
-                    ? 'Capped offers are still loading'
-                    : undefined,
-              },
-              {
-                value: 'net_min',
-                label: 'Net Min',
-                title: 'Use each offer’s minimum executable volume',
-              },
-            ]}
-            selected={mode}
-            onChange={v => setMode(v as TakerOpportunityMode)}
-          />
-          </>
-          )}
-
-          <button
-            type="button"
-            onClick={resetFilters}
-            className="w-full rounded-md border-none bg-red px-2.5 py-1.5 text-[0.72rem] font-semibold text-black transition-opacity hover:opacity-85"
-          >
-            ↺ Reset filters
-          </button>
-
-          {viewMode === 'past' && (
-          <div className="shrink-0 overflow-hidden rounded-lg border border-border bg-bg/20">
-            <div className="flex items-center justify-between gap-2 border-b border-border bg-surface/70 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-wide text-muted">
-              <span>Backtesting summary</span>
-              <UnitToggle fiat={fiat} unit={summaryUnit} onChange={setSummaryUnit} />
+          footer={viewMode === 'past' ? (
+            <div className="shrink-0 overflow-hidden rounded-lg border border-border bg-bg/20">
+              <div className="flex items-center justify-between gap-2 border-b border-border bg-surface/70 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-wide text-muted">
+                <span>Backtesting summary</span>
+                <UnitToggle fiat={fiat} unit={summaryUnit} onChange={setSummaryUnit} />
+              </div>
+              <div className="divide-y divide-border/70 text-[0.75rem]">
+                {summaryRows.map(row => (
+                  <div key={row.label} className="grid grid-cols-[minmax(5rem,0.85fr)_minmax(0,1.15fr)] gap-2 px-3 py-2">
+                    <span className="text-muted">{row.label}</span>
+                    <span className={`min-w-0 break-words text-right tabular-nums mono-nums ${row.className}`}>{row.value}</span>
+                  </div>
+                ))}
+              </div>
             </div>
-            <div className="divide-y divide-border/70 text-[0.75rem]">
-              {summaryRows.map(row => (
-                <div key={row.label} className="grid grid-cols-[minmax(5rem,0.85fr)_minmax(0,1.15fr)] gap-2 px-3 py-2">
-                  <span className="text-muted">{row.label}</span>
-                  <span className={`min-w-0 break-words text-right tabular-nums mono-nums ${row.className}`}>{row.value}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-          )}
-        </aside>
-        )}
+          ) : null}
+        />
 
         <div ref={offersLayoutRef} className="min-h-0 min-w-0 flex-1 flex flex-col gap-1">
           {chart != null && (

@@ -1,10 +1,19 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type {
   GeneralStatsPremiumSummaryData,
   NamedCount,
   PastPremiumTimeframeStats,
+  PremiumFilterMode,
   PremiumLifetimeModes,
 } from '../types';
+
+type PremiumCardMode = Extract<PremiumFilterMode, 'raw' | 'net_full' | 'net_capped'>;
+
+function cardModeLabel(mode: PremiumCardMode): string {
+  if (mode === 'raw') return 'Raw';
+  if (mode === 'net_capped') return 'Net Capped';
+  return 'Net Full';
+}
 
 function fmtDuration(ms: number): string {
   const h = Math.floor(ms / 3_600_000);
@@ -78,8 +87,29 @@ function buildConicGradient(entries: { value: number; color: string }[]): string
   return `conic-gradient(${stops.join(', ')})`;
 }
 
-const PIE_SIZE = 'clamp(180px, 28vh, 300px)';
-const PIE_INSET = 'clamp(28px, 4.5vh, 40px)';
+const PIE_FALLBACK_PX = 176;
+
+function useFittedSquareSize() {
+  const ref = useRef<HTMLDivElement>(null);
+  const [size, setSize] = useState(0);
+
+  useEffect(() => {
+    const node = ref.current;
+    if (!node) return;
+
+    const update = () => {
+      const { width, height } = node.getBoundingClientRect();
+      setSize(Math.max(0, Math.floor(Math.min(width, height))));
+    };
+
+    const observer = new ResizeObserver(update);
+    observer.observe(node);
+    update();
+    return () => observer.disconnect();
+  }, []);
+
+  return [ref, size] as const;
+}
 
 function BreakdownPie({
   entries,
@@ -90,35 +120,41 @@ function BreakdownPie({
   total: number;
   centerLabel: string;
 }) {
+  const [slotRef, fittedSize] = useFittedSquareSize();
+  const pieSize = fittedSize > 0 ? fittedSize : PIE_FALLBACK_PX;
+
   return (
-    <div className="flex h-full min-h-0 flex-col items-center justify-center gap-4 py-2">
-      <div
-        className="relative shrink-0"
-        style={{ width: PIE_SIZE, height: PIE_SIZE }}
-      >
+    <div className="flex min-h-0 flex-1 flex-col gap-2 overflow-hidden">
+      <div ref={slotRef} className="relative min-h-[7rem] w-full flex-1 overflow-hidden lg:min-h-0">
         <div
-          className="h-full w-full rounded-full border border-border/70"
-          style={{ background: buildConicGradient(entries.map(entry => ({ value: entry.value, color: entry.color }))) }}
-        />
-        <div
-          className="absolute rounded-full border border-border bg-bg flex flex-col items-center justify-center"
-          style={{ inset: PIE_INSET }}
+          className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2"
+          style={{ width: pieSize, height: pieSize }}
+          data-testid="breakdown-pie-graphic"
         >
-          <span className="text-[1.05rem] font-bold mono-nums tabular-nums leading-none text-text">{total}</span>
-          <span className="mt-1 text-[0.52rem] uppercase tracking-[0.16em] text-muted leading-none">{centerLabel}</span>
+          <div
+            className="h-full w-full rounded-full border border-border/70"
+            style={{ background: buildConicGradient(entries.map(entry => ({ value: entry.value, color: entry.color }))) }}
+          />
+          <div
+            className="absolute flex flex-col items-center justify-center rounded-full border border-border bg-bg"
+            style={{ inset: '22%' }}
+          >
+            <span className="text-[1.05rem] font-bold leading-none tabular-nums mono-nums text-text">{total}</span>
+            <span className="mt-1 text-[0.52rem] uppercase leading-none tracking-[0.16em] text-muted">{centerLabel}</span>
+          </div>
         </div>
       </div>
 
-      <div className="grid w-full grid-cols-1 gap-1.5 min-w-0">
+      <div className="grid max-h-[42%] w-full min-w-0 shrink-0 grid-cols-1 gap-1 overflow-y-auto">
         {entries.map(entry => {
           const pct = total > 0 ? (entry.value / total) * 100 : 0;
           return (
-            <div key={entry.name} className="flex items-center justify-between gap-3 min-w-0">
-              <div className="flex items-center gap-2 min-w-0">
-                <span className="h-2 w-2 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
+            <div key={entry.name} className="flex min-w-0 items-center justify-between gap-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ backgroundColor: entry.color }} />
                 <span className={`truncate text-[0.68rem] font-medium ${entry.textClass ?? 'text-text'}`}>{entry.name}</span>
               </div>
-              <span className="text-[0.68rem] mono-nums tabular-nums text-muted shrink-0">
+              <span className="shrink-0 text-[0.68rem] tabular-nums mono-nums text-muted">
                 {entry.value} · {pct.toFixed(0)}%
               </span>
             </div>
@@ -151,16 +187,18 @@ export function Card({
   accentHex,
   bottomFill,
   bottomColor,
+  testId,
   children,
 }: {
   accent?: string;
   accentHex?: string;
   bottomFill?: number;
   bottomColor?: string;
+  testId?: string;
   children: React.ReactNode;
 }) {
   return (
-    <div className="relative h-full bg-bg border border-border rounded-lg px-3 py-2.5 flex flex-col gap-2 overflow-hidden min-w-0">
+    <div data-testid={testId} className="relative flex h-full min-h-0 min-w-0 flex-col gap-2 overflow-hidden rounded-lg border border-border bg-bg px-3 py-2.5">
       <div
         className={`absolute left-0 top-2 bottom-2 w-0.5 rounded-full ${accentHex ? '' : accent}`}
         style={accentHex ? { backgroundColor: accentHex } : undefined}
@@ -200,8 +238,8 @@ export function ExchangesCard({ exchangesLive, offersByExchange }: {
   }));
 
   return (
-    <Card accentHex={accentHex}>
-      <div className="flex items-baseline justify-between gap-2">
+    <Card accentHex={accentHex} testId="exchanges-live-card">
+      <div className="flex shrink-0 items-baseline justify-between gap-2">
         <Label>Exchanges Live</Label>
         <span className="text-sm font-bold tabular-nums mono-nums leading-none text-text">
           {exchangesLive}
@@ -212,12 +250,13 @@ export function ExchangesCard({ exchangesLive, offersByExchange }: {
   );
 }
 
-export function LifetimeCard({ lifetimes }: { lifetimes: PremiumLifetimeModes }) {
-  const [mode, setMode] = useState<'raw' | 'net_full' | 'net_capped'>('raw');
-  const selected = lifetimes?.[mode] ?? { avg_offer_lifetime_ms: null, avg_offer_lifetime_ms_by_exchange: [] };
+export function LifetimeCard({ lifetimes, lockedMode }: { lifetimes: PremiumLifetimeModes; lockedMode?: PremiumCardMode }) {
+  const [mode, setMode] = useState<PremiumCardMode>('raw');
+  const selectedMode = lockedMode ?? mode;
+  const selected = lifetimes?.[selectedMode] ?? { avg_offer_lifetime_ms: null, avg_offer_lifetime_ms_by_exchange: [] };
   const byExchange = selected.avg_offer_lifetime_ms_by_exchange ?? [];
   const overall = selected.avg_offer_lifetime_ms;
-  const modeLabel = mode === 'raw' ? 'Raw' : mode === 'net_full' ? 'Net Full' : 'Net Capped';
+  const modeLabel = cardModeLabel(selectedMode);
 
   return (
     <Card accent="bg-muted" bottomFill={overall != null ? Math.min(overall / (24 * 3_600_000), 1) : 0} bottomColor="bg-muted">
@@ -230,6 +269,7 @@ export function LifetimeCard({ lifetimes }: { lifetimes: PremiumLifetimeModes })
           <span className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] leading-none text-muted">{modeLabel}</span>
         </div>
       </div>
+      {!lockedMode && (
       <div className="flex items-center gap-1 flex-wrap">
         {([
           ['raw', 'Raw'],
@@ -246,6 +286,7 @@ export function LifetimeCard({ lifetimes }: { lifetimes: PremiumLifetimeModes })
           </button>
         ))}
       </div>
+      )}
       {byExchange.length > 0 && (
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
           {byExchange.map(e => (
@@ -260,8 +301,9 @@ export function LifetimeCard({ lifetimes }: { lifetimes: PremiumLifetimeModes })
   );
 }
 
-export function PremiumsCard({ premium }: { premium: GeneralStatsPremiumSummaryData }) {
-  const [mode, setMode] = useState<'raw' | 'net_full' | 'net_capped'>('raw');
+export function PremiumsCard({ premium, lockedMode }: { premium: GeneralStatsPremiumSummaryData; lockedMode?: PremiumCardMode }) {
+  const [mode, setMode] = useState<PremiumCardMode>('raw');
+  const selectedMode = lockedMode ?? mode;
   const avgAsk = premium?.avg_ask_premium_pct ?? null;
   const avgBid = premium?.avg_bid_premium_pct ?? null;
   const bestAsk = premium?.best_ask_premium_pct ?? null;
@@ -270,8 +312,7 @@ export function PremiumsCard({ premium }: { premium: GeneralStatsPremiumSummaryD
   const barValue = isFinite(strongest) ? strongest : 0;
   const barColor = barValue >= 3 ? 'bg-green' : barValue > 0 ? 'bg-accent' : 'bg-red';
   const accent = barValue > 0 ? barColor : 'bg-border';
-  const modeLabel = mode === 'raw' ? 'Raw' : mode === 'net_full' ? 'Net Full' : 'Net Capped';
-  const mirrorsRaw = mode !== 'raw';
+  const modeLabel = cardModeLabel(selectedMode);
 
   return (
     <Card accent={accent} bottomFill={barValue > 0 ? Math.min(barValue / 10, 1) : 0} bottomColor={barColor}>
@@ -279,6 +320,7 @@ export function PremiumsCard({ premium }: { premium: GeneralStatsPremiumSummaryD
         <Label>Open Premiums</Label>
         <span className="text-[0.62rem] font-semibold uppercase tracking-[0.14em] leading-none text-muted">{modeLabel}</span>
       </div>
+      {!lockedMode && (
       <div className="flex items-center gap-1 flex-wrap">
         {([
           ['raw', 'Raw'],
@@ -295,6 +337,7 @@ export function PremiumsCard({ premium }: { premium: GeneralStatsPremiumSummaryD
           </button>
         ))}
       </div>
+      )}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
         <div className="rounded-md border border-border/60 bg-surface/40 px-2.5 py-2 flex flex-col gap-2">
           <div className="flex items-end justify-between gap-3">
@@ -318,17 +361,16 @@ export function PremiumsCard({ premium }: { premium: GeneralStatsPremiumSummaryD
         </div>
       </div>
       <span className="text-[0.62rem] text-muted leading-none">
-        {mirrorsRaw
-          ? 'Live offers do not have net-mode recomputes yet, so this view mirrors raw premiums.'
-          : 'Live premiums are calculated from the currently open offer set.'}
+        Live premiums use the selected premium category on the currently open offer set.
       </span>
     </Card>
   );
 }
 
-export function PastPremiumsCard({ frames }: { frames: PastPremiumTimeframeStats[] }) {
+export function PastPremiumsCard({ frames, lockedMode }: { frames: PastPremiumTimeframeStats[]; lockedMode?: PremiumCardMode }) {
   const framesList = useMemo(() => frames ?? [], [frames]);
-  const [mode, setMode] = useState<'raw' | 'net_full' | 'net_capped'>('raw');
+  const [mode, setMode] = useState<PremiumCardMode>('raw');
+  const selectedMode = lockedMode ?? mode;
   const [selectedTimeframe, setSelectedTimeframe] = useState('24h');
   const selected = useMemo(() => (
     framesList.find(frame => frame.timeframe === selectedTimeframe)
@@ -336,14 +378,14 @@ export function PastPremiumsCard({ frames }: { frames: PastPremiumTimeframeStats
       ?? framesList[0]
       ?? null
   ), [framesList, selectedTimeframe]);
-  const entries = selected?.modes?.[mode] ?? selected?.avg_premium_by_exchange ?? [];
+  const entries = selected?.modes?.[selectedMode] ?? selected?.avg_premium_by_exchange ?? [];
   const top = entries.slice(0, 3);
   const rest = entries.length - top.length;
   const topValue = top.reduce((best, entry) => Math.max(best, entry.avg_premium_pct), -Infinity);
   const barValue = isFinite(topValue) ? topValue : 0;
   const barColor = barValue >= 3 ? 'bg-green' : barValue > 0 ? 'bg-accent' : 'bg-red';
   const accent = barValue > 0 ? barColor : 'bg-border';
-  const modeLabel = mode === 'raw' ? 'Raw' : mode === 'net_full' ? 'Net Full' : 'Net Capped';
+  const modeLabel = cardModeLabel(selectedMode);
 
   return (
     <Card accent={accent} bottomFill={barValue > 0 ? Math.min(barValue / 10, 1) : 0} bottomColor={barColor}>
@@ -368,6 +410,7 @@ export function PastPremiumsCard({ frames }: { frames: PastPremiumTimeframeStats
           </button>
         ))}
       </div>
+      {!lockedMode && (
       <div className="flex items-center gap-1 flex-wrap">
         {([
           ['raw', 'Raw'],
@@ -384,6 +427,7 @@ export function PastPremiumsCard({ frames }: { frames: PastPremiumTimeframeStats
           </button>
         ))}
       </div>
+      )}
       {top.length > 0 ? (
         <div className="grid grid-cols-1 gap-2">
           {top.map(entry => (
@@ -424,8 +468,8 @@ export function PaymentMethodsCard({ counts }: { counts: NamedCount[] }) {
   const total = chartEntries.reduce((sum, entry) => sum + entry.value, 0);
 
   return (
-    <Card accent="bg-blue">
-      <div className="flex items-baseline justify-between gap-2">
+    <Card accent="bg-blue" testId="payment-methods-card">
+      <div className="flex shrink-0 items-baseline justify-between gap-2">
         <Label>Payment Methods</Label>
         <span className="text-sm font-bold tabular-nums mono-nums leading-none text-blue">{list.length}</span>
       </div>

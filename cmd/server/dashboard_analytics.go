@@ -27,6 +27,20 @@ type dashboardAnalyticsParams struct {
 	PastStartDate         string   `json:"past_start_date"`
 	PastEndDate           string   `json:"past_end_date"`
 	Timezone              string   `json:"timezone"`
+	// Offer filters shared with the Insights live rail. They are applied when
+	// building /api/statistics and ignored by /api/dashboard/analytics.
+	Direction             string   `json:"direction"`
+	ExcludedExchanges     []string `json:"excluded_exchanges"`
+	IncludePaymentMethods []string `json:"include_payment_methods"`
+	PaymentScope          string   `json:"payment_scope"`
+	PremiumMode           string   `json:"premium_mode"`
+	PremiumOnly           *bool    `json:"premium_only"`
+	RangeMetric           string   `json:"range_metric"`
+	ProfitMin             *float64 `json:"profit_min"`
+	ProfitMax             *float64 `json:"profit_max"`
+	PremiumMin            *float64 `json:"premium_min"`
+	PremiumMax            *float64 `json:"premium_max"`
+	Refresh               bool     `json:"refresh"`
 	pastRangeStart        time.Time
 	pastRangeEnd          time.Time
 }
@@ -61,6 +75,26 @@ func parseDashboardAnalyticsParams(r *http.Request) (dashboardAnalyticsParams, e
 		body.Fiat = "EUR"
 	}
 	body.ExcludePaymentMethods = normalizePaymentMethodList(body.ExcludePaymentMethods)
+	body.IncludePaymentMethods = normalizePaymentMethodList(body.IncludePaymentMethods)
+	body.PaymentScope = strings.ToLower(strings.TrimSpace(body.PaymentScope))
+	if body.PaymentScope != "linked" {
+		body.PaymentScope = ""
+	}
+	body.ExcludedExchanges = normalizeCEXList(body.ExcludedExchanges)
+	body.Direction = strings.ToLower(strings.TrimSpace(body.Direction))
+	if body.Direction != "bid" && body.Direction != "ask" {
+		body.Direction = ""
+	}
+	body.PremiumMode = strings.ToLower(strings.TrimSpace(body.PremiumMode))
+	switch body.PremiumMode {
+	case "raw", "net_full", "net_capped":
+	default:
+		body.PremiumMode = ""
+	}
+	body.RangeMetric = strings.ToLower(strings.TrimSpace(body.RangeMetric))
+	if body.RangeMetric != "profit" && body.RangeMetric != "premium" {
+		body.RangeMetric = ""
+	}
 	body.ExcludeSpotCEXes = mergeCEXLists(body.ExcludeCEXes, normalizeCEXList(body.ExcludeSpotCEXes))
 	body.ExcludeHedgeCEXes = mergeCEXLists(body.ExcludeCEXes, normalizeCEXList(body.ExcludeHedgeCEXes))
 	policySpot, policyHedge := authoritativeCEXExclusions(r.Context())

@@ -1,4 +1,4 @@
-import { test, expect, gotoAndWaitForData, offersPanel, controlPanel, openControlPanel, jsClick } from '../fixtures/base-fixture';
+import { test, expect, gotoAndWaitForData, offersPanel, controlPanel, openControlPanel, closeControlPanel, jsClick } from '../fixtures/base-fixture';
 
 const rowCells = (row: import('@playwright/test').Locator) => row.locator(':scope > span > span');
 
@@ -32,12 +32,10 @@ test.describe('Live offers list', () => {
     await offersPanel(page).getByTestId('live-offers-row').first().click();
     const detail = page.getByTestId('live-offer-detail');
     await expect(detail).toBeVisible();
-    await expect(detail.getByRole('region', { name: 'Decision summary' })).toBeVisible();
-    await expect(detail.getByRole('region', { name: 'Trade economics' })).toBeVisible();
-    await expect(detail.getByText('Total costs', { exact: true })).toBeVisible();
-    await expect(detail.getByText('Gross DEX premium', { exact: true })).toBeVisible();
-    await expect(detail.getByText('Net profit', { exact: true }).first()).toBeVisible();
-    await expect(detail.getByText(/^Capital allocation/)).toBeVisible();
+    await expect(detail.getByRole('tablist', { name: 'Offer breakdown sections' })).toBeVisible();
+    await expect(detail.getByRole('tab', { name: 'Offer' })).toHaveAttribute('aria-selected', 'true');
+    await expect(detail.getByRole('tabpanel', { name: 'Offer' })).toBeVisible();
+    await expect(detail.getByText(/^(Bid|Ask) side$/)).toBeVisible();
 
     await jsClick(page.getByRole('button', { name: 'Close live offer details' }));
     await expect(page.getByTestId('live-offer-detail')).not.toBeVisible();
@@ -51,22 +49,48 @@ test.describe('Live offers list', () => {
     await expect(page.getByTestId('live-offer-detail')).toBeVisible();
   });
 
-  test('stacks supporting economics below the cost table on narrow screens', async ({ page }) => {
+  test('shows one offer breakdown panel per selected tab', async ({ page }) => {
     await offersPanel(page).getByTestId('live-offers-row').first().click();
     const detail = page.getByTestId('live-offer-detail');
-    const economics = detail.getByRole('region', { name: 'Trade economics' });
-    const supporting = detail.getByRole('complementary', { name: 'Capital requirements' });
 
-    const [wideEconomics, wideSupporting] = await Promise.all([economics.boundingBox(), supporting.boundingBox()]);
-    expect(wideEconomics).not.toBeNull();
-    expect(wideSupporting).not.toBeNull();
-    expect(wideSupporting!.x).toBeGreaterThan(wideEconomics!.x + wideEconomics!.width - 2);
+    await expect(detail.getByRole('tab', { name: 'Offer' })).toHaveAttribute('aria-selected', 'true');
+    await expect(detail.getByRole('tabpanel', { name: 'Offer' })).toBeVisible();
+    await expect(detail.getByText(/^(Bid|Ask) side$/)).toBeVisible();
+    await expect(detail.getByText('Total costs', { exact: true })).toHaveCount(0);
+    await expect(detail.getByText('Spot notional (CEX buy)')).toHaveCount(0);
 
-    await page.setViewportSize({ width: 800, height: 1200 });
-    const [narrowEconomics, narrowSupporting] = await Promise.all([economics.boundingBox(), supporting.boundingBox()]);
-    expect(narrowEconomics).not.toBeNull();
-    expect(narrowSupporting).not.toBeNull();
-    expect(narrowSupporting!.y).toBeGreaterThan(narrowEconomics!.y + narrowEconomics!.height - 2);
+    await jsClick(detail.getByRole('tab', { name: 'Trade economics' }));
+    await expect(detail.getByRole('tabpanel', { name: 'Trade economics' })).toBeVisible();
+    await expect(detail.getByText('Total costs', { exact: true })).toBeVisible();
+    await expect(detail.getByText('Gross DEX premium', { exact: true })).toBeVisible();
+    await expect(detail.getByText('Net profit', { exact: true }).first()).toBeVisible();
+    await expect(detail.getByText(/^(Bid|Ask) side$/)).toHaveCount(0);
+
+    await jsClick(detail.getByRole('tab', { name: 'Capital allocation' }));
+    await expect(detail.getByRole('tabpanel', { name: 'Capital allocation' })).toBeVisible();
+    await expect(detail.getByText('Spot notional (CEX buy)')).toBeVisible();
+    await expect(detail.getByText('Total costs', { exact: true })).toHaveCount(0);
+
+    await jsClick(detail.getByRole('tab', { name: 'Risk' }));
+    await expect(detail.getByRole('tabpanel', { name: 'Risk' })).toBeVisible();
+    await expect(detail.getByText('Reputation')).toBeVisible();
+    await expect(detail.getByText('Maker stake')).toBeVisible();
+    await expect(detail.getByText('Security deposit')).toBeVisible();
+    await expect(detail.getByText('Rating inputs')).toBeVisible();
+    await expect(detail.getByText('Venue signals')).toBeVisible();
+  });
+
+  test('shows Bisq 2 bonded reputation including unstaked makers', async ({ page }) => {
+    await openControlPanel(page);
+    await jsClick(controlPanel(page).getByRole('button', { name: 'None', exact: true }));
+    await jsClick(controlPanel(page).getByRole('button', { name: /Bisq v2/ }));
+    await closeControlPanel(page);
+
+    const panel = offersPanel(page);
+    await expect(panel.getByText('72')).toBeVisible();
+    await expect(panel.getByText('reputation')).toBeVisible();
+    await expect(panel.getByText('unstaked')).toBeVisible();
+    await expect(panel.getByText('0★')).toBeVisible();
   });
 
   test('shows the empty state when filters exclude every offer', async ({ page }) => {

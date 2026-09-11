@@ -181,8 +181,9 @@ test('Net Min uses the precomputed minimum-volume scenario', async ({ page }) =>
   const detail = page.getByTestId('past-offer-detail');
   await expect(detail).toContainText('37 snapshots');
   await expect(detail).toContainText('Minimum-size estimate');
-  await expect(detail.getByRole('region', { name: 'Decision summary' })).toBeVisible();
-  await expect(detail.getByRole('region', { name: 'Trade economics' })).toBeVisible();
+  await expect(detail.getByRole('tab', { name: 'Offer' })).toHaveAttribute('aria-selected', 'true');
+  await expect(detail.getByRole('tabpanel', { name: 'Offer' })).toBeVisible();
+  await expect(detail.getByRole('tab', { name: 'Trade economics' })).toBeVisible();
   await expect(detail).toContainText('1.200,00 € – 60.000,00 €');
   await jsClick(detail.getByRole('button', { name: 'BTC', exact: true }).first());
   await expect(detail).toContainText('0,0200 BTC – 1,0000 BTC');

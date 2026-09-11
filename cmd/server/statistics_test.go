@@ -50,7 +50,7 @@ func TestBuildOfferLifecyclePremiumPointsUsesAgeForLiveAndLifetimeForPast(t *tes
 		},
 	}
 
-	live, past := buildOfferLifecyclePremiumPoints(offers, now, 24, []string{"Cash"}, nil)
+	live, past := buildOfferLifecyclePremiumPoints(offers, now, 24, []string{"Cash"}, nil, "", 0)
 	if len(live) != 1 || len(past) != 1 {
 		t.Fatalf("point counts live=%d past=%d, want 1 and 1", len(live), len(past))
 	}
@@ -101,7 +101,7 @@ func TestBuildOfferLifecyclePremiumPointsFallsBackToLifecycleSnapshot(t *testing
 		1: {RefPrice: 100, PremiumPct: 3.0},
 	}
 
-	live, past := buildOfferLifecyclePremiumPoints(offers, now, 24, nil, liveLifecycle)
+	live, past := buildOfferLifecyclePremiumPoints(offers, now, 24, nil, liveLifecycle, "", 0)
 	if len(past) != 0 {
 		t.Fatalf("past points = %d, want 0", len(past))
 	}

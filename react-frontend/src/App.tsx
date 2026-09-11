@@ -260,7 +260,7 @@ function AppShell() {
         )}
 
         {activeTab === 'statistics' && (
-          <Suspense fallback={<FeatureFallback label="Loading statistics" />}><StatisticsView /></Suspense>
+          <Suspense fallback={<FeatureFallback label="Loading statistics" />}><StatisticsView lastUpdatedAt={lastUpdatedAt} /></Suspense>
         )}
       </div>
       </FiltersProvider>

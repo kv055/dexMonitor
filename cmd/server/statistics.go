@@ -39,6 +39,7 @@ var statisticsResultCache struct {
 
 type statisticsResultCacheEntry struct {
 	params            dashboardAnalyticsParams
+	ctx               statisticsContext
 	response          statisticsResponse
 	builtAt           time.Time
 	expiry            time.Time
@@ -203,6 +204,8 @@ func buildOfferLifecyclePremiumPoints(
 	hours int,
 	excludedPaymentMethods []string,
 	liveLifecycle map[int64]offerLifecycleSnapshot,
+	premiumMode string,
+	maxFiatLimitEUR float64,
 ) (live, past []offerLifecyclePremiumPoint) {
 	if now.IsZero() {
 		now = time.Now()
@@ -213,6 +216,9 @@ func buildOfferLifecyclePremiumPoints(
 	cutoff := now.Add(-time.Duration(hours) * time.Hour)
 	live = make([]offerLifecyclePremiumPoint, 0)
 	past = make([]offerLifecyclePremiumPoint, 0)
+	if premiumMode == "" {
+		premiumMode = "raw"
+	}
 
 	for _, offer := range offers {
 		if offerHasExcludedPaymentMethod(offer, excludedPaymentMethods) {
@@ -233,50 +239,20 @@ func buildOfferLifecyclePremiumPoints(
 			continue
 		}
 
-		offerID := int64(offerFloat(offer, "id"))
-		premium := offerFloatPtrPreserveZero(offer, "avg_premium_pct")
-		if premium == nil {
-			refPrice := offerRefPrice(offer)
-			if refPrice <= 0 && isLive {
-				if snap, ok := liveLifecycle[offerID]; ok && snap.RefPrice > 0 {
-					computed := computeDirectionalPremiumPct(
-						offerString(offer, "direction"),
-						offerFloat(offer, "price"),
-						snap.RefPrice,
-					)
-					premium = &computed
-				}
-			}
-			if premium == nil && refPrice <= 0 {
-				continue
-			}
-			if premium == nil {
-				computed := computeDirectionalPremiumPct(
-					offerString(offer, "direction"),
-					offerFloat(offer, "price"),
-					refPrice,
-				)
-				premium = &computed
-			}
-		}
-		if math.IsNaN(*premium) || math.IsInf(*premium, 0) {
+		metrics := computeStatisticsOfferMetrics(offer, liveLifecycle, maxFiatLimitEUR)
+		premium, hasPremium := metrics.premium(premiumMode)
+		if !hasPremium || math.IsNaN(premium) || math.IsInf(premium, 0) {
 			continue
 		}
 
-		volume := offerFloat(offer, "btc_max")
+		volume := statisticsOfferVolumeBTC(offer)
 		if volume <= 0 {
-			volume = offerFloat(offer, "avg_btc_amount")
-		}
-		if volume <= 0 {
-			volume = offerFloat(offer, "btc_min")
-		}
-		if volume <= 0 || math.IsNaN(volume) || math.IsInf(volume, 0) {
 			continue
 		}
 
 		point := offerLifecyclePremiumPoint{
 			LifecycleHours: lifecycleEnd.Sub(firstSeen).Hours(),
-			PremiumRatePct: *premium,
+			PremiumRatePct: premium,
 			VolumeBTC:      volume,
 			Exchange:       offerString(offer, "exchange"),
 			Direction:      offerString(offer, "direction"),
@@ -433,6 +409,13 @@ func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, st
 	if err != nil {
 		return statisticsResponse{}, timings, err
 	}
+	resp := buildStatisticsFromContext(ctx, p)
+	timings.buildResponseMs = float64(time.Since(start).Milliseconds())
+	return resp, timings, nil
+}
+
+func buildStatisticsFromContext(ctx statisticsContext, p dashboardAnalyticsParams) statisticsResponse {
+	ctx = filterStatisticsContext(ctx, p)
 
 	liveOffers, pastOffers := splitGeneralOffersByLiveness(ctx)
 	liveLifecyclePoints, pastLifecyclePoints := buildOfferLifecyclePremiumPoints(
@@ -441,19 +424,18 @@ func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, st
 		ctx.hours,
 		ctx.excludedPaymentMethods,
 		ctx.liveLifecycle,
+		p.statisticsPremiumMode(),
+		p.MaxFiatLimitEUR,
 	)
 
 	// Live dimension: overview (active/live counts + exchange distribution) and
 	// the previously-unused premium summary, both scoped to currently-live offers.
-	liveStart := time.Now()
 	liveOverview := pastorders.BuildGeneralStatsOverview(liveOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
 	livePremiums := pastorders.BuildGeneralStatsPremiumSummary(liveOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
-	timings.buildLiveMs = float64(time.Since(liveStart).Milliseconds())
 
 	// Past dimension: per-timeframe past premiums and premium-weighted lifetimes.
 	// This summary endpoint intentionally uses only persisted per-offer averages
 	// from offers and avoids order_lifecycle aggregation.
-	pastStart := time.Now()
 	pastPremiums, premiumLifetimes := buildPastPremiumAndLifetimeStatsFromPersistedOffers(
 		ctx.offers,
 		ctx.now,
@@ -463,7 +445,6 @@ func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, st
 		p.ExcludeCEXes,
 		p.FeeTier,
 	)
-	timings.buildPastMs = float64(time.Since(pastStart).Milliseconds())
 
 	// Past-only exchange + payment method breakdown. BuildGeneralStatsOverview's
 	// active/exchangesLive fields are meaningless on a closed-only set, so only
@@ -472,11 +453,9 @@ func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, st
 	pastOverview := pastorders.BuildGeneralStatsOverview(pastOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
 
 	// Shared dimension: the full-window overview (live + past combined).
-	sharedStart := time.Now()
 	sharedOverview := pastorders.BuildGeneralStatsOverview(ctx.generalOffers, ctx.now, ctx.hours, ctx.excludedPaymentMethods)
-	timings.buildSharedMs = float64(time.Since(sharedStart).Milliseconds())
 
-	resp := statisticsResponse{
+	return statisticsResponse{
 		Live: liveStatistics{
 			TotalOffers:          liveOverview.TotalOffers,
 			ActiveOffers:         liveOverview.ActiveOffers,
@@ -503,8 +482,6 @@ func buildStatisticsResponse(p dashboardAnalyticsParams) (statisticsResponse, st
 			PaymentMethodCounts: sharedOverview.PaymentMethodCounts,
 		},
 	}
-	timings.buildResponseMs = float64(time.Since(start).Milliseconds())
-	return resp, timings, nil
 }
 
 func ensureStatisticsCacheEntry(cacheKey string, params dashboardAnalyticsParams, now time.Time) *statisticsResultCacheEntry {
@@ -534,7 +511,7 @@ func beginStatisticsRefreshLocked(entry *statisticsResultCacheEntry) chan struct
 	return entry.refreshDone
 }
 
-func finishStatisticsRefresh(cacheKey string, params dashboardAnalyticsParams, resp statisticsResponse, err error) {
+func finishStatisticsRefresh(cacheKey string, params dashboardAnalyticsParams, ctx statisticsContext, resp statisticsResponse, err error) {
 	now := time.Now()
 	statisticsResultCache.Lock()
 	entry := ensureStatisticsCacheEntry(cacheKey, params, now)
@@ -544,6 +521,7 @@ func finishStatisticsRefresh(cacheKey string, params dashboardAnalyticsParams, r
 	if err != nil {
 		entry.lastError = err.Error()
 	} else {
+		entry.ctx = ctx
 		entry.response = resp
 		entry.builtAt = now
 		entry.expiry = now.Add(statisticsResultCacheTTL)
@@ -560,8 +538,12 @@ func finishStatisticsRefresh(cacheKey string, params dashboardAnalyticsParams, r
 func triggerStatisticsRefresh(cacheKey string, params dashboardAnalyticsParams) {
 	go func() {
 		start := time.Now()
-		resp, timings, err := buildStatisticsResponse(params)
-		finishStatisticsRefresh(cacheKey, params, resp, err)
+		ctx, err := loadStatisticsContextForParams(params)
+		var resp statisticsResponse
+		if err == nil {
+			resp = buildStatisticsFromContext(ctx, params.withoutOfferFilters())
+		}
+		finishStatisticsRefresh(cacheKey, params, ctx, resp, err)
 		if err != nil {
 			slog.Warn("statistics refresh failed", "cache_key", cacheKey, "duration_ms", time.Since(start).Milliseconds(), "err", err)
 			return
@@ -570,10 +552,6 @@ func triggerStatisticsRefresh(cacheKey string, params dashboardAnalyticsParams) 
 			"statistics refresh completed",
 			"cache_key", cacheKey,
 			"duration_ms", time.Since(start).Milliseconds(),
-			"ctx_ms", timings.loadContextMs,
-			"live_ms", timings.buildLiveMs,
-			"past_ms", timings.buildPastMs,
-			"shared_ms", timings.buildSharedMs,
 		)
 	}()
 }
@@ -682,20 +660,20 @@ func handleStatistics(w http.ResponseWriter, r *http.Request) {
 	for {
 		now := time.Now()
 		statisticsResultCache.Lock()
-		entry := ensureStatisticsCacheEntry(cacheKey, p, now)
+		entry := ensureStatisticsCacheEntry(cacheKey, p.withoutOfferFilters(), now)
 		sweepStatisticsResultCacheLocked(now)
 
-		if statisticsCacheEntryUsable(entry) && now.Before(entry.expiry) {
-			resp := entry.response
+		if !p.Refresh && statisticsCacheEntryUsable(entry) && now.Before(entry.expiry) {
+			ctx := entry.ctx
 			builtAt := entry.builtAt
 			statisticsResultCache.Unlock()
 			writeStatisticsCacheHeaders(w, statisticsCacheStatusHit, builtAt)
 			writeStatisticsServerTiming(w, statisticsBuildTimings{cacheHit: true})
-			writeJSON(w, resp)
+			writeJSON(w, buildStatisticsFromContext(ctx, p))
 			return
 		}
-		if statisticsCacheEntryUsable(entry) {
-			resp := entry.response
+		if !p.Refresh && statisticsCacheEntryUsable(entry) {
+			ctx := entry.ctx
 			builtAt := entry.builtAt
 			startRefresh := !entry.refreshInProgress
 			if startRefresh {
@@ -703,11 +681,11 @@ func handleStatistics(w http.ResponseWriter, r *http.Request) {
 			}
 			statisticsResultCache.Unlock()
 			if startRefresh {
-				triggerStatisticsRefresh(cacheKey, p)
+				triggerStatisticsRefresh(cacheKey, p.withoutOfferFilters())
 			}
 			writeStatisticsCacheHeaders(w, statisticsCacheStatusStale, builtAt)
 			writeStatisticsServerTiming(w, statisticsBuildTimings{cacheHit: true})
-			writeJSON(w, resp)
+			writeJSON(w, buildStatisticsFromContext(ctx, p))
 			return
 		}
 		if entry.refreshInProgress {
@@ -721,12 +699,17 @@ func handleStatistics(w http.ResponseWriter, r *http.Request) {
 			beginStatisticsRefreshLocked(entry)
 			statisticsResultCache.Unlock()
 
-			resp, timings, err := buildStatisticsResponse(p)
-			finishStatisticsRefresh(cacheKey, p, resp, err)
+			ctxStart := time.Now()
+			ctx, err := loadStatisticsContextForParams(p)
+			timings := statisticsBuildTimings{loadContextMs: float64(time.Since(ctxStart).Milliseconds())}
 			if err != nil {
+				finishStatisticsRefresh(cacheKey, p.withoutOfferFilters(), statisticsContext{}, statisticsResponse{}, err)
 				writeError(w, err)
 				return
 			}
+			unfiltered := buildStatisticsFromContext(ctx, p.withoutOfferFilters())
+			finishStatisticsRefresh(cacheKey, p.withoutOfferFilters(), ctx, unfiltered, nil)
+			timings.buildResponseMs = float64(time.Since(ctxStart).Milliseconds())
 			statisticsResultCache.Lock()
 			builtAt := time.Time{}
 			if refreshed := statisticsResultCache.entries[cacheKey]; refreshed != nil {
@@ -735,7 +718,7 @@ func handleStatistics(w http.ResponseWriter, r *http.Request) {
 			statisticsResultCache.Unlock()
 			writeStatisticsCacheHeaders(w, statisticsCacheStatusMiss, builtAt)
 			writeStatisticsServerTiming(w, timings)
-			writeJSON(w, resp)
+			writeJSON(w, buildStatisticsFromContext(ctx, p))
 			return
 		}
 	}

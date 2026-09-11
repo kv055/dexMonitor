@@ -238,25 +238,30 @@ export function OfferPremiumScatterChart({
   points,
   dimension: dimensionKey,
   onDimensionChange,
+  includeNonPremium = false,
 }: {
   points: OfferLifecyclePremiumPoint[];
   dimension: PremiumScatterDimension;
   onDimensionChange?: (dimension: PremiumScatterDimension) => void;
+  includeNonPremium?: boolean;
 }) {
   const dimension = DIMENSIONS[dimensionKey];
   const chartRef = useRef<ChartJS<'bubble', OfferBubble[]>>(null);
   const viewRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<ChartDrag | null>(null);
   const [zoomedAxes, setZoomedAxes] = useState({ x: false, y: false });
-  const chartPoints = selectPremiumScatterPoints(points, dimensionKey);
+  const chartPoints = selectPremiumScatterPoints(points, dimensionKey, includeNonPremium);
   const maxSize = Math.max(...chartPoints.map(point => dimension.sizeValue(point)), dimension.sizeFloor);
   const maxX = Math.max(...chartPoints.map(point => dimension.xValue(point)), 0);
-  const minPremium = Math.min(...chartPoints.map(point => point.premium_rate_pct), 0);
+  const minPremium = Math.min(...chartPoints.map(point => point.premium_rate_pct), includeNonPremium ? 0 : 0);
   const maxPremium = Math.max(...chartPoints.map(point => point.premium_rate_pct), 1);
   const premiumPadding = Math.max((maxPremium - minPremium) * 0.08, 0.05);
   const fullBounds = {
     x: { min: 0, max: Math.max(maxX * 1.08, dimension.xFullMaxFloor) },
-    y: { min: Math.max(0, minPremium - premiumPadding), max: maxPremium + premiumPadding },
+    y: {
+      min: includeNonPremium ? minPremium - premiumPadding : Math.max(0, minPremium - premiumPadding),
+      max: maxPremium + premiumPadding,
+    },
   };
   const panBounds = {
     x: expandPanBounds(fullBounds.x),

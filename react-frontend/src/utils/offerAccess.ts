@@ -1,4 +1,35 @@
-import type { AbortCostBreakdown, CostBreakdown, Offer, PastProfitableOrder, PremiumFilterMode } from '../types';
+import type { AbortCostBreakdown, CostBreakdown, Offer, PastProfitableOrder, PremiumFilterMode, SellerRatingConfidence } from '../types';
+
+const SELLER_RATING_CONFIDENCES: readonly SellerRatingConfidence[] = [
+  'feedback_verified',
+  'feedback_new',
+  'stake_bonded',
+  'reputation_bonded',
+  'account_signing',
+  'unavailable',
+];
+
+export function asSellerRatingConfidence(value: unknown): SellerRatingConfidence | null {
+  return typeof value === 'string' && (SELLER_RATING_CONFIDENCES as readonly string[]).includes(value)
+    ? value as SellerRatingConfidence
+    : null;
+}
+
+export function asJsonObject(value: unknown): Record<string, unknown> | null {
+  if (value == null || value === '') return null;
+  let parsed: unknown = value;
+  if (typeof value === 'string') {
+    try {
+      parsed = JSON.parse(value) as unknown;
+    } catch {
+      return null;
+    }
+  }
+  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>;
+  }
+  return null;
+}
 
 export function getOfferPrice(offer: Offer): number {
   return offer.pricing?.offer_price ?? offer.pricing?.avg_offer_price ?? offer.price ?? 0;
@@ -277,6 +308,12 @@ export function pastProfitableOrderAsOffer(order: PastProfitableOrder): Offer {
       fiat_min: num('fiat_min'),
       fiat_max: num('fiat_max'),
     },
+    seller_rating_score: num('seller_rating_score'),
+    seller_rating_confidence: asSellerRatingConfidence(raw.seller_rating_confidence),
+    seller_rating_raw: asJsonObject(raw.seller_rating_raw),
+    seller_rating_signals: asJsonObject(raw.seller_rating_signals),
+    counterparty_stake_btc: num('counterparty_stake_btc'),
+    counterparty_stake_pct: num('counterparty_stake_pct'),
   };
 }
 

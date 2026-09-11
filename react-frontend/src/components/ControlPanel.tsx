@@ -463,6 +463,133 @@ function PremiumModeDropdown({ value, premiumOnly, onChange, inputCls, scope }: 
   );
 }
 
+export interface SelectGroupOption {
+  value: string;
+  label: string;
+  disabled?: boolean;
+  title?: string;
+}
+
+export function SelectGroup({
+  label,
+  description,
+  options,
+  selected,
+  onChange,
+}: {
+  label: string;
+  description: string;
+  options: SelectGroupOption[];
+  selected: string;
+  onChange: (value: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  const activeOption = options.find(option => option.value === selected) ?? options[0];
+
+  useEffect(() => {
+    const closeOnOutsideClick = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) setOpen(false);
+    };
+    document.addEventListener('mousedown', closeOnOutsideClick);
+    return () => document.removeEventListener('mousedown', closeOnOutsideClick);
+  }, []);
+
+  return (
+    <div ref={ref} className="relative flex flex-col gap-1">
+      <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
+      <button
+        type="button"
+        title={description}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen(value => !value)}
+        className="flex w-full items-center rounded border border-border bg-bg/60 px-2 py-1.5 text-left text-[0.75rem] font-medium text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
+      >
+        <span className="truncate">{activeOption?.label ?? selected}</span>
+        <span className="ml-auto text-[0.65rem] text-muted">▾</span>
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-50 mt-1 w-full min-w-44 overflow-hidden rounded-md border border-border bg-surface shadow-lg" role="menu">
+          {options.map(option => {
+            const active = option.value === selected;
+            return (
+              <button
+                key={option.value}
+                type="button"
+                role="menuitemradio"
+                aria-checked={active}
+                disabled={option.disabled}
+                title={option.title}
+                className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors ${
+                  option.disabled
+                    ? 'cursor-not-allowed text-muted/45'
+                    : active
+                      ? 'bg-accent/15 text-accent hover:bg-accent/20'
+                      : 'text-text hover:bg-bg'
+                }`}
+                onClick={() => {
+                  if (option.disabled) return;
+                  onChange(option.value);
+                  setOpen(false);
+                }}
+              >
+                <span className="w-3 text-center">{active ? '✓' : ''}</span>
+                {option.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function CustomDateRangeFilter({
+  startDate,
+  endDate,
+  maxDate,
+  loading,
+  onStartDateChange,
+  onEndDateChange,
+}: {
+  startDate: string;
+  endDate: string;
+  maxDate: string;
+  loading: boolean;
+  onStartDateChange: (value: string) => void;
+  onEndDateChange: (value: string) => void;
+}) {
+  return (
+    <fieldset className="flex flex-col gap-1" title="Show offers closed within an inclusive custom date range">
+      <legend className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">Custom date range{loading ? ' · Loading…' : ''}</legend>
+      <label className="flex flex-col gap-0.5 text-[0.65rem] text-muted">
+        Start date
+        <input
+          type="date"
+          aria-label="Start date"
+          value={startDate}
+          max={endDate || maxDate}
+          onChange={event => onStartDateChange(event.target.value)}
+          className="w-full rounded border border-border bg-bg/60 px-2 py-1 text-[0.75rem] text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
+        />
+      </label>
+      <label className="flex flex-col gap-0.5 text-[0.65rem] text-muted">
+        End date
+        <input
+          type="date"
+          aria-label="End date"
+          value={endDate}
+          min={startDate || undefined}
+          max={maxDate}
+          onChange={event => onEndDateChange(event.target.value)}
+          className="w-full rounded border border-border bg-bg/60 px-2 py-1 text-[0.75rem] text-text outline-none transition-colors hover:border-accent/50 focus:border-accent"
+        />
+      </label>
+    </fieldset>
+  );
+}
+
 const labelCls = "text-[0.65rem] font-semibold uppercase tracking-wide text-muted";
 const controlCls = "w-full rounded border border-border bg-bg/60 px-2 py-1.5 text-[0.75rem] font-medium text-text outline-none transition-colors hover:border-accent/50 focus:border-accent";
 
@@ -618,15 +745,17 @@ function LiveNetProfitRange() {
 interface LiveOfferFiltersProps {
   onRefresh: () => void;
   lastUpdatedAt: string;
+  showReferenceSource?: boolean;
 }
 
 /**
- * Filters shared by Live and Past Insights views. Premium category + range
- * stay live-only; Past uses its own Premium mode selector instead.
+ * Filters shared by Live, Past, and combined views. Premium category + range
+ * stay live-or-all; Past uses its own Premium mode selector instead.
  */
-export function SharedOfferFilters({ scope }: { scope: 'live' | 'past' }) {
+export function SharedOfferFilters({ scope }: { scope: 'live' | 'past' | 'all' }) {
   const { filters, setFilters } = useFilters();
   const rawPremiumCounts = useLiveFiatRawPremiumCounts();
+  const showLivePremium = scope === 'live' || scope === 'all';
 
   return (
     <div className="flex flex-col gap-3 min-w-0">
@@ -645,7 +774,7 @@ export function SharedOfferFilters({ scope }: { scope: 'live' | 'past' }) {
         />
       </div>
 
-      {scope === 'live' && (
+      {showLivePremium && (
         <>
           <div className="flex flex-col gap-1">
             <span className={labelCls}>Premium</span>
@@ -668,23 +797,25 @@ export function SharedOfferFilters({ scope }: { scope: 'live' | 'past' }) {
  * Live-only filter controls (reference CEX, payment methods, refresh). Shared
  * Fiat plus live Premium / Range live in SharedOfferFilters above this block.
  */
-export function LiveOfferFilters({ onRefresh, lastUpdatedAt }: LiveOfferFiltersProps) {
+export function LiveOfferFilters({ onRefresh, lastUpdatedAt, showReferenceSource = true }: LiveOfferFiltersProps) {
   const { filters, setFilters } = useFilters();
   const { timezone } = useTimezone();
   const lastUpdated = lastUpdatedAt ? `Updated ${formatTimeOnly(lastUpdatedAt, timezone)}` : '';
 
   return (
     <div className="relative flex flex-col gap-3 min-w-0">
-      <div className="flex flex-col gap-1">
-        <span className={labelCls}>Reference source</span>
-        <FilterSelectDropdown
-          value={filters.cex}
-          onChange={cex => setFilters({ cex })}
-          options={SOURCE_OPTIONS.map(source => ({ value: source, label: source[0].toUpperCase() + source.slice(1) }))}
-          inputCls={controlCls}
-          title="CEX reference-price source used while displaying offers"
-        />
-      </div>
+      {showReferenceSource && (
+        <div className="flex flex-col gap-1">
+          <span className={labelCls}>Reference source</span>
+          <FilterSelectDropdown
+            value={filters.cex}
+            onChange={cex => setFilters({ cex })}
+            options={SOURCE_OPTIONS.map(source => ({ value: source, label: source[0].toUpperCase() + source.slice(1) }))}
+            inputCls={controlCls}
+            title="CEX reference-price source used while displaying offers"
+          />
+        </div>
+      )}
 
       <PaymentMethodScopeDropdown />
 

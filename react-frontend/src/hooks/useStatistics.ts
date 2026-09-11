@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef } from 'react';
 import { apiPostWithHeaders } from '../api/client';
-import { buildAnalyticsBody, marketRequestKey, type MarketRequestParams } from '../shared/marketParams';
+import {
+  buildStatisticsBody,
+  type MarketRequestParams,
+  type StatisticsOfferFilters,
+} from '../shared/marketParams';
 import type { StatisticsResponse } from '../types';
 
 interface StatisticsState {
@@ -32,6 +36,10 @@ const initialState: StatisticsState = {
 
 const statisticsClientCache = new Map<string, StatisticsCacheEntry>();
 
+function statisticsCacheKey(params: MarketRequestParams, filters: StatisticsOfferFilters): string {
+  return JSON.stringify(buildStatisticsBody(params, { ...filters, refresh: false }));
+}
+
 function reducer(state: StatisticsState, action: StatisticsAction): StatisticsState {
   switch (action.type) {
     case 'LOAD_START':
@@ -54,34 +62,41 @@ export function useStatistics() {
   const [state, dispatch] = useReducer(reducer, initialState);
   const inFlightRef = useRef<{ key: string; controller: AbortController; promise: Promise<void> } | null>(null);
 
-  const load = useCallback(async (params: MarketRequestParams) => {
-    const key = marketRequestKey(params);
+  const load = useCallback(async (params: MarketRequestParams, filters: StatisticsOfferFilters = {}) => {
+    const key = statisticsCacheKey(params, filters);
+    if (filters.refresh) {
+      statisticsClientCache.delete(key);
+    }
     const cached = statisticsClientCache.get(key);
     const inFlight = inFlightRef.current;
     // An aborted request never dispatches, so deduping onto it would leave the
     // spinner up forever (StrictMode's dev double-mount aborts + reloads
     // synchronously, before the aborted fetch has settled and cleared the ref).
-    if (inFlight?.key === key && !inFlight.controller.signal.aborted) {
+    if (!filters.refresh && inFlight?.key === key && !inFlight.controller.signal.aborted) {
       return inFlight.promise;
     }
     inFlight?.controller.abort();
 
     const controller = new AbortController();
     const { signal } = controller;
-    if (cached) {
+    if (cached && !filters.refresh) {
       dispatch({
         type: 'LOAD_SUCCESS',
         data: cached.data,
         cacheState: cached.cacheState,
         builtAt: cached.builtAt,
       });
-    } else {
+    } else if (!cached) {
       dispatch({ type: 'LOAD_START' });
     }
 
     const promise = (async () => {
       try {
-        const { data, headers } = await apiPostWithHeaders<StatisticsResponse>('/api/statistics', buildAnalyticsBody(params), { signal });
+        const { data, headers } = await apiPostWithHeaders<StatisticsResponse>(
+          '/api/statistics',
+          buildStatisticsBody(params, filters),
+          { signal },
+        );
         if (signal.aborted) return;
         const rawCacheState = headers.get('X-Stats-Cache');
         const cacheState =

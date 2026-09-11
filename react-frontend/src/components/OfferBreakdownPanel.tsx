@@ -1,9 +1,12 @@
 import React, { useState } from 'react';
 import { formatDuration, formatTime, premiumClass } from '../utils/formatters';
 import { stripTrailingZeros } from '../utils/numberFormat';
+import type { AbortCostBreakdown, BTCNetworkFeeDetail as BTCDetail, CapitalRequirement, CostBreakdown, Offer } from '../types';
 import { formatFiat, formatSignedFiat } from '../utils/currency';
 import { useFilters } from '../hooks/useFilters';
-import type { AbortCostBreakdown, BTCNetworkFeeDetail as BTCDetail, CapitalRequirement, CostBreakdown } from '../types';
+import { asJsonObject, getCounterpartyStakePct, getSellerRatingScore } from '../utils/offerAccess';
+import { SellerRatingBadge } from './SellerRatingBadge';
+import { formatBisq2ReputationDetail, readBisq2ReputationRaw, shouldShowBondChip } from './sellerRating';
 
 function fmt8(n: number): string {
   return stripTrailingZeros(n.toFixed(8));
@@ -492,6 +495,130 @@ export function CapitalRequiredSection({ capital, flat = false, heading = 'Capit
   );
 }
 
+function formatJsonBlob(value: unknown): string | null {
+  const parsed = asJsonObject(value);
+  if (!parsed || Object.keys(parsed).length === 0) return null;
+  return JSON.stringify(parsed, null, 2);
+}
+
+function RiskSection({ offer, capital }: { offer?: Offer | null; capital?: CostBreakdown['capital'] }) {
+  const { filters } = useFilters();
+  const score = offer ? getSellerRatingScore(offer) : null;
+  const stakePct = offer ? getCounterpartyStakePct(offer) : null;
+  const stakeBtc = offer?.counterparty_stake_btc;
+  const hasStakeBtc = typeof stakeBtc === 'number' && Number.isFinite(stakeBtc) && stakeBtc > 0;
+  const hasDeposit = !!capital && capital.security_deposit_btc > 0;
+  const depositSide = capital?.security_deposit_side
+    ? capital.security_deposit_side.charAt(0).toUpperCase() + capital.security_deposit_side.slice(1)
+    : '';
+  const rawJson = formatJsonBlob(offer?.seller_rating_raw);
+  const signalsJson = formatJsonBlob(offer?.seller_rating_signals);
+  const bisq2 = readBisq2ReputationRaw(offer?.seller_rating_raw);
+
+  const stakeValue = (() => {
+    if (!shouldShowBondChip(stakePct) && !hasStakeBtc) return '—';
+    const parts: string[] = [];
+    if (shouldShowBondChip(stakePct) && stakePct != null) parts.push(fmtRatioPct(stakePct));
+    if (hasStakeBtc && stakeBtc != null) parts.push(`${fmt8(stakeBtc)} BTC`);
+    return parts.join(' · ');
+  })();
+
+  const depositValue = (() => {
+    if (!hasDeposit || !capital) return '—';
+    const parts: string[] = [];
+    if (depositSide) parts.push(depositSide);
+    if (capital.security_deposit_pct > 0) parts.push(fmtRatioPct(capital.security_deposit_pct));
+    parts.push(formatFiat(capital.security_deposit_fiat, filters.fiat));
+    parts.push(`${fmt8(capital.security_deposit_btc)} BTC`);
+    return parts.join(' · ');
+  })();
+
+  const row = (label: string, value: React.ReactNode) => (
+    <div className="flex items-start justify-between gap-3">
+      <span className="shrink-0 text-[0.58rem] font-semibold uppercase tracking-widest text-muted">{label}</span>
+      <span className="min-w-0 text-right text-[0.68rem] font-medium text-text">{value}</span>
+    </div>
+  );
+
+  const jsonBlock = (label: string, formatted: string | null) => (
+    <div className="flex flex-col gap-1">
+      <span className="text-[0.58rem] font-semibold uppercase tracking-widest text-muted">{label}</span>
+      {formatted ? (
+        <pre className="max-h-72 overflow-auto rounded-md border border-border bg-bg px-2.5 py-2 text-[0.64rem] leading-snug text-text font-mono whitespace-pre">{formatted}</pre>
+      ) : (
+        <span className="text-[0.68rem] text-muted">—</span>
+      )}
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col gap-3">
+      {row(
+        'Reputation',
+        <SellerRatingBadge
+          score={score}
+          confidence={offer?.seller_rating_confidence}
+          raw={offer?.seller_rating_raw}
+          withLabel
+        />,
+      )}
+      {bisq2 != null && row('Bisq 2 book', <span className="mono-nums">{formatBisq2ReputationDetail(bisq2)}</span>)}
+      {row('Maker stake', <span className="mono-nums">{stakeValue}</span>)}
+      {row(
+        'Security deposit',
+        <span className="inline-flex flex-wrap items-center justify-end gap-1.5">
+          <span className="mono-nums">{depositValue}</span>
+          {hasDeposit && capital?.deposit_estimated && <Badge label="est." colorCls="text-muted" />}
+        </span>,
+      )}
+      {jsonBlock('Rating inputs', rawJson)}
+      {jsonBlock('Venue signals', signalsJson)}
+    </div>
+  );
+}
+
+type BreakdownTabId = 'summary' | 'economics' | 'capital' | 'route' | 'risk';
+
+function BreakdownTabBar({
+  tabs,
+  activeId,
+  onSelect,
+}: {
+  tabs: Array<{ id: BreakdownTabId; label: string }>;
+  activeId: BreakdownTabId;
+  onSelect: (id: BreakdownTabId) => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Offer breakdown sections"
+      data-testid="offer-breakdown-tabs"
+      className="flex flex-wrap items-center gap-0 border-b border-border pr-8"
+    >
+      {tabs.map(tab => {
+        const selected = activeId === tab.id;
+        return (
+          <button
+            key={tab.id}
+            type="button"
+            role="tab"
+            id={`breakdown-tab-${tab.id}`}
+            aria-selected={selected}
+            aria-controls={`breakdown-panel-${tab.id}`}
+            tabIndex={selected ? 0 : -1}
+            onClick={() => onSelect(tab.id)}
+            className={`relative flex items-center px-3 py-2 text-[0.65rem] font-semibold tracking-wide transition-colors border-b-2 -mb-px ${
+              selected ? 'border-accent text-accent' : 'border-transparent text-muted hover:text-text'
+            }`}
+          >
+            {tab.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 export function CostBreakdownPanel({
   bd,
   abortCost,
@@ -511,6 +638,7 @@ export function CostBreakdownPanel({
   amountUnit: controlledAmountUnit,
   onAmountUnitChange,
   costsUnavailable = false,
+  offer,
 }: {
   bd: CostBreakdown;
   abortCost: AbortCostBreakdown | null;
@@ -518,7 +646,7 @@ export function CostBreakdownPanel({
   netPremiumPct: number | null;
   refPrice: number | null;
   offerPrice?: number | null;
-  /** Compact offer metadata displayed in the left-hand offer summary panel. */
+  /** Compact offer metadata displayed in the Offer tab. */
   overview?: React.ReactNode;
   contextLabel?: string;
   contextDetail?: string | null;
@@ -539,6 +667,8 @@ export function CostBreakdownPanel({
   onAmountUnitChange?: (unit: 'btc' | 'fiat') => void;
   /** When no CEX route could be priced, hide misleading 0% net/profit figures. */
   costsUnavailable?: boolean;
+  /** Live or reconstructed offer used by the Risk tab (reputation, maker stake, raw JSON). */
+  offer?: Offer | null;
 }) {
 	const { filters } = useFilters();
 	type BreakdownRow = { label: string; venue?: string; btc: number; pct: number; expandable?: 'network' | 'hedge' };
@@ -546,6 +676,7 @@ export function CostBreakdownPanel({
   const [hedgeFeeOpen, setHedgeFeeOpen] = useState(false);
   const [internalAmountUnit, setInternalAmountUnit] = useState<'btc' | 'fiat'>('fiat');
   const [tableUnit, setTableUnit] = useState<'btc' | 'fiat'>(controlledAmountUnit ?? 'fiat');
+  const [selectedTab, setSelectedTab] = useState<BreakdownTabId>('summary');
   const amountUnit = controlledAmountUnit ?? internalAmountUnit;
   const changeAmountUnit = onAmountUnitChange ?? setInternalAmountUnit;
   const hasNetworkFeeDetail = !!bd.network_fee_detail;
@@ -612,7 +743,14 @@ export function CostBreakdownPanel({
   const hasCapital = showCapitalAndAbort && !!bd.capital && bd.capital.total_fiat > 0;
   const hasAbortCost = showCapitalAndAbort && !!abortCost && abortCost.btc_amount > 0;
   const hasSupportingColumn = hasCapital || hasAbortCost;
-  const hasRightColumn = hasSupportingColumn || !!routeControls;
+  const tabs: Array<{ id: BreakdownTabId; label: string }> = [
+    { id: 'summary', label: 'Offer' },
+    { id: 'economics', label: 'Trade economics' },
+    ...(hasSupportingColumn ? [{ id: 'capital' as const, label: 'Capital allocation' }] : []),
+    { id: 'risk', label: 'Risk' },
+    ...(routeControls ? [{ id: 'route' as const, label: 'Route analysis' }] : []),
+  ];
+  const activeTab = tabs.some(tab => tab.id === selectedTab) ? selectedTab : tabs[0].id;
   const amountButton = (unit: 'fiat' | 'btc', label: string) => (
     <button
       type="button"
@@ -630,158 +768,186 @@ export function CostBreakdownPanel({
       <span className={`min-w-0 text-right text-[0.68rem] font-semibold mono-nums ${valueCls}`}>{value}</span>
     </div>
   );
-  const panelClass = 'min-w-0 rounded-lg border border-border/70 bg-bg/30 px-3 py-2.5';
 
   return (
     <div className="flex flex-col gap-3 text-[0.72rem]">
       {routeNotice}
 
-      <div className={`grid items-start gap-4 pr-8 ${hasRightColumn
-        ? 'lg:grid-cols-[minmax(13rem,0.7fr)_minmax(0,1.05fr)_minmax(14rem,0.6fr)]'
-        : 'lg:grid-cols-[minmax(13rem,0.7fr)_minmax(0,1.4fr)]'}`}
-      >
-        <section aria-label="Decision summary" className={`${panelClass} flex flex-col gap-2.5`}>
-          <header className="flex flex-col gap-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[0.6rem] font-semibold ${isAsk ? 'bg-orange-900/30 text-orange-400' : 'bg-blue-900/30 text-blue-400'}`}>
-                {isAsk ? 'Ask side' : 'Bid side'}
-              </span>
-              <span className="inline-flex items-center rounded border border-border bg-bg/70 p-0.5">
-                {amountButton('fiat', filters.fiat)}
-                {amountButton('btc', 'BTC')}
-              </span>
-            </div>
-            {(contextLabel || contextId != null) && (
-              <div className="text-[0.63rem] font-medium text-text" title={contextDetail ?? undefined}>
-                {contextLabel}
-                {contextId != null && <span className="text-muted"> · ID {contextId}</span>}
-              </div>
-            )}
-            {toolbar}
-          </header>
-          {overview}
-          <div className="flex flex-col gap-2 border-t border-border/70 pt-2.5">
-          {summaryRow(
-            'Estimated profit',
-            profitBtc == null
-              ? '—'
-              : amountUnit === 'btc'
-                ? `${fmtSignedBtc(profitBtc)} BTC`
-                : fmtFiatAmount(fiatValue(profitBtc), filters.fiat),
-            profitCls,
-          )}
-          {summaryRow('Return', profitPct != null ? fmtPct(profitPct) : '—', profitCls)}
-          {summaryRow(
-            'Trade value',
-            amountUnit === 'btc' ? `${fmt8(bd.btc_amount)} BTC` : formatFiat(tradeValueFiat, filters.fiat),
-          )}
-          {summaryRow(
-            'Capital required',
-            capitalTotal != null && capitalTotal > 0 ? formatFiat(capitalTotal, filters.fiat) : '—',
-          )}
-          </div>
-        </section>
-
-        <section aria-label="Trade economics" className={panelClass}>
-          <table className="w-full">
-        <thead>
-          <tr className="border-b border-border">
-            <th className="text-left text-muted font-semibold pb-1.5 pr-3 text-[0.62rem] uppercase tracking-widest">
-              <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 font-normal normal-case tracking-normal">
-                <span className="font-semibold uppercase tracking-widest">Trade economics</span>
-                {tradeModeToggle}
-              </span>
-            </th>
-            <th className="text-right font-normal pb-1.5 text-[0.63rem]">
-              <span className="inline-flex items-center rounded border border-border bg-bg/70 p-0.5">
-                <button type="button" aria-pressed={tableUnit === 'fiat'} onClick={() => setTableUnit('fiat')}
-                  className={`rounded-sm px-1.5 py-0.5 transition-colors ${tableUnit === 'fiat' ? 'bg-accent/15 text-accent font-semibold' : 'text-muted hover:text-text'}`}>{filters.fiat}</button>
-                <button type="button" aria-pressed={tableUnit === 'btc'} onClick={() => setTableUnit('btc')}
-                  className={`rounded-sm px-1.5 py-0.5 transition-colors ${tableUnit === 'btc' ? 'bg-accent/15 text-accent font-semibold' : 'text-muted hover:text-text'}`}>BTC</button>
-              </span>
-            </th>
-            <th className="w-20 pb-1.5 pl-3 text-right text-[0.63rem] font-normal uppercase tracking-wide text-muted">% trade</th>
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((r, i) => {
-            const isNetworkFee = r.expandable === 'network';
-            const isHedgeFee = r.expandable === 'hedge';
-            const isExpandable = !!r.expandable;
-            return (
-              <React.Fragment key={r.label}>
-                <tr
-                  className={`${i % 2 !== 0 ? 'bg-grid/40' : ''} ${isExpandable ? 'cursor-pointer hover:brightness-110' : ''}`}
-                  onClick={
-                    isNetworkFee
-                      ? () => setNetworkFeeOpen(o => !o)
-                      : isHedgeFee
-                        ? () => setHedgeFeeOpen(o => !o)
-                        : undefined
-                  }
-                >
-                  <td className="pr-3 py-1 text-muted rounded-l">
-                    {isExpandable ? (
-                      <span className="flex items-center gap-1.5">
-                        <FeeVenueLabel label={r.label} venue={r.venue} />
-                        <span className={`text-[0.6rem] text-muted transition-transform duration-150 inline-block ${(isNetworkFee ? networkFeeOpen : hedgeFeeOpen) ? 'rotate-180' : ''}`}>▾</span>
-                      </span>
-                    ) : <FeeVenueLabel label={r.label} venue={r.venue} />}
-                  </td>
-                  <td className="py-1 text-right text-text mono-nums rounded-r">{tableValue(r.btc, r.pct)}</td>
-                  <td className="py-1 pl-3 text-right text-muted mono-nums">{fmtPct(r.pct)}</td>
-                </tr>
-                {isNetworkFee && networkFeeOpen && <NetworkFeeDetail bd={bd} />}
-                {isHedgeFee && hedgeFeeOpen && <HedgeDetailRow bd={bd} />}
-              </React.Fragment>
-            );
-          })}
-          <tr className="border-t border-border">
-            <td className="pr-3 pt-2.5 pb-1 font-semibold text-text">Total costs</td>
-            <td className="pt-2.5 pb-1 text-right font-semibold text-red mono-nums">
-              {costsUnavailable ? '—' : tableValue(bd.total_cost_btc, bd.total_cost_pct)}
-            </td>
-            <td className="pt-2.5 pb-1 pl-3 text-right font-semibold text-red mono-nums">{costsUnavailable ? '—' : fmtPct(bd.total_cost_pct)}</td>
-          </tr>
-          <tr>
-            <td className="pr-3 py-1 text-muted">Gross DEX premium</td>
-            <td className={`py-1 text-right font-medium mono-nums rounded-r ${premiumClass(priceDiffPct)}`}>
-              {tableValue(grossPremiumBtc, priceDiffPct, true)}
-            </td>
-            <td className={`py-1 pl-3 text-right font-medium mono-nums ${premiumClass(priceDiffPct)}`}>{priceDiffPct != null ? fmtPct(priceDiffPct) : '—'}</td>
-          </tr>
-          <tr className="border-t border-border">
-            <td className="pr-3 pt-2.5 font-bold text-text text-[0.75rem]">Net profit</td>
-            <td className={`pt-2.5 text-right font-bold text-[0.82rem] mono-nums rounded-r ${netCls}`}>
-              {costsUnavailable ? '—' : tableValue(profitBtc, displayNetPremiumPct, true)}
-            </td>
-            <td className={`pt-2.5 pl-3 text-right font-bold mono-nums ${netCls}`}>{displayNetPremiumPct != null ? fmtPct(displayNetPremiumPct) : '—'}</td>
-          </tr>
-        </tbody>
-          </table>
-        </section>
-
-        {hasRightColumn && (
-          <div className="flex min-w-0 flex-col gap-4">
-            {hasSupportingColumn && (
-              <aside aria-label="Capital requirements" className={`${panelClass} flex flex-col gap-2`}>
-                {hasCapital && (
-                  <CapitalRequiredSection capital={bd.capital} flat heading="Capital allocation" showTotal={false} />
-                )}
-                {hasAbortCost && (
-                  <div className="border-t border-border pt-2.5">
-                    <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
+      <div className="overflow-hidden rounded-lg border border-border/70 bg-bg/30">
+        <BreakdownTabBar tabs={tabs} activeId={activeTab} onSelect={setSelectedTab} />
+        <div className="px-3 py-2.5">
+          {activeTab === 'summary' && (
+            <section
+              role="tabpanel"
+              id="breakdown-panel-summary"
+              aria-labelledby="breakdown-tab-summary"
+              className="flex flex-col gap-2.5"
+            >
+              <header className="flex flex-col gap-2">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className={`shrink-0 rounded px-1.5 py-0.5 text-[0.6rem] font-semibold ${isAsk ? 'bg-orange-900/30 text-orange-400' : 'bg-blue-900/30 text-blue-400'}`}>
+                    {isAsk ? 'Ask side' : 'Bid side'}
+                  </span>
+                  <span className="inline-flex items-center rounded border border-border bg-bg/70 p-0.5">
+                    {amountButton('fiat', filters.fiat)}
+                    {amountButton('btc', 'BTC')}
+                  </span>
+                </div>
+                {(contextLabel || contextId != null) && (
+                  <div className="text-[0.63rem] font-medium text-text" title={contextDetail ?? undefined}>
+                    {contextLabel}
+                    {contextId != null && <span className="text-muted"> · ID {contextId}</span>}
                   </div>
                 )}
-              </aside>
-            )}
-            {routeControls && (
-              <section aria-label="Route analysis overrides" className={panelClass}>
-                {routeControls}
-              </section>
-            )}
-          </div>
-        )}
+                {toolbar}
+              </header>
+              {overview}
+              <div className="flex flex-col gap-2 border-t border-border/70 pt-2.5">
+                {summaryRow(
+                  'Estimated profit',
+                  profitBtc == null
+                    ? '—'
+                    : amountUnit === 'btc'
+                      ? `${fmtSignedBtc(profitBtc)} BTC`
+                      : fmtFiatAmount(fiatValue(profitBtc), filters.fiat),
+                  profitCls,
+                )}
+                {summaryRow('Return', profitPct != null ? fmtPct(profitPct) : '—', profitCls)}
+                {summaryRow(
+                  'Trade value',
+                  amountUnit === 'btc' ? `${fmt8(bd.btc_amount)} BTC` : formatFiat(tradeValueFiat, filters.fiat),
+                )}
+                {summaryRow(
+                  'Capital required',
+                  capitalTotal != null && capitalTotal > 0 ? formatFiat(capitalTotal, filters.fiat) : '—',
+                )}
+              </div>
+            </section>
+          )}
+
+          {activeTab === 'economics' && (
+            <section
+              role="tabpanel"
+              id="breakdown-panel-economics"
+              aria-labelledby="breakdown-tab-economics"
+            >
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-border">
+                    <th className="text-left text-muted font-semibold pb-1.5 pr-3 text-[0.62rem] uppercase tracking-widest">
+                      <span className="inline-flex flex-wrap items-center gap-x-2 gap-y-1 font-normal normal-case tracking-normal">
+                        <span className="font-semibold uppercase tracking-widest">Trade economics</span>
+                        {tradeModeToggle}
+                      </span>
+                    </th>
+                    <th className="text-right font-normal pb-1.5 text-[0.63rem]">
+                      <span className="inline-flex items-center rounded border border-border bg-bg/70 p-0.5">
+                        <button type="button" aria-pressed={tableUnit === 'fiat'} onClick={() => setTableUnit('fiat')}
+                          className={`rounded-sm px-1.5 py-0.5 transition-colors ${tableUnit === 'fiat' ? 'bg-accent/15 text-accent font-semibold' : 'text-muted hover:text-text'}`}>{filters.fiat}</button>
+                        <button type="button" aria-pressed={tableUnit === 'btc'} onClick={() => setTableUnit('btc')}
+                          className={`rounded-sm px-1.5 py-0.5 transition-colors ${tableUnit === 'btc' ? 'bg-accent/15 text-accent font-semibold' : 'text-muted hover:text-text'}`}>BTC</button>
+                      </span>
+                    </th>
+                    <th className="w-20 pb-1.5 pl-3 text-right text-[0.63rem] font-normal uppercase tracking-wide text-muted">% trade</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r, i) => {
+                    const isNetworkFee = r.expandable === 'network';
+                    const isHedgeFee = r.expandable === 'hedge';
+                    const isExpandable = !!r.expandable;
+                    return (
+                      <React.Fragment key={r.label}>
+                        <tr
+                          className={`${i % 2 !== 0 ? 'bg-grid/40' : ''} ${isExpandable ? 'cursor-pointer hover:brightness-110' : ''}`}
+                          onClick={
+                            isNetworkFee
+                              ? () => setNetworkFeeOpen(o => !o)
+                              : isHedgeFee
+                                ? () => setHedgeFeeOpen(o => !o)
+                                : undefined
+                          }
+                        >
+                          <td className="pr-3 py-1 text-muted rounded-l">
+                            {isExpandable ? (
+                              <span className="flex items-center gap-1.5">
+                                <FeeVenueLabel label={r.label} venue={r.venue} />
+                                <span className={`text-[0.6rem] text-muted transition-transform duration-150 inline-block ${(isNetworkFee ? networkFeeOpen : hedgeFeeOpen) ? 'rotate-180' : ''}`}>▾</span>
+                              </span>
+                            ) : <FeeVenueLabel label={r.label} venue={r.venue} />}
+                          </td>
+                          <td className="py-1 text-right text-text mono-nums rounded-r">{tableValue(r.btc, r.pct)}</td>
+                          <td className="py-1 pl-3 text-right text-muted mono-nums">{fmtPct(r.pct)}</td>
+                        </tr>
+                        {isNetworkFee && networkFeeOpen && <NetworkFeeDetail bd={bd} />}
+                        {isHedgeFee && hedgeFeeOpen && <HedgeDetailRow bd={bd} />}
+                      </React.Fragment>
+                    );
+                  })}
+                  <tr className="border-t border-border">
+                    <td className="pr-3 pt-2.5 pb-1 font-semibold text-text">Total costs</td>
+                    <td className="pt-2.5 pb-1 text-right font-semibold text-red mono-nums">
+                      {costsUnavailable ? '—' : tableValue(bd.total_cost_btc, bd.total_cost_pct)}
+                    </td>
+                    <td className="pt-2.5 pb-1 pl-3 text-right font-semibold text-red mono-nums">{costsUnavailable ? '—' : fmtPct(bd.total_cost_pct)}</td>
+                  </tr>
+                  <tr>
+                    <td className="pr-3 py-1 text-muted">Gross DEX premium</td>
+                    <td className={`py-1 text-right font-medium mono-nums rounded-r ${premiumClass(priceDiffPct)}`}>
+                      {tableValue(grossPremiumBtc, priceDiffPct, true)}
+                    </td>
+                    <td className={`py-1 pl-3 text-right font-medium mono-nums ${premiumClass(priceDiffPct)}`}>{priceDiffPct != null ? fmtPct(priceDiffPct) : '—'}</td>
+                  </tr>
+                  <tr className="border-t border-border">
+                    <td className="pr-3 pt-2.5 font-bold text-text text-[0.75rem]">Net profit</td>
+                    <td className={`pt-2.5 text-right font-bold text-[0.82rem] mono-nums rounded-r ${netCls}`}>
+                      {costsUnavailable ? '—' : tableValue(profitBtc, displayNetPremiumPct, true)}
+                    </td>
+                    <td className={`pt-2.5 pl-3 text-right font-bold mono-nums ${netCls}`}>{displayNetPremiumPct != null ? fmtPct(displayNetPremiumPct) : '—'}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </section>
+          )}
+
+          {activeTab === 'capital' && hasSupportingColumn && (
+            <aside
+              role="tabpanel"
+              id="breakdown-panel-capital"
+              aria-labelledby="breakdown-tab-capital"
+              className="flex flex-col gap-2"
+            >
+              {hasCapital && (
+                <CapitalRequiredSection capital={bd.capital} flat heading="Capital allocation" showTotal={false} />
+              )}
+              {hasAbortCost && (
+                <div className={hasCapital ? 'border-t border-border pt-2.5' : ''}>
+                  <AbortCostSection abortCost={abortCost} refPrice={refPrice} />
+                </div>
+              )}
+            </aside>
+          )}
+
+          {activeTab === 'risk' && (
+            <section
+              role="tabpanel"
+              id="breakdown-panel-risk"
+              aria-labelledby="breakdown-tab-risk"
+            >
+              <RiskSection offer={offer} capital={bd.capital} />
+            </section>
+          )}
+
+          {activeTab === 'route' && routeControls && (
+            <section
+              role="tabpanel"
+              id="breakdown-panel-route"
+              aria-labelledby="breakdown-tab-route"
+            >
+              {routeControls}
+            </section>
+          )}
+        </div>
       </div>
     </div>
   );

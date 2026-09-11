@@ -77,8 +77,9 @@ export function scatterXValue(
 export function selectPremiumScatterPoints(
   points: OfferLifecyclePremiumPoint[],
   dimensionKey: PremiumScatterDimension,
+  includeNonPremium = false,
 ): OfferLifecyclePremiumPoint[] {
   return points.filter(point => (
-    point.premium_rate_pct > 0 && Number.isFinite(scatterXValue(point, dimensionKey))
+    (includeNonPremium || point.premium_rate_pct > 0) && Number.isFinite(scatterXValue(point, dimensionKey))
   ));
 }

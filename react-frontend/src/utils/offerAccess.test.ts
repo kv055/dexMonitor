@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Offer } from '../types';
-import { getCounterpartyStakePct, getSellerRatingScore, hasZeroTrustScore } from './offerAccess';
+import type { Offer, PastProfitableOrder } from '../types';
+import { asJsonObject, getCounterpartyStakePct, getSellerRatingScore, hasZeroTrustScore, pastProfitableOrderAsOffer } from './offerAccess';
 
 function baseOffer(overrides: Partial<Offer> = {}): Offer {
   return {
@@ -87,5 +87,51 @@ describe('getCounterpartyStakePct', () => {
 describe('getSellerRatingScore', () => {
   it('preserves a genuine 0', () => {
     expect(getSellerRatingScore(baseOffer({ seller_rating_score: 0 }))).toBe(0);
+  });
+});
+
+describe('asJsonObject', () => {
+  it('parses objects and JSON strings', () => {
+    expect(asJsonObject({ rating: 0.98 })).toEqual({ rating: 0.98 });
+    expect(asJsonObject('{"source":"hodlhodl"}')).toEqual({ source: 'hodlhodl' });
+    expect(asJsonObject('')).toBeNull();
+    expect(asJsonObject(null)).toBeNull();
+  });
+});
+
+describe('pastProfitableOrderAsOffer', () => {
+  it('copies counterparty rating and stake fields from the stored payload', () => {
+    const offer = pastProfitableOrderAsOffer({
+      id: 9,
+      exchange: 'hodlhodl',
+      direction: 'bid',
+      status: { first_seen: '2026-01-01', last_seen: '2026-01-02', is_live: false },
+      pricing: { price_type: 'fixed', fiat_currency: 'EUR' },
+      summary: { net_profit_btc: 0, net_profit_fiat: 0, trade_size_btc: 0.01, trade_size_fiat: 600, net_percent: 1 },
+      analysis: {
+        full_volume: {
+          trade_size_btc: 0.01,
+          trade_size_fiat: 600,
+          route: { cex: 'kraken', settlement: 'onchain' },
+          premium: {},
+          profit: {},
+          costs: {} as PastProfitableOrder['analysis']['full_volume']['costs'],
+        },
+      },
+      offer: {
+        seller_rating_score: 73,
+        seller_rating_confidence: 'feedback_verified',
+        seller_rating_raw: { rating: 0.98, trades_count: 42 },
+        seller_rating_signals: '{"source":"hodlhodl","online_status":"online"}',
+        counterparty_stake_pct: 0.03,
+        counterparty_stake_btc: 0.0003,
+      },
+    });
+    expect(offer.seller_rating_score).toBe(73);
+    expect(offer.seller_rating_confidence).toBe('feedback_verified');
+    expect(offer.seller_rating_raw).toEqual({ rating: 0.98, trades_count: 42 });
+    expect(offer.seller_rating_signals).toEqual({ source: 'hodlhodl', online_status: 'online' });
+    expect(offer.counterparty_stake_pct).toBe(0.03);
+    expect(offer.counterparty_stake_btc).toBe(0.0003);
   });
 });

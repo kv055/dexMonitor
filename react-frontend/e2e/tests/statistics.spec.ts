@@ -18,6 +18,50 @@ test.describe('Statistics', () => {
     await gotoAndWaitForData(page);
     await page.getByRole('button', { name: 'Statistics', exact: true }).click();
 
+    const statsFilters = page.getByRole('complementary', { name: 'Statistics filters' });
+    await expect(statsFilters).toBeVisible();
+    await expect(statsFilters.getByText('Reference source')).toHaveCount(0);
+    await expect(statsFilters.getByText(/BTC\/.+ — /)).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'Ask', exact: true })).toBeVisible();
+    await expect(page.getByTestId('exchanges-live-card')).toBeVisible();
+    await expect(page.getByTestId('payment-methods-card')).toBeVisible();
+    for (const cardId of ['exchanges-live-card', 'payment-methods-card'] as const) {
+      const card = page.getByTestId(cardId);
+      const pie = card.getByTestId('breakdown-pie-graphic');
+      await expect.poll(async () => {
+        const cardBox = await card.boundingBox();
+        const pieBox = await pie.boundingBox();
+        if (!cardBox || !pieBox) return 'missing';
+        const pad = 1.5;
+        const inside = pieBox.x >= cardBox.x - pad
+          && pieBox.y >= cardBox.y - pad
+          && pieBox.x + pieBox.width <= cardBox.x + cardBox.width + pad
+          && pieBox.y + pieBox.height <= cardBox.y + cardBox.height + pad;
+        return inside ? 'inside' : `overflow card=${JSON.stringify(cardBox)} pie=${JSON.stringify(pieBox)}`;
+      }).toBe('inside');
+    }
+    await expect(page.getByRole('heading', { name: 'Live Offers', exact: true })).toBeVisible();
+    await expect(statsFilters.getByText('Timeframe', { exact: true })).toHaveCount(0);
+    await expect(statsFilters.getByText('Duration', { exact: true })).toHaveCount(0);
+    await expect(statsFilters.getByText('Premium', { exact: true })).toBeVisible();
+    await expect(statsFilters.getByText('Range', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Past Offers', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'Past Offers', exact: true })).toBeVisible();
+    await expect(statsFilters.getByText('Timeframe', { exact: true })).toBeVisible();
+    await expect(statsFilters.getByText('Duration', { exact: true })).toBeVisible();
+    await expect(statsFilters.getByText('Premium mode', { exact: true })).toBeVisible();
+    await expect(statsFilters.getByText('Premium', { exact: true })).toHaveCount(0);
+    await expect(statsFilters.getByText('Range', { exact: true })).toHaveCount(0);
+
+    await page.getByRole('button', { name: 'All Offers', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'All Offers', exact: true })).toBeVisible();
+    await expect(statsFilters.getByText('Timeframe', { exact: true })).toBeVisible();
+    await expect(statsFilters.getByText('Duration', { exact: true })).toBeVisible();
+    await expect(statsFilters.getByText('Premium', { exact: true })).toBeVisible();
+    await expect(statsFilters.getByText('Range', { exact: true })).toBeVisible();
+
+    await page.getByRole('button', { name: 'Live Offers', exact: true }).click();
     await expect(page.getByRole('heading', { name: 'Live Offers', exact: true })).toBeVisible();
     await expect(page.getByRole('img', { name: /offer lifecycle length by premium rate/i })).toBeVisible();
     await expect(page.getByRole('img', { name: /offered btc volume by premium rate/i })).toHaveCount(0);

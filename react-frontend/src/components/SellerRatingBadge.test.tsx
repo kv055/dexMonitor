@@ -1,8 +1,12 @@
-import { render, screen } from '@testing-library/react';
-import { describe, expect, it } from 'vitest';
+import { cleanup, render, screen } from '@testing-library/react';
+import { afterEach, describe, expect, it } from 'vitest';
 
 import { CounterpartyStakeBadge, SellerRatingBadge } from './SellerRatingBadge';
-import { formatBondChip, sellerRatingScoreClass, shouldShowBondChip } from './sellerRating';
+import { formatBisq2ReputationDetail, formatBondChip, formatFiveSystemStars, readBisq2ReputationRaw, sellerRatingScoreClass, shouldShowBondChip } from './sellerRating';
+
+afterEach(() => {
+  cleanup();
+});
 
 describe('sellerRatingScoreClass', () => {
   it('never paints feedback_new green', () => {
@@ -52,6 +56,49 @@ describe('SellerRatingBadge', () => {
   it('renders an em dash when there is no score and no stake', () => {
     render(<SellerRatingBadge score={null} confidence="unavailable" compact />);
     expect(screen.getByTitle('No rating available').textContent).toContain('—');
+  });
+
+  it('renders Bisq 2 unstaked makers from the offerbook raw blob', () => {
+    render(
+      <SellerRatingBadge
+        score={null}
+        confidence="unavailable"
+        compact
+        raw={{ total_score: 0, five_system_score: 0, ranking: 0 }}
+      />,
+    );
+    expect(screen.getByText('0★')).toBeTruthy();
+    expect(screen.getByText('unstaked')).toBeTruthy();
+  });
+
+  it('keeps the 0–100 badge for staked Bisq 2 makers', () => {
+    render(
+      <SellerRatingBadge
+        score={82}
+        confidence="reputation_bonded"
+        compact
+        raw={{ total_score: 70969, five_system_score: 4.5, ranking: 11 }}
+      />,
+    );
+    expect(screen.getByText('82')).toBeTruthy();
+    expect(screen.getByText('reputation')).toBeTruthy();
+    expect(screen.queryByText('unstaked')).toBeNull();
+  });
+});
+
+describe('readBisq2ReputationRaw', () => {
+  it('reads the snapshot raw blob and ignores other venues', () => {
+    expect(readBisq2ReputationRaw({ total_score: 70969, five_system_score: 4.5, ranking: 11 })).toEqual({
+      totalScore: 70969,
+      fiveSystemScore: 4.5,
+      ranking: 11,
+    });
+    expect(readBisq2ReputationRaw({ rating: 0.9, trades_count: 40 })).toBeNull();
+    expect(formatFiveSystemStars(4.5)).toBe('4.5★');
+    expect(formatBisq2ReputationDetail({ totalScore: 0, fiveSystemScore: 0, ranking: 0 })).toBe('0★ · unstaked');
+    expect(formatBisq2ReputationDetail({ totalScore: 70969, fiveSystemScore: 4.5, ranking: 11 })).toBe(
+      '4.5★ · 70,969 total · rank #11',
+    );
   });
 });
 

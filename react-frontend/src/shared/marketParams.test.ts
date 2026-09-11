@@ -3,6 +3,7 @@ import {
   buildAnalyticsBody,
   buildLiveOffersSearch,
   buildPastOffersSearch,
+  buildStatisticsBody,
   marketRequestKey,
   type MarketRequestParams,
 } from './marketParams';
@@ -49,5 +50,40 @@ describe('market request parameters', () => {
       timezone: 'Europe/Berlin',
     });
     expect(buildAnalyticsBody(params)).not.toHaveProperty('past_start_date');
+  });
+
+  it('sends Insights offer filters only on the statistics body', () => {
+    expect(buildStatisticsBody(params, {
+      direction: 'ask',
+      excludedExchanges: ['hodlhodl'],
+      includePaymentMethods: ['SEPA Instant'],
+      paymentScope: 'linked',
+      premiumMode: 'net_full',
+      premiumOnly: true,
+      rangeMetric: 'profit',
+      profitMin: 0.01,
+      profitMax: 10.26,
+    })).toMatchObject({
+      fiat: 'USD',
+      hours: 48,
+      cex: 'coinbase',
+      direction: 'ask',
+      excluded_exchanges: ['hodlhodl'],
+      include_payment_methods: ['SEPA Instant'],
+      payment_scope: 'linked',
+      premium_mode: 'net_full',
+      premium_only: true,
+      range_metric: 'profit',
+      profit_min: 0.01,
+      profit_max: 10.26,
+    });
+    expect(buildStatisticsBody(params, {
+      pastRange: { startDate: '2026-01-01', endDate: '2026-01-31', timezone: 'UTC' },
+    })).toMatchObject({
+      past_start_date: '2026-01-01',
+      past_end_date: '2026-01-31',
+      timezone: 'UTC',
+    });
+    expect(buildAnalyticsBody(params)).not.toHaveProperty('direction');
   });
 });

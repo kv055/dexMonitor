@@ -23,6 +23,7 @@ function offer(
     firstSeenHoursAgo: number; lastSeenHoursAgo: number;
     isLive: boolean; refPrice: number;
     tradeCostPct: number; netPremiumPct: number;
+    unstaked: boolean;
   }> = {},
 ) {
   const refPrice = opts.refPrice ?? 82000;
@@ -139,8 +140,17 @@ function offer(
     ref_price: refPrice,
     premium: premiumPct,
     time: ts(opts.firstSeenHoursAgo ?? 12),
-    seller_rating_score: exchange === 'bisq' ? 82 : null,
-    seller_rating_confidence: exchange === 'bisq' ? 'account_signing' : 'unavailable',
+    seller_rating_score: exchange === 'bisq' ? 82 : exchange === 'bisq2' && !opts.unstaked ? 72 : null,
+    seller_rating_confidence: exchange === 'bisq'
+      ? 'account_signing'
+      : exchange === 'bisq2'
+        ? (opts.unstaked ? 'unavailable' : 'reputation_bonded')
+        : 'unavailable',
+    seller_rating_raw: exchange === 'bisq2'
+      ? (opts.unstaked
+        ? { total_score: 0, five_system_score: 0, ranking: 0 }
+        : { total_score: 28000, five_system_score: 2.5, ranking: 12 })
+      : null,
     counterparty_stake_pct: exchange === 'robosats' ? 0.03 : exchange === 'bisq' ? 0.05 : null,
   };
 }
@@ -168,6 +178,8 @@ export const MOCK_LIVE_OFFERS = [
   offer(5, 'hodlhodl', 'bid', 82820, 1.0, { btcMax: 0.03, payment: 'Revolut', firstSeenHoursAgo: 4 }),
   offer(6, 'robosats', 'bid', 86510, 5.5, { btcMax: 0.04, payment: 'Revolut', firstSeenHoursAgo: 2 }),
   offer(7, 'robosats', 'bid', 83230, 1.5, { btcMax: 0.02, payment: 'Wise', firstSeenHoursAgo: 7 }),
+  offer(18, 'bisq2', 'bid', 84800, 3.4, { btcMax: 0.07, payment: 'SEPA', firstSeenHoursAgo: 5 }),
+  offer(19, 'bisq2', 'bid', 83600, 2.0, { btcMax: 0.04, payment: 'Revolut', firstSeenHoursAgo: 8, unstaked: true }),
   // Sell direction with negative premium (user buys on DEX cheaper)
   offer(8, 'bisq', 'ask', 80360, -2.0, { btcMax: 0.06, payment: 'SEPA', firstSeenHoursAgo: 15 }),
   offer(9, 'robosats', 'ask', 81590, -0.5, { btcMax: 0.03, payment: 'PayPal', firstSeenHoursAgo: 5 }),
