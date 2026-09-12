@@ -6,7 +6,8 @@ async function selectMenuOption(
   option: string,
 ) {
   await jsClick(trigger);
-  await page.getByRole('menuitemradio', { name: option, exact: true }).click();
+  // The selected option exposes its checkmark in the accessible name.
+  await page.getByRole('menuitemradio', { name: option }).click();
 }
 
 test.describe('ControlPanel (Insights filter sidebar)', () => {

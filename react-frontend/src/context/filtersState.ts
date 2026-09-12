@@ -5,7 +5,10 @@ const BASE_FILTERS: Filters = {
   exchange: '',
   excludedExchanges: [],
   payment: '',
-  paymentScope: 'linked',
+	// The initial monitor remains a complete market view. Linked methods are
+	// an opt-in trading filter; defaulting to them hides valid offers before
+	// the account catalogue has loaded.
+	paymentScope: 'all',
   selectedLinkedPaymentMethods: [],
   status: 'open',
   premiumOnly: true,
