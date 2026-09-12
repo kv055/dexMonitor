@@ -5,7 +5,7 @@ const BASE_FILTERS: Filters = {
   exchange: '',
   excludedExchanges: [],
   payment: '',
-  paymentScope: 'all',
+  paymentScope: 'linked',
   selectedLinkedPaymentMethods: [],
   status: 'open',
   premiumOnly: true,

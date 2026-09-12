@@ -127,7 +127,7 @@ export function StatisticsView({ lastUpdatedAt = '' }: { lastUpdatedAt?: string 
     linkedPaymentMethodOptions,
   } = useFilters();
   const { data, loading, error, builtAt, load } = useStatistics();
-  const [mode, setMode] = useState<StatisticsMode>('live');
+  const [mode, setMode] = useState<StatisticsMode>('shared');
   const [scatterDimension, setScatterDimension] = useState<PremiumScatterDimension>('lifecycle');
   const { timezone } = useTimezone();
   const [selectedTimeframe, setSelectedTimeframe] = useState('24h');
