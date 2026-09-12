@@ -906,7 +906,7 @@ function PaymentMethodScopeDropdown() {
             className={`flex w-full items-center gap-2 px-2.5 py-1.5 text-left text-xs transition-colors ${filters.paymentScope === 'all' ? 'bg-accent/15 text-accent hover:bg-accent/20' : 'text-text hover:bg-bg'}`}
             onClick={() => selectScope('all')}
           >
-            <span className="w-3 text-center">{filters.paymentScope === 'all' ? '✓' : ''}</span>
+            <span aria-hidden="true" className="w-3 text-center">{filters.paymentScope === 'all' ? '✓' : ''}</span>
             All methods
           </button>
           <button
@@ -918,7 +918,7 @@ function PaymentMethodScopeDropdown() {
               setFilters({ paymentScope: 'linked', selectedLinkedPaymentMethods: [] });
             }}
           >
-            <span className="w-3 text-center">{filters.paymentScope === 'linked' && selected.size === 0 ? '✓' : ''}</span>
+            <span aria-hidden="true" className="w-3 text-center">{filters.paymentScope === 'linked' && selected.size === 0 ? '✓' : ''}</span>
             Linked methods
           </button>
           {filters.paymentScope === 'linked' && (

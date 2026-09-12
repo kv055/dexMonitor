@@ -28,7 +28,7 @@ function headerTickAll(page: Page) {
 
 test.describe('Insights chart offer visibility and fit-to-offers', () => {
   test('offers start hidden; ticking all renders them and fits the x-axis', async ({ page }) => {
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     await openControlPanel(page); // dex Monitor, Live mode
 
     // Nothing is plotted until offers are ticked.
@@ -47,7 +47,7 @@ test.describe('Insights chart offer visibility and fit-to-offers', () => {
   });
 
   test('switching Live/Past hides all offers again and re-ticking re-fits', async ({ page }) => {
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     await openControlPanel(page);
 
     await jsClick(headerTickAll(page));

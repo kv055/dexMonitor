@@ -417,7 +417,7 @@ export async function waitForChartReady(container: Locator, page: Page) {
 /**
  * Navigate to the app and wait for initial data to load.
  */
-export async function gotoAndWaitForData(page: Page) {
+export async function gotoAndWaitForData(page: Page, paymentScope?: 'all') {
   const liveOffersResponse = page.waitForResponse(resp =>
     resp.url().includes('/api/live_offers') && resp.status() === 200,
   );
@@ -430,6 +430,12 @@ export async function gotoAndWaitForData(page: Page) {
   await page.goto('/');
   // Wait for live data, analytics, and React's lazy-loaded offers view.
   await Promise.all([liveOffersResponse, analyticsResponse, ohlcResponse]);
+  if (paymentScope === 'all') {
+    await openControlPanel(page);
+    await jsClick(controlPanel(page).getByTitle('Show all methods, linked methods, or selected linked methods'));
+    await page.getByRole('menuitemradio', { name: 'All methods', exact: true }).click();
+    await closeControlPanel(page);
+  }
   await page.getByTestId('live-offers-row').first().waitFor({ state: 'visible', timeout: 10_000 });
 }
 

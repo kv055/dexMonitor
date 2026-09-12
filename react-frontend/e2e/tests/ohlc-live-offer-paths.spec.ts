@@ -34,14 +34,14 @@ test.describe('OHLC live offer price paths', () => {
     const lifecycleRequest = page.waitForRequest(req =>
       /\/api\/live_offers\/\d+\/lifecycle$/.test(new URL(req.url()).pathname),
     );
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     // Insights only plots (and fetches lifecycle for) offers once they're ticked.
     await revealChartOffers(page);
     await lifecycleRequest;
   });
 
   test('plots the full price history of live offers, not just the latest price', async ({ page }) => {
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     await revealChartOffers(page);
     await waitForChartReady(ohlcPanel(page), page);
 
@@ -70,7 +70,7 @@ test.describe('OHLC live offer price paths', () => {
   });
 
   test('visual regression: live offer paths trace history on the chart', async ({ page }) => {
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     await revealChartOffers(page);
 
     const panel = ohlcPanel(page);
@@ -86,7 +86,7 @@ test.describe('OHLC live offer price paths', () => {
   });
 
   test('offer paths snap to the selected candle size', async ({ page }) => {
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     await revealChartOffers(page);
     const panel = ohlcPanel(page);
     await waitForChartReady(panel, page);
@@ -117,7 +117,7 @@ test.describe('OHLC live offer price paths', () => {
   });
 
   test('discards non-premium offers even when the filter includes them', async ({ page }) => {
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     await waitForChartReady(ohlcPanel(page), page);
 
     // Let non-premium offers through the filters: include them and widen the
@@ -148,7 +148,7 @@ test.describe('OHLC live offer price paths', () => {
       route.fulfill({ status: 500, json: { error: 'lifecycle unavailable' } }),
     );
 
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     await revealChartOffers(page);
     const panel = ohlcPanel(page);
     await waitForChartReady(panel, page);

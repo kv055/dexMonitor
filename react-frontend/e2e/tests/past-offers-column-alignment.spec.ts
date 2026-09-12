@@ -41,7 +41,7 @@ test('past-offer headers align with their left-aligned values', async ({ page })
     },
   }));
 
-  await gotoAndWaitForData(page);
+  await gotoAndWaitForData(page, 'all');
   await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
 
   const header = page.getByTestId('past-offers-header');
@@ -168,7 +168,7 @@ test('Net Min uses the precomputed minimum-volume scenario', async ({ page }) =>
     },
   }));
 
-  await gotoAndWaitForData(page);
+  await gotoAndWaitForData(page, 'all');
   await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
   await jsClick(page.getByTitle(/Net full uses full order size/));
   await page.getByRole('menuitemradio', { name: 'Net Min', exact: true }).click();

@@ -4,7 +4,7 @@ import type { LiveOfferAnalysis } from '../../src/types';
 
 test.describe('Taker opportunities', () => {
   test('collapses the Insights filters into a side rail and restores them', async ({ page }) => {
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     await page.getByRole('button', { name: 'dex Monitor' }).click();
 
     const filters = page.getByRole('complementary', { name: 'Insights filters' });
@@ -24,7 +24,7 @@ test.describe('Taker opportunities', () => {
   });
 
   test('collapses the orderbook depth chart into a right side rail and restores it', async ({ page }) => {
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     await page.getByRole('button', { name: 'dex Monitor' }).click();
 
     const depthCanvas = depthPanel(page).locator('canvas');
@@ -43,7 +43,7 @@ test.describe('Taker opportunities', () => {
   });
 
   test('selecting a live offer swaps the depth chart for the Trade Tracing panel', async ({ page }) => {
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     await page.getByRole('button', { name: 'dex Monitor' }).click();
 
     const depthCanvas = depthPanel(page).locator('canvas');
@@ -63,7 +63,7 @@ test.describe('Taker opportunities', () => {
   });
 
   test('trade tracing fills the space freed by a collapsed OHLC chart', async ({ page }) => {
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     await page.getByRole('button', { name: 'dex Monitor' }).click();
 
     await page.getByRole('button', { name: 'Hide premium chart' }).click();
@@ -132,7 +132,7 @@ test.describe('Taker opportunities', () => {
     const pageErrors: Error[] = [];
     page.on('pageerror', error => pageErrors.push(error));
 
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
     await page.getByRole('button', { name: 'dex Monitor' }).click();
     await page.getByRole('button', { name: /Bisq v1 Bid/ }).click();
 

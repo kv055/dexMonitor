@@ -4,7 +4,7 @@ const rowCells = (row: import('@playwright/test').Locator) => row.locator(':scop
 
 test.describe('Live offers list', () => {
   test.beforeEach(async ({ page }) => {
-    await gotoAndWaitForData(page);
+    await gotoAndWaitForData(page, 'all');
   });
 
   test('renders the current grid headers and offer rows', async ({ page }) => {
