@@ -433,3 +433,55 @@ export function unlockBisqWallet(password: string, timeoutSeconds = 300) {
     body: JSON.stringify({ password, timeout_seconds: timeoutSeconds }),
   });
 }
+
+// --- App settings (user-facing root .env variables) ---
+
+export interface AppSettingField {
+  key: string;
+  label: string;
+  description?: string;
+  type: 'string' | 'secret' | 'bool' | 'int' | 'duration' | 'enum' | 'email' | 'url' | 'hostname';
+  owner?: string;
+  default?: string;
+  required?: boolean;
+  enum?: string[];
+  restartServices?: string[];
+}
+
+export interface AppSettingSection {
+  id: string;
+  title: string;
+  description?: string;
+  fields: AppSettingField[];
+}
+
+export interface AppSettings {
+  writable: boolean;
+  file: string;
+  schema: { sections: AppSettingSection[] };
+  values: Record<string, string>;
+}
+
+export interface AppSettingsUpdate {
+  updated: string[];
+  restart: string[];
+  values: Record<string, string>;
+}
+
+export function fetchAppSettings() {
+  return request<AppSettings>('/api/app-settings');
+}
+
+export function updateAppSettings(values: Record<string, string>) {
+  return request<AppSettingsUpdate>('/api/app-settings', {
+    method: 'PUT',
+    body: JSON.stringify({ values }),
+  });
+}
+
+export function revealAppSetting(key: string) {
+  return request<{ key: string; value: string }>('/api/app-settings/reveal', {
+    method: 'POST',
+    body: JSON.stringify({ key }),
+  });
+}

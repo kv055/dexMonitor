@@ -2,7 +2,7 @@
 import { usePreferences } from '../hooks/usePreferences';
 import { useAuth } from '../hooks/useAuth';
 
-export type Tab = 'insights' | 'mmcontroller' | 'trading' | 'statistics';
+export type Tab = 'insights' | 'mmcontroller' | 'trading' | 'statistics' | 'settings';
 
 interface Props {
   activeTab: Tab;
@@ -36,6 +36,7 @@ const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
   { id: 'statistics', label: 'Statistics', color: 'text-peach', disabled: false },
   { id: 'trading', label: 'Trading Accounts', color: 'text-purple', disabled: false },
   { id: 'mmcontroller', label: 'dex Mm Controller', color: 'text-green', disabled: false },
+  { id: 'settings', label: 'Settings', color: 'text-muted', disabled: false },
 ];
 
 export function Header({ activeTab, onTabChange, onOpenSettings, wssConnected, pollError }: Props) {

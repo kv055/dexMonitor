@@ -102,6 +102,100 @@ paths:
       description: GET /api/auth/me
       security:
         - dashboardSession: []
+  /api/app-settings:
+    get:
+      operationId: getApiAppSettings
+      tags:
+        - settings
+      summary: GET /api/app-settings
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: GET /api/app-settings
+      security:
+        - dashboardSession: []
+    put:
+      operationId: putApiAppSettings
+      tags:
+        - settings
+      summary: PUT /api/app-settings
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: PUT /api/app-settings
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+  /api/app-settings/reveal:
+    post:
+      operationId: postApiAppSettingsReveal
+      tags:
+        - settings
+      summary: POST /api/app-settings/reveal
+      responses:
+        "200":
+          description: Successful response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Error response
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+            text/plain:
+              schema:
+                type: string
+      description: POST /api/app-settings/reveal
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
   /api/auth/register:
     post:
       operationId: postApiAuthRegister
@@ -4005,6 +4099,7 @@ tags:
   - name: payment-method-groups
   - name: phone-push
   - name: raw
+  - name: settings
   - name: snapshot-log
   - name: statistics
   - name: stats

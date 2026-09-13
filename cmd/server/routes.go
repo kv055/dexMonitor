@@ -69,6 +69,7 @@ func registerLegacyBackendRoutes(mux *http.ServeMux) {
 	registerPaymentMethodRoutes(mux)
 	registerMMControllerRoutes(mux)
 	registerTradingAccountRoutes(mux)
+	registerAppSettingsRoutes(mux)
 	mux.HandleFunc("GET /health", handleHealth)
 }
 
@@ -181,4 +182,10 @@ func registerTradingAccountRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/trading/accounts/{id}/bank_accounts", handleTradingAccountBankAccounts)
 	mux.HandleFunc("PUT /api/trading/bank_accounts/{id}", handleTradingBankAccountByID)
 	mux.HandleFunc("DELETE /api/trading/bank_accounts/{id}", handleTradingBankAccountByID)
+}
+
+func registerAppSettingsRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("GET /api/app-settings", handleAppSettings)
+	mux.HandleFunc("PUT /api/app-settings", handleAppSettings)
+	mux.HandleFunc("POST /api/app-settings/reveal", handleAppSettingsReveal)
 }

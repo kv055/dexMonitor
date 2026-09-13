@@ -141,6 +141,33 @@ func (server *LegacyStrictServer) serveLegacy(w http.ResponseWriter, request *le
 	return nil
 }
 
+type legacyGetApiAppSettingsResponse struct {
+	server  *LegacyStrictServer
+	request *legacyRequest
+}
+
+func (response legacyGetApiAppSettingsResponse) VisitGetApiAppSettingsResponse(w http.ResponseWriter) error {
+	return response.server.serveLegacy(w, response.request)
+}
+
+type legacyPutApiAppSettingsResponse struct {
+	server  *LegacyStrictServer
+	request *legacyRequest
+}
+
+func (response legacyPutApiAppSettingsResponse) VisitPutApiAppSettingsResponse(w http.ResponseWriter) error {
+	return response.server.serveLegacy(w, response.request)
+}
+
+type legacyPostApiAppSettingsRevealResponse struct {
+	server  *LegacyStrictServer
+	request *legacyRequest
+}
+
+func (response legacyPostApiAppSettingsRevealResponse) VisitPostApiAppSettingsRevealResponse(w http.ResponseWriter) error {
+	return response.server.serveLegacy(w, response.request)
+}
+
 type legacyPostApiAuthLoginResponse struct {
 	server  *LegacyStrictServer
 	request *legacyRequest
@@ -681,6 +708,27 @@ func (response legacyGetHealthResponse) VisitGetHealthResponse(w http.ResponseWr
 	return response.server.serveLegacy(w, response.request)
 }
 
+func (server *LegacyStrictServer) GetApiAppSettings(ctx context.Context, _ GetApiAppSettingsRequestObject) (GetApiAppSettingsResponseObject, error) {
+	request, err := legacyRequestFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return legacyGetApiAppSettingsResponse{server: server, request: request}, nil
+}
+func (server *LegacyStrictServer) PutApiAppSettings(ctx context.Context, _ PutApiAppSettingsRequestObject) (PutApiAppSettingsResponseObject, error) {
+	request, err := legacyRequestFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return legacyPutApiAppSettingsResponse{server: server, request: request}, nil
+}
+func (server *LegacyStrictServer) PostApiAppSettingsReveal(ctx context.Context, _ PostApiAppSettingsRevealRequestObject) (PostApiAppSettingsRevealResponseObject, error) {
+	request, err := legacyRequestFromContext(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return legacyPostApiAppSettingsRevealResponse{server: server, request: request}, nil
+}
 func (server *LegacyStrictServer) PostApiAuthLogin(ctx context.Context, _ PostApiAuthLoginRequestObject) (PostApiAuthLoginResponseObject, error) {
 	request, err := legacyRequestFromContext(ctx)
 	if err != nil {

@@ -1,0 +1,592 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "dexArbTrading user-facing settings",
+  "description": "Single source of truth for the dexMonitor Settings page and its /api/app-settings endpoints. Every key MUST also be documented in the root .env.example. Keys in this file are the only ones the settings API will ever read or write (whitelist). Exchange API credentials, the LND wallet password and similar operator secrets are NOT here: they live in Postgres and are managed via the Accounts panel.",
+  "sections": [
+    {
+      "id": "edge",
+      "title": "Public edge",
+      "description": "Public hostname, TLS contact and the public Telegram webhook URL.",
+      "fields": [
+        {
+          "key": "PUBLIC_HOSTNAME",
+          "label": "Public hostname",
+          "description": "Public HTTPS hostname served by nginx (e.g. dexmonitor.live).",
+          "type": "hostname",
+          "required": true,
+          "restartServices": [
+            "nginx",
+            "dexmonitor",
+            "unified-api"
+          ],
+          "owner": "nginx"
+        },
+        {
+          "key": "LETSENCRYPT_EMAIL",
+          "label": "Let's Encrypt email",
+          "description": "Contact address for certificate expiry and security notices.",
+          "type": "email",
+          "restartServices": [
+            "certbot"
+          ],
+          "owner": "nginx"
+        },
+        {
+          "key": "DEXMM_TELEGRAM_WEBHOOK_URL",
+          "label": "Telegram webhook URL",
+          "description": "Public URL Telegram posts operator replies to.",
+          "type": "url",
+          "restartServices": [
+            "mm-controller"
+          ],
+          "owner": "mm-controller"
+        },
+        {
+          "key": "SESSION_COOKIE_SECURE",
+          "label": "Secure session cookies",
+          "description": "Keep true on HTTPS. Set false only for local HTTP development.",
+          "type": "bool",
+          "default": "true",
+          "restartServices": [
+            "dexmonitor",
+            "unified-api"
+          ],
+          "owner": "dexmonitor / unified-api"
+        }
+      ]
+    },
+    {
+      "id": "notifications",
+      "title": "Notifications",
+      "description": "Telegram operator bot and phone-payment push secrets.",
+      "fields": [
+        {
+          "key": "TELEGRAM_BOT_TOKEN",
+          "label": "Telegram bot token",
+          "description": "Operator bot token shared by mm-controller and fiat-controller.",
+          "type": "secret",
+          "restartServices": [
+            "mm-controller",
+            "fiat-controller"
+          ],
+          "owner": "mm-controller / fiat-controller"
+        },
+        {
+          "key": "TELEGRAM_CHAT_ID",
+          "label": "Telegram chat ID",
+          "description": "Chat receiving trade-chat relay and anomaly alerts.",
+          "type": "string",
+          "restartServices": [
+            "mm-controller",
+            "fiat-controller"
+          ],
+          "owner": "mm-controller / fiat-controller"
+        },
+        {
+          "key": "TELEGRAM_WEBHOOK_SECRET",
+          "label": "Telegram webhook secret",
+          "description": "Long random value echoed back by Telegram on every callback; callbacks without it are rejected.",
+          "type": "secret",
+          "restartServices": [
+            "mm-controller"
+          ],
+          "owner": "mm-controller"
+        },
+        {
+          "key": "PUSHPUSH_NOTIFY_SECRET",
+          "label": "Push notification secret",
+          "description": "Long random value guarding Android phone-payment callbacks. Fail-closed when empty.",
+          "type": "secret",
+          "restartServices": [
+            "dexmonitor",
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller / dexmonitor"
+        },
+        {
+          "key": "PUSHPUSH_HEARTBEAT_MAX_AGE",
+          "label": "Phone heartbeat max age",
+          "description": "Phone is reported offline after this time without a heartbeat.",
+          "type": "duration",
+          "default": "15m",
+          "restartServices": [
+            "dexmonitor",
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller / dexmonitor"
+        },
+        {
+          "key": "PUSHPUSH_DEX_RELEASE_URL",
+          "label": "DEX release webhook URL",
+          "description": "fiat-controller calls this mm-controller webhook to release BTC.",
+          "type": "url",
+          "default": "http://dexmmcontroller:8080/api/webhooks/dex-release",
+          "restartServices": [
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller"
+        },
+        {
+          "key": "PUSHPUSH_DEX_RELEASE_TOKEN",
+          "label": "DEX release token",
+          "description": "Bearer token for the DEX release webhook.",
+          "type": "secret",
+          "restartServices": [
+            "mm-controller",
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller / mm-controller"
+        },
+        {
+          "key": "PUSHPUSH_RELEASE_TIMEOUT",
+          "label": "Release timeout",
+          "description": "Timeout for the DEX release webhook call.",
+          "type": "duration",
+          "default": "10s",
+          "restartServices": [
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller"
+        },
+        {
+          "key": "PUSHPUSH_TELEGRAM_WEBHOOK_URL",
+          "label": "Push Telegram webhook URL",
+          "description": "Telegram escalation target for ambiguous notifications. Empty disables.",
+          "type": "url",
+          "restartServices": [
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller"
+        }
+      ]
+    },
+    {
+      "id": "mail",
+      "title": "Payment mailbox",
+      "description": "Receive-only mailbox for incoming fiat payment notifications (Wise/PayPal).",
+      "fields": [
+        {
+          "key": "MADDY_HOSTNAME",
+          "label": "Mail hostname",
+          "description": "A/AAAA record of the Maddy server; MX of the domain points here.",
+          "type": "hostname",
+          "default": "mx.example.com",
+          "restartServices": [
+            "maddy",
+            "fiat-controller"
+          ],
+          "owner": "maddy"
+        },
+        {
+          "key": "MADDY_DOMAIN",
+          "label": "Mail domain",
+          "description": "Domain whose MX points at the mail hostname.",
+          "type": "hostname",
+          "default": "example.com",
+          "restartServices": [
+            "maddy",
+            "fiat-controller"
+          ],
+          "owner": "maddy"
+        },
+        {
+          "key": "MADDY_RECIPIENT",
+          "label": "Payment recipient",
+          "description": "Mailbox receiving payment notifications.",
+          "type": "email",
+          "default": "payments@example.com",
+          "restartServices": [
+            "fiat-controller"
+          ],
+          "owner": "maddy"
+        },
+        {
+          "key": "MADDY_IMAP_PASSWORD",
+          "label": "Mailbox IMAP password",
+          "description": "Password the payment-email reader logs in with.",
+          "type": "secret",
+          "restartServices": [
+            "maddy",
+            "fiat-controller"
+          ],
+          "owner": "maddy / fiat-controller"
+        },
+        {
+          "key": "PAYMENT_EMAIL_MODE",
+          "label": "Payment email mode",
+          "description": "Safe rollout: capture, then shadow. Active requires both watermarks below.",
+          "type": "enum",
+          "enum": [
+            "capture",
+            "shadow",
+            "active"
+          ],
+          "default": "capture",
+          "restartServices": [
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller"
+        },
+        {
+          "key": "PAYMENT_EMAIL_POLL_INTERVAL",
+          "label": "Poll interval",
+          "description": "How often the payment inbox is polled.",
+          "type": "duration",
+          "default": "5m",
+          "restartServices": [
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller"
+        },
+        {
+          "key": "PAYMENT_EMAIL_HEALTH_MAX_AGE",
+          "label": "Health max age",
+          "description": "Payment-email health is stale after this long without a poll.",
+          "type": "duration",
+          "default": "15m",
+          "restartServices": [
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller"
+        },
+        {
+          "key": "PAYMENT_EMAIL_ACTIVATION_UID",
+          "label": "Activation UID watermark",
+          "description": "Required with the timestamp before active mode accepts mail.",
+          "type": "int",
+          "default": "0",
+          "restartServices": [
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller"
+        },
+        {
+          "key": "PAYMENT_EMAIL_ACTIVATION_TIME",
+          "label": "Activation timestamp",
+          "description": "Required with the UID before active mode accepts mail.",
+          "type": "string",
+          "restartServices": [
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller"
+        }
+      ]
+    },
+    {
+      "id": "wallets",
+      "title": "Bisq wallets",
+      "description": "Bisq daemon API access. Wallet files stay on the host and are never pasted here.",
+      "fields": [
+        {
+          "key": "BISQ_API_PASSWORD",
+          "label": "Bisq 1 API password",
+          "description": "gRPC API password for the Bisq 1 daemon (:9998).",
+          "type": "secret",
+          "restartServices": [
+            "bisq",
+            "unified-api",
+            "unified-snapshot",
+            "mm-controller",
+            "dexmonitor"
+          ],
+          "owner": "bisq / unified-api"
+        },
+        {
+          "key": "BISQ_WALLET_PASSWORD",
+          "label": "Bisq 1 wallet password",
+          "description": "Wallet password for the Bisq 1 daemon.",
+          "type": "secret",
+          "restartServices": [
+            "bisq"
+          ],
+          "owner": "bisq"
+        },
+        {
+          "key": "BISQ_ACCOUNT_FILE_PATH",
+          "label": "Bisq 1 account file",
+          "description": "Optional host path of the Bisq 1 account file.",
+          "type": "string",
+          "restartServices": [
+            "bisq"
+          ],
+          "owner": "bisq"
+        },
+        {
+          "key": "BISQ2_API_PASSWORD",
+          "label": "Bisq 2 API password",
+          "description": "REST API password for the Bisq 2 daemon (:8090).",
+          "type": "secret",
+          "restartServices": [
+            "bisq2",
+            "unified-api",
+            "unified-snapshot",
+            "mm-controller"
+          ],
+          "owner": "bisq2 / unified-api"
+        },
+        {
+          "key": "BISQ2_WALLET_PASSWORD",
+          "label": "Bisq 2 wallet password",
+          "description": "Wallet password for the Bisq 2 daemon.",
+          "type": "secret",
+          "restartServices": [
+            "bisq2"
+          ],
+          "owner": "bisq2"
+        },
+        {
+          "key": "BISQ2_ACCOUNT_FILE_PATH",
+          "label": "Bisq 2 account file",
+          "description": "Optional host path of the Bisq 2 account file.",
+          "type": "string",
+          "restartServices": [
+            "bisq2"
+          ],
+          "owner": "bisq2"
+        }
+      ]
+    },
+    {
+      "id": "backups",
+      "title": "Backups",
+      "description": "Postgres logical backups uploaded with rclone.",
+      "fields": [
+        {
+          "key": "PG_BACKUP_ENABLED",
+          "label": "Enable backups",
+          "type": "bool",
+          "default": "true",
+          "restartServices": [
+            "postgres-backup"
+          ],
+          "owner": "postgres-backup"
+        },
+        {
+          "key": "PG_BACKUP_INTERVAL",
+          "label": "Backup interval",
+          "type": "duration",
+          "default": "6h",
+          "restartServices": [
+            "postgres-backup"
+          ],
+          "owner": "postgres-backup"
+        },
+        {
+          "key": "PG_BACKUP_RETENTION_DAYS",
+          "label": "Retention (days)",
+          "type": "int",
+          "default": "14",
+          "restartServices": [
+            "postgres-backup"
+          ],
+          "owner": "postgres-backup"
+        },
+        {
+          "key": "PG_BACKUP_UPLOAD",
+          "label": "Upload backups",
+          "type": "bool",
+          "default": "true",
+          "restartServices": [
+            "postgres-backup"
+          ],
+          "owner": "postgres-backup"
+        },
+        {
+          "key": "PG_BACKUP_UPLOAD_REQUIRED",
+          "label": "Require upload success",
+          "type": "bool",
+          "default": "true",
+          "restartServices": [
+            "postgres-backup"
+          ],
+          "owner": "postgres-backup"
+        },
+        {
+          "key": "PG_BACKUP_RCLONE_REMOTE",
+          "label": "Rclone remote",
+          "description": "Upload target, e.g. proton:postgres-backups/dexarb.",
+          "type": "string",
+          "default": "proton:postgres-backups/dexarb",
+          "restartServices": [
+            "postgres-backup"
+          ],
+          "owner": "postgres-backup"
+        },
+        {
+          "key": "RCLONE_CONFIG_PROTON_USERNAME",
+          "label": "Proton username",
+          "type": "string",
+          "restartServices": [
+            "postgres-backup"
+          ],
+          "owner": "postgres-backup"
+        },
+        {
+          "key": "RCLONE_CONFIG_PROTON_PASSWORD",
+          "label": "Proton password",
+          "description": "Must be rclone-obscured, not plaintext.",
+          "type": "secret",
+          "restartServices": [
+            "postgres-backup"
+          ],
+          "owner": "postgres-backup"
+        }
+      ]
+    },
+    {
+      "id": "safety",
+      "title": "Automation and safety",
+      "description": "Master switches for money-moving automation. Keep off until staging validation passes.",
+      "fields": [
+        {
+          "key": "ENABLE_AUTOMATED_TRADEFLOW_WORKERS",
+          "label": "Automated tradeflow workers",
+          "description": "Enables money-moving recovery, DEX relay and hedgeless execution/refill workers.",
+          "type": "bool",
+          "default": "false",
+          "restartServices": [
+            "mm-controller",
+            "unified-api"
+          ],
+          "owner": "mm-controller / unified-api"
+        },
+        {
+          "key": "SCRAPING_ENABLED",
+          "label": "Fiat scraping fallback",
+          "description": "Last-resort fiat-arrival path. Push notifications are primary.",
+          "type": "bool",
+          "default": "false",
+          "restartServices": [
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller"
+        },
+        {
+          "key": "BISQ_FIAT_ESCALATION_AFTER",
+          "label": "Fiat-sent escalation delay",
+          "description": "Alert after a Bisq buyer fiat-sent signal stays unmatched this long. 0 disables. Never auto-releases BTC.",
+          "type": "duration",
+          "default": "2h",
+          "restartServices": [
+            "mm-controller"
+          ],
+          "owner": "mm-controller"
+        },
+        {
+          "key": "POLL_INTERVAL",
+          "label": "Fiat controller poll interval",
+          "type": "duration",
+          "default": "30s",
+          "restartServices": [
+            "fiat-controller"
+          ],
+          "owner": "fiat-controller"
+        },
+        {
+          "key": "FIAT_CONTROLLER_URL",
+          "label": "Fiat controller URL",
+          "description": "Bid-side pre-trade checks fail closed unless this is reachable.",
+          "type": "url",
+          "default": "http://fiat-controller:8080",
+          "restartServices": [
+            "dexmonitor",
+            "mm-controller"
+          ],
+          "owner": "dexmonitor / mm-controller"
+        }
+      ]
+    },
+    {
+      "id": "advanced",
+      "title": "Advanced tuning",
+      "description": "Snapshot, pricing and wallet knobs. Defaults are safe; change only with reason.",
+      "fields": [
+        {
+          "key": "SNAPSHOT_INTERVAL_MIN",
+          "label": "Snapshot interval (min)",
+          "type": "int",
+          "default": "1",
+          "restartServices": [
+            "unified-snapshot",
+            "dexmonitor"
+          ],
+          "owner": "unified-snapshot / dexmonitor"
+        },
+        {
+          "key": "MM_CEX_CAPABILITY_MAX_AGE",
+          "label": "CEX capability max age",
+          "description": "Permission snapshots older than this are not trusted for new routes.",
+          "type": "duration",
+          "default": "30m",
+          "restartServices": [
+            "unified-api",
+            "mm-controller",
+            "dexmonitor"
+          ],
+          "owner": "unified-api / mm-controller"
+        },
+        {
+          "key": "COINBASE_WITHDRAW_RESERVE_FLOOR_SAT",
+          "label": "Withdraw reserve floor (sat)",
+          "type": "int",
+          "default": "10000",
+          "restartServices": [
+            "unified-api"
+          ],
+          "owner": "unified-api"
+        },
+        {
+          "key": "COINBASE_WITHDRAW_RESERVE_MULTIPLIER",
+          "label": "Withdraw reserve multiplier",
+          "type": "int",
+          "default": "2",
+          "restartServices": [
+            "unified-api"
+          ],
+          "owner": "unified-api"
+        },
+        {
+          "key": "ROBOSATS_FEDERATION_URL",
+          "label": "Federation registry URL",
+          "type": "url",
+          "default": "https://raw.githubusercontent.com/RoboSats/robosats/main/frontend/static/federation.json",
+          "restartServices": [
+            "unified-snapshot"
+          ],
+          "owner": "unified-snapshot"
+        },
+        {
+          "key": "ROBOSATS_FEDERATION_REFRESH_INTERVAL",
+          "label": "Federation refresh interval",
+          "type": "duration",
+          "default": "6h",
+          "restartServices": [
+            "unified-snapshot"
+          ],
+          "owner": "unified-snapshot"
+        },
+        {
+          "key": "LND_INIT_FRESH",
+          "label": "Initialize fresh LND wallet",
+          "description": "One-shot escape hatch to create a separate empty wallet. Keep false.",
+          "type": "bool",
+          "default": "false",
+          "restartServices": [
+            "mm-controller"
+          ],
+          "owner": "mm-controller"
+        },
+        {
+          "key": "GRAFANA_ADMIN_PASSWORD",
+          "label": "Grafana admin password",
+          "description": "Login for Grafana as admin.",
+          "type": "secret",
+          "restartServices": [
+            "grafana"
+          ],
+          "owner": "grafana"
+        }
+      ]
+    }
+  ]
+}

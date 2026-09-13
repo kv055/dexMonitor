@@ -64,6 +64,12 @@ type Health struct {
 	AdditionalProperties map[string]interface{}  `json:"-"`
 }
 
+// PutApiAppSettingsJSONBody defines parameters for PutApiAppSettings.
+type PutApiAppSettingsJSONBody map[string]interface{}
+
+// PostApiAppSettingsRevealJSONBody defines parameters for PostApiAppSettingsReveal.
+type PostApiAppSettingsRevealJSONBody map[string]interface{}
+
 // PostApiAuthLoginJSONBody defines parameters for PostApiAuthLogin.
 type PostApiAuthLoginJSONBody map[string]interface{}
 
@@ -135,6 +141,12 @@ type PutApiTradingSeedsIdJSONBody map[string]interface{}
 
 // PutApiTradingTotpSecretsIdJSONBody defines parameters for PutApiTradingTotpSecretsId.
 type PutApiTradingTotpSecretsIdJSONBody map[string]interface{}
+
+// PutApiAppSettingsJSONRequestBody defines body for PutApiAppSettings for application/json ContentType.
+type PutApiAppSettingsJSONRequestBody PutApiAppSettingsJSONBody
+
+// PostApiAppSettingsRevealJSONRequestBody defines body for PostApiAppSettingsReveal for application/json ContentType.
+type PostApiAppSettingsRevealJSONRequestBody PostApiAppSettingsRevealJSONBody
 
 // PostApiAuthLoginJSONRequestBody defines body for PostApiAuthLogin for application/json ContentType.
 type PostApiAuthLoginJSONRequestBody PostApiAuthLoginJSONBody
@@ -709,6 +721,15 @@ func (a Health) MarshalJSON() ([]byte, error) {
 
 // ServerInterface represents all server handlers.
 type ServerInterface interface {
+	// GetApiAppSettings GET /api/app-settings
+	// (GET /api/app-settings)
+	GetApiAppSettings(w http.ResponseWriter, r *http.Request)
+	// PutApiAppSettings PUT /api/app-settings
+	// (PUT /api/app-settings)
+	PutApiAppSettings(w http.ResponseWriter, r *http.Request)
+	// PostApiAppSettingsReveal POST /api/app-settings/reveal
+	// (POST /api/app-settings/reveal)
+	PostApiAppSettingsReveal(w http.ResponseWriter, r *http.Request)
 	// PostApiAuthLogin POST /api/auth/login
 	// (POST /api/auth/login)
 	PostApiAuthLogin(w http.ResponseWriter, r *http.Request)
@@ -899,6 +920,48 @@ type ServerInterfaceWrapper struct {
 }
 
 type MiddlewareFunc func(http.Handler) http.Handler
+
+// GetApiAppSettings operation middleware
+func (siw *ServerInterfaceWrapper) GetApiAppSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.GetApiAppSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PutApiAppSettings operation middleware
+func (siw *ServerInterfaceWrapper) PutApiAppSettings(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PutApiAppSettings(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
+
+// PostApiAppSettingsReveal operation middleware
+func (siw *ServerInterfaceWrapper) PostApiAppSettingsReveal(w http.ResponseWriter, r *http.Request) {
+
+	handler := http.Handler(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		siw.Handler.PostApiAppSettingsReveal(w, r)
+	}))
+
+	for _, middleware := range siw.HandlerMiddlewares {
+		handler = middleware(handler)
+	}
+
+	handler.ServeHTTP(w, r)
+}
 
 // PostApiAuthLogin operation middleware
 func (siw *ServerInterfaceWrapper) PostApiAuthLogin(w http.ResponseWriter, r *http.Request) {
@@ -2298,6 +2361,9 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/auth/login", wrapper.PostApiAuthLogin)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/auth/logout", wrapper.PostApiAuthLogout)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/auth/me", wrapper.GetApiAuthMe)
+	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/app-settings", wrapper.GetApiAppSettings)
+	m.HandleFunc(http.MethodPut+" "+options.BaseURL+"/api/app-settings", wrapper.PutApiAppSettings)
+	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/app-settings/reveal", wrapper.PostApiAppSettingsReveal)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/auth/register", wrapper.PostApiAuthRegister)
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/api/auth/registration_available", wrapper.GetApiAuthRegistrationAvailable)
 	m.HandleFunc(http.MethodPost+" "+options.BaseURL+"/api/dashboard/analytics", wrapper.PostApiDashboardAnalytics)
@@ -2357,6 +2423,164 @@ func HandlerWithOptions(si ServerInterface, options StdHTTPServerOptions) http.H
 	m.HandleFunc(http.MethodGet+" "+options.BaseURL+"/health", wrapper.GetHealth)
 
 	return m
+}
+
+type GetApiAppSettingsRequestObject struct {
+}
+
+type GetApiAppSettingsResponseObject interface {
+	VisitGetApiAppSettingsResponse(w http.ResponseWriter) error
+}
+
+type GetApiAppSettings200JSONResponse map[string]interface{}
+
+func (response GetApiAppSettings200JSONResponse) VisitGetApiAppSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetApiAppSettingsdefaultJSONResponse struct {
+	Body       map[string]interface{}
+	StatusCode int
+}
+
+func (response GetApiAppSettingsdefaultJSONResponse) VisitGetApiAppSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type GetApiAppSettingsdefaultTextResponse struct {
+	Body       string
+	StatusCode int
+}
+
+func (response GetApiAppSettingsdefaultTextResponse) VisitGetApiAppSettingsResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(response.StatusCode)
+
+	_, err := w.Write([]byte(fmt.Sprint(response.Body)))
+	return err
+}
+
+type PutApiAppSettingsRequestObject struct {
+	Body *PutApiAppSettingsJSONRequestBody
+}
+
+type PutApiAppSettingsResponseObject interface {
+	VisitPutApiAppSettingsResponse(w http.ResponseWriter) error
+}
+
+type PutApiAppSettings200JSONResponse map[string]interface{}
+
+func (response PutApiAppSettings200JSONResponse) VisitPutApiAppSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutApiAppSettingsdefaultJSONResponse struct {
+	Body       map[string]interface{}
+	StatusCode int
+}
+
+func (response PutApiAppSettingsdefaultJSONResponse) VisitPutApiAppSettingsResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PutApiAppSettingsdefaultTextResponse struct {
+	Body       string
+	StatusCode int
+}
+
+func (response PutApiAppSettingsdefaultTextResponse) VisitPutApiAppSettingsResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(response.StatusCode)
+
+	_, err := w.Write([]byte(fmt.Sprint(response.Body)))
+	return err
+}
+
+type PostApiAppSettingsRevealRequestObject struct {
+	Body *PostApiAppSettingsRevealJSONRequestBody
+}
+
+type PostApiAppSettingsRevealResponseObject interface {
+	VisitPostApiAppSettingsRevealResponse(w http.ResponseWriter) error
+}
+
+type PostApiAppSettingsReveal200JSONResponse map[string]interface{}
+
+func (response PostApiAppSettingsReveal200JSONResponse) VisitPostApiAppSettingsRevealResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostApiAppSettingsRevealdefaultJSONResponse struct {
+	Body       map[string]interface{}
+	StatusCode int
+}
+
+func (response PostApiAppSettingsRevealdefaultJSONResponse) VisitPostApiAppSettingsRevealResponse(w http.ResponseWriter) error {
+
+	var buf bytes.Buffer
+	if err := json.NewEncoder(&buf).Encode(response.Body); err != nil {
+		return err
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(response.StatusCode)
+	_, err := buf.WriteTo(w)
+	return err
+}
+
+type PostApiAppSettingsRevealdefaultTextResponse struct {
+	Body       string
+	StatusCode int
+}
+
+func (response PostApiAppSettingsRevealdefaultTextResponse) VisitPostApiAppSettingsRevealResponse(w http.ResponseWriter) error {
+
+	w.Header().Set("Content-Type", "text/plain")
+	w.WriteHeader(response.StatusCode)
+
+	_, err := w.Write([]byte(fmt.Sprint(response.Body)))
+	return err
 }
 
 type PostApiAuthLoginRequestObject struct {
@@ -5556,6 +5780,15 @@ func (response GetHealthdefaultTextResponse) VisitGetHealthResponse(w http.Respo
 
 // StrictServerInterface represents all server handlers.
 type StrictServerInterface interface {
+	// GetApiAppSettings GET /api/app-settings
+	// (GET /api/app-settings)
+	GetApiAppSettings(ctx context.Context, request GetApiAppSettingsRequestObject) (GetApiAppSettingsResponseObject, error)
+	// PutApiAppSettings PUT /api/app-settings
+	// (PUT /api/app-settings)
+	PutApiAppSettings(ctx context.Context, request PutApiAppSettingsRequestObject) (PutApiAppSettingsResponseObject, error)
+	// PostApiAppSettingsReveal POST /api/app-settings/reveal
+	// (POST /api/app-settings/reveal)
+	PostApiAppSettingsReveal(ctx context.Context, request PostApiAppSettingsRevealRequestObject) (PostApiAppSettingsRevealResponseObject, error)
 	// PostApiAuthLogin POST /api/auth/login
 	// (POST /api/auth/login)
 	PostApiAuthLogin(ctx context.Context, request PostApiAuthLoginRequestObject) (PostApiAuthLoginResponseObject, error)
@@ -5775,6 +6008,98 @@ type strictHandler struct {
 	ssi         StrictServerInterface
 	middlewares []StrictMiddlewareFunc
 	options     StrictHTTPServerOptions
+}
+
+// GetApiAppSettings operation middleware
+func (sh *strictHandler) GetApiAppSettings(w http.ResponseWriter, r *http.Request) {
+	var request GetApiAppSettingsRequestObject
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.GetApiAppSettings(ctx, request.(GetApiAppSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "GetApiAppSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(GetApiAppSettingsResponseObject); ok {
+		if err := validResponse.VisitGetApiAppSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PutApiAppSettings operation middleware
+func (sh *strictHandler) PutApiAppSettings(w http.ResponseWriter, r *http.Request) {
+	var request PutApiAppSettingsRequestObject
+
+	var body PutApiAppSettingsJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PutApiAppSettings(ctx, request.(PutApiAppSettingsRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PutApiAppSettings")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PutApiAppSettingsResponseObject); ok {
+		if err := validResponse.VisitPutApiAppSettingsResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
+}
+
+// PostApiAppSettingsReveal operation middleware
+func (sh *strictHandler) PostApiAppSettingsReveal(w http.ResponseWriter, r *http.Request) {
+	var request PostApiAppSettingsRevealRequestObject
+
+	var body PostApiAppSettingsRevealJSONRequestBody
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		if !errors.Is(err, io.EOF) {
+			sh.options.RequestErrorHandlerFunc(w, r, fmt.Errorf("can't decode JSON body: %w", err))
+			return
+		}
+	} else {
+		request.Body = &body
+	}
+
+	handler := func(ctx context.Context, w http.ResponseWriter, r *http.Request, request interface{}) (interface{}, error) {
+		return sh.ssi.PostApiAppSettingsReveal(ctx, request.(PostApiAppSettingsRevealRequestObject))
+	}
+	for _, middleware := range sh.middlewares {
+		handler = middleware(handler, "PostApiAppSettingsReveal")
+	}
+
+	response, err := handler(r.Context(), w, r, request)
+
+	if err != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, err)
+	} else if validResponse, ok := response.(PostApiAppSettingsRevealResponseObject); ok {
+		if err := validResponse.VisitPostApiAppSettingsRevealResponse(w); err != nil {
+			sh.options.ResponseErrorHandlerFunc(w, r, err)
+		}
+	} else if response != nil {
+		sh.options.ResponseErrorHandlerFunc(w, r, fmt.Errorf("unexpected response type: %T", response))
+	}
 }
 
 // PostApiAuthLogin operation middleware
@@ -7533,55 +7858,56 @@ func (sh *strictHandler) GetHealth(w http.ResponseWriter, r *http.Request) {
 // const string: with thousands of chunks the chained `+` fold is several
 // times slower for the Go compiler than parsing a slice literal.
 var swaggerSpec = []string{
-	"7J1fb6M498ffSsTvdxlKd1dzk7tup5qpnllNtOmjvRhVkQMnwVtjM7ZpGlV974/4lxgwYGj6Z1LftXDO",
-	"geDP+frYGHh0fBbFjAKVwpk9OsIPIULZn5fw8BliJrC8CAIOItuIggBLzCgic85i4BKDcGaSJzB1YmVL",
-	"Zlk6yV0MzswRkmO6cZ6mDhICpHZPBDJkgXYXBbll/E67T6KNZvvT1OHwM8EcAmf2ozjqIdB0f46309KV",
-	"rf4FX6YhL+FhETN5w1EAA395xBKq/jyaRCvgadA1QNv2ZftFiTn29X4SRyAkimL9VUnPfYmDjp355pbd",
-	"mG6WMcK8/9Luj1RzrBym/CHT8grl10P9FS0N8Q+WYcDRFpFXRJGgFZAjkTh1tiGWQLCQoDbHijECiD4T",
-	"1a+AiAyHXRM/BP+u9zo2DiUkkonoB6Kwa55tGgP8hGO5W6Rak59NgES4YogHCxACM5puw9SZOT5jdzhl",
-	"hKIoDRPAw1IUNvvYKMb/gZ3zlAbHdM2y38eoRH7WsgfXC766yfGcRAhTiTAFLpypk3DizJxQyljMPG+D",
-	"ZZisznwWeXf3558+eRXX9DIEIHyOY5mdqvMV0WDLsZRAJ4Il3AeXrV3JExlO0vPgyJeTNeMTGWIx4QlN",
-	"gT/LwJekOLW/GMWS8cnXm5v55GJ+7Uyde+D5tXB+Ozs/O0+Py2KgKMbOzPnj7Lez8zSlkAyzS+ihGHso",
-	"kaFH2AZnVzBmIrsA1bOdf1/cTOrWWWiOUpPrIDViQl7E+CKR4bfCIG1eEPJPFuzKCwy5zKE4JtjPnL1/",
-	"Rd56eUcykK+nHCMRMypyMH4/P3+5g9XbcZH4PgixTsikPIm8sdcoIfLFzmPqSHiQXkwQrkWp51jjjK84",
-	"Z1w5WSW7nNmP26kjkihCfNfe7BJtRKY4iQyd2zRAxYYlcghJqXk3SrmFZenEWMqbtQumKKszNqDh6MuV",
-	"Gi2CBkJfoCToL3Bsqx6vVXU974/bp0pja1qnq505bNIqhxvLxt6hQzj+PthY6Tgl6VAavx+qnI0lukeY",
-	"oBUxFZQW53aR+VtxuFDsLRIvgoRha7XwsRcwD1FEdhL7wkR6dG4tAvS5NL1QLK0MnWJf18dHyeB+rwLi",
-	"BihwRJbp0Fd4BK8hm9foF6k2R71AfcmtF6nxN8XWgvImRVF745WsFBZuZtHKC7sHfo9hOxSXvV8/Ld8P",
-	"phaWdwCL0nTDWImRkMuYQ4STaLC+VJ37qZkjIecH82eRgyVEw+ccy1k+ztHOItWJVL1xh3K1i4DKZX4T",
-	"ZgRZVXcTtjKPv/YOlq73TVe9gfv4iiI3mwBnhAD3Vlj8LIO4yPdZkt91HGDtPeLgyczlQLG5cRbeWzMe",
-	"dbttESEgveKmDAgj6xUiiPqGxpIjKpCfNqmZQ0IJ8++MTLfF7bRWYx8evJiDm928c7NbRZ22md2asO6I",
-	"2/1dvDRwR0hCA4NLm1r5IaIUiBtzECCNbIXnEybAzJTFQDstiYjdwtrUzvMRDXCAZM9vU10itImQV9zb",
-	"GuLC1mvgQ4/DeDDWqTs/ez3TfDT23t+LbDcXySpCHFNwxRbF3bZ5chiYeJhiI7v0BNtBE2n154Nb3OZr",
-	"PzkJBDYcRZ7P6Bpv+u2Ke/Y9VgKku4VVyNhdv7EE0f6TFa1CxCX4Z4KDrLPptxdGRl4AD24MNMB0MzB+",
-	"HUgWEr+/sMms9PXL93yXHUG9SUFSNExZd2T/HsqNrPzdS15PG6vG+qZOhz7fSwNbmr4vEqrNVwKRbnWL",
-	"rVou8m6G4DX4O9/kFkKHbx8118E3xTZGHEUgMzZ/FMtbYiTDw+KWbP3UYRVNfvXbr+6thfIdQ9mExYTR",
-	"tBTKR1umZCoeHTymVovCyHZdb8hGpbmqRKS7GiPoYkaHrbFEKwLLfW1uAkfTrx2R+d72e2lq1eUdEqRr",
-	"0wpHBwO3MFBpUmdwlhvOktgIJp1bG0vKnN6X0tJqzhsRo2+4AzDq9Jdb7Fd4CRkFN05EmA4Xk9gAlbpH",
-	"CyWp2TwR4aIwsoC8DSDN5tqzsd/VAYTH4R4QMVlx0ebasuqiSsjfpa1dd3Ha6y7aKenkUlAUi5BJl7BN",
-	"v0hVrPUCtShMvmUWthJ6X7JVa8ASjcpmPRzlfOAAQnKXXkyug/c4yLdSdAzGSgT6QJNIYmG6BFGxbukD",
-	"F6qF7flOu+er4LAH7bCxipnBqK1rUsjOBb2tttQmgOqzPsVDtJ6ySKKnsRse+nYvnmG8OFjZ0uZ9oaFp",
-	"yJKSYpdz+zTt7Vx6eSi6GB0Qtp855X7GCLA2IfJijhnH5VPkcaKD8L8tR1KdGzgmGhrnqr3l8iS5NINl",
-	"AKHlAC8AAtnym9o5f776dnVzNelwrrP5OYvUxNOO+E4CQRMgtF3wMPHToqWVvRfkykroR5LQVng7xTPd",
-	"s7yDndEkRk8Es6rzOrjIXuEiLPeW+yOUtA0Ih2bACtG7pTr4HpcG1TCmufAnonfKeMwmhE2I4yREHcfB",
-	"WYHFz/JJHHeNibq2vcMjQBK5AebgS8Z3vT4+PKiPygyc99LEMJoJuw4u4eHPg4st6092Rk2LyNBcSN2D",
-	"/PWYrvqs0mhcm8HMua2+p/N98rufKv5/Dmtn5vyfd3jzqFe8dtRrvnPUThePhVsH1BjKQwg24Gaxigd2",
-	"RjNeD2VO+NfUc644Wn3+AAg3eRkDsIiZzB9lfRa8ahhzcPfvEP6lRfnwJmSrx2NhrvIzBmTlAeqjlBza",
-	"eOZoN97K/Gsz3nzJtGV9LOstZA2GnkMAVGJExnOuhDBFu+JiC41T57XS3EMRDbN3ry/Ld2SMnCisRDGd",
-	"J8xf+35Z+NhpQpsPx5kmrME4NCNiJMQd7JY18R6XGLpgpvkxz31fQ85tmny8NNGjOTRbBPgc5OjypnQ3",
-	"LG0We3Nb1px4WXMgYziSEDxDsnN3U5FeFNZWly33x9Hlkr+h2Esm46Uix+Por0QxTYIbJuOXlmabCh8v",
-	"FWowGmREsWRm3CLainPvItp8xZddQ3u6a2hrPDxjDW0nWdU1tC+OlRXSj7CEtpfdunRWFleN0k9NhD4R",
-	"VZcKWiU9WSXVkjFeTg1Aq2jqK1FmhfUDCKshynV11Uy2jdLY1jh9StucTLZ6e7J620HJeNU1Rq+iva/K",
-	"nVXgD6DAg+Bu6vDAT8S0OXbesDjud2EsMs+9s9D+4RdjUkb21poY/T21Co/tpU+4l9bS8Zwe2gC3Wu/8",
-	"SqzZnvlD9MyGQJtorYcIRgKEF3MWsVxxTW9pGcXrvrlVz4yL3Hu+d7Z5YvNk7F0uQz5HJo4fIrmUEMWk",
-	"+EbXuBJXG2xA2XsdXIZI3iiutow59cq6hZmjgOw9woMfIrqBo9ThHdGHVugVzq+KMC/B+1QbBA5HtKnz",
-	"y48AOrk87thgQAp0jhp+Wf5ttfVBRyUDk8yotwpgk31uVjI3K+W8x5izexwAXxZTR88avvSEHzaa+ZwH",
-	"u2HZsGZeBHqZ8b8+aZWTt3lr8/Z4adCfvdkC21HzuYpnX42YrQu3k7cnW7pVUBhflnUQVSm5Xhonq6gf",
-	"oBLqYbauk+rq61Fy2QzQp5rKgwRWO09WO3VcjJfQfsoqSvo6iFk9/QB6asZxXVa3iBCQyxFvwGl4ds7G",
-	"/5NZq6+2sbi86Vy5pvn0tOQvMOjmorDREPC13POs5u562VBxBPN2/nT+xysc/JJxmARIohUSMMm+ICwm",
-	"iMOEMjnhgILdL81cE649AyVGxYacoq1Q3kEnJAcUObPHPCi/L/u7hBNn5oRSxjPPI8xHJGRCzj6dn//u",
-	"pDwXoR/LzhAl6cWf7v/f54G6cQMUOCLFx8CVHcUJKltYSHz1f/Xj8o3NyhfG6/uaX42uWOg+E6waHL7J",
-	"qWzlaKv+W/lonrr98I2z2tbKhjLHn26f/hcAAP//",
+	"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",
 }
 
 // decodeSpec returns the embedded OpenAPI spec as raw JSON bytes,

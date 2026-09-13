@@ -26,6 +26,7 @@ const LiquidityWorkspace = lazy(() => import('./components/LiquidityWorkspace').
 const TradingAccountsPanel = lazy(() => import('./components/TradingAccountsPanel').then(module => ({ default: module.TradingAccountsPanel })));
 const PaymentMethodsPanel = lazy(() => import('./components/PaymentMethodsPanel').then(module => ({ default: module.PaymentMethodsPanel })));
 const StatisticsView = lazy(() => import('./components/StatisticsView').then(module => ({ default: module.StatisticsView })));
+const AppSettingsPage = lazy(() => import('./components/AppSettingsPage').then(module => ({ default: module.AppSettingsPage })));
 
 function FeatureFallback({ label = 'Loading view' }: { label?: string }) {
   return <div className="relative min-h-40 flex-1"><LoadingSpinner label={label} /></div>;
@@ -261,6 +262,10 @@ function AppShell() {
 
         {activeTab === 'statistics' && (
           <Suspense fallback={<FeatureFallback label="Loading statistics" />}><StatisticsView lastUpdatedAt={lastUpdatedAt} /></Suspense>
+        )}
+
+        {activeTab === 'settings' && (
+          <Suspense fallback={<FeatureFallback label="Loading settings" />}><AppSettingsPage /></Suspense>
         )}
       </div>
       </FiltersProvider>
