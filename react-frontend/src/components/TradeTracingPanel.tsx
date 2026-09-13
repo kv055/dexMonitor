@@ -623,6 +623,12 @@ export function TradeTracingPanel({
         cex_withdrawal_fee_btc: resolvedRoute.cex_withdrawal_fee_btc,
         swap_safety_headroom_btc: resolvedRoute.swap_safety_headroom_btc,
         selected_offer: {
+          venue_node_pubkey: offer.venue_node_pubkey,
+          venue_node_name: offer.venue_node_name,
+          source_event_id: offer.source_event_id,
+          source_event_created_at: offer.source_event_created_at,
+          protocol_version: offer.protocol_version,
+          fiat_currency: offer.pricing?.fiat_currency,
           offer_id: offer.offer_id,
           exchange: offer.exchange,
           direction: offer.direction,

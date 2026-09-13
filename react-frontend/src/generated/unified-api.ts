@@ -170,6 +170,19 @@ export interface components {
     schemas: {
         /** @description Enriched live DEX offer returned by the unified routing book. */
         LiveOffer: {
+            /** @description Nostr author of the Mostro order, scoped to its coordinator. */
+            venue_node_pubkey?: string;
+            venue_node_name?: string;
+            /** @description Signed quote identifier revalidated before taking an offer. */
+            source_event_id?: string;
+            /** Format: date-time */
+            source_event_created_at?: string;
+            /**
+             * @description Absent when unknown; execution reads signed node capabilities.
+             * @enum {integer}
+             */
+            protocol_version?: 1 | 2;
+        } & {
             [key: string]: unknown;
         };
         LifecyclePoint: {
