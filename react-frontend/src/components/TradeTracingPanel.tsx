@@ -3,7 +3,7 @@ import type { Offer, CexSpotBuyResult, CexHedgeOpenResult, CexTradeflowResult, H
 import { ExchangeTag } from './ExchangeTag';
 import { stripTrailingZeros } from '../utils/numberFormat';
 import { premiumClass } from '../utils/formatters';
-import { cexTradeflow, cexPreTradeCheck, fetchMMTransaction } from '../api/execution';
+import { acceptBisqExecution, cexTradeflow, cexPreTradeCheck, fetchMMTransaction, createExecutionQuote, quoteBisqExecution, type BisqAcceptance, type ExecutionQuote } from '../api/execution';
 import { useFilters } from '../hooks/useFilters';
 import { useHedgeStream } from '../hooks/useHedgeStream';
 import { useWithdrawalTrack } from '../hooks/useWithdrawalTrack';
@@ -46,6 +46,8 @@ interface WalletState {
   result?: CexTradeflowResult['withdrawal'];
   transactionId?: number;
   poolRefill?: CexTradeflowResult['pool_refill'];
+  accepted?: boolean;
+  txStatus?: string;
   error?: string;
 }
 
@@ -354,6 +356,7 @@ export function TradeTracingPanel({
   const setSizeMode = onSizeModeChange ?? setUncontrolledSizeMode;
   const resolvedRoute = offer.metadata?.resolved_route;
   const isHedgeless = (resolvedRoute?.trade_mode ?? tradeMode) === 'hedgeless_double_collateral';
+  const isBisq = offer.exchange?.toLowerCase() === 'bisq';
 
   const { breakdown: bd, abortCost, effectiveMode } = useMemo(
     () => resolveTradeBreakdown(offer, sizeMode, tradeMode, manualSelection),
@@ -363,6 +366,10 @@ export function TradeTracingPanel({
   const refPrice = getRefPrice(offer);
   const fiatCurrency = offer.pricing?.fiat_currency ?? 'EUR';
   const isAsk = offer.direction === 'ask';
+  const isRobosats = offer.exchange.toLowerCase() === 'robosats';
+  const directionLabel = isRobosats
+    ? (isAsk ? 'Buy BTC on RoboSats' : 'Sell BTC on RoboSats')
+    : (isAsk ? 'Sell on DEX' : 'Buy on DEX');
   const isLightningRoute = resolvedRoute?.settlement === 'onchain_swap';
   const routeCex = bd?.route_cex ?? '';
   // This immutable snapshot is the Unified API's execution decision. Display
@@ -397,6 +404,54 @@ export function TradeTracingPanel({
   const [walletSubmit, setWalletSubmit] = useState<WalletState>({ phase: 'idle' });
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [checks, setChecks] = useState<ChecksState>({ phase: 'idle' });
+  const [quote, setQuote] = useState<ExecutionQuote | null>(null);
+  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteLoading, setQuoteLoading] = useState(false);
+  const quoteSeq = useRef(0);
+  const checksSeq = useRef(0);
+  const [checkedQuoteID, setCheckedQuoteID] = useState<string | null>(null);
+  const [quoteNow, setQuoteNow] = useState(Date.now());
+  const [admitted, setAdmitted] = useState<{ id: number; status: string; reason?: string } | null>(null);
+  const submitting = useRef(false);
+  const [bisqQuote, setBisqQuote] = useState<{ phase: 'idle' | 'loading' | 'done' | 'error'; quote?: Awaited<ReturnType<typeof quoteBisqExecution>>; inputIdentity?: string; error?: string }>({ phase: 'idle' });
+  const recoveryKey = `bisq-acceptance:${offer.offer_id ?? ''}`;
+  const [savedBisq, setSavedBisq] = useState<{ storageKey: string; request: BisqAcceptance } | null>(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(recoveryKey) ?? 'null');
+      return typeof stored?.quote_id === 'string' && typeof stored?.idempotency_key === 'string' ? { storageKey: recoveryKey, request: stored } : null;
+    } catch { return null; }
+  });
+  const pendingBisq = savedBisq?.storageKey === recoveryKey ? savedBisq.request : null;
+  useEffect(() => {
+    try {
+      const stored = JSON.parse(window.localStorage.getItem(recoveryKey) ?? 'null');
+      setSavedBisq(typeof stored?.quote_id === 'string' && typeof stored?.idempotency_key === 'string' ? { storageKey: recoveryKey, request: stored } : null);
+    } catch { setSavedBisq(null); }
+  }, [recoveryKey]);
+  const submittingBisq = useRef(false);
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setQuoteNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  useEffect(() => {
+    if (!admitted?.id) return;
+    let cancelled = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const poll = async () => {
+      try {
+        const tx = await fetchMMTransaction(admitted.id);
+        if (cancelled) return;
+        const progress = tx.robosats as { phase?: string; chat_sent?: boolean; last_error?: string; chat_error?: string } | undefined;
+        setAdmitted({ id: admitted.id, status: `${tx.status}${progress?.phase ? ` · ${progress.phase}` : ''}${progress?.chat_sent ? ' · chat sent' : ''}`, reason: String(tx.status_reason ?? progress?.last_error ?? progress?.chat_error ?? '') });
+        if (tx.transaction_complete === true) return;
+      } catch { /* Retry reads; never resubmit the trade on a polling failure. */ }
+      if (!cancelled) timer = setTimeout(poll, 5000);
+    };
+    void poll();
+    return () => { cancelled = true; if (timer) clearTimeout(timer); };
+  }, [admitted?.id]);
   const [expectedLndAddress, setExpectedLndAddress] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>('preview');
   const routeIdentity = JSON.stringify(resolvedRoute ?? null);
@@ -431,28 +486,29 @@ export function TradeTracingPanel({
     ?? checks.report?.lnd_withdraw_address
     ?? null;
 
-  // The execution response only proves that the replacement withdrawal was
-  // submitted. Pool restoration is a separate backend lifecycle, so poll the
-  // persisted transaction until it reaches either terminal state. A transient
-  // read error is safe to retry because this endpoint has no side effects.
+  // Accepted Bisq trades and hedgeless pool restoration continue after HTTP 202.
+  // Poll the persisted transaction; a transient read error is safe to retry.
   useEffect(() => {
     const transactionId = walletSubmit.transactionId;
-    if (!isHedgeless || !transactionId || walletSubmit.phase !== 'done') return;
+    if (!transactionId || walletSubmit.phase !== 'done') return;
     let cancelled = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
     const poll = async () => {
       try {
         const tx = await fetchMMTransaction(transactionId);
-        if (cancelled) return;
+        if (cancelled || !tx) return;
         setWalletSubmit(previous => ({
           ...previous,
+          txStatus: tx.status,
           poolRefill: previous.poolRefill
             ? { ...previous.poolRefill, target_btc: tx.btc_pool_target_btc ?? previous.poolRefill.target_btc, status: tx.btc_pool_refill_status ?? previous.poolRefill.status }
             : undefined,
         }));
-        if (tx.btc_pool_refill_status === 'restored' || tx.btc_pool_refill_status === 'needs_review') return;
+        const review = /NeedsReview$/.test(tx.status);
+        const poolDone = tx.btc_pool_refill_status === 'restored' || tx.btc_pool_refill_status === 'needs_review';
+        if (review || (isHedgeless ? poolDone : tx.status === 'DexPositionTaken')) return;
       } catch {
-        // The live withdrawal card still reports progress; retry transient transaction fetch failures.
+        // Retry transient transaction fetch failures; the endpoint has no side effects.
       }
       if (!cancelled) timer = setTimeout(poll, 5000);
     };
@@ -472,6 +528,7 @@ export function TradeTracingPanel({
   }, [draft, unit, canUseFiat, refPrice]);
 
   const clampedBtc = clamp(amountBtc, btcMin, btcMax);
+  const bisqInputIdentity = JSON.stringify([offer.offer_id, clampedBtc, routeIdentity, resolvedPaymentMethod]);
   const outOfBounds = amountBtc > 0 && clampedBtc !== amountBtc;
   const estFiat = canUseFiat ? clampedBtc * refPrice! : null;
 
@@ -521,11 +578,65 @@ export function TradeTracingPanel({
     && resolvedRoute.required_capital > 0
     && (isHedgeless || !!resolvedRoute.hedge_venue)
     && hasResolvedExecutionRoute
+    && (!isBisq || !pendingBisq)
     && submit.phase !== 'submitting';
   const checksPassed = checks.phase === 'done'
     && !!checks.report?.ok
     && (!isHedgeless || !!checks.report.checks.some(c => c.name === 'liquidity_pool' && c.passed))
-    && (!isLightningRoute || !!checks.report.checks.some(c => c.name === 'lightning_liquidity' && c.passed));
+    && (!isLightningRoute || !!checks.report.checks.some(c => (c.name === 'lightning_liquidity' || c.name === 'lsp_channel') && c.passed))
+    && (!isBisq || (bisqQuote.phase === 'done' && bisqQuote.inputIdentity === bisqInputIdentity && !!bisqQuote.quote && Date.parse(bisqQuote.quote.expires_at) > Date.now()));
+  const quoteFresh = !!quote && Date.parse(quote.expires_at) > quoteNow && quote.executable && !!quote.resolved_route;
+  const canConfirm = isRobosats
+    ? checksPassed && checkedQuoteID === quote?.quote_id && quoteFresh && !quoteError && !admitted
+    : checksPassed;
+  const confirmBtc = quote?.btc_amount ?? clampedBtc;
+  const confirmFiat = quote?.fiat_amount ?? estFiat;
+
+  const quoteInputKey = `${offer.id}|${offer.offer_id ?? ''}|${offer.venue_coordinator_id ?? ''}|${offer.exchange}|${unit}|${draft}|${resolvedPaymentMethod}`;
+
+  useEffect(() => {
+    setQuote(null);
+    setQuoteError(null);
+    setChecks({ phase: 'idle' });
+    setCheckedQuoteID(null);
+    ++checksSeq.current;
+  }, [quoteInputKey]);
+
+  useEffect(() => {
+    if (!isRobosats) {
+      setQuoteLoading(false);
+      return;
+    }
+    const seq = ++quoteSeq.current;
+    const parsed = parseFloat(draft.replace(',', '.'));
+    if (!Number.isFinite(parsed) || parsed <= 0 || !hasResolvedExecutionRoute) {
+      setQuoteLoading(false);
+      return;
+    }
+    setQuoteLoading(true);
+    const timer = window.setTimeout(() => {
+      void createExecutionQuote({
+        offer_db_id: offer.id,
+        offer_id: offer.offer_id ?? undefined,
+        exchange: offer.exchange,
+        venue_coordinator_id: offer.venue_coordinator_id,
+        amount: draft.replace(',', '.'),
+        unit,
+        payment_method: resolvedPaymentMethod || undefined,
+      }).then(next => {
+        if (quoteSeq.current !== seq) return;
+        setQuote(next);
+        setQuoteError(next.executable ? null : (next.blocked_reason || 'Quote is not executable'));
+        setQuoteLoading(false);
+      }).catch(err => {
+        if (quoteSeq.current !== seq) return;
+        setQuote(null);
+        setQuoteError(err instanceof Error ? err.message : String(err));
+        setQuoteLoading(false);
+      });
+    }, 300);
+    return () => { window.clearTimeout(timer); ++quoteSeq.current; };
+  }, [quoteInputKey, hasResolvedExecutionRoute, isRobosats, offer.id, offer.offer_id, offer.venue_coordinator_id, offer.exchange, unit, draft, resolvedPaymentMethod]);
 
   // Opening the confirm dialog immediately kicks off the (read-only) pre-trade checks
   // so their results are shown in the same card before the operator confirms.
@@ -535,6 +646,7 @@ export function TradeTracingPanel({
   }
 
   function closeConfirm() {
+    ++checksSeq.current;
     setConfirmOpen(false);
     setChecks({ phase: 'idle' });
   }
@@ -549,31 +661,40 @@ export function TradeTracingPanel({
   }, [confirmOpen]);
 
   async function runPreTradeChecks() {
-    if (!resolvedRoute?.settlement) {
+    const seq = ++checksSeq.current;
+    const checkedID = quote?.quote_id ?? null;
+    setCheckedQuoteID(null);
+    const route = quote?.resolved_route ?? resolvedRoute;
+    if (!route?.settlement) {
       setChecks({ phase: 'error', error: routeUnavailableMessage });
       return;
     }
     setChecks({ phase: 'running' });
     try {
       const report = await cexPreTradeCheck({
+        quote_id: quote?.quote_id,
         payment_method: resolvedPaymentMethod || undefined,
         payment_methods: offer.payment_methods ?? undefined,
         dex: offer.exchange,
-        resolved_route: resolvedRoute,
+        resolved_route: route,
       });
+      if (checksSeq.current !== seq) return;
+      setCheckedQuoteID(checkedID);
       setChecks({ phase: 'done', report });
       if (report.lnd_withdraw_address) {
         setExpectedLndAddress(report.lnd_withdraw_address);
       }
     } catch (err) {
+      if (checksSeq.current !== seq) return;
       setChecks({ phase: 'error', error: err instanceof Error ? err.message : String(err) });
     }
   }
 
-  // Re-run when confirm opens or the effective execution route / capital inputs change.
+  // Re-run when confirm opens or the effective execution quote / route changes.
   useEffect(() => {
-    if (!confirmOpen || !hasResolvedExecutionRoute) return;
+    if (!confirmOpen || !hasResolvedExecutionRoute || !quoteFresh) return;
     void runPreTradeChecks();
+    return () => { ++checksSeq.current; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     confirmOpen,
@@ -583,10 +704,85 @@ export function TradeTracingPanel({
     offer.exchange,
     hasResolvedExecutionRoute,
     routeIdentity,
+    quote?.quote_id,
+    quoteFresh,
   ]);
 
+  const quotePaymentMethod = checks.phase === 'done' && checks.report?.ok
+    ? resolvedPaymentMethod || checks.report.resolved_payment_method || '' : '';
+  const quotePayload = confirmOpen && isBisq && resolvedRoute && quotePaymentMethod ? JSON.stringify({
+    offer_id: offer.offer_id ?? '', btc_amount: clampedBtc,
+    trade_mode: resolvedRoute.trade_mode, payment_method: quotePaymentMethod,
+    fiat_currency: resolvedRoute.fiat_currency, provider: resolvedRoute.provider,
+    resolved_route: resolvedRoute,
+    selected_offer: { offer_id: offer.offer_id, exchange: offer.exchange, metadata: offer.metadata },
+  }) : '';
+  useEffect(() => {
+    if (!quotePayload) {
+      setBisqQuote({ phase: 'idle' });
+      return;
+    }
+    let cancelled = false;
+    setBisqQuote({ phase: 'loading' });
+    const timer = setTimeout(() => { void quoteBisqExecution(JSON.parse(quotePayload)).then(quote => {
+      if (!cancelled) setBisqQuote({ phase: 'done', quote, inputIdentity: bisqInputIdentity });
+    }).catch(err => {
+      if (!cancelled) setBisqQuote({ phase: 'error', error: err instanceof Error ? err.message : String(err) });
+    }); }, 350);
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, [quotePayload, bisqInputIdentity]);
+
+  useEffect(() => {
+    if (bisqQuote.phase !== 'done' || !bisqQuote.quote) return;
+    const delay = Date.parse(bisqQuote.quote.expires_at) - Date.now();
+    const timer = setTimeout(() => setBisqQuote({ phase: 'error', error: 'Quote expired. Close and reopen confirmation for a fresh quote.' }), Math.min(Math.max(0, delay), 2_147_483_647));
+    return () => clearTimeout(timer);
+  }, [bisqQuote]);
+
+  async function submitBisqAcceptance(pending: BisqAcceptance) {
+    if (submittingBisq.current) return;
+    submittingBisq.current = true;
+    setConfirmOpen(false);
+    setSubmit({ phase: 'submitting' });
+    try {
+      // Persist before the request. If storage is unavailable, do not start a
+      // financial workflow whose lost response could not survive a page reload.
+      window.localStorage.setItem(recoveryKey, JSON.stringify(pending));
+      setSavedBisq({ storageKey: recoveryKey, request: pending });
+      const result = await acceptBisqExecution(pending);
+      if (!result.accepted || !result.transaction_id) throw new Error('Invalid acceptance response; retry the saved request.');
+      setSubmit({ phase: 'done' });
+      setHedgeSubmit({ phase: 'done' });
+      setWalletSubmit({ phase: 'done', transactionId: result.transaction_id, accepted: true, txStatus: result.stage });
+      setActiveTab('wallet');
+      // Keep the saved key for reload recovery. A retry returns the same trade.
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setSubmit({ phase: 'error', error: message });
+      setWalletSubmit({ phase: 'error', error: message });
+      // Only an explicit expiry response proves this request was never accepted.
+      if (message === 'bisq quote has expired' || message === 'Bisq execution expired') {
+        window.localStorage.removeItem(recoveryKey);
+        setSavedBisq(null);
+      }
+    } finally { submittingBisq.current = false; }
+  }
+
   async function runTrade() {
-    if (!resolvedRoute?.settlement || (!isHedgeless && !resolvedRoute.hedge_venue)) return;
+    if (isBisq) {
+      if (!resolvedRoute?.settlement || (!isHedgeless && !resolvedRoute.hedge_venue)) return;
+      if (!checksPassed || !bisqQuote.quote?.quote_id || pendingBisq) return;
+      await submitBisqAcceptance({ quote_id: bisqQuote.quote.quote_id, idempotency_key: crypto.randomUUID() });
+      return;
+    }
+    const route = isRobosats ? quote?.resolved_route : resolvedRoute;
+    if (isRobosats) {
+      if (!canConfirm || !route || Date.parse(quote!.expires_at) <= Date.now() || submitting.current) return;
+    } else if (!route?.settlement || (!isHedgeless && !route.hedge_venue)) {
+      return;
+    }
+    if (!route.settlement || (!isHedgeless && !route.hedge_venue)) return;
+    submitting.current = true;
 
     setConfirmOpen(false);
     setChecks({ phase: 'idle' });
@@ -597,34 +793,36 @@ export function TradeTracingPanel({
 
     // Pay with the method the pre-trade checks validated: the explicit choice
     // when there is one, else the backend's priority pick echoed in the report.
-    const tradePaymentMethod = resolvedPaymentMethod || (checks.phase === 'done' ? checks.report?.resolved_payment_method ?? '' : '');
+    const tradePaymentMethod = (isRobosats ? quote?.payment_method : undefined) || resolvedPaymentMethod || (checks.phase === 'done' ? checks.report?.resolved_payment_method ?? '' : '');
 
     try {
       const result = await cexTradeflow({
-        provider: resolvedRoute.provider,
-        market_side: resolvedRoute.market_side,
-        btc_amount: resolvedRoute.btc_amount,
-        fiat_currency: resolvedRoute.fiat_currency,
-        required_capital: resolvedRoute.required_capital,
-        required_btc_liquidity: resolvedRoute.required_btc_liquidity,
-        security_deposit_btc: resolvedRoute.security_deposit_btc,
-        hedge_venue: resolvedRoute.hedge_venue,
-        hedge_side: resolvedRoute.hedge_side as 'long' | 'short' | undefined,
-        hedge_notional_btc: resolvedRoute.hedge_notional_btc,
-        leverage: resolvedRoute.leverage,
+        quote_id: isRobosats ? quote?.quote_id : undefined,
+        provider: route.provider,
+        market_side: route.market_side,
+        btc_amount: route.btc_amount,
+        fiat_currency: route.fiat_currency,
+        required_capital: route.required_capital,
+        required_btc_liquidity: route.required_btc_liquidity,
+        security_deposit_btc: route.security_deposit_btc,
+        hedge_venue: route.hedge_venue,
+        hedge_side: route.hedge_side as 'long' | 'short' | undefined,
+        hedge_notional_btc: route.hedge_notional_btc,
+        leverage: route.leverage,
         offer_id: offer.offer_id ?? undefined,
         dex: offer.exchange,
-        fiat_amount: resolvedRoute.fiat_amount,
+        fiat_amount: route.fiat_amount,
         payment_method: tradePaymentMethod || undefined,
         payment_methods: tradePaymentMethod ? undefined : offer.payment_methods ?? undefined,
-        trade_mode: resolvedRoute.trade_mode,
-        resolved_route: resolvedRoute,
-        routing_fee_allowance_sat: resolvedRoute.routing_fee_allowance_sat,
-        cex_withdrawal_fee_btc: resolvedRoute.cex_withdrawal_fee_btc,
-        swap_safety_headroom_btc: resolvedRoute.swap_safety_headroom_btc,
+        trade_mode: route.trade_mode,
+        resolved_route: route,
+        routing_fee_allowance_sat: route.routing_fee_allowance_sat,
+        cex_withdrawal_fee_btc: route.cex_withdrawal_fee_btc,
+        swap_safety_headroom_btc: route.swap_safety_headroom_btc,
         selected_offer: {
           venue_node_pubkey: offer.venue_node_pubkey,
           venue_node_name: offer.venue_node_name,
+          venue_coordinator_id: (isRobosats ? quote?.venue_coordinator_id : undefined) ?? offer.venue_coordinator_id,
           source_event_id: offer.source_event_id,
           source_event_created_at: offer.source_event_created_at,
           protocol_version: offer.protocol_version,
@@ -635,9 +833,31 @@ export function TradeTracingPanel({
           price: offer.price,
           btc_min: offer.btc_min,
           btc_max: offer.btc_max,
+          quote_id: isRobosats ? quote?.quote_id : undefined,
+          max_bond_sat: isRobosats ? quote?.max_bond_sat : undefined,
+          max_escrow_sat: isRobosats ? quote?.max_escrow_sat : undefined,
           metadata: offer.metadata,
         },
       });
+      if ('status_url' in result) {
+        setAdmitted({ id: result.transaction_id, status: 'Admitted — awaiting execution' });
+        setSubmit({ phase: 'idle' });
+        setHedgeSubmit({ phase: 'idle' });
+        setWalletSubmit({ phase: 'idle' });
+        return;
+      }
+      if ('accepted' in result && result.accepted) {
+        setSubmit({ phase: 'done' });
+        setHedgeSubmit({ phase: 'done' });
+        setWalletSubmit({
+          phase: 'done',
+          transactionId: result.transaction_id,
+          accepted: true,
+          txStatus: result.stage || 'accepted',
+        });
+        setActiveTab('wallet');
+        return;
+      }
       setSubmit({ phase: 'done', result: result.spot_buy });
       setHedgeSubmit({ phase: 'done', result: result.hedge, funding: result.dex_funding });
       setWalletSubmit({
@@ -652,11 +872,26 @@ export function TradeTracingPanel({
       setSubmit({ phase: 'error', error: message });
       setHedgeSubmit({ phase: 'error', error: message });
       setWalletSubmit({ phase: 'error', error: message });
+    } finally {
+      submitting.current = false;
     }
   }
 
   return (
     <div className="flex flex-col h-full min-h-0">
+      {admitted && <div role="status" className="p-2 mb-2 text-xs border border-border rounded">
+        Transaction #{admitted.id}: {admitted.status}
+        {admitted.reason && <p>{admitted.reason}</p>}
+        <p>Admission is not a fill or funding confirmation. Do not submit a second trade while this job is active.</p>
+      </div>}
+      {isBisq && submit.phase === 'error' && !pendingBisq && <p role="alert" className="text-xs text-red">{submit.error}</p>}
+      {isBisq && pendingBisq && !walletSubmit.transactionId && (
+        <div role="status" className="rounded-md border border-border p-2 text-xs">
+          A Bisq acceptance request is saved. Recover its result before starting another trade.
+          <button type="button" disabled={submit.phase === 'submitting'} onClick={() => void submitBisqAcceptance(pendingBisq)} className="ml-2 underline">Recover saved request</button>
+          {submit.phase === 'error' && <p>{submit.error}</p>}
+        </div>
+      )}
       <div className="flex items-center justify-between mb-2 shrink-0">
         <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">Trade Tracing</h3>
         <span className={`text-[0.6rem] font-semibold px-1.5 py-0.5 rounded ${isAsk ? 'bg-orange-900/30 text-orange-400' : 'bg-blue-900/30 text-blue-400'}`}>
@@ -700,7 +935,7 @@ export function TradeTracingPanel({
             <div className="flex flex-col gap-2">
               {/* Facts grid */}
               <div className="grid grid-cols-3 gap-x-3 gap-y-1.5">
-                <HeaderFact label="Direction">{isAsk ? 'Sell on DEX' : 'Buy on DEX'}</HeaderFact>
+                <HeaderFact label="Direction">{directionLabel}</HeaderFact>
                 <HeaderFact label="DEX"><ExchangeTag exchange={offer.exchange} /></HeaderFact>
                 <HeaderFact label={manualSelection.spot === 'auto' ? 'Best CEX' : 'Spot CEX'}>{cexLabel}</HeaderFact>
                 <HeaderFact label="Payment">{offer.payment_methods?.join(', ') ?? '—'}</HeaderFact>
@@ -871,13 +1106,28 @@ export function TradeTracingPanel({
               )}
               {walletSubmit.phase === 'submitting' && (
                 <div className="flex flex-col gap-1.5 text-text">
-                  <span className="text-accent">Initiating CEX withdrawal to LND wallet…</span>
+                  <span className="text-accent">{isBisq ? 'Accepting the confirmed Bisq quote…' : 'Initiating CEX withdrawal to LND wallet…'}</span>
                   {receivingAddress && (
                     <div className="flex justify-between gap-2"><span className="text-muted">Receiving address</span><span className="mono-nums truncate max-w-40" title={receivingAddress}>{receivingAddress}</span></div>
                   )}
                 </div>
               )}
               {walletSubmit.phase === 'error' && <span className="text-red wrap-break-word">{walletSubmit.error}</span>}
+              {walletSubmit.phase === 'done' && walletSubmit.accepted && !walletSubmit.result && (
+                <div className="flex flex-col gap-1.5 text-text">
+                  <div className="flex justify-between gap-2">
+                    <span className="text-muted">Status</span>
+                    <span className="text-green font-medium">{cexStatusLabel(walletSubmit.txStatus ?? 'accepted')}</span>
+                  </div>
+                  {walletSubmit.transactionId != null && walletSubmit.transactionId > 0 && (
+                    <div className="flex justify-between gap-2">
+                      <span className="text-muted">Transaction</span>
+                      <span className="mono-nums">#{walletSubmit.transactionId}</span>
+                    </div>
+                  )}
+                  <span className="text-muted text-[0.68rem]">Closing this page does not cancel the accepted trade.</span>
+                </div>
+              )}
               {walletSubmit.phase === 'done' && walletSubmit.result && (
                 <div className="flex flex-col gap-1.5 text-text">
                   <div className="flex justify-between gap-2">
@@ -937,11 +1187,19 @@ export function TradeTracingPanel({
             aria-labelledby="trade-confirm-title"
           >
             <div className="shrink-0 flex flex-col gap-1.5">
-              <h3 id="trade-confirm-title" className="text-[0.85rem] font-semibold text-text tracking-tight">{isHedgeless ? 'Confirm hedgeless trade' : 'Confirm market buy'}</h3>
+              <h3 id="trade-confirm-title" className="text-[0.85rem] font-semibold text-text tracking-tight">
+                {isRobosats && !isAsk
+                  ? (isHedgeless ? 'Confirm RoboSats sale' : 'Confirm BTC sale on RoboSats')
+                  : (isHedgeless ? 'Confirm hedgeless trade' : 'Confirm market buy')}
+              </h3>
               <p className="text-[0.72rem] text-muted leading-relaxed">
-                {isHedgeless
-                  ? <>This takes the DEX offer and spends BTC from LND immediately. A replacement market <span className="text-green font-medium">BUY</span> and withdrawal will follow automatically.</>
-                  : <>This places a real market <span className="text-green font-medium">BUY</span> order. Funds will be spent immediately.</>}
+                {isRobosats && !isAsk
+                  ? (isHedgeless
+                    ? <>This sells BTC on RoboSats from LND immediately. A replacement market <span className="text-green font-medium">BUY</span> and withdrawal will follow automatically.</>
+                    : <>This sells BTC on RoboSats after a real market <span className="text-green font-medium">BUY</span> and withdrawal. Funds will be spent immediately.</>)
+                  : (isHedgeless
+                    ? <>This takes the DEX offer and spends BTC from LND immediately. A replacement market <span className="text-green font-medium">BUY</span> and withdrawal will follow automatically.</>
+                    : <>This places a real market <span className="text-green font-medium">BUY</span> order. Funds will be spent immediately.</>)}
               </p>
             </div>
 
@@ -952,11 +1210,11 @@ export function TradeTracingPanel({
               </div>
               <div className="flex flex-col gap-0.5 min-w-0">
                 <span className="text-[0.58rem] uppercase tracking-wide text-muted">Amount</span>
-                <span className="text-text mono-nums truncate">{fmtBtc(clampedBtc)} BTC</span>
+                <span className="text-text mono-nums truncate">{fmtBtc(isBisq && bisqQuote.quote ? bisqQuote.quote.trade_amount_sats / 100_000_000 : confirmBtc)} BTC</span>
               </div>
               <div className="flex flex-col gap-0.5 min-w-0">
-                <span className="text-[0.58rem] uppercase tracking-wide text-muted">Est. cost</span>
-                <span className="text-text mono-nums truncate">{estFiat != null ? fmtFiat(estFiat, fiatCurrency) : '—'}</span>
+                <span className="text-[0.58rem] uppercase tracking-wide text-muted">{isBisq ? 'Bisq fiat' : 'Est. cost'}</span>
+                <span className="text-text mono-nums truncate">{isBisq && bisqQuote.quote ? fmtFiat(bisqQuote.quote.fiat_amount, fiatCurrency) : confirmFiat != null ? fmtFiat(confirmFiat, fiatCurrency) : '—'}</span>
               </div>
               <div className="flex flex-col gap-0.5 min-w-0">
                 <span className="text-[0.58rem] uppercase tracking-wide text-muted">Payment</span>
@@ -964,10 +1222,38 @@ export function TradeTracingPanel({
               </div>
             </div>
 
+            {isBisq && bisqQuote.phase === 'loading' && (
+              <p className="shrink-0 text-[0.68rem] text-muted">Requesting the live Bisq funding quote…</p>
+            )}
+            {isBisq && bisqQuote.phase === 'error' && (
+              <div className="shrink-0 rounded-lg border border-red/35 bg-red/10 px-3 py-2 text-[0.7rem] text-red leading-snug">{bisqQuote.error}</div>
+            )}
+            {isBisq && bisqQuote.quote && (
+              <div className="shrink-0 rounded-lg border border-border bg-bg px-3 py-2 grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5 text-[0.7rem]">
+                <div className="flex flex-col gap-0.5"><span className="text-[0.58rem] uppercase tracking-wide text-muted">Deposit</span><span className="mono-nums">{fmtBtc(bisqQuote.quote.security_deposit_sats / 100_000_000)} BTC</span></div>
+                <div className="flex flex-col gap-0.5"><span className="text-[0.58rem] uppercase tracking-wide text-muted">Bisq fees</span><span className="mono-nums">{fmtBtc((bisqQuote.quote.taker_fee_sats + bisqQuote.quote.mining_fee_sats) / 100_000_000)} BTC</span></div>
+                <div className="flex flex-col gap-0.5"><span className="text-[0.58rem] uppercase tracking-wide text-muted">Wallet debit</span><span className="mono-nums">{fmtBtc(bisqQuote.quote.total_to_pay_sats / 100_000_000)} BTC</span></div>
+                <div className="flex flex-col gap-0.5 min-w-0"><span className="text-[0.58rem] uppercase tracking-wide text-muted">Funding address</span><span className="mono-nums truncate" title={bisqQuote.quote.funding_address}>{bisqQuote.quote.funding_address}</span></div>
+                <div>Maximum CEX spend: {fmtFiat(bisqQuote.quote.limits.max_cex_fiat_spend ?? 0, fiatCurrency)}</div>
+                <div>Maximum wallet debit: {fmtBtc((bisqQuote.quote.limits.max_wallet_debit_sats ?? 0) / 100_000_000)} BTC</div>
+                <div>Minimum fiat proceeds: {fmtFiat(bisqQuote.quote.limits.min_fiat_proceeds ?? 0, fiatCurrency)}</div>
+                <div>Quote expires: {new Date(bisqQuote.quote.expires_at).toLocaleTimeString()}</div>
+              </div>
+            )}
+
             {!resolvedPaymentMethod && (offer.payment_methods?.length ?? 0) > 1 && (
               <p className="shrink-0 text-[0.68rem] text-muted">
                 This offer accepts multiple payment methods — the highest-priority linked method from the Payments tab is used automatically.
               </p>
+            )}
+            {quote && (
+              <p className="shrink-0 text-[0.68rem] text-muted">
+                Spending caps: bond {quote.max_bond_sat.toLocaleString('de-DE')} sat · escrow {quote.max_escrow_sat.toLocaleString('de-DE')} sat.
+                {quoteLoading ? ' Refreshing quote…' : quoteFresh ? '' : ' Quote expired — update the amount to requote.'}
+              </p>
+            )}
+            {quoteError && (
+              <p className="shrink-0 text-[0.68rem] text-red">{quoteError}</p>
             )}
 
             <div className="min-h-0 flex-1 overflow-hidden flex flex-col">
@@ -991,11 +1277,11 @@ export function TradeTracingPanel({
               <button
                 type="button"
                 onClick={runTrade}
-                disabled={!checksPassed}
-                title={checksPassed ? undefined : 'All pre-trade checks must pass first'}
-                className={`text-[0.72rem] px-3 py-1.5 rounded-md border font-semibold transition-colors ${checksPassed ? 'border-green/50 bg-green/15 text-green hover:bg-green/25' : 'border-border bg-surface text-muted cursor-not-allowed'}`}
+                disabled={!canConfirm}
+                title={canConfirm ? undefined : (isRobosats && !quoteFresh ? 'A current execution quote is required' : isBisq && bisqQuote.phase !== 'done' ? 'Waiting for the live Bisq quote' : 'All pre-trade checks must pass first')}
+                className={`text-[0.72rem] px-3 py-1.5 rounded-md border font-semibold transition-colors ${canConfirm ? 'border-green/50 bg-green/15 text-green hover:bg-green/25' : 'border-border bg-surface text-muted cursor-not-allowed'}`}
               >
-                {checks.phase === 'running' ? 'Checking…' : isHedgeless ? 'Take and refill' : 'Confirm buy'}
+                {checks.phase === 'running' || (isRobosats && quoteLoading) ? 'Checking…' : isBisq && bisqQuote.phase === 'loading' ? 'Quoting…' : (isRobosats && !isAsk) ? (isHedgeless ? 'Sell and refill' : 'Sell BTC on RoboSats') : (isHedgeless ? 'Take and refill' : 'Confirm buy')}
               </button>
             </div>
           </div>

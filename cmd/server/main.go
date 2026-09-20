@@ -2521,6 +2521,22 @@ func handleMmControllerBisqPaymentAccountByID(w http.ResponseWriter, r *http.Req
 	forwardMMControllerJSON(w, r, "/api/bisq/payment-accounts/"+url.PathEscape(id))
 }
 
+func handleMmControllerBisqExecutionQuote(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/bisq/execution/quote")
+}
+
+func handleMmControllerBisqExecutionAccept(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/bisq/execution/accept")
+}
+
+func handleMmControllerBisqPaymentAccountMappings(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/bisq/payment-account-mappings")
+}
+
+func handleMmControllerBisqFundingDestination(w http.ResponseWriter, r *http.Request) {
+	forwardMMControllerJSON(w, r, "/api/bisq/funding-destination")
+}
+
 // handleMmControllerBisqWalletBalances proxies the bisq1 wallet balance summary.
 func handleMmControllerBisqWalletBalances(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/bisq/wallet/balances")

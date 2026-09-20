@@ -319,6 +319,7 @@ export type OfferDirection = 'bid' | 'ask';
 export interface Offer {
   venue_node_pubkey?: string;
   venue_node_name?: string;
+  venue_coordinator_id?: string;
   source_event_id?: string;
   source_event_created_at?: string;
   protocol_version?: number;
