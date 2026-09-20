@@ -5,11 +5,9 @@ import (
 	"compress/gzip"
 	"context"
 	"database/sql"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"hash/fnv"
 	"io"
 	"log/slog"
 	"math"
@@ -123,11 +121,31 @@ func sweepGeneralStatsCache(now time.Time) {
 	}
 }
 
+// lifecycleAggEntryTTL bounds staleness of cached per-offer lifecycle
+// aggregates. Closed-offer lifecycle data is effectively immutable (snapshots
+// are written for live offers), so entries are cached per offer rather than
+// per ID set: a max-position-size or other param change reuses every cached
+// offer and only queries offers never seen before. The capped/min
+// profitability math itself is pure Go, so recalculations need no SQL at all
+// once the aggregates are cached.
+const lifecycleAggEntryTTL = analyticsResultCacheTTL
+
+// maxLifecycleAggCacheEntries bounds the per-offer cache: closed offers
+// accumulate indefinitely, but only recent ones sit inside the analytics
+// window. Insertion-order eviction drops the oldest-closed first, which are
+// also the first to age out of the window.
+const maxLifecycleAggCacheEntries = 50000
+
+type lifecycleAggCacheEntry struct {
+	agg       pastLifecycleAggregate
+	fetchedAt time.Time
+}
+
 var lifecycleAggCache struct {
 	sync.Mutex
-	key    string
-	result map[int64]pastLifecycleAggregate
-	expiry time.Time
+	entries map[int64]lifecycleAggCacheEntry
+	// fifo holds entry IDs in first-insert order for eviction.
+	fifo []int64
 }
 
 // supportedCEXes lists all exchanges available for selection in the UI.
@@ -451,30 +469,50 @@ func fetchOfferLifecycle(ids []int64) map[int64][]LifecyclePoint {
 	return result
 }
 
-func copyLifecycleAgg(src map[int64]pastLifecycleAggregate) map[int64]pastLifecycleAggregate {
-	dst := make(map[int64]pastLifecycleAggregate, len(src))
-	for id, agg := range src {
-		dst[id] = agg
+// lifecycleAggCacheLookup splits ids into cached aggregates and IDs that must
+// be loaded from the database.
+func lifecycleAggCacheLookup(ids []int64, now time.Time) (cached map[int64]pastLifecycleAggregate, missing []int64) {
+	cached = make(map[int64]pastLifecycleAggregate, len(ids))
+	lifecycleAggCache.Lock()
+	defer lifecycleAggCache.Unlock()
+	for _, id := range ids {
+		if e, ok := lifecycleAggCache.entries[id]; ok && now.Sub(e.fetchedAt) < lifecycleAggEntryTTL {
+			cached[id] = e.agg
+		} else {
+			missing = append(missing, id)
+		}
 	}
-	return dst
+	return cached, missing
 }
 
-func lifecycleAggCacheKey(ids []int64) string {
-	if len(ids) == 0 {
-		return ""
+// lifecycleAggCacheStore caches freshly loaded aggregates. Only offers with
+// actual lifecycle rows are stored: IDs without rows stay uncached so a later
+// fetch picks up snapshots that arrive after an offer closes, via cheap
+// index seeks rather than serving a stale zero aggregate.
+func lifecycleAggCacheStore(fetched map[int64]pastLifecycleAggregate, now time.Time) {
+	if len(fetched) == 0 {
+		return
 	}
-	sorted := append([]int64(nil), ids...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	// Hash the full id set: a len:min:max key collides for different sets that
-	// share those three values, which would serve one query's aggregates for
-	// another's within the cache TTL.
-	h := fnv.New64a()
-	var buf [8]byte
-	for _, id := range sorted {
-		binary.LittleEndian.PutUint64(buf[:], uint64(id))
-		_, _ = h.Write(buf[:])
+	lifecycleAggCache.Lock()
+	defer lifecycleAggCache.Unlock()
+	if lifecycleAggCache.entries == nil {
+		lifecycleAggCache.entries = make(map[int64]lifecycleAggCacheEntry, len(fetched))
 	}
-	return fmt.Sprintf("%d:%x", len(sorted), h.Sum64())
+	for id, agg := range fetched {
+		if _, ok := lifecycleAggCache.entries[id]; !ok {
+			lifecycleAggCache.fifo = append(lifecycleAggCache.fifo, id)
+		}
+		lifecycleAggCache.entries[id] = lifecycleAggCacheEntry{agg: agg, fetchedAt: now}
+	}
+	if len(lifecycleAggCache.entries) > maxLifecycleAggCacheEntries {
+		drop := len(lifecycleAggCache.entries) - maxLifecycleAggCacheEntries
+		keep := lifecycleAggCache.fifo
+		for i := 0; i < drop && len(keep) > 0; i++ {
+			delete(lifecycleAggCache.entries, keep[0])
+			keep = keep[1:]
+		}
+		lifecycleAggCache.fifo = keep
+	}
 }
 
 func fetchPastOfferLifecycleAggregates(ids []int64) map[int64]pastLifecycleAggregate {
@@ -482,38 +520,37 @@ func fetchPastOfferLifecycleAggregates(ids []int64) map[int64]pastLifecycleAggre
 	if len(ids) == 0 {
 		return result
 	}
-	key := lifecycleAggCacheKey(ids)
 	now := time.Now()
-	lifecycleAggCache.Lock()
-	if lifecycleAggCache.result != nil && lifecycleAggCache.key == key && now.Before(lifecycleAggCache.expiry) {
-		cached := lifecycleAggCache.result
-		lifecycleAggCache.Unlock()
-		return copyLifecycleAgg(cached)
+	cached, missing := lifecycleAggCacheLookup(ids, now)
+	for id, agg := range cached {
+		result[id] = agg
 	}
-	lifecycleAggCache.Unlock()
+	if len(missing) == 0 {
+		return result
+	}
 
 	if lifecycleRepo.DB != db && db != nil {
 		lifecycleRepo = lifecycle.NewRepository(db)
 	}
 	// The order_lifecycle aggregate can take many seconds on tens of millions
 	// of rows; without a deadline a mis-planned query pins one of the pool's
-	// few connections indefinitely.
+	// few connections indefinitely. Only never-cached offers are queried here,
+	// so param-only changes (e.g. max position size) reuse every cached offer
+	// and the capped/min profitability derivation that follows needs no SQL.
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	aggregates, err := lifecycleRepo.LoadPastAggregates(ctx, ids)
+	aggregates, err := lifecycleRepo.LoadPastAggregates(ctx, missing)
 	if err != nil {
 		return result
 	}
+	fetched := make(map[int64]pastLifecycleAggregate, len(aggregates))
 	for id, agg := range aggregates {
-		result[id] = pastLifecycleAggregate(agg)
+		converted := pastLifecycleAggregate(agg)
+		fetched[id] = converted
+		result[id] = converted
 	}
-
-	lifecycleAggCache.Lock()
-	lifecycleAggCache.key = key
-	lifecycleAggCache.result = copyLifecycleAgg(result)
-	lifecycleAggCache.expiry = now.Add(dashboardCacheTTL)
-	lifecycleAggCache.Unlock()
-	return copyLifecycleAgg(result)
+	lifecycleAggCacheStore(fetched, now)
+	return result
 }
 
 func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {

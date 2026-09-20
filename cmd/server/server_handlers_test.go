@@ -1906,6 +1906,60 @@ func TestPaymentMethodChatTemplatesCRUD(t *testing.T) {
 	}
 }
 
+// TestFetchPastOfferLifecycleAggregatesCachesPerOffer guards the past-offers
+// profitability path against re-aggregating order_lifecycle on every param
+// change (e.g. max position size): offers fetched once must be served from the
+// per-offer cache even after their lifecycle rows disappear, while unseen
+// offers are still queried live.
+func TestFetchPastOfferLifecycleAggregatesCachesPerOffer(t *testing.T) {
+	withTempOrdersDB(t)
+	oldLifecycleRepo := lifecycleRepo
+	t.Cleanup(func() { lifecycleRepo = oldLifecycleRepo })
+
+	// LoadPastAggregates references hedge columns missing from the shared
+	// sqlite schema.
+	for _, col := range []string{"hedge_notional_fiat REAL", "leverage_used REAL", "recommended_collateral_fiat REAL"} {
+		if _, err := db.Exec("ALTER TABLE order_lifecycle ADD COLUMN " + col); err != nil {
+			t.Fatalf("add column %s: %v", col, err)
+		}
+	}
+	if _, err := db.Exec(`
+		INSERT INTO order_lifecycle
+			(offer_db_id, price, ref_price, premium_pct, trade_cost_pct, trade_cost_btc, net_premium_pct, net_premium_btc, btc_amount)
+		VALUES
+			(1, 105, 100, 5, 1, 0.001, 4, 0.004, 0.1),
+			(2, 95, 100, -5, 1, 0.002, -6, -0.012, 0.2)
+	`); err != nil {
+		t.Fatalf("insert lifecycle rows: %v", err)
+	}
+
+	first := fetchPastOfferLifecycleAggregates([]int64{1, 2})
+	if len(first) != 2 {
+		t.Fatalf("first fetch returned %d aggregates, want 2", len(first))
+	}
+	assertFloat(t, first[1].AvgRefPrice, 100)
+	assertFloat(t, first[1].AvgProfitBTC, 0.004)
+	if first[1].Count != 1 {
+		t.Fatalf("first fetch offer 1 count = %d, want 1", first[1].Count)
+	}
+
+	// Remove every lifecycle row: cached offers must still resolve, proving
+	// the second fetch served them without touching the database.
+	if _, err := db.Exec(`DELETE FROM order_lifecycle`); err != nil {
+		t.Fatalf("delete lifecycle rows: %v", err)
+	}
+	second := fetchPastOfferLifecycleAggregates([]int64{1, 2, 3})
+	if len(second) != 2 {
+		t.Fatalf("second fetch returned %d aggregates, want 2 (cached offers 1 and 2)", len(second))
+	}
+	assertFloat(t, second[1].AvgRefPrice, first[1].AvgRefPrice)
+	assertFloat(t, second[1].AvgProfitBTC, first[1].AvgProfitBTC)
+	assertFloat(t, second[2].AvgRefPrice, first[2].AvgRefPrice)
+	if _, ok := second[3]; ok {
+		t.Fatal("second fetch returned offer 3, which has no lifecycle rows and was never cached")
+	}
+}
+
 func resetAnalyticsCaches() {
 	analyticsResultCache.Lock()
 	analyticsResultCache.entries = nil
@@ -1922,9 +1976,8 @@ func resetAnalyticsCaches() {
 	generalStatsCache.Unlock()
 
 	lifecycleAggCache.Lock()
-	lifecycleAggCache.key = ""
-	lifecycleAggCache.result = nil
-	lifecycleAggCache.expiry = time.Time{}
+	lifecycleAggCache.entries = nil
+	lifecycleAggCache.fifo = nil
 	lifecycleAggCache.Unlock()
 }
 
