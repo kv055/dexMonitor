@@ -110,9 +110,26 @@ type analyticsBuildContext struct {
 	closedOffers      []map[string]any
 	closedIDs         []int64
 	lifecycleAggCache map[int64]pastLifecycleAggregate
+	aggByID           map[int64]pastLifecycleAggregate
 	analysisByID      map[int64]pastOfferAnalysis
 	derivedByID       map[int64]analyticsOfferDerived
 	timings           *analyticsBuildTimings
+}
+
+// resolvedAggs returns per-offer lifecycle aggregates, preferring the
+// analyzer-persisted offer-row columns and querying order_lifecycle only for
+// offers without persisted values — so steady-state builds need no lifecycle
+// SQL at all.
+func (bc *analyticsBuildContext) resolvedAggs() map[int64]pastLifecycleAggregate {
+	if bc.aggByID != nil {
+		return bc.aggByID
+	}
+	start := time.Now()
+	bc.aggByID = resolveAggsForOffers(bc.closedOffers)
+	if bc.timings != nil {
+		bc.timings.lifecycleAggMs = float64(time.Since(start).Microseconds()) / 1000
+	}
+	return bc.aggByID
 }
 
 // lifecycleAgg lazily fetches the whole-life lifecycle averages for
@@ -168,7 +185,7 @@ func (bc *analyticsBuildContext) offerAnalyses() map[int64]pastOfferAnalysis {
 	if bc.analysisByID != nil {
 		return bc.analysisByID
 	}
-	agg := bc.lifecycleAgg()
+	agg := bc.resolvedAggs()
 	result := make(map[int64]pastOfferAnalysis, len(bc.closedOffers))
 	for _, o := range bc.closedOffers {
 		id := int64(offerFloat(o, "id"))
@@ -405,7 +422,7 @@ func (bc *analyticsBuildContext) buildTakerStatsOnly() takerAnalyticsResult {
 
 func (bc *analyticsBuildContext) buildTakerOrdersOnly() []pastProfitableOrderAPI {
 	analyses := bc.offerAnalyses()
-	agg := bc.lifecycleAgg()
+	agg := bc.resolvedAggs()
 	orders := make([]pastProfitableOrderAPI, 0, len(bc.closedOffers))
 
 	for _, o := range bc.closedOffers {
@@ -450,7 +467,7 @@ func (bc *analyticsBuildContext) applyOverviewSections(resp *dashboardAnalyticsR
 	resp.GeneralStatsOverview = bc.generalCtx.overview()
 	resp.PastPremiums, resp.PremiumLifetimes = buildPastPremiumAndLifetimeStats(
 		bc.generalCtx.offers,
-		bc.lifecycleAgg(),
+		bc.resolvedAggs(),
 		bc.generalCtx.now,
 		bc.generalCtx.excludedPaymentMethods,
 		p.MaxFiatLimitEUR,
@@ -801,11 +818,10 @@ func loadPastTakerBuildContext(maxFiatLimitEUR float64) (*analyticsBuildContext,
 	for _, o := range closedOffers {
 		closedIDs = append(closedIDs, int64(offerFloat(o, "id")))
 	}
-	lifecycleAgg := fetchPastOfferLifecycleAggregates(closedIDs)
 	return &analyticsBuildContext{
 		closedOffers:      closedOffers,
 		closedIDs:         closedIDs,
-		lifecycleAggCache: lifecycleAgg,
+		lifecycleAggCache: resolveAggsForOffers(closedOffers),
 	}, nil
 }
 

@@ -85,6 +85,8 @@ SELECT
 	avg_net_premium_pct, avg_estimated_profit_btc, avg_estimated_profit_fiat, avg_btc_amount,
 	avg_min_trade_cost_pct, avg_min_trade_cost_btc, avg_min_net_premium_pct,
 	avg_min_estimated_profit_btc, avg_min_estimated_profit_fiat, avg_min_btc_amount, min_volume_analyzed,
+	avg_lifecycle_price, avg_hedge_notional_fiat, avg_leverage_used,
+	avg_recommended_collateral_fiat, lifecycle_observation_count,
 	price_type, best_route_cex, routing_profile, routing_fee_detail, security_deposit_pct,
 	counterparty_stake_btc, counterparty_stake_pct
 FROM offers
@@ -418,7 +420,7 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	lifecycleAgg := fetchPastOfferLifecycleAggregates(ids)
+	lifecycleAgg := resolveAggsForOffers(filteredOffers)
 	result := make([]pastOfferAPI, 0, len(filteredOffers))
 	for _, o := range filteredOffers {
 		id := int64(offerFloat(o, "id"))
@@ -758,7 +760,7 @@ func handleGeneralStatsPastPremiums(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	lifecycleAgg := fetchPastOfferLifecycleAggregates(ctx.closedOfferIDs)
+	lifecycleAgg := resolveAggsForOffers(ctx.offers)
 	writeJSON(w, ctx.pastPremiums(r, lifecycleAgg))
 }
 
@@ -768,7 +770,7 @@ func handleGeneralStatsLifetimes(w http.ResponseWriter, r *http.Request) {
 		writeError(w, err)
 		return
 	}
-	lifecycleAgg := fetchPastOfferLifecycleAggregates(ctx.closedOfferIDs)
+	lifecycleAgg := resolveAggsForOffers(ctx.offers)
 	writeJSON(w, ctx.premiumLifetimes(r, lifecycleAgg))
 }
 
@@ -811,15 +813,62 @@ func buildPremiumLifetimeStats(offers []map[string]any, lifecycleAgg map[int64]p
 
 func persistedLifecycleAggregateForOffer(offer map[string]any) pastLifecycleAggregate {
 	return pastLifecycleAggregate{
-		AvgRefPrice:       tradecost.Round4(offerFloat(offer, "avg_ref_price")),
-		AvgPremiumPercent: tradecost.Round4(offerFloat(offer, "avg_premium_pct")),
-		AvgTradeCostPct:   tradecost.Round4(offerFloat(offer, "avg_trade_cost_pct")),
-		AvgTradeCostBTC:   tradecost.Round8(offerFloat(offer, "avg_trade_cost_btc")),
-		AvgNetPercent:     tradecost.Round4(offerFloat(offer, "avg_net_premium_pct")),
-		AvgProfitBTC:      tradecost.Round8(offerFloat(offer, "avg_estimated_profit_btc")),
-		AvgProfitFiat:     tradecost.Round4(offerFloat(offer, "avg_estimated_profit_fiat")),
-		AvgBTCAmount:      tradecost.Round8(offerFloat(offer, "avg_btc_amount")),
+		Count:                    int(offerFloat(offer, "lifecycle_observation_count")),
+		AvgOfferPrice:            tradecost.Round4(offerFloat(offer, "avg_lifecycle_price")),
+		AvgRefPrice:              tradecost.Round4(offerFloat(offer, "avg_ref_price")),
+		AvgPremiumPercent:        tradecost.Round4(offerFloat(offer, "avg_premium_pct")),
+		AvgTradeCostPct:          tradecost.Round4(offerFloat(offer, "avg_trade_cost_pct")),
+		AvgTradeCostBTC:          tradecost.Round8(offerFloat(offer, "avg_trade_cost_btc")),
+		AvgNetPercent:            tradecost.Round4(offerFloat(offer, "avg_net_premium_pct")),
+		AvgProfitBTC:             tradecost.Round8(offerFloat(offer, "avg_estimated_profit_btc")),
+		AvgProfitFiat:            tradecost.Round4(offerFloat(offer, "avg_estimated_profit_fiat")),
+		AvgBTCAmount:             tradecost.Round8(offerFloat(offer, "avg_btc_amount")),
+		AvgHedgeNotionalEUR:      tradecost.Round2(offerFloat(offer, "avg_hedge_notional_fiat")),
+		AvgLeverageUsed:          tradecost.Round4(offerFloat(offer, "avg_leverage_used")),
+		AvgRecommendedCollateral: tradecost.Round2(offerFloat(offer, "avg_recommended_collateral_fiat")),
 	}
+}
+
+// persistedLifecycleAggregate resolves the lifecycle aggregate for one closed
+// offer from the analyzer-persisted offer-row columns. It reports false when
+// the offer was analyzed before those columns existed (or before the
+// backfill), in which case callers fall back to the live order_lifecycle
+// query: analyzed offers always had lifecycle rows, so a zero observation
+// count means missing persisted values, never a genuinely empty lifecycle.
+func persistedLifecycleAggregate(offer map[string]any) (pastLifecycleAggregate, bool) {
+	agg := persistedLifecycleAggregateForOffer(offer)
+	if agg.Count <= 0 {
+		return pastLifecycleAggregate{}, false
+	}
+	return agg, true
+}
+
+// resolveAggsForOffers returns per-offer lifecycle aggregates, preferring the
+// analyzer-persisted offer-row columns and querying order_lifecycle only for
+// offers without persisted values. Live offers are skipped: aggregates are a
+// closed-offer concept and live offers were never queried before either.
+func resolveAggsForOffers(offers []map[string]any) map[int64]pastLifecycleAggregate {
+	result := make(map[int64]pastLifecycleAggregate, len(offers))
+	var missing []int64
+	for _, o := range offers {
+		if offerBool(o, "is_live") {
+			continue
+		}
+		id := int64(offerFloat(o, "id"))
+		if agg, ok := persistedLifecycleAggregate(o); ok {
+			result[id] = agg
+		} else {
+			missing = append(missing, id)
+		}
+	}
+	if len(missing) == 0 {
+		return result
+	}
+	live := fetchPastOfferLifecycleAggregates(missing)
+	for _, id := range missing {
+		result[id] = live[id]
+	}
+	return result
 }
 
 func buildPastPremiumAndLifetimeStatsFromPersistedOffers(

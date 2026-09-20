@@ -76,6 +76,11 @@ CREATE TABLE offers (
     avg_min_estimated_profit_fiat REAL,
     avg_min_btc_amount REAL,
     min_volume_analyzed BOOLEAN NOT NULL DEFAULT 0,
+    avg_lifecycle_price REAL,
+    avg_hedge_notional_fiat REAL,
+    avg_leverage_used REAL,
+    avg_recommended_collateral_fiat REAL,
+    lifecycle_observation_count INTEGER,
     price_type TEXT,
     best_route_cex TEXT,
     routing_profile TEXT,
@@ -1903,6 +1908,82 @@ func TestPaymentMethodChatTemplatesCRUD(t *testing.T) {
 	handleTradingPaymentMethodChatTemplateByExchange(delRec, delReq)
 	if delRec.Code != http.StatusOK {
 		t.Fatalf("DELETE chat_template status = %d", delRec.Code)
+	}
+}
+
+// TestPersistedLifecycleAggregateMapsObservationColumns guards the
+// analyzer-persisted aggregate mapping (including rounding) used by the
+// past-offers profitability path.
+func TestPersistedLifecycleAggregateMapsObservationColumns(t *testing.T) {
+	o := map[string]any{
+		"lifecycle_observation_count":     int64(7),
+		"avg_lifecycle_price":             101.23456,
+		"avg_hedge_notional_fiat":         1500.125,
+		"avg_leverage_used":               2.99996,
+		"avg_recommended_collateral_fiat": 500.125,
+		"avg_ref_price":                   100.0,
+		"avg_premium_pct":                 5.0,
+		"avg_trade_cost_pct":              1.0,
+		"avg_trade_cost_btc":              0.001,
+		"avg_net_premium_pct":             4.0,
+		"avg_estimated_profit_btc":        0.004,
+		"avg_estimated_profit_fiat":       0.4,
+		"avg_btc_amount":                  0.1,
+	}
+	agg, ok := persistedLifecycleAggregate(o)
+	if !ok {
+		t.Fatal("persisted aggregate not recognized with observation count set")
+	}
+	if agg.Count != 7 {
+		t.Fatalf("Count = %d, want 7", agg.Count)
+	}
+	assertFloat(t, agg.AvgOfferPrice, 101.2346)
+	assertFloat(t, agg.AvgHedgeNotionalEUR, 1500.13)
+	assertFloat(t, agg.AvgLeverageUsed, 3.0)
+	assertFloat(t, agg.AvgRecommendedCollateral, 500.13)
+
+	if _, ok := persistedLifecycleAggregate(map[string]any{}); ok {
+		t.Fatal("empty offer map reported a persisted aggregate, want fallback")
+	}
+	if _, ok := persistedLifecycleAggregate(map[string]any{"lifecycle_observation_count": int64(0)}); ok {
+		t.Fatal("zero observation count reported a persisted aggregate, want fallback")
+	}
+}
+
+// TestTakerAnalyticsUsesPersistedAggregatesWithoutLifecycleQuery guards the
+// steady-state past-offers path: with analyzer-persisted aggregates on the
+// offer rows, the capped stats/orders build must succeed with no
+// order_lifecycle table at all.
+func TestTakerAnalyticsUsesPersistedAggregatesWithoutLifecycleQuery(t *testing.T) {
+	withTempOrdersDB(t)
+	if _, err := db.Exec(`
+		UPDATE offers SET
+			avg_lifecycle_price = 100,
+			avg_hedge_notional_fiat = 1000,
+			avg_leverage_used = 2,
+			avg_recommended_collateral_fiat = 500,
+			lifecycle_observation_count = 10
+	`); err != nil {
+		t.Fatalf("seed persisted aggregates: %v", err)
+	}
+	if _, err := db.Exec(`DROP TABLE order_lifecycle`); err != nil {
+		t.Fatalf("drop lifecycle table: %v", err)
+	}
+
+	p := dashboardAnalyticsParams{
+		Hours: 48, Cex: "kraken", Fiat: "EUR",
+		Sections:        []string{analyticsSectionTakerStats, analyticsSectionTakerOrders},
+		MaxFiatLimitEUR: 1000,
+	}
+	resp, _, err := buildDashboardAnalyticsResponse(p)
+	if err != nil {
+		t.Fatalf("build analytics without lifecycle table: %v", err)
+	}
+	if len(resp.PastProfitableOrders) == 0 {
+		t.Fatal("expected profitable orders from persisted aggregates alone")
+	}
+	if resp.PastOrderStatsAll.Timeframes == nil && resp.PastOrderStats.Timeframes == nil {
+		t.Fatal("expected taker stats from persisted aggregates alone")
 	}
 }
 
