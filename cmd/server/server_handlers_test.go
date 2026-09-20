@@ -1960,6 +1960,35 @@ func TestFetchPastOfferLifecycleAggregatesCachesPerOffer(t *testing.T) {
 	}
 }
 
+// TestGeneralStatsContextCacheIgnoresMaxFiatLimit guards slider-driven
+// recalculations (e.g. max position size) against re-running the offers
+// query: a max-fiat-only param change must reuse the cached offers even
+// after the underlying table is emptied.
+func TestGeneralStatsContextCacheIgnoresMaxFiatLimit(t *testing.T) {
+	withTempOrdersDB(t)
+
+	p := dashboardAnalyticsParams{Hours: 48, Cex: "kraken", Fiat: "EUR", MaxFiatLimitEUR: 1000}
+	ctx1, err := loadGeneralStatsContextForParams(p)
+	if err != nil {
+		t.Fatalf("load context: %v", err)
+	}
+	if len(ctx1.offers) == 0 {
+		t.Fatal("expected seeded offers in cached context")
+	}
+
+	if _, err := db.Exec(`DELETE FROM offers`); err != nil {
+		t.Fatalf("delete offers: %v", err)
+	}
+	p.MaxFiatLimitEUR = 5000
+	ctx2, err := loadGeneralStatsContextForParams(p)
+	if err != nil {
+		t.Fatalf("load context after maxFiat change: %v", err)
+	}
+	if len(ctx2.offers) != len(ctx1.offers) {
+		t.Fatalf("maxFiat-only change re-queried offers: got %d, want cached %d", len(ctx2.offers), len(ctx1.offers))
+	}
+}
+
 func resetAnalyticsCaches() {
 	analyticsResultCache.Lock()
 	analyticsResultCache.entries = nil

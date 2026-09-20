@@ -191,8 +191,27 @@ func (p dashboardAnalyticsParams) cacheKey() string {
 	return strings.Join(parts, "|")
 }
 
+// contextCacheKey keys the loaded offers list by the inputs that affect it:
+// window, fiat, custom-range bounds, and excluded payment methods (stored on
+// the context because overview()/premium stats apply them downstream).
+// Cost-affecting params (max fiat limit, fee tier, confirmations, CEX
+// exclusions) are applied downstream of the cached context, so changing
+// them — e.g. dragging max position size — reuses the cached offers instead
+// of re-running the offers query.
+func (p dashboardAnalyticsParams) contextCacheKey() string {
+	parts := []string{
+		strconv.Itoa(p.Hours),
+		p.Fiat,
+		strings.Join(p.ExcludePaymentMethods, ","),
+		p.PastStartDate,
+		p.PastEndDate,
+		p.Timezone,
+	}
+	return strings.Join(parts, "|")
+}
+
 func loadGeneralStatsContextForParams(p dashboardAnalyticsParams) (generalStatsContext, error) {
-	key := p.cacheKey()
+	key := p.contextCacheKey()
 	now := time.Now()
 	generalStatsCache.Lock()
 	if entry, ok := generalStatsCache.entries[key]; ok && now.Before(entry.expiry) {
