@@ -399,10 +399,10 @@ func TestStatisticsCachesResultByParams(t *testing.T) {
 		t.Fatalf("cached request took %v, want <= 50ms", cacheElapsed)
 	}
 
-	// A different cex param misses the cache (separate key) but may produce
-	// an identical body on this fixture, which only seeds bisq offers. What
-	// matters is that the cache now holds both param keys independently, so
-	// each subsequent identical request is served without rebuilding.
+	// Cex affects neither the cached context nor the statistics response, so
+	// a different cex param shares the cache entry (hit) instead of
+	// rebuilding. It may produce an identical body on this fixture, which
+	// only seeds bisq offers.
 	otherBody := `{"hours":48,"cex":"bitstamp","fiat":"EUR"}`
 	otherReq := httptest.NewRequest(http.MethodPost, "/api/statistics", strings.NewReader(otherBody))
 	otherReq.Header.Set("Content-Type", "application/json")
@@ -411,15 +411,15 @@ func TestStatisticsCachesResultByParams(t *testing.T) {
 	if otherRec.Code != http.StatusOK {
 		t.Fatalf("other status = %d, want %d; body=%s", otherRec.Code, http.StatusOK, otherRec.Body.String())
 	}
-	if got := otherRec.Header().Get(statisticsCacheHeader); got != string(statisticsCacheStatusMiss) {
-		t.Fatalf("other %s = %q, want %q", statisticsCacheHeader, got, statisticsCacheStatusMiss)
+	if got := otherRec.Header().Get(statisticsCacheHeader); got != string(statisticsCacheStatusHit) {
+		t.Fatalf("other %s = %q, want %q", statisticsCacheHeader, got, statisticsCacheStatusHit)
 	}
 
 	statisticsResultCache.Lock()
 	entryCount := len(statisticsResultCache.entries)
 	statisticsResultCache.Unlock()
-	if entryCount != 2 {
-		t.Fatalf("expected 2 cached param entries, got %d", entryCount)
+	if entryCount != 1 {
+		t.Fatalf("expected 1 shared cached entry, got %d", entryCount)
 	}
 
 	// The original kraken entry must still be live and serve the cached body.
@@ -458,7 +458,7 @@ func TestStatisticsServesStaleWhileRefreshing(t *testing.T) {
 		t.Fatalf("build status = %d, want %d", buildRec.Code, http.StatusOK)
 	}
 
-	cacheKey := dashboardAnalyticsParams{Hours: 48, Cex: "kraken", Fiat: "EUR"}.cacheKey()
+	cacheKey := dashboardAnalyticsParams{Hours: 48, Cex: "kraken", Fiat: "EUR"}.contextCacheKey()
 	statisticsResultCache.Lock()
 	entry := statisticsResultCache.entries[cacheKey]
 	if entry == nil {
@@ -492,5 +492,34 @@ func TestStatisticsServesStaleWhileRefreshing(t *testing.T) {
 			t.Fatalf("expected stale refresh to complete and return %q within deadline", statisticsCacheStatusHit)
 		}
 		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+// TestStatisticsCacheIgnoresMaxFiatLimit guards slider-driven recalculations:
+// a max-fiat-only param change must reuse the cached statistics context
+// instead of rebuilding it synchronously.
+func TestStatisticsCacheIgnoresMaxFiatLimit(t *testing.T) {
+	withTempOrdersDB(t)
+	resetStatisticsCache()
+
+	post := func(maxFiat string) *httptest.ResponseRecorder {
+		body := `{"hours":48,"cex":"kraken","fiat":"EUR","max_fiat_limit":` + maxFiat + `}`
+		req := httptest.NewRequest(http.MethodPost, "/api/statistics", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		handleStatistics(rec, req)
+		return rec
+	}
+
+	first := post("1000")
+	if first.Code != http.StatusOK {
+		t.Fatalf("build status = %d, want %d", first.Code, http.StatusOK)
+	}
+	second := post("5000")
+	if second.Code != http.StatusOK {
+		t.Fatalf("maxFiat-change status = %d, want %d", second.Code, http.StatusOK)
+	}
+	if got := second.Header().Get(statisticsCacheHeader); got != string(statisticsCacheStatusHit) {
+		t.Fatalf("maxFiat-only change %s = %q, want %q", statisticsCacheHeader, got, statisticsCacheStatusHit)
 	}
 }

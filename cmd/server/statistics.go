@@ -170,6 +170,11 @@ SELECT
 	avg_estimated_profit_btc,
 	avg_estimated_profit_fiat,
 	avg_btc_amount,
+	avg_lifecycle_price,
+	avg_hedge_notional_fiat,
+	avg_leverage_used,
+	avg_recommended_collateral_fiat,
+	lifecycle_observation_count,
 	best_route_cex,
 	routing_profile,
 	routing_fee_detail,
@@ -656,7 +661,11 @@ func handleStatistics(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cacheKey := p.cacheKey()
+	// The cached context depends only on window/fiat/range/payment exclusions
+	// (see contextCacheKey): cost params such as max position size are applied
+	// downstream per request, so slider recalculations reuse the cached offers
+	// instead of rebuilding the context synchronously.
+	cacheKey := p.contextCacheKey()
 	for {
 		now := time.Now()
 		statisticsResultCache.Lock()
