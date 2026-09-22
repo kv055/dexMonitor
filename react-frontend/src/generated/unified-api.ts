@@ -44,6 +44,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/execution-quotes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Create an authoritative execution quote for a custom trade size */
+        post: operations["postApiExecutionQuotes"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/live_offers": {
         parameters: {
             query?: never;
@@ -173,6 +190,8 @@ export interface components {
             /** @description Nostr author of the Mostro order, scoped to its coordinator. */
             venue_node_pubkey?: string;
             venue_node_name?: string;
+            /** @description Stable RoboSats federation coordinator alias bound to the native order id. */
+            venue_coordinator_id?: string;
             /** @description Signed quote identifier revalidated before taking an offer. */
             source_event_id?: string;
             /** Format: date-time */
@@ -243,6 +262,46 @@ export interface operations {
             cookie?: never;
         };
         requestBody?: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Successful response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Error response */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                    "text/plain": string;
+                };
+            };
+        };
+    };
+    postApiExecutionQuotes: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
             content: {
                 "application/json": {
                     [key: string]: unknown;

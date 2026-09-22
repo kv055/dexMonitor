@@ -3,6 +3,8 @@ import {
   fetchBisqWalletAddresses,
   fetchBisqWalletBalances,
   fetchBisqWalletTransactions,
+  fetchBisqFundingDestination,
+  setBisqFundingDestination,
   withdrawBisqWallet,
 } from '../../utils/api';
 import type {
@@ -59,6 +61,8 @@ function BisqWalletPanel() {
   const [data, setData] = useState<WalletData>({ balances: null, addresses: [], transactions: [] });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [designated, setDesignated] = useState<string | null>(null);
+  const [designating, setDesignating] = useState<string | null>(null);
 
   // Withdrawal form state: edit → review → done.
   const [step, setStep] = useState<'edit' | 'review' | 'done'>('edit');
@@ -74,10 +78,11 @@ function BisqWalletPanel() {
     setLoading(true);
     setError(null);
     const next: WalletData = { balances: null, addresses: [], transactions: [] };
-    const [balances, addresses, transactions] = await Promise.allSettled([
+    const [balances, addresses, transactions, destination] = await Promise.allSettled([
       fetchBisqWalletBalances(),
       fetchBisqWalletAddresses(),
       fetchBisqWalletTransactions(),
+      fetchBisqFundingDestination(),
     ] as const);
     let firstError: string | null = null;
     if (balances.status === 'fulfilled') {
@@ -94,6 +99,9 @@ function BisqWalletPanel() {
       next.transactions = transactions.value.transactions;
     } else if (!firstError) {
       firstError = transactions.reason instanceof Error ? transactions.reason.message : String(transactions.reason);
+    }
+    if (destination.status === 'fulfilled') {
+      setDesignated(destination.value.destination?.address ?? null);
     }
     setData(next);
     setError(firstError);
@@ -177,6 +185,24 @@ function BisqWalletPanel() {
           <div key={a.address} className="flex items-center justify-between gap-2 rounded-lg border border-border bg-bg px-2 py-1.5">
             <span className="min-w-0 truncate font-mono text-xs text-text">{a.address}</span>
             <span className="flex shrink-0 items-center gap-2">
+              {designated === a.address ? (
+                <span className="rounded-full border border-green/40 px-1.5 py-0 text-[0.6rem] text-green">designated</span>
+              ) : (
+                <button
+                  type="button"
+                  className={buttonCls}
+                  disabled={designating === a.address}
+                  onClick={() => {
+                    setDesignating(a.address);
+                    void setBisqFundingDestination(a.address)
+                      .then(() => setDesignated(a.address))
+                      .catch(err => setError(err instanceof Error ? err.message : String(err)))
+                      .finally(() => setDesignating(null));
+                  }}
+                >
+                  {designating === a.address ? 'Saving…' : 'Use for CEX funding'}
+                </button>
+              )}
               {!a.is_address_unused ? (
                 a.balance_sats > 0 ? (
                   <span className="font-mono text-[0.65rem] text-text">{formatSats(a.balance_sats)}</span>

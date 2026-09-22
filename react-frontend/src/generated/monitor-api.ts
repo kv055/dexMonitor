@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/execution-quotes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Obtain a size-bound execution quote */
+        post: operations["proxyExecutionQuote"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/auth/login": {
         parameters: {
             query?: never;
@@ -325,6 +342,94 @@ export interface paths {
          */
         get: operations["getApiMmControllerBisqPaymentMethodsIdForm"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mm-controller/bisq/execution/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accept a stored Bisq quote or recover an earlier acceptance
+         * @description Retries of the same quote and idempotency key return the existing transaction and current stage without starting another execution.
+         */
+        post: operations["proxyAcceptBisqExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mm-controller/bisq/execution/quote": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Quote a Bisq v1 take-offer without reserving the offer
+         * @description Quote a Bisq v1 take-offer without reserving the offer
+         */
+        post: operations["proxyQuoteBisqExecution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mm-controller/bisq/payment-account-mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List local-to-Bisq payment account mappings
+         * @description List local-to-Bisq payment account mappings
+         */
+        get: operations["proxyListBisqPaymentAccountMappings"];
+        /**
+         * Bind a local receiving account to a Bisq daemon payment account
+         * @description Bind a local receiving account to a Bisq daemon payment account
+         */
+        put: operations["proxyUpsertBisqPaymentAccountMapping"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/mm-controller/bisq/funding-destination": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get the designated Bisq funding address
+         * @description Get the designated Bisq funding address
+         */
+        get: operations["proxyGetBisqFundingDestination"];
+        /**
+         * Set the designated Bisq funding address
+         * @description Set the designated Bisq funding address
+         */
+        put: operations["proxySetBisqFundingDestination"];
         post?: never;
         delete?: never;
         options?: never;
@@ -1937,6 +2042,7 @@ export interface components {
         /** @enum {string} */
         TradeMode: "hedgefull_single_collateral" | "hedgeless_double_collateral";
         CexPreTradeCheckRequest: {
+            quote_id?: string;
             provider?: string;
             fiat_currency?: string;
             required_capital?: number;
@@ -2031,6 +2137,7 @@ export interface components {
             conversion_fee_btc: number;
         };
         CexTradeflowRequest: {
+            quote_id?: string;
             provider: string;
             /** @enum {string} */
             market_side: "bid" | "ask";
@@ -2058,6 +2165,11 @@ export interface components {
             routing_fee_allowance_sat?: number;
             cex_withdrawal_fee_btc?: number;
             swap_safety_headroom_btc?: number;
+            idempotency_key?: string;
+        };
+        CexTradeflowAccepted: {
+            transaction_id: number;
+            status_url: string;
         };
         CexTradeflowResult: {
             trade_mode: components["schemas"]["TradeMode"];
@@ -2067,6 +2179,93 @@ export interface components {
             dex_funding?: components["schemas"]["DEXFundingResult"];
             pool_refill?: components["schemas"]["PoolRefillResult"];
             transaction_id?: number;
+        };
+        BisqExecutionAcceptRequest: {
+            /** Format: uuid */
+            quote_id: string;
+            idempotency_key: string;
+        };
+        BisqExecutionQuoteRequest: {
+            offer_id: string;
+            btc_amount_sats?: number;
+            btc_amount?: number;
+            trade_mode: components["schemas"]["TradeMode"];
+            payment_method: string;
+            payment_methods?: string[];
+            fiat_currency?: string;
+            provider: string;
+            resolved_route: components["schemas"]["ResolvedRoute"];
+            selected_offer?: {
+                [key: string]: unknown;
+            };
+            max_cex_fiat_spend?: number;
+            max_wallet_debit_sats?: number;
+            min_fiat_proceeds?: number;
+        };
+        BisqSpendingLimits: {
+            max_cex_fiat_spend?: number;
+            max_wallet_debit_sats?: number;
+            min_fiat_proceeds?: number;
+        };
+        BisqExecutionQuote: {
+            quote_id: string;
+            /** Format: date-time */
+            expires_at: string;
+            trade_mode: components["schemas"]["TradeMode"];
+            payment_account_id: string;
+            funding_address: string;
+            trade_amount_sats: number;
+            security_deposit_sats: number;
+            taker_fee_sats: number;
+            mining_fee_sats: number;
+            total_to_pay_sats: number;
+            hedgeless_network_fee_sats?: number;
+            fiat_amount: number;
+            volume?: string;
+            limits: components["schemas"]["BisqSpendingLimits"];
+            is_btc_wallet_funded: boolean;
+            missing_sats: number;
+        };
+        BisqExecutionAccepted: {
+            transaction_id: number;
+            accepted: boolean;
+            stage: string;
+            trade_mode: string;
+        };
+        BisqPaymentAccountMappingRequest: {
+            payment_method_name: string;
+            currency: string;
+            bisq_payment_account_id: string;
+            local_account_id?: number;
+        };
+        BisqPaymentAccountMapping: {
+            id: number;
+            local_account_id: number;
+            payment_method_name: string;
+            currency: string;
+            bisq_payment_account_id: string;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        BisqPaymentAccountMappingList: {
+            mappings: components["schemas"]["BisqPaymentAccountMapping"][];
+        };
+        BisqFundingDestinationRequest: {
+            address: string;
+        };
+        BisqFundingDestination: {
+            id: number;
+            address: string;
+            is_active: boolean;
+            /** Format: date-time */
+            created_at?: string;
+            /** Format: date-time */
+            updated_at?: string;
+        };
+        BisqFundingDestinationEnvelope: {
+            destination: components["schemas"]["BisqFundingDestination"] | null;
         };
         FeeLine: {
             asset: string;
@@ -2250,6 +2449,41 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    proxyExecutionQuote: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Immutable execution quote */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+            /** @description Quote unavailable or rejected */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
     postApiAuthLogin: {
         parameters: {
             query?: never;
@@ -2902,6 +3136,154 @@ export interface operations {
             };
         };
     };
+    proxyAcceptBisqExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BisqExecutionAcceptRequest"];
+            };
+        };
+        responses: {
+            /** @description Durable acceptance or previously accepted execution */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BisqExecutionAccepted"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    proxyQuoteBisqExecution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BisqExecutionQuoteRequest"];
+            };
+        };
+        responses: {
+            /** @description Live Bisq funding quote */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BisqExecutionQuote"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            409: components["responses"]["Conflict"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    proxyListBisqPaymentAccountMappings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stored mappings */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BisqPaymentAccountMappingList"];
+                };
+            };
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    proxyUpsertBisqPaymentAccountMapping: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BisqPaymentAccountMappingRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved mapping */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BisqPaymentAccountMapping"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    proxyGetBisqFundingDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active destination */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BisqFundingDestinationEnvelope"];
+                };
+            };
+            503: components["responses"]["Unavailable"];
+        };
+    };
+    proxySetBisqFundingDestination: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BisqFundingDestinationRequest"];
+            };
+        };
+        responses: {
+            /** @description Saved destination */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["BisqFundingDestination"];
+                };
+            };
+            400: components["responses"]["BadRequest"];
+            503: components["responses"]["Unavailable"];
+        };
+    };
     getApiMmControllerBisqWalletBalances: {
         parameters: {
             query?: never;
@@ -3132,6 +3514,15 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["CexTradeflowResult"];
+                };
+            };
+            /** @description Durable execution accepted; no fill or funding implied */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CexTradeflowAccepted"] | components["schemas"]["BisqExecutionAccepted"];
                 };
             };
             400: components["responses"]["BadRequest"];

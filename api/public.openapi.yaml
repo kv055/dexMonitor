@@ -9,6 +9,31 @@ info:
 servers:
   - url: http://localhost:5002
 paths:
+  /api/execution-quotes:
+    post:
+      operationId: proxyExecutionQuote
+      summary: Obtain a size-bound execution quote
+      tags: [raw]
+      x-raw-reason: Forwards the Unified API execution quote unchanged.
+      security:
+        - dashboardSession: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Immutable execution quote
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+        default:
+          description: Quote unavailable or rejected
   /api/auth/login:
     post:
       operationId: postApiAuthLogin
@@ -552,6 +577,154 @@ paths:
       x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
       security:
         - dashboardSession: []
+  /api/mm-controller/bisq/execution/accept:
+    post:
+      operationId: proxyAcceptBisqExecution
+      summary: Accept a stored Bisq quote or recover an earlier acceptance
+      description: Retries of the same quote and idempotency key return the existing transaction and current stage without starting another execution.
+      tags:
+        - raw
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BisqExecutionAcceptRequest"
+      responses:
+        "202":
+          description: Durable acceptance or previously accepted execution
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BisqExecutionAccepted"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+      security:
+        - dashboardSession: []
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+  /api/mm-controller/bisq/execution/quote:
+    post:
+      operationId: proxyQuoteBisqExecution
+      summary: Quote a Bisq v1 take-offer without reserving the offer
+      tags:
+        - raw
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BisqExecutionQuoteRequest"
+      responses:
+        "200":
+          description: Live Bisq funding quote
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BisqExecutionQuote"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "409":
+          $ref: "#/components/responses/Conflict"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+      description: Quote a Bisq v1 take-offer without reserving the offer
+      security:
+        - dashboardSession: []
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+  /api/mm-controller/bisq/payment-account-mappings:
+    get:
+      operationId: proxyListBisqPaymentAccountMappings
+      summary: List local-to-Bisq payment account mappings
+      tags:
+        - raw
+      responses:
+        "200":
+          description: Stored mappings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BisqPaymentAccountMappingList"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+      description: List local-to-Bisq payment account mappings
+      security:
+        - dashboardSession: []
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+    put:
+      operationId: proxyUpsertBisqPaymentAccountMapping
+      summary: Bind a local receiving account to a Bisq daemon payment account
+      tags:
+        - raw
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BisqPaymentAccountMappingRequest"
+      responses:
+        "200":
+          description: Saved mapping
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BisqPaymentAccountMapping"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+      description: Bind a local receiving account to a Bisq daemon payment account
+      security:
+        - dashboardSession: []
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+  /api/mm-controller/bisq/funding-destination:
+    get:
+      operationId: proxyGetBisqFundingDestination
+      summary: Get the designated Bisq funding address
+      tags:
+        - raw
+      responses:
+        "200":
+          description: Active destination
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BisqFundingDestinationEnvelope"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+      description: Get the designated Bisq funding address
+      security:
+        - dashboardSession: []
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
+    put:
+      operationId: proxySetBisqFundingDestination
+      summary: Set the designated Bisq funding address
+      tags:
+        - raw
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BisqFundingDestinationRequest"
+      responses:
+        "200":
+          description: Saved destination
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BisqFundingDestination"
+        "400":
+          $ref: "#/components/responses/BadRequest"
+        "503":
+          $ref: "#/components/responses/Unavailable"
+      description: Set the designated Bisq funding address
+      security:
+        - dashboardSession: []
+      x-raw-reason: The dashboard deliberately preserves the upstream MM controller status, headers, and body.
   /api/mm-controller/bisq/wallet/balances:
     get:
       operationId: getApiMmControllerBisqWalletBalances
@@ -756,6 +929,14 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CexTradeflowResult"
+        "202":
+          description: Durable execution accepted; no fill or funding implied
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/CexTradeflowAccepted"
+                  - $ref: "#/components/schemas/BisqExecutionAccepted"
         "400":
           $ref: "#/components/responses/BadRequest"
         "409":
@@ -3491,6 +3672,8 @@ components:
       required:
         - resolved_route
       properties:
+        quote_id:
+          type: string
         provider:
           type: string
         fiat_currency:
@@ -3753,6 +3936,8 @@ components:
         - fiat_currency
         - required_capital
       properties:
+        quote_id:
+          type: string
         provider:
           type: string
         market_side:
@@ -3821,6 +4006,18 @@ components:
         swap_safety_headroom_btc:
           type: number
           minimum: 0
+        idempotency_key:
+          type: string
+    CexTradeflowAccepted:
+      type: object
+      additionalProperties: false
+      required: ["transaction_id", "status_url"]
+      properties:
+        transaction_id:
+          type: integer
+          minimum: 1
+        status_url:
+          type: string
     CexTradeflowResult:
       type: object
       additionalProperties: false
@@ -3842,6 +4039,239 @@ components:
         transaction_id:
           type: integer
           minimum: 1
+    BisqExecutionAcceptRequest:
+      type: object
+      additionalProperties: false
+      required: [quote_id, idempotency_key]
+      properties:
+        quote_id:
+          type: string
+          format: uuid
+        idempotency_key:
+          type: string
+          minLength: 1
+    BisqExecutionQuoteRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - offer_id
+        - trade_mode
+        - payment_method
+        - provider
+        - resolved_route
+      properties:
+        offer_id:
+          type: string
+        btc_amount_sats:
+          type: integer
+          minimum: 0
+        btc_amount:
+          type: number
+          minimum: 0
+        trade_mode:
+          $ref: "#/components/schemas/TradeMode"
+        payment_method:
+          type: string
+        payment_methods:
+          type: array
+          items:
+            type: string
+        fiat_currency:
+          type: string
+        provider:
+          type: string
+        resolved_route:
+          $ref: "#/components/schemas/ResolvedRoute"
+        selected_offer:
+          type: object
+          additionalProperties: true
+        max_cex_fiat_spend:
+          type: number
+          minimum: 0
+        max_wallet_debit_sats:
+          type: integer
+          minimum: 0
+        min_fiat_proceeds:
+          type: number
+          minimum: 0
+    BisqSpendingLimits:
+      type: object
+      additionalProperties: false
+      properties:
+        max_cex_fiat_spend:
+          type: number
+        max_wallet_debit_sats:
+          type: integer
+          minimum: 0
+        min_fiat_proceeds:
+          type: number
+    BisqExecutionQuote:
+      type: object
+      additionalProperties: false
+      required:
+        - quote_id
+        - expires_at
+        - trade_mode
+        - payment_account_id
+        - funding_address
+        - trade_amount_sats
+        - security_deposit_sats
+        - taker_fee_sats
+        - mining_fee_sats
+        - total_to_pay_sats
+        - fiat_amount
+        - limits
+        - is_btc_wallet_funded
+        - missing_sats
+      properties:
+        quote_id:
+          type: string
+        expires_at:
+          type: string
+          format: date-time
+        trade_mode:
+          $ref: "#/components/schemas/TradeMode"
+        payment_account_id:
+          type: string
+        funding_address:
+          type: string
+        trade_amount_sats:
+          type: integer
+          minimum: 0
+        security_deposit_sats:
+          type: integer
+          minimum: 0
+        taker_fee_sats:
+          type: integer
+          minimum: 0
+        mining_fee_sats:
+          type: integer
+          minimum: 0
+        total_to_pay_sats:
+          type: integer
+          minimum: 0
+        hedgeless_network_fee_sats:
+          type: integer
+        fiat_amount:
+          type: number
+        volume:
+          type: string
+        limits:
+          $ref: "#/components/schemas/BisqSpendingLimits"
+        is_btc_wallet_funded:
+          type: boolean
+        missing_sats:
+          type: integer
+          minimum: 0
+    BisqExecutionAccepted:
+      type: object
+      additionalProperties: false
+      required:
+        - transaction_id
+        - accepted
+        - stage
+        - trade_mode
+      properties:
+        transaction_id:
+          type: integer
+          minimum: 1
+        accepted:
+          type: boolean
+        stage:
+          type: string
+        trade_mode:
+          type: string
+    BisqPaymentAccountMappingRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - payment_method_name
+        - currency
+        - bisq_payment_account_id
+      properties:
+        payment_method_name:
+          type: string
+        currency:
+          type: string
+        bisq_payment_account_id:
+          type: string
+        local_account_id:
+          type: integer
+          minimum: 1
+    BisqPaymentAccountMapping:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - local_account_id
+        - payment_method_name
+        - currency
+        - bisq_payment_account_id
+      properties:
+        id:
+          type: integer
+        local_account_id:
+          type: integer
+        payment_method_name:
+          type: string
+        currency:
+          type: string
+        bisq_payment_account_id:
+          type: string
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    BisqPaymentAccountMappingList:
+      type: object
+      additionalProperties: false
+      required:
+        - mappings
+      properties:
+        mappings:
+          type: array
+          items:
+            $ref: "#/components/schemas/BisqPaymentAccountMapping"
+    BisqFundingDestinationRequest:
+      type: object
+      additionalProperties: false
+      required:
+        - address
+      properties:
+        address:
+          type: string
+    BisqFundingDestination:
+      type: object
+      additionalProperties: false
+      required:
+        - id
+        - address
+        - is_active
+      properties:
+        id:
+          type: integer
+        address:
+          type: string
+        is_active:
+          type: boolean
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+    BisqFundingDestinationEnvelope:
+      type: object
+      additionalProperties: false
+      required:
+        - destination
+      properties:
+        destination:
+          oneOf:
+            - $ref: "#/components/schemas/BisqFundingDestination"
+            - type: "null"
     FeeLine:
       type: object
       additionalProperties: false

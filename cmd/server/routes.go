@@ -15,6 +15,7 @@ func registerOpenAPIRoutes(mux *http.ServeMux, legacyMux *http.ServeMux) {
 }
 
 func registerRawBackendRoutes(mux *http.ServeMux) {
+	mux.HandleFunc("POST /api/execution-quotes", handleExecutionQuoteProxy)
 	mux.HandleFunc("GET /api/mm-controller/transactions", handleMmControllerTransactions)
 	mux.HandleFunc("GET /api/mm-controller/transactions/dex-pending-liquidity", handleMmControllerDexPendingLiquidity)
 	mux.HandleFunc("GET /api/mm-controller/transactions/{id}", handleMmControllerTransactionByID)
@@ -45,6 +46,12 @@ func registerRawBackendRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mm-controller/bisq/payment-methods/{id}/form", handleMmControllerBisqPaymentMethodForm)
 	mux.HandleFunc("POST /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
 	mux.HandleFunc("DELETE /api/mm-controller/bisq/payment-accounts/{id}", handleMmControllerBisqPaymentAccountByID)
+	mux.HandleFunc("POST /api/mm-controller/bisq/execution/quote", handleMmControllerBisqExecutionQuote)
+	mux.HandleFunc("POST /api/mm-controller/bisq/execution/accept", handleMmControllerBisqExecutionAccept)
+	mux.HandleFunc("GET /api/mm-controller/bisq/payment-account-mappings", handleMmControllerBisqPaymentAccountMappings)
+	mux.HandleFunc("PUT /api/mm-controller/bisq/payment-account-mappings", handleMmControllerBisqPaymentAccountMappings)
+	mux.HandleFunc("GET /api/mm-controller/bisq/funding-destination", handleMmControllerBisqFundingDestination)
+	mux.HandleFunc("PUT /api/mm-controller/bisq/funding-destination", handleMmControllerBisqFundingDestination)
 	mux.HandleFunc("GET /api/mm-controller/bisq/wallet/balances", handleMmControllerBisqWalletBalances)
 	mux.HandleFunc("GET /api/mm-controller/bisq/wallet/addresses", handleMmControllerBisqWalletAddresses)
 	mux.HandleFunc("GET /api/mm-controller/bisq/wallet/transactions", handleMmControllerBisqWalletTransactions)
@@ -134,6 +141,12 @@ func registerMMControllerRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/mm-controller/bisq/payment-methods/{id}/form", handleMmControllerBisqPaymentMethodForm)
 	mux.HandleFunc("POST /api/mm-controller/bisq/payment-accounts", handleMmControllerBisqPaymentAccounts)
 	mux.HandleFunc("DELETE /api/mm-controller/bisq/payment-accounts/{id}", handleMmControllerBisqPaymentAccountByID)
+	mux.HandleFunc("POST /api/mm-controller/bisq/execution/quote", handleMmControllerBisqExecutionQuote)
+	mux.HandleFunc("POST /api/mm-controller/bisq/execution/accept", handleMmControllerBisqExecutionAccept)
+	mux.HandleFunc("GET /api/mm-controller/bisq/payment-account-mappings", handleMmControllerBisqPaymentAccountMappings)
+	mux.HandleFunc("PUT /api/mm-controller/bisq/payment-account-mappings", handleMmControllerBisqPaymentAccountMappings)
+	mux.HandleFunc("GET /api/mm-controller/bisq/funding-destination", handleMmControllerBisqFundingDestination)
+	mux.HandleFunc("PUT /api/mm-controller/bisq/funding-destination", handleMmControllerBisqFundingDestination)
 	mux.HandleFunc("GET /api/mm-controller/bisq/wallet/balances", handleMmControllerBisqWalletBalances)
 	mux.HandleFunc("GET /api/mm-controller/bisq/wallet/addresses", handleMmControllerBisqWalletAddresses)
 	mux.HandleFunc("GET /api/mm-controller/bisq/wallet/transactions", handleMmControllerBisqWalletTransactions)

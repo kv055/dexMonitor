@@ -400,6 +400,41 @@ export function deleteBisqPaymentAccount(id: string) {
   });
 }
 
+export function fetchBisqPaymentAccountMappings() {
+  return request<{ mappings: Array<{
+    id: number;
+    local_account_id: number;
+    payment_method_name: string;
+    currency: string;
+    bisq_payment_account_id: string;
+  }> }>('/api/mm-controller/bisq/payment-account-mappings');
+}
+
+export function upsertBisqPaymentAccountMapping(payload: {
+  payment_method_name: string;
+  currency: string;
+  bisq_payment_account_id: string;
+  local_account_id?: number;
+}) {
+  return request('/api/mm-controller/bisq/payment-account-mappings', {
+    method: 'PUT',
+    body: JSON.stringify(payload),
+  });
+}
+
+export function fetchBisqFundingDestination() {
+  return request<{ destination: { id: number; address: string; is_active: boolean } | null }>(
+    '/api/mm-controller/bisq/funding-destination',
+  );
+}
+
+export function setBisqFundingDestination(address: string) {
+  return request('/api/mm-controller/bisq/funding-destination', {
+    method: 'PUT',
+    body: JSON.stringify({ address }),
+  });
+}
+
 // --- Bisq1 daemon wallet management ---
 
 export function fetchBisqWalletBalances() {

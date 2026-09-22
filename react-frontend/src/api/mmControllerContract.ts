@@ -7,6 +7,7 @@ export type PreTradeCheckResult = Schemas['PreTradeCheckResult'];
 export type PreTradeCheckReport = Schemas['PreTradeCheckReport'];
 export type CexTradeflowRequest = Schemas['CexTradeflowRequest'];
 export type CexTradeflowResult = Schemas['CexTradeflowResult'];
+export type CexTradeflowAccepted = Schemas['CexTradeflowAccepted'];
 export type ResolvedRoute = Schemas['ResolvedRoute'];
 export type FeeLine = Schemas['FeeLine'];
 export type ExecutionDetail = Schemas['ExecutionDetail'];

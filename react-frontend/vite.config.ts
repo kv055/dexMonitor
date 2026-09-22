@@ -102,6 +102,7 @@ export default defineConfig({
       // browser-facing localhost:5173 host so legitimate dev connections pass.
       '/ws/live_offers':        { ...quietWsProxy('ws://127.0.0.1:5010'), changeOrigin: false },
       '/api/live_offers':       DEV_UNIFIED_API,
+      '/api/execution-quotes':  DEV_UNIFIED_API,
       '/api/trade_cost_config': DEV_UNIFIED_API,
       '/api/cex_permissions': DEV_UNIFIED_API,
       '/api':                   DEV_DEXMONITOR,

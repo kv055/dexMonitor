@@ -36,6 +36,7 @@ import {
   createBisqPaymentAccount,
   deletePaymentMethodChatTemplate,
   deleteBisqPaymentAccount,
+  upsertBisqPaymentAccountMapping,
   fetchPaymentMethodChatTemplates,
   initLNDWallet,
   openLNDChannel,
@@ -2713,10 +2714,19 @@ export function TradingAccountsPanel() {
     setBisqPmBusyKey('create-confirm');
     setBisqPmError(null);
     try {
-      await createBisqPaymentAccount({
+      const created = await createBisqPaymentAccount({
         payment_method_id: bisqSelectedMethodID,
         fields: bisqFormValues,
       });
+      const catalog = catalogRowForBisqMethod(bisqSelectedMethodID, bisqCatalogRows);
+      if (catalog?.name) {
+        await upsertBisqPaymentAccountMapping({
+          payment_method_name: catalog.name,
+          currency: filters.fiat.toUpperCase(),
+          bisq_payment_account_id: created.id,
+          local_account_id: catalog.account_id ?? undefined,
+        });
+      }
       await loadBisqPaymentAccounts();
       resetBisqCreateForm();
     } catch (err) {
@@ -4295,11 +4305,27 @@ export function TradingAccountsPanel() {
           <div className="grid gap-1.5 sm:grid-cols-2">
             {bisqPmAccounts.map(acct => {
               const busyKey = `saved-${acct.id}`;
-              const busy = bisqPmBusyKey === busyKey;
+              const mapKey = `map-${acct.id}`;
+              const busy = bisqPmBusyKey === busyKey || bisqPmBusyKey === mapKey;
               return (
                 <ResourceCard key={acct.id} title={acct.account_name} meta={`${bisqPaymentMethodLabel(acct.payment_method_id)}${acct.trade_currency ? ` · ${acct.trade_currency}` : ''}`}>
                   <div className="flex items-center justify-between gap-1.5">
                     <span className="text-[0.65rem] text-green">Linked ✓</span>
+                    <button
+                      type="button"
+                      className={compactButtonCls}
+                      disabled={busy || bisqPmLoading || creating || !selectedCatalogRow?.name}
+                      onClick={() => runBisqAction(mapKey, async () => {
+                        await upsertBisqPaymentAccountMapping({
+                          payment_method_name: selectedCatalogRow!.name,
+                          currency: selectedFiat,
+                          bisq_payment_account_id: acct.id,
+                          local_account_id: selectedCatalogRow?.account_id ?? undefined,
+                        });
+                      })}
+                    >
+                      Use for {selectedFiat} trades
+                    </button>
                     <button
                       type="button"
                       className={`${compactButtonCls} text-red`}
