@@ -271,6 +271,11 @@ func main() {
 	pmRepo = &paymentmethods.Repo{DB: db}
 	go pmService.RefreshLoop(ctx, time.Hour)
 	go runStatisticsRefreshLoop(ctx.Done())
+	// Pre-warm live DEX taker fees (robosats via Tor, mostro via Nostr)
+	// off the request path and refresh them periodically: the first
+	// past-offers request needing one would otherwise block on those
+	// fetches (up to ~12s each) inside the per-offer pricing loop.
+	go orchestrator.RunDexTakerFeeRefreshLoop(ctx)
 
 	mux := http.NewServeMux()
 	legacyMux := http.NewServeMux()
