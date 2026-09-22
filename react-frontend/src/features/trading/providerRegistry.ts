@@ -101,6 +101,17 @@ export function isBisq2Provider(value: string): boolean {
   return value.trim().toLowerCase() === 'bisq2';
 }
 
+/**
+ * Offer id the user can take into the local Bisq app, or null when copying
+ * is not useful: only Bisq 1 / Bisq 2 offers qualify (web-based venues get a
+ * View-on-DEX deep link instead), and an id must be present.
+ */
+export function copyableOfferId(exchange: string, offerId: string | null | undefined): string | null {
+  const id = offerId?.trim();
+  if (!id || !isBisqProvider(exchange)) return null;
+  return id;
+}
+
 export function chatExchangeForProvider(value: string): ChatExchange | null {
   if (isRobosatsProvider(value)) return 'robosats';
   if (isBisq2Provider(value)) return 'bisq2';

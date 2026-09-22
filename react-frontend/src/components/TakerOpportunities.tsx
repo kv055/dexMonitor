@@ -43,6 +43,9 @@ import {
 } from '../utils/routeAvailability';
 import { useCEXPermissions } from '../hooks/useCEXPermissions';
 import { CostBreakdownPanel, SizeToggle, type SizeMode } from './OfferBreakdownPanel';
+import { CopyOfferIdButton } from './CopyOfferIdButton';
+import { copyableOfferId } from '../features/trading/providerRegistry';
+import { getDexOfferLink } from '../utils/dexOfferLinks';
 import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
 import { CustomDateRangeFilter, DualRangeFilter, SelectGroup } from './ControlPanel';
@@ -1024,9 +1027,30 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
     ? explainMissingTradeRoute(exchanges, offer.metadata?.route_resolution)
     : null;
   const showTradeModeToggle = !!hedgelessVariant || !hedgeAvailable;
+  const dexLink = getDexOfferLink(offer);
+  // Bisq 1 / Bisq 2 are local GUI apps with no web offer pages, so instead
+  // of a deep link the user gets the offer id to find it in the local app.
+  const bisqOfferId = copyableOfferId(offer.exchange, offer.offer_id);
 
   return (
     <div data-testid="live-offer-detail" className="flex flex-col gap-3">
+      {(dexLink || bisqOfferId) && (
+        <div className="flex flex-wrap items-center gap-2">
+          {dexLink && (
+            <a
+              href={dexLink.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              title={dexLink.title}
+              data-testid="view-on-dex"
+              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[0.7rem] font-semibold text-accent transition-colors hover:bg-accent/10 hover:underline"
+            >
+              {dexLink.label} <span aria-hidden="true">↗</span>
+            </a>
+          )}
+          {bisqOfferId && <CopyOfferIdButton offerId={bisqOfferId} />}
+        </div>
+      )}
       {displayedBreakdown ? (
         <div className="flex flex-col gap-3">
           <CostBreakdownPanel
