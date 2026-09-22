@@ -588,7 +588,9 @@ export function TradeTracingPanel({
   const quoteFresh = !!quote && Date.parse(quote.expires_at) > quoteNow && quote.executable && !!quote.resolved_route;
   const canConfirm = isRobosats
     ? checksPassed && checkedQuoteID === quote?.quote_id && quoteFresh && !quoteError && !admitted
-    : checksPassed;
+    // Without a generic quote the snapshot amounts apply; a stale fetched
+    // quote must not back a confirmation, so requote first.
+    : checksPassed && (!quote || quoteFresh);
   const confirmBtc = quote?.btc_amount ?? clampedBtc;
   const confirmFiat = quote?.fiat_amount ?? estFiat;
 
@@ -603,7 +605,7 @@ export function TradeTracingPanel({
   }, [quoteInputKey]);
 
   useEffect(() => {
-    if (!isRobosats) {
+    if (!isRobosats && !isBisq) {
       setQuoteLoading(false);
       return;
     }
@@ -636,7 +638,7 @@ export function TradeTracingPanel({
       });
     }, 300);
     return () => { window.clearTimeout(timer); ++quoteSeq.current; };
-  }, [quoteInputKey, hasResolvedExecutionRoute, isRobosats, offer.id, offer.offer_id, offer.venue_coordinator_id, offer.exchange, unit, draft, resolvedPaymentMethod]);
+  }, [quoteInputKey, hasResolvedExecutionRoute, isRobosats, isBisq, offer.id, offer.offer_id, offer.venue_coordinator_id, offer.exchange, unit, draft, resolvedPaymentMethod]);
 
   // Opening the confirm dialog immediately kicks off the (read-only) pre-trade checks
   // so their results are shown in the same card before the operator confirms.
@@ -691,8 +693,10 @@ export function TradeTracingPanel({
   }
 
   // Re-run when confirm opens or the effective execution quote / route changes.
+  // RoboSats checks bind to a fresh quote; other venues check the resolved
+  // route directly (their confirmation does not consume a generic quote).
   useEffect(() => {
-    if (!confirmOpen || !hasResolvedExecutionRoute || !quoteFresh) return;
+    if (!confirmOpen || !hasResolvedExecutionRoute || (isRobosats && !quoteFresh)) return;
     void runPreTradeChecks();
     return () => { ++checksSeq.current; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -772,10 +776,16 @@ export function TradeTracingPanel({
     if (isBisq) {
       if (!resolvedRoute?.settlement || (!isHedgeless && !resolvedRoute.hedge_venue)) return;
       if (!checksPassed || !bisqQuote.quote?.quote_id || pendingBisq) return;
+      // The Bisq quote is time-sensitive: accept first, then hedge below.
       await submitBisqAcceptance({ quote_id: bisqQuote.quote.quote_id, idempotency_key: crypto.randomUUID() });
-      return;
+      // Hedge leg mirrors the live generic quote when one backs this
+      // confirmation; otherwise the acceptance above is the whole trade.
+      if (!(quoteFresh && quote?.resolved_route)) return;
     }
-    const route = isRobosats ? quote?.resolved_route : resolvedRoute;
+    // A fresh generic quote sizes the submitted route; Robosats always quotes.
+    const route = isRobosats
+      ? quote?.resolved_route
+      : (isBisq && quoteFresh && quote?.resolved_route ? quote.resolved_route : resolvedRoute);
     if (isRobosats) {
       if (!canConfirm || !route || Date.parse(quote!.expires_at) <= Date.now() || submitting.current) return;
     } else if (!route?.settlement || (!isHedgeless && !route.hedge_venue)) {
@@ -833,7 +843,7 @@ export function TradeTracingPanel({
           price: offer.price,
           btc_min: offer.btc_min,
           btc_max: offer.btc_max,
-          quote_id: isRobosats ? quote?.quote_id : undefined,
+          quote_id: isRobosats || isBisq ? quote?.quote_id : undefined,
           max_bond_sat: isRobosats ? quote?.max_bond_sat : undefined,
           max_escrow_sat: isRobosats ? quote?.max_escrow_sat : undefined,
           metadata: offer.metadata,

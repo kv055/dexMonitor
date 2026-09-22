@@ -7,7 +7,7 @@ vi.mock('../api/execution', () => ({
   cexTradeflow: vi.fn().mockResolvedValue({ trade_mode: 'hedgefull_single_collateral' }),
   acceptBisqExecution: vi.fn(),
   fetchMMTransaction: vi.fn(),
-  createExecutionQuote: vi.fn(),
+  createExecutionQuote: vi.fn().mockResolvedValue(undefined as never),
   quoteBisqExecution: vi.fn().mockRejectedValue(new Error('quote unavailable in test')),
 }));
 
@@ -140,9 +140,19 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
-  vi.clearAllMocks();
   window.localStorage.clear();
   vi.unstubAllGlobals();
+  // Restore the module-factory defaults so per-test mock setups never leak
+  // into later tests (clearAllMocks only clears call history, not implementations).
+  vi.mocked(cexPreTradeCheck).mockReset();
+  vi.mocked(cexPreTradeCheck).mockResolvedValue({ ok: true, checks: [] });
+  vi.mocked(cexTradeflow).mockReset();
+  vi.mocked(cexTradeflow).mockResolvedValue({ trade_mode: 'hedgefull_single_collateral' });
+  vi.mocked(acceptBisqExecution).mockReset();
+  vi.mocked(fetchMMTransaction).mockReset();
+  vi.mocked(createExecutionQuote).mockReset();
+  vi.mocked(createExecutionQuote).mockResolvedValue(undefined as never);
+  vi.mocked(quoteBisqExecution).mockReset();
   vi.mocked(quoteBisqExecution).mockRejectedValue(new Error('quote unavailable in test'));
 });
 
@@ -286,6 +296,22 @@ describe('TradeTracingPanel execution route snapshot', () => {
 describe('TradeTracingPanel custom quotes', () => {
   it('submits the reduced quoted amount instead of the snapshot size', async () => {
     vi.mocked(createExecutionQuote).mockImplementation(async payload => quoteFor(Number(payload.amount)));
+    vi.mocked(quoteBisqExecution).mockResolvedValue({
+      quote_id: 'quote-reduced',
+      expires_at: '2099-01-01T00:00:00Z',
+      trade_mode: 'hedgefull_single_collateral',
+      payment_account_id: 'acct-9',
+      funding_address: 'bc1qdesignated',
+      trade_amount_sats: 500_000,
+      security_deposit_sats: 150_000,
+      taker_fee_sats: 8_000,
+      mining_fee_sats: 2_000,
+      total_to_pay_sats: 660_000,
+      fiat_amount: 250,
+      limits: { max_cex_fiat_spend: 1200, max_wallet_debit_sats: 660_000, min_fiat_proceeds: 250 },
+      is_btc_wallet_funded: false,
+      missing_sats: 660_000,
+    });
     const user = userEvent.setup();
     renderPanel(offer(snapshotRoute));
 
@@ -297,8 +323,9 @@ describe('TradeTracingPanel custom quotes', () => {
     await user.click(screen.getByRole('button', { name: 'Start trade' }));
     await waitFor(() => expect(screen.getByText('0.005 BTC')).toBeTruthy());
     await waitFor(() => expect(cexPreTradeCheck).toHaveBeenCalled());
+    await waitFor(() => expect(quoteBisqExecution).toHaveBeenCalled());
 
-    await user.click(screen.getByRole('button', { name: 'Confirm buy' }));
+    await user.click(await screen.findByRole('button', { name: 'Confirm buy' }));
     await waitFor(() => expect(cexTradeflow).toHaveBeenCalledWith(expect.objectContaining({
       btc_amount: 0.005,
       fiat_amount: 250,
@@ -329,6 +356,22 @@ describe('TradeTracingPanel custom quotes', () => {
 
   it('disables confirmation when the quote has expired', async () => {
     vi.mocked(createExecutionQuote).mockResolvedValue(quoteFor(0.01, { expires_at: new Date(Date.now() - 1000).toISOString() }));
+    vi.mocked(quoteBisqExecution).mockResolvedValue({
+      quote_id: 'quote-live',
+      expires_at: '2099-01-01T00:00:00Z',
+      trade_mode: 'hedgefull_single_collateral',
+      payment_account_id: 'acct-9',
+      funding_address: 'bc1qdesignated',
+      trade_amount_sats: 1_000_000,
+      security_deposit_sats: 150_000,
+      taker_fee_sats: 8_000,
+      mining_fee_sats: 2_000,
+      total_to_pay_sats: 1_160_000,
+      fiat_amount: 550,
+      limits: { max_cex_fiat_spend: 1200, max_wallet_debit_sats: 1_160_000, min_fiat_proceeds: 550 },
+      is_btc_wallet_funded: false,
+      missing_sats: 1_160_000,
+    });
     const user = userEvent.setup();
     renderPanel(offer(snapshotRoute));
     await user.click(screen.getByRole('button', { name: 'Start trade' }));
@@ -342,6 +385,22 @@ describe('TradeTracingPanel custom quotes', () => {
     vi.mocked(cexPreTradeCheck).mockResolvedValue({
       ok: true,
       checks: [{ name: 'lsp_channel', label: 'LSP channel', passed: true, message: 'ready' }],
+    });
+    vi.mocked(quoteBisqExecution).mockResolvedValue({
+      quote_id: 'quote-lsp',
+      expires_at: '2099-01-01T00:00:00Z',
+      trade_mode: 'hedgefull_single_collateral',
+      payment_account_id: 'acct-9',
+      funding_address: 'bc1qdesignated',
+      trade_amount_sats: 1_000_000,
+      security_deposit_sats: 150_000,
+      taker_fee_sats: 8_000,
+      mining_fee_sats: 2_000,
+      total_to_pay_sats: 1_160_000,
+      fiat_amount: 550,
+      limits: { max_cex_fiat_spend: 1200, max_wallet_debit_sats: 1_160_000, min_fiat_proceeds: 550 },
+      is_btc_wallet_funded: false,
+      missing_sats: 1_160_000,
     });
     const user = userEvent.setup();
     renderPanel(offer({ ...snapshotRoute, settlement: 'onchain_swap', needs_lightning: true, required_btc_liquidity: 0.01 }));
@@ -383,6 +442,22 @@ describe('TradeTracingPanel custom quotes', () => {
 
   it('expires a previously valid confirmation without another user action', async () => {
     vi.mocked(createExecutionQuote).mockImplementation(async () => quoteFor(0.01, { expires_at: new Date(Date.now() + 1500).toISOString() }));
+    vi.mocked(quoteBisqExecution).mockResolvedValue({
+      quote_id: 'quote-expiring',
+      expires_at: '2099-01-01T00:00:00Z',
+      trade_mode: 'hedgefull_single_collateral',
+      payment_account_id: 'acct-9',
+      funding_address: 'bc1qdesignated',
+      trade_amount_sats: 1_000_000,
+      security_deposit_sats: 150_000,
+      taker_fee_sats: 8_000,
+      mining_fee_sats: 2_000,
+      total_to_pay_sats: 1_160_000,
+      fiat_amount: 550,
+      limits: { max_cex_fiat_spend: 1200, max_wallet_debit_sats: 1_160_000, min_fiat_proceeds: 550 },
+      is_btc_wallet_funded: false,
+      missing_sats: 1_160_000,
+    });
     const user = userEvent.setup();
     renderPanel(offer(snapshotRoute));
     await user.click(screen.getByRole('button', { name: 'Start trade' }));
