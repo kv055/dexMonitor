@@ -14,7 +14,7 @@ ENV COMMIT_DATE=${COMMIT_DATE}
 RUN npm run build
 
 # Stage 2: Build Go binary
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 # Fall through on any proxy error: proxy.golang.org may be unreachable on some
 # hosts, while goproxy.io can intermittently return 5xx responses.
 ARG GOPROXY=https://proxy.golang.org|https://goproxy.io|direct

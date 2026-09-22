@@ -407,13 +407,11 @@ func handlePastOffers(w http.ResponseWriter, r *http.Request) {
 	}
 
 	filteredOffers := make([]map[string]any, 0, len(offers))
-	ids := make([]int64, 0, len(offers))
 	for _, o := range offers {
 		if offerHasExcludedPaymentMethod(o, excludedPaymentMethods) {
 			continue
 		}
 		filteredOffers = append(filteredOffers, o)
-		ids = append(ids, int64(offerFloat(o, "id")))
 	}
 
 	if queryBool(r, "compact") {

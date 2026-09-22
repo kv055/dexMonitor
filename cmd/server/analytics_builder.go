@@ -209,8 +209,6 @@ type takerAnalyticsResult struct {
 	statsFilteredCapped pastorders.StatsResponse
 	statsAllMin         pastorders.StatsResponse
 	statsFilteredMin    pastorders.StatsResponse
-	orders              []pastProfitableOrderAPI
-	ordersCompact       []pastProfitableOrderCompactAPI
 }
 
 func (p dashboardAnalyticsParams) wantsSection(section string) bool {
