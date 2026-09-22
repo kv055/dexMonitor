@@ -3,7 +3,8 @@ FROM node:24-alpine AS frontend
 
 WORKDIR /build
 COPY dexMonitor/react-frontend/package*.json ./
-RUN npm ci
+RUN --mount=type=cache,target=/root/.npm \
+    npm ci --prefer-offline
 COPY dexMonitor/react-frontend/ ./
 # Commit metadata for the frontend's "deployed commit" header. The build runs
 # without a .git dir, so CI passes these in; vite.config falls back to git/unknown.
