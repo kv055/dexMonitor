@@ -476,6 +476,7 @@ export interface AppSettingField {
   label: string;
   description?: string;
   type: 'string' | 'secret' | 'bool' | 'int' | 'duration' | 'enum' | 'email' | 'url' | 'hostname';
+  store?: 'db' | 'file';
   owner?: string;
   default?: string;
   required?: boolean;
@@ -491,8 +492,10 @@ export interface AppSettingSection {
 }
 
 export interface AppSettings {
-  writable: boolean;
+  writableFile: boolean;
+  db: boolean;
   file: string;
+  fileKeys: string[];
   schema: { sections: AppSettingSection[] };
   values: Record<string, string>;
 }
@@ -500,6 +503,7 @@ export interface AppSettings {
 export interface AppSettingsUpdate {
   updated: string[];
   restart: string[];
+  fileSynced: boolean;
   values: Record<string, string>;
 }
 

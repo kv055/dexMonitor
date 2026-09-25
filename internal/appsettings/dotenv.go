@@ -3,17 +3,30 @@ package appsettings
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
+	"syscall"
 )
 
 // SettingsEnvFile is the process env var pointing at the writable root .env.
 // Empty (the default) means read-only mode: values are served from the process
 // environment but PUT is rejected. The dexmonitor compose service does not
-// mount the root .env by default; operators enable writes by mounting it, e.g.
-// volumes: ["./.env:/settings/root.env:rw"] with SETTINGS_ENV_FILE=/settings/root.env.
+// mount the root .env by default; operators enable writes with two changes
+// (root .env values are only compose interpolation and are NOT auto-injected
+// into containers):
+// volumes: ["./.env:/settings/root.env:rw"] (dexmonitor service) plus
+// environment: ["SETTINGS_ENV_FILE=/settings/root.env"] (dexmonitor service).
 const SettingsEnvFile = "SETTINGS_ENV_FILE"
+
+// backupPath is the rotating pre-write backup kept next to the settings file.
+func backupPath(path string) string { return path + ".bak" }
+
+// lockPath is the sidecar file guarding read-modify-write cycles. The lock
+// lives in its own file (rather than on the settings file itself) so it stays
+// valid across the atomic rename used for the write.
+func lockPath(path string) string { return path + ".lock" }
 
 // dotenvLine matches an active KEY=value assignment, preserving any leading
 // whitespace and everything after the raw value (trailing comments are kept
@@ -77,23 +90,18 @@ type ApplyResult struct {
 // file at path, preserving comments, order and quoting style of untouched
 // lines. Keys missing from the file are appended. The MaskedSecret sentinel
 // on a secret means "leave unchanged" and is skipped.
+//
+// The write is serialized with an exclusive flock on a sidecar lock file, so
+// concurrent saves cannot interleave read-modify-write cycles and lose edits.
+// Before replacing the file, the previous content is copied to "<path>.bak"
+// (same permissions, rotating) and the new content is written to a temp file
+// and atomically renamed, so a crash cannot leave a truncated settings file.
+// When nothing would change, the file (and its backup) is left untouched.
 func Apply(path string, values map[string]string, fields map[string]Field) (ApplyResult, error) {
 	for key, value := range values {
 		if err := Validate(key, value, fields); err != nil {
 			return ApplyResult{}, err
 		}
-	}
-
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return ApplyResult{}, fmt.Errorf("read settings file: %w", err)
-	}
-	info, err := os.Stat(path)
-	if err != nil {
-		return ApplyResult{}, fmt.Errorf("stat settings file: %w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return ApplyResult{}, fmt.Errorf("settings file is not a regular file")
 	}
 
 	pending := make(map[string]string, len(values))
@@ -102,6 +110,31 @@ func Apply(path string, values map[string]string, fields map[string]Field) (Appl
 			continue
 		}
 		pending[key] = value
+	}
+	if len(pending) == 0 {
+		return ApplyResult{}, nil
+	}
+
+	lock, err := os.OpenFile(lockPath(path), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return ApplyResult{}, fmt.Errorf("open settings lock: %w", err)
+	}
+	defer func() { _ = lock.Close() }()
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
+		return ApplyResult{}, fmt.Errorf("lock settings file: %w", err)
+	}
+	defer func() { _ = syscall.Flock(int(lock.Fd()), syscall.LOCK_UN) }()
+
+	info, err := os.Stat(path)
+	if err != nil {
+		return ApplyResult{}, fmt.Errorf("stat settings file: %w", err)
+	}
+	if !info.Mode().IsRegular() {
+		return ApplyResult{}, fmt.Errorf("settings file is not a regular file")
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return ApplyResult{}, fmt.Errorf("read settings file: %w", err)
 	}
 
 	lines := strings.Split(string(raw), "\n")
@@ -138,8 +171,42 @@ func Apply(path string, values map[string]string, fields map[string]Field) (Appl
 	sort.Strings(updated)
 
 	out := strings.Join(lines, "\n")
-	if err := os.WriteFile(path, []byte(out), info.Mode().Perm()); err != nil {
-		return ApplyResult{}, fmt.Errorf("write settings file: %w", err)
+	if out == string(raw) {
+		return ApplyResult{Updated: updated, Restart: RestartServicesFor(updated, fields)}, nil
 	}
+
+	perm := info.Mode().Perm()
+	if err := os.WriteFile(backupPath(path), raw, perm); err != nil {
+		return ApplyResult{}, fmt.Errorf("write settings backup: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".env.tmp-*")
+	if err != nil {
+		return ApplyResult{}, fmt.Errorf("create settings temp file: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer func() {
+		if tmpName != "" {
+			_ = os.Remove(tmpName)
+		}
+	}()
+	if err := tmp.Chmod(perm); err != nil {
+		_ = tmp.Close()
+		return ApplyResult{}, fmt.Errorf("chmod settings temp file: %w", err)
+	}
+	if _, err := tmp.WriteString(out); err != nil {
+		_ = tmp.Close()
+		return ApplyResult{}, fmt.Errorf("write settings temp file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return ApplyResult{}, fmt.Errorf("sync settings temp file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return ApplyResult{}, fmt.Errorf("close settings temp file: %w", err)
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return ApplyResult{}, fmt.Errorf("replace settings file: %w", err)
+	}
+	tmpName = ""
 	return ApplyResult{Updated: updated, Restart: RestartServicesFor(updated, fields)}, nil
 }

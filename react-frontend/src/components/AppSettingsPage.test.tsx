@@ -51,12 +51,12 @@ describe('AppSettingsPage', () => {
   it('renders sections and saves only dirty values', async () => {
     mockRequest.mockImplementation((path: string, init?: RequestInit) => {
       if (path === '/api/app-settings' && !init) {
-        return Promise.resolve({ writable: true, file: '/settings/root.env', schema, values });
+        return Promise.resolve({ writableFile: true, db: true, file: '/settings/root.env', fileKeys: [], schema, values });
       }
       if (path === '/api/app-settings' && init?.method === 'PUT') {
         const body = JSON.parse(String(init.body));
         expect(body).toEqual({ values: { PUBLIC_HOSTNAME: 'new.example.com' } });
-        return Promise.resolve({ updated: ['PUBLIC_HOSTNAME'], restart: ['nginx'], values: { ...values, PUBLIC_HOSTNAME: 'new.example.com' } });
+        return Promise.resolve({ updated: ['PUBLIC_HOSTNAME'], restart: ['nginx'], fileSynced: true, values: { ...values, PUBLIC_HOSTNAME: 'new.example.com' } });
       }
       throw new Error(`unexpected request ${path}`);
     });
@@ -80,18 +80,41 @@ describe('AppSettingsPage', () => {
     expect(await screen.findByText(/docker compose up -d nginx/)).toBeTruthy();
   });
 
-  it('is read-only when the settings file is not mounted', async () => {
-    mockRequest.mockResolvedValue({ writable: false, file: '', schema, values });
+  it('locks file-backed fields but keeps db-backed fields editable without a mount', async () => {
+    mockRequest.mockImplementation((path: string, init?: RequestInit) => {
+      if (path === '/api/app-settings' && !init) {
+        return Promise.resolve({ writableFile: false, db: true, file: '', fileKeys: ['PUBLIC_HOSTNAME'], schema, values });
+      }
+      if (path === '/api/app-settings' && init?.method === 'PUT') {
+        const body = JSON.parse(String(init.body));
+        expect(body).toEqual({ values: { PAYMENT_EMAIL_MODE: 'shadow' } });
+        return Promise.resolve({ updated: ['PAYMENT_EMAIL_MODE'], restart: ['fiat-controller'], fileSynced: false, values: { ...values, PAYMENT_EMAIL_MODE: 'shadow' } });
+      }
+      throw new Error(`unexpected request ${path}`);
+    });
 
     render(<AppSettingsPage />);
-    expect(await screen.findByText(/Read-only/)).toBeTruthy();
-    const saveButton = screen.getByRole('button', { name: 'Save' });
-    expect(saveButton.hasAttribute('disabled')).toBe(true);
-    expect(mockRequest).toHaveBeenCalledTimes(1);
+    expect(await screen.findByText(/File-backed settings are read-only/)).toBeTruthy();
+
+    // File-backed input is locked …
+    const hostInput = screen.getByLabelText('Public hostname') as HTMLInputElement;
+    expect(hostInput.hasAttribute('disabled')).toBe(true);
+
+    // … and only file-backed fields carry the deploy-overwrite warning.
+    const warnings = screen.getAllByText(/new version push overwrites/);
+    expect(warnings).toHaveLength(1);
+
+    // … but db-backed inputs stay editable and save without the mount.
+    const modeSelect = screen.getByLabelText('Payment email mode') as HTMLSelectElement;
+    expect(modeSelect.hasAttribute('disabled')).toBe(false);
+    await userEvent.selectOptions(modeSelect, 'shadow');
+    await userEvent.click(screen.getByRole('button', { name: 'Save (1)' }));
+    await waitFor(() => expect(mockRequest).toHaveBeenCalledTimes(2));
+    expect(await screen.findByText(/not updated.*not mounted/)).toBeTruthy();
   });
 
   it('filters fields by search text and service', async () => {
-    mockRequest.mockResolvedValue({ writable: false, file: '', schema, values });
+    mockRequest.mockResolvedValue({ writableFile: false, db: true, file: '', fileKeys: [], schema, values });
 
     render(<AppSettingsPage />);
     await screen.findByText('Public edge');

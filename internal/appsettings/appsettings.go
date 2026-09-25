@@ -24,15 +24,37 @@ const MaskedSecret = "***"
 
 // Field is one user-facing setting backed by a root .env key.
 type Field struct {
-	Key             string   `json:"key"`
-	Label           string   `json:"label"`
-	Description     string   `json:"description,omitempty"`
-	Type            string   `json:"type"`
+	Key         string `json:"key"`
+	Label       string `json:"label"`
+	Description string `json:"description,omitempty"`
+	Type        string `json:"type"`
+	// Store selects persistence: "db" keeps the value in the app_settings
+	// table (deploy-proof, audited); anything else keeps the legacy root
+	// .env file as the store.
+	Store           string   `json:"store,omitempty"`
 	Owner           string   `json:"owner,omitempty"`
 	Default         string   `json:"default,omitempty"`
 	Required        bool     `json:"required,omitempty"`
 	Enum            []string `json:"enum,omitempty"`
 	RestartServices []string `json:"restartServices,omitempty"`
+}
+
+// StoredInDB reports whether the field persists in the app_settings table
+// rather than the dotenv file.
+func (f Field) StoredInDB() bool { return f.Store == "db" }
+
+// PartitionKeys splits keys into db-stored and file-stored using the schema.
+func PartitionKeys(keys []string, fields map[string]Field) (db, file []string) {
+	for _, key := range keys {
+		if fields[key].StoredInDB() {
+			db = append(db, key)
+		} else {
+			file = append(file, key)
+		}
+	}
+	sort.Strings(db)
+	sort.Strings(file)
+	return db, file
 }
 
 // Section groups fields for the Settings page.

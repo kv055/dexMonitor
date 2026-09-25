@@ -29,6 +29,7 @@ import (
 	"commons/mmcapabilities"
 	"commons/tracing"
 	"commons/tradecost"
+	"dexmonitor/internal/appsettings"
 	"dexmonitor/internal/auth"
 	"dexmonitor/internal/lifecycle"
 	"dexmonitor/internal/mmproxy"
@@ -174,17 +175,8 @@ func init() {
 	if databaseURL == "" {
 		databaseURL = "postgres://postgres:postgres@localhost:5432/dexarb?sslmode=disable"
 	}
-	interval := os.Getenv("SNAPSHOT_INTERVAL_MIN")
-	if interval == "" {
-		snapshotIntervalMin = 1
-	} else {
-		v, err := strconv.Atoi(interval)
-		if err != nil {
-			snapshotIntervalMin = 1
-		} else {
-			snapshotIntervalMin = v
-		}
-	}
+	// SNAPSHOT_INTERVAL_MIN is db-backed (app_settings table) and loads in
+	// main() after the schema is ensured; it defaults to 1 until then.
 
 	exe, _ := os.Executable()
 	frontendDir = filepath.Join(filepath.Dir(exe), "react-frontend", "dist")
@@ -207,12 +199,10 @@ func init() {
 	if fiatControllerURL == "" {
 		fiatControllerURL = "http://localhost:8080"
 	}
-	pushpushNotifySecret = strings.TrimSpace(os.Getenv("PUSHPUSH_NOTIFY_SECRET"))
+	// PUSHPUSH_NOTIFY_SECRET, PUSHPUSH_HEARTBEAT_MAX_AGE and
+	// MM_CEX_CAPABILITY_MAX_AGE are db-backed (app_settings table) and load
+	// in main() after the schema is ensured; package defaults apply until then.
 	pushpushHeartbeatMaxAge = 15 * time.Minute
-	if configured, err := time.ParseDuration(strings.TrimSpace(os.Getenv("PUSHPUSH_HEARTBEAT_MAX_AGE"))); err == nil && configured > 0 {
-		pushpushHeartbeatMaxAge = configured
-	}
-	capabilityMaxAge = mmcapabilities.ParseMaxAge(os.Getenv("MM_CEX_CAPABILITY_MAX_AGE"))
 
 	// Session cookie Secure attribute: default true (prod is HTTPS). Set
 	// SESSION_COOKIE_SECURE=false only for local HTTP dev, where browsers drop
@@ -250,6 +240,22 @@ func main() {
 		os.Exit(1)
 	}
 	authSvc := auth.New(db, auth.Config{CookieSecure: sessionCookieSecure})
+	settingsAuth = authSvc // attribute Settings-page writes in the audit log
+
+	// Db-backed settings (app_settings table): ensure the schema, seed absent
+	// keys from the deploy bundle (never overwriting operator edits), then
+	// load this process's own runtime keys DB-first so UI edits survive
+	// deploys that replace the .env files.
+	appSettingsStore = appsettings.NewSQLStore(db)
+	startupCtx := context.Background()
+	if err := appSettingsStore.EnsureSchema(startupCtx); err != nil {
+		slog.Error("failed to ensure app_settings schema", "err", err)
+		os.Exit(1)
+	}
+	if err := loadDBBackedRuntimeConfig(startupCtx); err != nil {
+		slog.Error("failed to load db-backed settings", "err", err)
+		os.Exit(1)
+	}
 
 	orchestrator := tradecost.NewTradeCostEstimatorWithPersistedFees(db)
 	tradeCostEstimators = make(map[string]*tradecost.TradeCostEstimator, len(supportedCEXes))

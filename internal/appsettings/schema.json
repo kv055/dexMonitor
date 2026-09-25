@@ -65,6 +65,7 @@
           "label": "Telegram bot token",
           "description": "Operator bot token shared by mm-controller and fiat-controller.",
           "type": "secret",
+          "store": "db",
           "restartServices": [
             "mm-controller",
             "fiat-controller"
@@ -76,6 +77,7 @@
           "label": "Telegram chat ID",
           "description": "Chat receiving trade-chat relay and anomaly alerts.",
           "type": "string",
+          "store": "db",
           "restartServices": [
             "mm-controller",
             "fiat-controller"
@@ -87,6 +89,7 @@
           "label": "Telegram webhook secret",
           "description": "Long random value echoed back by Telegram on every callback; callbacks without it are rejected.",
           "type": "secret",
+          "store": "db",
           "restartServices": [
             "mm-controller"
           ],
@@ -97,6 +100,7 @@
           "label": "Push notification secret",
           "description": "Long random value guarding Android phone-payment callbacks. Fail-closed when empty.",
           "type": "secret",
+          "store": "db",
           "restartServices": [
             "dexmonitor",
             "fiat-controller"
@@ -108,6 +112,7 @@
           "label": "Phone heartbeat max age",
           "description": "Phone is reported offline after this time without a heartbeat.",
           "type": "duration",
+          "store": "db",
           "default": "15m",
           "restartServices": [
             "dexmonitor",
@@ -120,6 +125,7 @@
           "label": "DEX release webhook URL",
           "description": "fiat-controller calls this mm-controller webhook to release BTC.",
           "type": "url",
+          "store": "db",
           "default": "http://dexmmcontroller:8080/api/webhooks/dex-release",
           "restartServices": [
             "fiat-controller"
@@ -131,6 +137,7 @@
           "label": "DEX release token",
           "description": "Bearer token for the DEX release webhook.",
           "type": "secret",
+          "store": "db",
           "restartServices": [
             "mm-controller",
             "fiat-controller"
@@ -142,6 +149,7 @@
           "label": "Release timeout",
           "description": "Timeout for the DEX release webhook call.",
           "type": "duration",
+          "store": "db",
           "default": "10s",
           "restartServices": [
             "fiat-controller"
@@ -153,6 +161,7 @@
           "label": "Push Telegram webhook URL",
           "description": "Telegram escalation target for ambiguous notifications. Empty disables.",
           "type": "url",
+          "store": "db",
           "restartServices": [
             "fiat-controller"
           ],
@@ -194,6 +203,7 @@
           "label": "Payment recipient",
           "description": "Mailbox receiving payment notifications.",
           "type": "email",
+          "store": "db",
           "default": "payments@example.com",
           "restartServices": [
             "fiat-controller"
@@ -216,6 +226,7 @@
           "label": "Payment email mode",
           "description": "Safe rollout: capture, then shadow. Active requires both watermarks below.",
           "type": "enum",
+          "store": "db",
           "enum": [
             "capture",
             "shadow",
@@ -232,6 +243,7 @@
           "label": "Poll interval",
           "description": "How often the payment inbox is polled.",
           "type": "duration",
+          "store": "db",
           "default": "5m",
           "restartServices": [
             "fiat-controller"
@@ -243,6 +255,7 @@
           "label": "Health max age",
           "description": "Payment-email health is stale after this long without a poll.",
           "type": "duration",
+          "store": "db",
           "default": "15m",
           "restartServices": [
             "fiat-controller"
@@ -254,6 +267,7 @@
           "label": "Activation UID watermark",
           "description": "Required with the timestamp before active mode accepts mail.",
           "type": "int",
+          "store": "db",
           "default": "0",
           "restartServices": [
             "fiat-controller"
@@ -265,6 +279,7 @@
           "label": "Activation timestamp",
           "description": "Required with the UID before active mode accepts mail.",
           "type": "string",
+          "store": "db",
           "restartServices": [
             "fiat-controller"
           ],
@@ -355,6 +370,7 @@
           "key": "PG_BACKUP_ENABLED",
           "label": "Enable backups",
           "type": "bool",
+          "store": "db",
           "default": "true",
           "restartServices": [
             "postgres-backup"
@@ -365,6 +381,7 @@
           "key": "PG_BACKUP_INTERVAL",
           "label": "Backup interval",
           "type": "duration",
+          "store": "db",
           "default": "6h",
           "restartServices": [
             "postgres-backup"
@@ -375,6 +392,7 @@
           "key": "PG_BACKUP_RETENTION_DAYS",
           "label": "Retention (days)",
           "type": "int",
+          "store": "db",
           "default": "14",
           "restartServices": [
             "postgres-backup"
@@ -385,6 +403,7 @@
           "key": "PG_BACKUP_UPLOAD",
           "label": "Upload backups",
           "type": "bool",
+          "store": "db",
           "default": "true",
           "restartServices": [
             "postgres-backup"
@@ -395,6 +414,7 @@
           "key": "PG_BACKUP_UPLOAD_REQUIRED",
           "label": "Require upload success",
           "type": "bool",
+          "store": "db",
           "default": "true",
           "restartServices": [
             "postgres-backup"
@@ -406,6 +426,7 @@
           "label": "Rclone remote",
           "description": "Upload target, e.g. proton:postgres-backups/dexarb.",
           "type": "string",
+          "store": "db",
           "default": "proton:postgres-backups/dexarb",
           "restartServices": [
             "postgres-backup"
@@ -416,6 +437,7 @@
           "key": "RCLONE_CONFIG_PROTON_USERNAME",
           "label": "Proton username",
           "type": "string",
+          "store": "db",
           "restartServices": [
             "postgres-backup"
           ],
@@ -426,6 +448,7 @@
           "label": "Proton password",
           "description": "Must be rclone-obscured, not plaintext.",
           "type": "secret",
+          "store": "db",
           "restartServices": [
             "postgres-backup"
           ],
@@ -443,6 +466,7 @@
           "label": "Automated tradeflow workers",
           "description": "Enables money-moving recovery, DEX relay and hedgeless execution/refill workers.",
           "type": "bool",
+          "store": "db",
           "default": "false",
           "restartServices": [
             "mm-controller",
@@ -455,6 +479,7 @@
           "label": "Fiat scraping fallback",
           "description": "Last-resort fiat-arrival path. Push notifications are primary.",
           "type": "bool",
+          "store": "db",
           "default": "false",
           "restartServices": [
             "fiat-controller"
@@ -466,6 +491,7 @@
           "label": "Fiat-sent escalation delay",
           "description": "Alert after a Bisq buyer fiat-sent signal stays unmatched this long. 0 disables. Never auto-releases BTC.",
           "type": "duration",
+          "store": "db",
           "default": "2h",
           "restartServices": [
             "mm-controller"
@@ -476,6 +502,7 @@
           "key": "POLL_INTERVAL",
           "label": "Fiat controller poll interval",
           "type": "duration",
+          "store": "db",
           "default": "30s",
           "restartServices": [
             "fiat-controller"
@@ -505,6 +532,7 @@
           "key": "SNAPSHOT_INTERVAL_MIN",
           "label": "Snapshot interval (min)",
           "type": "int",
+          "store": "db",
           "default": "1",
           "restartServices": [
             "unified-snapshot",
@@ -517,6 +545,7 @@
           "label": "CEX capability max age",
           "description": "Permission snapshots older than this are not trusted for new routes.",
           "type": "duration",
+          "store": "db",
           "default": "30m",
           "restartServices": [
             "unified-api",
@@ -529,6 +558,7 @@
           "key": "COINBASE_WITHDRAW_RESERVE_FLOOR_SAT",
           "label": "Withdraw reserve floor (sat)",
           "type": "int",
+          "store": "db",
           "default": "10000",
           "restartServices": [
             "unified-api"
@@ -539,6 +569,7 @@
           "key": "COINBASE_WITHDRAW_RESERVE_MULTIPLIER",
           "label": "Withdraw reserve multiplier",
           "type": "int",
+          "store": "db",
           "default": "2",
           "restartServices": [
             "unified-api"
@@ -549,6 +580,7 @@
           "key": "ROBOSATS_FEDERATION_URL",
           "label": "Federation registry URL",
           "type": "url",
+          "store": "db",
           "default": "https://raw.githubusercontent.com/RoboSats/robosats/main/frontend/static/federation.json",
           "restartServices": [
             "unified-snapshot"
@@ -559,6 +591,7 @@
           "key": "ROBOSATS_FEDERATION_REFRESH_INTERVAL",
           "label": "Federation refresh interval",
           "type": "duration",
+          "store": "db",
           "default": "6h",
           "restartServices": [
             "unified-snapshot"

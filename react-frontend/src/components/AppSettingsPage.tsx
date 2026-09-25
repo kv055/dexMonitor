@@ -142,6 +142,7 @@ export function AppSettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [restart, setRestart] = useState<string[]>([]);
+  const [fileSynced, setFileSynced] = useState(true);
   const [closedSections, setClosedSections] = useState<Record<string, boolean>>({});
   const [query, setQuery] = useState('');
   const [serviceFilter, setServiceFilter] = useState('all');
@@ -158,6 +159,7 @@ export function AppSettingsPage() {
       setSettings(data);
       setEdits({});
       setRestart([]);
+      setFileSynced(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load settings');
     } finally {
@@ -222,6 +224,15 @@ export function AppSettingsPage() {
     [edits, baseValues],
   );
 
+  // File-backed keys are editable only when the dotenv file is mounted;
+  // database-backed keys persist in app_settings and are always editable.
+  const fileKeySet = useMemo(() => new Set(settings?.fileKeys ?? []), [settings]);
+  const fileReadonly = !settings?.writableFile;
+  const isFieldLocked = useCallback(
+    (key: string) => fileReadonly && fileKeySet.has(key),
+    [fileReadonly, fileKeySet],
+  );
+
   const handleReveal = useCallback(
     async (field: AppSettingField) => {
       setRevealing(field.key);
@@ -255,6 +266,7 @@ export function AppSettingsPage() {
       setSettings((prev) => (prev ? { ...prev, values: result.values } : prev));
       setEdits({});
       setRestart(result.restart);
+      setFileSynced(result.fileSynced);
     } catch (err) {
       setSaveError(err instanceof Error ? err.message : 'Failed to save settings');
     } finally {
@@ -276,7 +288,7 @@ export function AppSettingsPage() {
     );
   }
 
-  const readonly = !settings.writable;
+
 
   return (
     <div className="flex w-full flex-col gap-3 p-3 sm:p-4 lg:min-h-0 lg:flex-1 lg:overflow-y-auto [&>*]:shrink-0">
@@ -290,18 +302,26 @@ export function AppSettingsPage() {
         <button
           type="button"
           className={primaryButtonCls}
-          disabled={readonly || saving || dirtyKeys.length === 0}
-          title={readonly ? 'Settings file not mounted' : `Save ${dirtyKeys.length} change(s)`}
+          disabled={saving || dirtyKeys.length === 0}
+          title={`Save ${dirtyKeys.length} change(s)`}
           onClick={() => void handleSave()}
         >
           {saving ? 'Saving…' : dirtyKeys.length > 0 ? `Save (${dirtyKeys.length})` : 'Save'}
         </button>
       </div>
 
-      {readonly ? (
+      {fileReadonly ? (
         <div className="rounded-md border border-peach/40 bg-peach/10 px-3 py-2 text-xs text-text">
-          Read-only: the settings file is not mounted. Showing effective values only. Mount the root .env into
-          dexmonitor with <code className="font-mono">SETTINGS_ENV_FILE</code> to enable editing.
+          File-backed settings are read-only: the settings file is not mounted. Database-backed settings below
+          remain editable; mount the root .env into dexmonitor with{' '}
+          <code className="font-mono">SETTINGS_ENV_FILE</code> to edit the rest.
+        </div>
+      ) : null}
+
+      {!fileSynced ? (
+        <div className="rounded-md border border-peach/40 bg-peach/10 px-3 py-2 text-xs text-text">
+          Saved to the database, but the dotenv file was not updated (not mounted). Services that still read the
+          file need the values ported into <code className="font-mono">.env.enc</code> and a redeploy to pick them up.
         </div>
       ) : null}
 
@@ -387,7 +407,7 @@ export function AppSettingsPage() {
                     <FieldInput
                       field={field}
                       value={current}
-                      disabled={readonly || saving}
+                      disabled={saving || isFieldLocked(field.key)}
                       revealing={revealing === field.key}
                       onReveal={() => void handleReveal(field)}
                       onChange={(value) =>
@@ -395,6 +415,11 @@ export function AppSettingsPage() {
                       }
                     />
                     {field.description ? <p className={helpCls}>{field.description}</p> : null}
+                    {fileKeySet.has(field.key) ? (
+                      <p className={`${helpCls} text-peach`}>
+                        File-backed: a new version push overwrites .env — port changes into .env.enc as well.
+                      </p>
+                    ) : null}
                   </div>
                 </div>
               );

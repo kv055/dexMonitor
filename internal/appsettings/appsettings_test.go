@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"reflect"
 	"strings"
+	"sync"
 	"testing"
 )
 
@@ -131,6 +132,131 @@ func TestApplyRejectsUnknownAndBadValues(t *testing.T) {
 	after, _ := os.ReadFile(path)
 	if string(before) != string(after) {
 		t.Errorf("file changed on rejected apply:\n%s", string(after))
+	}
+}
+
+func TestApplyWritesBackup(t *testing.T) {
+	fields := testFields(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	original := "PUBLIC_HOSTNAME=old.example.com\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := Apply(path, map[string]string{"PUBLIC_HOSTNAME": "new.example.com"}, fields); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	backup, err := os.ReadFile(path + ".bak")
+	if err != nil {
+		t.Fatalf("read backup: %v", err)
+	}
+	if string(backup) != original {
+		t.Errorf("backup = %q, want original %q", backup, original)
+	}
+	if info, err := os.Stat(path + ".bak"); err != nil {
+		t.Fatal(err)
+	} else if info.Mode().Perm() != 0o600 {
+		t.Errorf("backup mode = %o, want 600", info.Mode().Perm())
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), "PUBLIC_HOSTNAME=new.example.com") {
+		t.Errorf("file not updated:\n%s", raw)
+	}
+}
+
+func TestApplySkipsWriteWhenNothingChanges(t *testing.T) {
+	fields := testFields(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	original := "PUBLIC_HOSTNAME=same.example.com\n"
+	if err := os.WriteFile(path, []byte(original), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// All-masked secrets are a no-op: nothing pending, file untouched.
+	result, err := Apply(path, map[string]string{"TELEGRAM_BOT_TOKEN": MaskedSecret}, fields)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(result.Updated) != 0 {
+		t.Errorf("updated = %v, want empty", result.Updated)
+	}
+
+	// Identical values rewrite nothing: no backup, content untouched.
+	result, err = Apply(path, map[string]string{"PUBLIC_HOSTNAME": "same.example.com"}, fields)
+	if err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+	if len(result.Updated) != 1 {
+		t.Errorf("updated = %v, want [PUBLIC_HOSTNAME]", result.Updated)
+	}
+	if _, err := os.Stat(path + ".bak"); !os.IsNotExist(err) {
+		t.Errorf("backup written for a no-change apply")
+	}
+	after, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !after.ModTime().Equal(before.ModTime()) {
+		t.Error("file rewritten although nothing changed")
+	}
+}
+
+func TestApplyConcurrentNoLostUpdates(t *testing.T) {
+	fields := testFields(t)
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".env")
+	if err := os.WriteFile(path, []byte("PUBLIC_HOSTNAME=host.example.com\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	writes := map[string]string{
+		"SESSION_COOKIE_SECURE":        "true",
+		"TELEGRAM_CHAT_ID":             "12345",
+		"PAYMENT_EMAIL_ACTIVATION_UID": "7",
+		"PG_BACKUP_ENABLED":            "true",
+		"PG_BACKUP_RETENTION_DAYS":     "30",
+		"SCRAPING_ENABLED":             "false",
+		"SNAPSHOT_INTERVAL_MIN":        "2",
+		"PAYMENT_EMAIL_MODE":           "shadow",
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, len(writes))
+	for key, value := range writes {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := Apply(path, map[string]string{key: value}, fields)
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatalf("Apply: %v", err)
+		}
+	}
+
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(raw)
+	for key, value := range writes {
+		if !strings.Contains(content, key+"="+value) {
+			t.Errorf("lost update for %s=%s:\n%s", key, value, content)
+		}
 	}
 }
 
