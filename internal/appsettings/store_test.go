@@ -4,13 +4,43 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	_ "github.com/jackc/pgx/v5/stdlib"
 )
+
+func pgErr(code string) error {
+	return fmt.Errorf("test pg error: %w", &pgconn.PgError{Code: code})
+}
+
+// SQLSTATE mapping must degrade exactly the deploy failure: missing table
+// detected, denied DDL tolerated, everything else fatal — without needing a
+// restricted role to exercise it.
+func TestMissingTableDetection(t *testing.T) {
+	if !IsMissingTable(pgErr("42P01")) {
+		t.Fatal("IsMissingTable(42P01) = false, want true")
+	}
+	for _, err := range []error{nil, errors.New("boom"), pgErr("42501"), pgErr("23505")} {
+		if IsMissingTable(err) {
+			t.Fatalf("IsMissingTable(%v) = true, want false", err)
+		}
+	}
+}
+
+func TestEnsureSchemaErrorMapping(t *testing.T) {
+	if err := mapEnsureSchemaError(pgErr("42501")); !errors.Is(err, ErrSchemaNotManaged) {
+		t.Fatalf("mapEnsureSchemaError(42501) = %v, want ErrSchemaNotManaged", err)
+	}
+	if err := mapEnsureSchemaError(errors.New("conn refused")); errors.Is(err, ErrSchemaNotManaged) {
+		t.Fatalf("mapEnsureSchemaError(generic) = %v, want fatal error", err)
+	}
+}
 
 func testDBFields() map[string]Field {
 	return map[string]Field{

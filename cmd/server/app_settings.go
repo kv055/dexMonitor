@@ -29,6 +29,11 @@ var settingsAuth *auth.Service
 // rows, so operator edits made through the Settings page survive deploys that
 // replace the .env files.
 func loadDBBackedRuntimeConfig(ctx context.Context) error {
+	if appSettingsStore == nil {
+		// Deploy-managed table unavailable at startup: environment-only
+		// settings (defaults already apply).
+		return nil
+	}
 	fields, err := appsettings.FieldsByKey()
 	if err != nil {
 		return err

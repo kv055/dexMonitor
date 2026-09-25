@@ -3,13 +3,40 @@ package appsettings
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strings"
 	"time"
 
 	"commons/credentialcrypto"
+	"github.com/jackc/pgx/v5/pgconn"
 )
+
+// ErrSchemaNotManaged reports that the app_settings table is deploy-managed:
+// it does not exist yet (migrations not applied) and this role may not
+// create it (no CREATE privilege). Callers should run with environment-only
+// settings instead of failing startup.
+var ErrSchemaNotManaged = errors.New("app_settings schema is deploy-managed and not writable by this role")
+
+// pgCode extracts the Postgres SQLSTATE from a driver error, if any.
+func pgCode(err error) string {
+	var pgErr *pgconn.PgError
+	if errors.As(err, &pgErr) {
+		return string(pgErr.Code)
+	}
+	return ""
+}
+
+// IsMissingTable reports Postgres undefined_table (42P01).
+func IsMissingTable(err error) bool {
+	return pgCode(err) == "42P01"
+}
+
+// isPermissionDenied reports Postgres insufficient_privilege (42501).
+func isPermissionDenied(err error) bool {
+	return pgCode(err) == "42501"
+}
 
 // Setting is one persisted row of the app_settings table. Value is always
 // plaintext in memory; secrets are encrypted at rest when Encrypted is set.
@@ -42,9 +69,13 @@ type SQLStore struct {
 // NewSQLStore wraps db (pgx stdlib driver) for settings persistence.
 func NewSQLStore(db *sql.DB) *SQLStore { return &SQLStore{db: db} }
 
-// EnsureSchema creates the app_settings table when absent. Tables are
-// ensured per-package in this codebase (no migration runner); IF NOT EXISTS
-// keeps it idempotent across restarts and replicas.
+// EnsureSchema makes the app_settings table readable, creating it when the
+// role allows. The table is deploy-managed (see the app_settings migration
+// in dexUnifiedApi/db/migrations, applied privileged): low-privilege roles
+// must not fail startup when it is absent or uncreatable, so a missing table
+// the role may not create maps to ErrSchemaNotManaged for the caller to
+// degrade to environment-only settings. Any other error (DB down, etc.)
+// stays fatal. Keep the DDL identical to the migration.
 func (s *SQLStore) EnsureSchema(ctx context.Context) error {
 	const ddl = `CREATE TABLE IF NOT EXISTS app_settings (
 		key TEXT PRIMARY KEY,
@@ -53,10 +84,26 @@ func (s *SQLStore) EnsureSchema(ctx context.Context) error {
 		updated_by TEXT NOT NULL DEFAULT '',
 		updated_at TIMESTAMPTZ NOT NULL DEFAULT now()
 	)`
+	if _, err := s.db.ExecContext(ctx, `SELECT 1 FROM app_settings LIMIT 1`); err == nil {
+		return nil
+	} else if !IsMissingTable(err) {
+		return fmt.Errorf("probe app_settings schema: %w", err)
+	}
 	if _, err := s.db.ExecContext(ctx, ddl); err != nil {
-		return fmt.Errorf("ensure app_settings schema: %w", err)
+		return mapEnsureSchemaError(err)
 	}
 	return nil
+}
+
+// mapEnsureSchemaError classifies a failed creation attempt after a
+// missing-table probe: a role that may not create the deploy-managed table
+// maps to ErrSchemaNotManaged (caller degrades); anything else stays fatal.
+// Pure for unit-testing the SQLSTATE mapping without a restricted role.
+func mapEnsureSchemaError(ddlErr error) error {
+	if isPermissionDenied(ddlErr) {
+		return ErrSchemaNotManaged
+	}
+	return fmt.Errorf("ensure app_settings schema: %w", ddlErr)
 }
 
 // GetAll returns every persisted row, decrypting secrets. A decrypt failure

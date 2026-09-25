@@ -249,8 +249,16 @@ func main() {
 	appSettingsStore = appsettings.NewSQLStore(db)
 	startupCtx := context.Background()
 	if err := appSettingsStore.EnsureSchema(startupCtx); err != nil {
-		slog.Error("failed to ensure app_settings schema", "err", err)
-		os.Exit(1)
+		if errors.Is(err, appsettings.ErrSchemaNotManaged) {
+			// Deploy-managed table, not yet migrated and uncreatable by
+			// this role: stay up with environment-only settings. GET
+			// falls back to env values; PUT reports the store missing.
+			slog.Warn("app_settings table unavailable; running with environment-only settings", "err", err)
+			appSettingsStore = nil
+		} else {
+			slog.Error("failed to ensure app_settings schema", "err", err)
+			os.Exit(1)
+		}
 	}
 	if err := loadDBBackedRuntimeConfig(startupCtx); err != nil {
 		slog.Error("failed to load db-backed settings", "err", err)
