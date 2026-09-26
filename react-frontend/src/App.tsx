@@ -14,6 +14,7 @@ import { useMarketRequestParams } from './hooks/useMarketRequestParams';
 import type { AnalyticsPastRange, MarketRequestParams } from './shared/marketParams';
 import { LoginPage } from './components/LoginPage';
 import { LoadingSpinner } from './components/LoadingSpinner';
+import { ErrorBoundary, LazyView } from './components/ErrorBoundary';
 import { Header } from './components/Header';
 import type { Tab } from './components/Header';
 import { TakerOpportunities } from './components/TakerOpportunities';
@@ -28,10 +29,6 @@ const PaymentMethodsPanel = lazy(() => import('./components/PaymentMethodsPanel'
 const StatisticsView = lazy(() => import('./components/StatisticsView').then(module => ({ default: module.StatisticsView })));
 const AppSettingsPage = lazy(() => import('./components/AppSettingsPage').then(module => ({ default: module.AppSettingsPage })));
 
-function FeatureFallback({ label = 'Loading view' }: { label?: string }) {
-  return <div className="relative min-h-40 flex-1"><LoadingSpinner label={label} /></div>;
-}
-
 function MmControllerView() {
   return (
     <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
@@ -40,19 +37,19 @@ function MmControllerView() {
           <section className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-52 xl:min-h-0 xl:flex-1 overflow-hidden">
             <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Transactions</h3>
             <div className="relative flex-1 min-h-0">
-              <Suspense fallback={<FeatureFallback label="Loading transactions" />}><MmTransactionsLog /></Suspense>
+              <LazyView view="transactions" label="Loading transactions"><MmTransactionsLog /></LazyView>
             </div>
           </section>
           <section className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-52 xl:min-h-0 xl:flex-1 overflow-hidden">
             <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Snapshot Log</h3>
             <div className="relative flex-1 min-h-0">
-              <Suspense fallback={<FeatureFallback label="Loading snapshot log" />}><SnapshotLog /></Suspense>
+              <LazyView view="snapshot log" label="Loading snapshot log"><SnapshotLog /></LazyView>
             </div>
           </section>
         </div>
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-104 xl:min-h-0 overflow-hidden">
           <div className="relative flex-1 min-h-0">
-            <Suspense fallback={<FeatureFallback label="Loading liquidity workspace" />}><LiquidityWorkspace /></Suspense>
+            <LazyView view="liquidity workspace" label="Loading liquidity workspace"><LiquidityWorkspace /></LazyView>
           </div>
         </div>
       </div>
@@ -133,7 +130,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
           customRangeLoading={pastRange != null && (analyticsOverviewLoading || analyticsOrdersLoading || analyticsCappedLoading)}
           onCustomRangeChange={handleCustomRangeChange}
           chart={(extraOffers, includeLiveOffers) => (
-            <Suspense fallback={<FeatureFallback label="Loading market chart" />}>
+            <LazyView view="market chart" label="Loading market chart">
             <OHLCChart
               data={ohlcData}
               loadedHours={Number(filters.hours)}
@@ -144,7 +141,7 @@ function InsightsView({ pastOrderStats, pastOrderStatsAll, pastOrderStatsNetCapp
               fitToOffers
               chartScope="insights"
             />
-            </Suspense>
+            </LazyView>
           )}
         />
       </div>
@@ -156,13 +153,13 @@ function TradingView() {
   return (
     <div className="lg:flex-1 lg:min-h-0 lg:overflow-hidden flex flex-col gap-3">
       <div className="flex-1 min-h-0 overflow-hidden">
-        <Suspense fallback={<FeatureFallback label="Loading trading accounts" />}><TradingAccountsPanel /></Suspense>
+        <LazyView view="trading accounts" label="Loading trading accounts"><TradingAccountsPanel /></LazyView>
       </div>
       <div className="shrink-0 pt-1">
         <div className="mb-2 px-1 text-[0.6rem] font-semibold uppercase tracking-[0.18em] text-muted">
           Payment Method Catalog
         </div>
-        <Suspense fallback={<FeatureFallback label="Loading payment methods" />}><PaymentMethodsPanel /></Suspense>
+        <LazyView view="payment methods" label="Loading payment methods"><PaymentMethodsPanel /></LazyView>
       </div>
     </div>
   );
@@ -220,12 +217,14 @@ function AppShell() {
         />
 
         {settingsOpen && (
-          <Suspense fallback={null}>
-            <SettingsOverlay
-              open
-              onClose={() => setSettingsOpen(false)}
-            />
-          </Suspense>
+          <ErrorBoundary viewName="settings">
+            <Suspense fallback={null}>
+              <SettingsOverlay
+                open
+                onClose={() => setSettingsOpen(false)}
+              />
+            </Suspense>
+          </ErrorBoundary>
         )}
 
         {activeTab === 'mmcontroller' && (
@@ -261,11 +260,11 @@ function AppShell() {
         )}
 
         {activeTab === 'statistics' && (
-          <Suspense fallback={<FeatureFallback label="Loading statistics" />}><StatisticsView lastUpdatedAt={lastUpdatedAt} /></Suspense>
+          <LazyView view="statistics" label="Loading statistics"><StatisticsView lastUpdatedAt={lastUpdatedAt} /></LazyView>
         )}
 
         {activeTab === 'settings' && (
-          <Suspense fallback={<FeatureFallback label="Loading settings" />}><AppSettingsPage /></Suspense>
+          <LazyView view="settings" label="Loading settings"><AppSettingsPage /></LazyView>
         )}
       </div>
       </FiltersProvider>
@@ -297,10 +296,12 @@ function AuthGate() {
 
 export default function App() {
   return (
-    <PreferencesProvider>
-      <AuthProvider>
-        <AuthGate />
-      </AuthProvider>
-    </PreferencesProvider>
+    <ErrorBoundary viewName="dashboard">
+      <PreferencesProvider>
+        <AuthProvider>
+          <AuthGate />
+        </AuthProvider>
+      </PreferencesProvider>
+    </ErrorBoundary>
   );
 }
