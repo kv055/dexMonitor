@@ -523,3 +523,231 @@ func TestStatisticsCacheIgnoresMaxFiatLimit(t *testing.T) {
 		t.Fatalf("maxFiat-only change %s = %q, want %q", statisticsCacheHeader, got, statisticsCacheStatusHit)
 	}
 }
+
+func seedLiveOfferWithSnapshots(t *testing.T, offerID string, lastSeenOffset string, snapshots [][3]any) int64 {
+	t.Helper()
+	res, err := db.Exec(`
+		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, first_seen, last_seen, is_live)
+		VALUES ('robosats', 'ask', 103, 0.1, 0.25, 'Revolut', ?, datetime('now', '-2 hours'), datetime('now', ?), 1)
+	`, offerID, lastSeenOffset)
+	if err != nil {
+		t.Fatalf("insert live offer: %v", err)
+	}
+	id, err := res.LastInsertId()
+	if err != nil {
+		t.Fatalf("last insert id: %v", err)
+	}
+	for _, snap := range snapshots {
+		if _, err := db.Exec(`
+			INSERT INTO order_lifecycle (offer_db_id, snapshot_time, price, ref_price, premium_pct)
+			VALUES (?, datetime('now', ?), 103, ?, ?)
+		`, id, snap[0], snap[1], snap[2]); err != nil {
+			t.Fatalf("insert lifecycle snapshot: %v", err)
+		}
+	}
+	return id
+}
+
+// TestLoadLiveLifecyclePremiumsReturnsNewestSnapshotPerLiveOffer pins the
+// per-offer seek lookup: newest in-cutoff snapshot wins, offers without one
+// (no rows, rows before the cutoff, closed, or outside the window) are
+// absent from the map.
+func TestLoadLiveLifecyclePremiumsReturnsNewestSnapshotPerLiveOffer(t *testing.T) {
+	withTempOrdersDB(t)
+
+	now := time.Now().UTC()
+	windowStart := now.Add(-168 * time.Hour)
+	cutoff := now.Add(-24 * time.Hour)
+
+	newestID := seedLiveOfferWithSnapshots(t, "newest-wins", "-30 minutes", [][3]any{
+		{"-30 hours", 90.0, 1.0}, // before the cutoff: must lose to the fresh row
+		{"-2 hours", 100.0, 3.0},
+	})
+	staleOnlyID := seedLiveOfferWithSnapshots(t, "stale-only", "-30 minutes", [][3]any{
+		{"-30 hours", 90.0, 1.0},
+	})
+	snapshotlessID := seedLiveOfferWithSnapshots(t, "no-snapshots", "-30 minutes", nil)
+	outsideWindowID := seedLiveOfferWithSnapshots(t, "outside-window", "-200 hours", [][3]any{
+		{"-2 hours", 100.0, 3.0},
+	})
+	if _, err := db.Exec(`
+		INSERT INTO offers (exchange, direction, price, btc_min, btc_max, payment_method, offer_id, first_seen, last_seen, is_live)
+		VALUES ('robosats', 'ask', 103, 0.1, 0.25, 'Revolut', 'closed', datetime('now', '-3 hours'), datetime('now', '-30 minutes'), 0)
+	`); err != nil {
+		t.Fatalf("insert closed offer: %v", err)
+	}
+
+	got, err := loadLiveLifecyclePremiums(windowStart, time.Time{}, cutoff)
+	if err != nil {
+		t.Fatalf("loadLiveLifecyclePremiums: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("snapshots for %d offers, want exactly the newest-wins offer", len(got))
+	}
+	snap, ok := got[newestID]
+	if !ok || snap.RefPrice != 100 || snap.PremiumPct != 3 {
+		t.Fatalf("newest snapshot = %#v, want {RefPrice:100 PremiumPct:3}", snap)
+	}
+	for id, name := range map[int64]string{staleOnlyID: "stale-only", snapshotlessID: "no-snapshots", outsideWindowID: "outside-window"} {
+		if _, ok := got[id]; ok {
+			t.Fatalf("offer %s (id %d) present, want absent", name, id)
+		}
+	}
+}
+
+// TestLoadLiveLifecyclePremiumsHonorsCustomRangeEnd covers the bounded
+// variant: live offers seen at or after the custom range end are excluded.
+func TestLoadLiveLifecyclePremiumsHonorsCustomRangeEnd(t *testing.T) {
+	withTempOrdersDB(t)
+
+	now := time.Now().UTC()
+	inRangeID := seedLiveOfferWithSnapshots(t, "in-range", "-30 hours", [][3]any{
+		{"-2 hours", 100.0, 3.0},
+	})
+	afterEndID := seedLiveOfferWithSnapshots(t, "after-end", "-1 hours", [][3]any{
+		{"-30 minutes", 100.0, 3.0},
+	})
+
+	got, err := loadLiveLifecyclePremiums(now.Add(-48*time.Hour), now.Add(-24*time.Hour), now.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatalf("loadLiveLifecyclePremiums: %v", err)
+	}
+	if _, ok := got[inRangeID]; !ok {
+		t.Fatalf("in-range offer missing from %#v", got)
+	}
+	if _, ok := got[afterEndID]; ok {
+		t.Fatalf("after-end offer present, want excluded by the range end")
+	}
+}
+
+// TestStatisticsWaiterTimesOutInsteadOfHanging wedges a cache entry on a
+// refresh that never finishes: waiters must get a retryable 503 quickly,
+// not a silent connection that hangs until something kills it.
+func TestStatisticsWaiterTimesOutInsteadOfHanging(t *testing.T) {
+	withTempOrdersDB(t)
+	resetStatisticsCache()
+
+	oldTimeout := statisticsWaitTimeout
+	statisticsWaitTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { statisticsWaitTimeout = oldTimeout })
+
+	body := `{"hours":48,"cex":"kraken","fiat":"EUR"}`
+	parseReq := httptest.NewRequest(http.MethodPost, "/api/statistics", strings.NewReader(body))
+	parsed, err := parseDashboardAnalyticsParams(parseReq)
+	if err != nil {
+		t.Fatalf("parse params: %v", err)
+	}
+	key := parsed.contextCacheKey()
+
+	statisticsResultCache.Lock()
+	if statisticsResultCache.entries == nil {
+		statisticsResultCache.entries = make(map[string]*statisticsResultCacheEntry)
+	}
+	statisticsResultCache.entries[key] = &statisticsResultCacheEntry{
+		refreshInProgress: true,
+		refreshDone:       make(chan struct{}), // never closed: simulates a hung build
+	}
+	statisticsResultCache.Unlock()
+
+	req := httptest.NewRequest(http.MethodPost, "/api/statistics", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+
+	start := time.Now()
+	handleStatistics(rec, req)
+	if elapsed := time.Since(start); elapsed > 10*time.Second {
+		t.Fatalf("waiter blocked %v, want a fast 503", elapsed)
+	}
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want %d; body=%s", rec.Code, http.StatusServiceUnavailable, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "timed out") {
+		t.Fatalf("body %q, want a retry hint", rec.Body.String())
+	}
+	if rec.Header().Get("Retry-After") == "" {
+		t.Fatalf("missing Retry-After header")
+	}
+}
+
+// TestStatisticsSyncPanicUnwedgesCacheKey simulates a build that panics
+// (here: a nil database handle): the panic must surface to net/http as
+// usual, but the cache entry must be released with the failure recorded so
+// later requests rebuild instead of hanging on a wedged channel.
+func TestStatisticsSyncPanicUnwedgesCacheKey(t *testing.T) {
+	withTempOrdersDB(t)
+	resetStatisticsCache()
+
+	oldDB := db
+	db = nil
+	t.Cleanup(func() {
+		db = oldDB
+		resetAnalyticsCaches()
+	})
+
+	body := `{"hours":199,"cex":"kraken","fiat":"EUR"}`
+	parseReq := httptest.NewRequest(http.MethodPost, "/api/statistics", strings.NewReader(body))
+	parsed, err := parseDashboardAnalyticsParams(parseReq)
+	if err != nil {
+		t.Fatalf("parse params: %v", err)
+	}
+	key := parsed.contextCacheKey()
+
+	func() {
+		defer func() {
+			if rec := recover(); rec == nil {
+				t.Fatalf("expected handleStatistics to re-panic on nil-db build failure")
+			}
+		}()
+		req := httptest.NewRequest(http.MethodPost, "/api/statistics", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		handleStatistics(httptest.NewRecorder(), req)
+	}()
+
+	statisticsResultCache.Lock()
+	entry := statisticsResultCache.entries[key]
+	statisticsResultCache.Unlock()
+	if entry == nil {
+		t.Fatalf("no cache entry for key %q", key)
+	}
+	if entry.refreshInProgress {
+		t.Fatalf("entry still marked refreshInProgress after panic")
+	}
+	if !strings.Contains(entry.lastError, "panicked") {
+		t.Fatalf("lastError %q, want the recorded panic", entry.lastError)
+	}
+}
+
+// TestTriggerStatisticsRefreshRecoversFromPanic proves a panicking
+// background refresh neither kills the process nor wedges the key.
+func TestTriggerStatisticsRefreshRecoversFromPanic(t *testing.T) {
+	withTempOrdersDB(t)
+	resetStatisticsCache()
+
+	oldDB := db
+	db = nil
+	t.Cleanup(func() {
+		db = oldDB
+		resetAnalyticsCaches()
+	})
+
+	const key = "panic-refresh-test"
+	triggerStatisticsRefresh(key, dashboardAnalyticsParams{Hours: 24, Fiat: "EUR"})
+
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		statisticsResultCache.Lock()
+		entry := statisticsResultCache.entries[key]
+		var done bool
+		if entry != nil && !entry.refreshInProgress {
+			done = strings.Contains(entry.lastError, "panicked")
+		}
+		statisticsResultCache.Unlock()
+		if done {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("background refresh did not record its panic within deadline")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}

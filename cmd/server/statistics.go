@@ -1,10 +1,12 @@
 package main
 
 import (
+	"database/sql"
 	"fmt"
 	"log/slog"
 	"math"
 	"net/http"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +20,12 @@ const (
 	statisticsCacheRetention       = 48 * time.Hour
 	statisticsCacheMaxEntries      = 32
 )
+
+// statisticsWaitTimeout bounds how long a request waits for another
+// in-flight cache build before answering 503: a hung build must degrade to
+// a retryable response, never a connection that stays silent until some
+// middlebox kills it. A variable so tests can shrink it.
+var statisticsWaitTimeout = 60 * time.Second
 
 const (
 	statisticsCacheHeader   = "X-Stats-Cache"
@@ -307,7 +315,20 @@ func loadStatisticsContextForParams(p dashboardAnalyticsParams) (statisticsConte
 	if windowHours <= 0 {
 		windowHours = 24
 	}
-	liveLifecycle, err := loadLiveLifecyclePremiums(offers, time.Now().Add(-time.Duration(windowHours)*time.Hour))
+	// The lifecycle fallback covers the same live offers the context query
+	// just loaded: the full window for preset ranges, the custom bounds
+	// otherwise. Re-filtering in SQL keeps one round trip and no ID list.
+	var windowStart, windowEnd time.Time
+	if p.hasCustomPastRange() {
+		windowStart, windowEnd = p.pastRangeStart, p.pastRangeEnd
+	} else {
+		historyHours := p.Hours
+		if historyHours < 168 {
+			historyHours = 168
+		}
+		windowStart = time.Now().Add(-time.Duration(historyHours) * time.Hour)
+	}
+	liveLifecycle, err := loadLiveLifecyclePremiums(windowStart, windowEnd, time.Now().Add(-time.Duration(windowHours)*time.Hour))
 	if err != nil {
 		return statisticsContext{}, err
 	}
@@ -343,31 +364,32 @@ func loadStatisticsContextForParams(p dashboardAnalyticsParams) (statisticsConte
 	}, nil
 }
 
-// loadLiveLifecyclePremiums returns each live offer's newest order_lifecycle
-// baseline row inside the window. Live offers carry no persisted premium
-// averages (reconcileLiveOfferStatus nulls them until close), so this single
-// indexed lookup — not a full lifecycle replay — supplies the reference price
-// the lifecycle/premium chart needs for currently-live offers.
-func loadLiveLifecyclePremiums(offers []map[string]any, cutoff time.Time) (map[int64]offerLifecycleSnapshot, error) {
-	liveIDs := make([]int64, 0, len(offers))
-	for _, o := range offers {
-		if offerBool(o, "is_live") {
-			liveIDs = append(liveIDs, int64(offerFloat(o, "id")))
-		}
-	}
-	if len(liveIDs) == 0 {
-		return nil, nil
-	}
+// liveLifecyclePremiumsQuery returns each in-window live offer's newest
+// order_lifecycle baseline snapshot inside the cutoff, or NULLs when the
+// offer has none. Correlated scalar subqueries (valid in PostgreSQL and the
+// SQLite test schema alike) make this one index seek per offer on
+// (offer_db_id, snapshot_time): the previous shape scanned the whole cutoff
+// slice (600k+ rows on prod) and sorted it, costing ~30s under load.
+const liveLifecyclePremiumsQuery = `
+SELECT o.id AS offer_db_id,
+	(SELECT ref_price FROM order_lifecycle WHERE offer_db_id = o.id AND snapshot_time >= ? ORDER BY snapshot_time DESC LIMIT 1) AS ref_price,
+	(SELECT premium_pct FROM order_lifecycle WHERE offer_db_id = o.id AND snapshot_time >= ? ORDER BY snapshot_time DESC LIMIT 1) AS premium_pct
+FROM offers o
+WHERE o.is_live AND o.last_seen >= ?`
 
-	query := `
-SELECT offer_db_id, ref_price, premium_pct
-FROM order_lifecycle
-WHERE snapshot_time >= ? AND offer_db_id IN (` + strings.TrimSuffix(strings.Repeat("?,", len(liveIDs)), ",") + `)
-ORDER BY offer_db_id, snapshot_time`
-	args := make([]any, 0, len(liveIDs)+1)
-	args = append(args, cutoff.Format("2006-01-02 15:04:05"))
-	for _, id := range liveIDs {
-		args = append(args, id)
+// loadLiveLifecyclePremiums returns each live offer's newest order_lifecycle
+// baseline row inside the cutoff for offers in [windowStart, windowEnd); a
+// zero windowEnd leaves the range open. Live offers carry no persisted
+// premium averages (reconcileLiveOfferStatus nulls them until close), so this
+// indexed lookup — not a full lifecycle replay — supplies the reference
+// price the lifecycle/premium chart needs for currently-live offers.
+func loadLiveLifecyclePremiums(windowStart, windowEnd, cutoff time.Time) (map[int64]offerLifecycleSnapshot, error) {
+	query := liveLifecyclePremiumsQuery
+	cutoffStr := cutoff.Format("2006-01-02 15:04:05")
+	args := []any{cutoffStr, cutoffStr, windowStart.Format("2006-01-02 15:04:05")}
+	if !windowEnd.IsZero() {
+		query += " AND o.last_seen < ?"
+		args = append(args, windowEnd.Format("2006-01-02 15:04:05"))
 	}
 
 	rows, err := db.Query(rebind(query), args...)
@@ -379,16 +401,20 @@ ORDER BY offer_db_id, snapshot_time`
 	}
 	defer rows.Close()
 
-	latest := make(map[int64]offerLifecycleSnapshot, len(liveIDs))
+	latest := make(map[int64]offerLifecycleSnapshot)
 	for rows.Next() {
 		var (
 			id   int64
-			snap offerLifecycleSnapshot
+			ref  sql.NullFloat64
+			prem sql.NullFloat64
 		)
-		if err := rows.Scan(&id, &snap.RefPrice, &snap.PremiumPct); err != nil {
+		if err := rows.Scan(&id, &ref, &prem); err != nil {
 			return nil, fmt.Errorf("scan live lifecycle premium: %w", err)
 		}
-		latest[id] = snap
+		if !ref.Valid || !prem.Valid {
+			continue
+		}
+		latest[id] = offerLifecycleSnapshot{RefPrice: ref.Float64, PremiumPct: prem.Float64}
 	}
 	return latest, rows.Err()
 }
@@ -543,6 +569,16 @@ func finishStatisticsRefresh(cacheKey string, params dashboardAnalyticsParams, c
 func triggerStatisticsRefresh(cacheKey string, params dashboardAnalyticsParams) {
 	go func() {
 		start := time.Now()
+		defer func() {
+			// A panicking refresh must neither take down the process nor
+			// wedge the cache key (waiters would hang forever): record the
+			// failure and wake them instead.
+			if rec := recover(); rec != nil {
+				err := fmt.Errorf("statistics refresh panicked: %v", rec)
+				slog.Error("statistics refresh panicked", "cache_key", cacheKey, "err", err, "stack", string(debug.Stack()))
+				finishStatisticsRefresh(cacheKey, params, statisticsContext{}, statisticsResponse{}, err)
+			}
+		}()
 		ctx, err := loadStatisticsContextForParams(params)
 		var resp statisticsResponse
 		if err == nil {
@@ -666,6 +702,16 @@ func handleStatistics(w http.ResponseWriter, r *http.Request) {
 	// downstream per request, so slider recalculations reuse the cached offers
 	// instead of rebuilding the context synchronously.
 	cacheKey := p.contextCacheKey()
+	defer func() {
+		// A panicking build must not wedge the cache key: waiters blocked on
+		// the refresh channel would otherwise hang forever with zero bytes
+		// on the wire. Record the failure so they wake, then re-panic so
+		// net/http still logs the stack and the client gets a 502.
+		if rec := recover(); rec != nil {
+			finishStatisticsRefresh(cacheKey, p.withoutOfferFilters(), statisticsContext{}, statisticsResponse{}, fmt.Errorf("statistics build panicked: %v", rec))
+			panic(rec)
+		}
+	}()
 	for {
 		now := time.Now()
 		statisticsResultCache.Lock()
@@ -701,8 +747,18 @@ func handleStatistics(w http.ResponseWriter, r *http.Request) {
 			done := entry.refreshDone
 			statisticsResultCache.Unlock()
 			if done != nil {
-				<-done
-				continue
+				timer := time.NewTimer(statisticsWaitTimeout)
+				select {
+				case <-done:
+					timer.Stop()
+					continue
+				case <-timer.C:
+					// The build keeps running in the background; the retry
+					// this invites will likely hit the finished entry.
+					w.Header().Set("Retry-After", "5")
+					http.Error(w, "statistics build timed out; retry shortly", http.StatusServiceUnavailable)
+					return
+				}
 			}
 		} else {
 			beginStatisticsRefreshLocked(entry)
