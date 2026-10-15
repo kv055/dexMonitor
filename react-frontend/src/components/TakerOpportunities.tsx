@@ -237,6 +237,8 @@ const DEFAULT_SORT_DIR: Record<SortColumn, SortDir> = {
 
 type NetProfitUnit = 'btc' | 'fiat';
 type SizeUnit = 'btc' | 'fiat';
+/** Unit of the Insights net-profit range slider: fiat amounts or net premium percentage. */
+type ProfitRangeUnit = 'fiat' | 'pct';
 
 const INSIGHTS_FILTERS_STORAGE_KEY = 'dex-insights-filters';
 const CUSTOM_TIMEFRAME = 'custom';
@@ -258,8 +260,11 @@ interface PersistedInsightsFilters {
   summaryUnit: SizeUnit;
   durationMin: number | null;
   durationMax: number | null;
+  profitRangeUnit: ProfitRangeUnit;
   profitFiatMin: number | null;
   profitFiatMax: number | null;
+  profitPctMin: number | null;
+  profitPctMax: number | null;
 }
 
 const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
@@ -277,8 +282,11 @@ const DEFAULT_INSIGHTS_FILTERS: PersistedInsightsFilters = {
   summaryUnit: 'btc',
   durationMin: null,
   durationMax: null,
+  profitRangeUnit: 'fiat',
   profitFiatMin: null,
   profitFiatMax: null,
+  profitPctMin: null,
+  profitPctMax: null,
 };
 
 const VALID_VIEW_MODES = new Set<InsightsViewMode>(['live', 'past']);
@@ -287,6 +295,7 @@ const VALID_DIRECTIONS = new Set<DirectionFilter>(['both', 'bid', 'ask']);
 const VALID_MODES = new Set<TakerOpportunityMode>(['net_full', 'net_capped', 'net_min']);
 const VALID_NET_PROFIT_UNITS = new Set<NetProfitUnit>(['btc', 'fiat']);
 const VALID_SIZE_UNITS = new Set<SizeUnit>(['btc', 'fiat']);
+const VALID_PROFIT_RANGE_UNITS = new Set<ProfitRangeUnit>(['fiat', 'pct']);
 const VALID_SORT_COLUMNS = new Set<SortColumn>([
   'exchange',
   'direction',
@@ -391,8 +400,13 @@ function readPersistedInsightsFilters(): PersistedInsightsFilters {
         : DEFAULT_INSIGHTS_FILTERS.summaryUnit,
       durationMin: readNullableNumber(parsed.durationMin, PERSISTED_DURATION_BOUNDS),
       durationMax: readNullableNumber(parsed.durationMax, PERSISTED_DURATION_BOUNDS),
+      profitRangeUnit: VALID_PROFIT_RANGE_UNITS.has(parsed.profitRangeUnit as ProfitRangeUnit)
+        ? parsed.profitRangeUnit as ProfitRangeUnit
+        : DEFAULT_INSIGHTS_FILTERS.profitRangeUnit,
       profitFiatMin: readNullableNumber(parsed.profitFiatMin, PERSISTED_PROFIT_BOUNDS),
       profitFiatMax: readNullableNumber(parsed.profitFiatMax, PERSISTED_PROFIT_BOUNDS),
+      profitPctMin: readNullableNumber(parsed.profitPctMin, PERSISTED_PROFIT_BOUNDS),
+      profitPctMax: readNullableNumber(parsed.profitPctMax, PERSISTED_PROFIT_BOUNDS),
     };
   } catch {
     return DEFAULT_INSIGHTS_FILTERS;
@@ -412,6 +426,10 @@ function orderNetProfitFiat(order: DisplayOrder, mode: TakerOpportunityMode): nu
   return orderScenarioSummary(order, mode).profitFiat;
 }
 
+function orderNetPremiumPct(order: DisplayOrder, mode: TakerOpportunityMode): number {
+  return orderScenarioSummary(order, mode).netPercent;
+}
+
 function profitFiatToCents(profit: number): number {
   return Math.round(profit * 100);
 }
@@ -420,33 +438,50 @@ function profitFiatFromCents(cents: number): number {
   return cents / 100;
 }
 
-interface ProfitFiatBounds {
-  minCents: number;
-  maxCents: number;
-  sliderMaxCents: number;
+function profitPctToHundredths(pct: number): number {
+  return Math.round(pct * 100);
+}
+
+function profitPctFromHundredths(hundredths: number): number {
+  return hundredths / 100;
+}
+
+// Both profit metrics share one bounds shape: fiat amounts scaled to cents and
+// net premium percentages scaled to hundredths of a percent.
+interface ProfitMetricBounds {
+  minScaled: number;
+  maxScaled: number;
+  sliderMaxScaled: number;
   hasData: boolean;
 }
 
-function computeProfitFiatBounds(
+const NO_PROFIT_METRIC_BOUNDS: ProfitMetricBounds = {
+  minScaled: 0,
+  maxScaled: 0,
+  sliderMaxScaled: 0,
+  hasData: false,
+};
+
+function computeProfitMetricBounds(
   orders: DisplayOrder[],
-  mode: TakerOpportunityMode,
-): ProfitFiatBounds {
+  metricValue: (order: DisplayOrder) => number,
+): ProfitMetricBounds {
   let min = Infinity;
   let max = -Infinity;
   for (const order of orders) {
-    const profit = orderNetProfitFiat(order, mode);
-    if (profit < min) min = profit;
-    if (profit > max) max = profit;
+    const value = metricValue(order);
+    if (value < min) min = value;
+    if (value > max) max = value;
   }
   if (!Number.isFinite(min) || !Number.isFinite(max)) {
-    return { minCents: 0, maxCents: 0, sliderMaxCents: 0, hasData: false };
+    return NO_PROFIT_METRIC_BOUNDS;
   }
-  const minCents = Math.floor(min * 100);
-  const maxCents = Math.ceil(max * 100);
+  const minScaled = Math.floor(min * 100);
+  const maxScaled = Math.ceil(max * 100);
   return {
-    minCents,
-    maxCents,
-    sliderMaxCents: minCents === maxCents ? maxCents + 1 : maxCents,
+    minScaled,
+    maxScaled,
+    sliderMaxScaled: minScaled === maxScaled ? maxScaled + 1 : maxScaled,
     hasData: true,
   };
 }
@@ -1365,7 +1400,9 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const [sizeUnit, setSizeUnit] = useState<SizeUnit>(initialFilters.sizeUnit);
   const [summaryUnit, setSummaryUnit] = useState<SizeUnit>(initialFilters.summaryUnit);
   const [durationRange, setDurationRange] = useState<[number, number] | null>(null);
+  const [profitRangeUnit, setProfitRangeUnit] = useState<ProfitRangeUnit>(initialFilters.profitRangeUnit);
   const [profitFiatRangeCents, setProfitFiatRangeCents] = useState<[number, number] | null>(null);
+  const [profitPctRangeScaled, setProfitPctRangeScaled] = useState<[number, number] | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [expandedScenarioMode, setExpandedScenarioMode] = useState<SizeMode>('full');
   const { exchanges: cexExchanges } = useCEXPermissions();
@@ -1394,10 +1431,17 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     minCents: initialFilters.profitFiatMin != null ? profitFiatToCents(initialFilters.profitFiatMin) : null,
     maxCents: initialFilters.profitFiatMax != null ? profitFiatToCents(initialFilters.profitFiatMax) : null,
   });
+  const persistedProfitPctRef = useRef({
+    minHundredths: initialFilters.profitPctMin != null ? profitPctToHundredths(initialFilters.profitPctMin) : null,
+    maxHundredths: initialFilters.profitPctMax != null ? profitPctToHundredths(initialFilters.profitPctMax) : null,
+  });
   const durationBoundsInitializedRef = useRef(false);
   const profitFiatBoundsInitializedRef = useRef(false);
-  const lastProfitFiatBoundsRef = useRef<{ minCents: number; maxCents: number } | null>(null);
+  const profitPctBoundsInitializedRef = useRef(false);
+  const lastProfitFiatBoundsRef = useRef<{ minScaled: number; maxScaled: number } | null>(null);
+  const lastProfitPctBoundsRef = useRef<{ minScaled: number; maxScaled: number } | null>(null);
   const profitFiatModeRef = useRef(mode);
+  const profitPctModeRef = useRef(mode);
   const tradesListRef = useRef<HTMLDivElement>(null);
   const offersLayoutRef = useRef<HTMLDivElement>(null);
   const offersListPanelRef = useRef<HTMLDivElement>(null);
@@ -1641,8 +1685,15 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
 
   const profitFiatBounds = useMemo(
     () => scenarioDataPending
-      ? { minCents: 0, maxCents: 0, sliderMaxCents: 0, hasData: false }
-      : computeProfitFiatBounds(ordersAfterDurationFilter, mode),
+      ? NO_PROFIT_METRIC_BOUNDS
+      : computeProfitMetricBounds(ordersAfterDurationFilter, order => orderNetProfitFiat(order, mode)),
+    [scenarioDataPending, ordersAfterDurationFilter, mode],
+  );
+
+  const profitPctBounds = useMemo(
+    () => scenarioDataPending
+      ? NO_PROFIT_METRIC_BOUNDS
+      : computeProfitMetricBounds(ordersAfterDurationFilter, order => orderNetPremiumPct(order, mode)),
     [scenarioDataPending, ordersAfterDurationFilter, mode],
   );
 
@@ -1655,10 +1706,10 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       profitFiatBoundsInitializedRef.current = false;
     }
 
-    const bounds = { min: profitFiatBounds.minCents, max: profitFiatBounds.maxCents };
+    const bounds = { min: profitFiatBounds.minScaled, max: profitFiatBounds.maxScaled };
     const lastBounds = lastProfitFiatBoundsRef.current;
     const boundsChanged = lastBounds != null
-      && (lastBounds.minCents !== bounds.min || lastBounds.maxCents !== bounds.max);
+      && (lastBounds.minScaled !== bounds.min || lastBounds.maxScaled !== bounds.max);
 
     setProfitFiatRangeCents(prev => {
       if (modeChanged || !profitFiatBoundsInitializedRef.current) {
@@ -1672,17 +1723,55 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       if (prev == null) {
         return [bounds.min, bounds.max];
       }
-      if (boundsChanged && prev[0] === lastBounds!.minCents && prev[1] === lastBounds!.maxCents) {
+      if (boundsChanged && prev[0] === lastBounds!.minScaled && prev[1] === lastBounds!.maxScaled) {
         return [bounds.min, bounds.max];
       }
       return clampNumericRange(prev, bounds);
     });
 
     lastProfitFiatBoundsRef.current = {
-      minCents: profitFiatBounds.minCents,
-      maxCents: profitFiatBounds.maxCents,
+      minScaled: profitFiatBounds.minScaled,
+      maxScaled: profitFiatBounds.maxScaled,
     };
   }, [mode, profitFiatBounds, durationRange]);
+
+  useEffect(() => {
+    if (!profitPctBounds.hasData) return;
+
+    const modeChanged = profitPctModeRef.current !== mode;
+    if (modeChanged) {
+      profitPctModeRef.current = mode;
+      profitPctBoundsInitializedRef.current = false;
+    }
+
+    const bounds = { min: profitPctBounds.minScaled, max: profitPctBounds.maxScaled };
+    const lastBounds = lastProfitPctBoundsRef.current;
+    const boundsChanged = lastBounds != null
+      && (lastBounds.minScaled !== bounds.min || lastBounds.maxScaled !== bounds.max);
+
+    setProfitPctRangeScaled(prev => {
+      if (modeChanged || !profitPctBoundsInitializedRef.current) {
+        profitPctBoundsInitializedRef.current = true;
+        const { minHundredths, maxHundredths } = persistedProfitPctRef.current;
+        if (minHundredths != null && maxHundredths != null) {
+          return clampNumericRange([minHundredths, maxHundredths], bounds);
+        }
+        return [bounds.min, bounds.max];
+      }
+      if (prev == null) {
+        return [bounds.min, bounds.max];
+      }
+      if (boundsChanged && prev[0] === lastBounds!.minScaled && prev[1] === lastBounds!.maxScaled) {
+        return [bounds.min, bounds.max];
+      }
+      return clampNumericRange(prev, bounds);
+    });
+
+    lastProfitPctBoundsRef.current = {
+      minScaled: profitPctBounds.minScaled,
+      maxScaled: profitPctBounds.maxScaled,
+    };
+  }, [mode, profitPctBounds, durationRange]);
 
   useLayoutEffect(() => {
     const atFullDurationRange = durationBounds.hasData
@@ -1691,8 +1780,12 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       && durationRange[1] === durationBounds.max;
     const atFullProfitRange = profitFiatBounds.hasData
       && profitFiatRangeCents != null
-      && profitFiatRangeCents[0] === profitFiatBounds.minCents
-      && profitFiatRangeCents[1] === profitFiatBounds.maxCents;
+      && profitFiatRangeCents[0] === profitFiatBounds.minScaled
+      && profitFiatRangeCents[1] === profitFiatBounds.maxScaled;
+    const atFullProfitPctRange = profitPctBounds.hasData
+      && profitPctRangeScaled != null
+      && profitPctRangeScaled[0] === profitPctBounds.minScaled
+      && profitPctRangeScaled[1] === profitPctBounds.maxScaled;
     const payload: PersistedInsightsFilters = {
       viewMode,
       selectedTimeframe,
@@ -1712,12 +1805,19 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       durationMax: !durationBounds.hasData || atFullDurationRange || durationRange == null
         ? null
         : durationRange[1],
+      profitRangeUnit,
       profitFiatMin: !profitFiatBounds.hasData || atFullProfitRange || profitFiatRangeCents == null
         ? null
         : profitFiatFromCents(profitFiatRangeCents[0]),
       profitFiatMax: !profitFiatBounds.hasData || atFullProfitRange || profitFiatRangeCents == null
         ? null
         : profitFiatFromCents(profitFiatRangeCents[1]),
+      profitPctMin: !profitPctBounds.hasData || atFullProfitPctRange || profitPctRangeScaled == null
+        ? null
+        : profitPctFromHundredths(profitPctRangeScaled[0]),
+      profitPctMax: !profitPctBounds.hasData || atFullProfitPctRange || profitPctRangeScaled == null
+        ? null
+        : profitPctFromHundredths(profitPctRangeScaled[1]),
     };
     localStorage.setItem(INSIGHTS_FILTERS_STORAGE_KEY, JSON.stringify(payload));
   }, [
@@ -1736,13 +1836,28 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     durationBounds.min,
     durationBounds.max,
     durationBounds.hasData,
+    profitRangeUnit,
     profitFiatRangeCents,
-    profitFiatBounds.minCents,
-    profitFiatBounds.maxCents,
+    profitFiatBounds.minScaled,
+    profitFiatBounds.maxScaled,
     profitFiatBounds.hasData,
+    profitPctRangeScaled,
+    profitPctBounds.minScaled,
+    profitPctBounds.maxScaled,
+    profitPctBounds.hasData,
   ]);
 
   const filteredOrders = useMemo(() => {
+    if (profitRangeUnit === 'pct') {
+      if (profitPctRangeScaled == null) {
+        return ordersAfterDurationFilter;
+      }
+      const [lo, hi] = profitPctRangeScaled;
+      return ordersAfterDurationFilter.filter(order => {
+        const scaled = profitPctToHundredths(orderNetPremiumPct(order, mode));
+        return scaled >= lo && scaled <= hi;
+      });
+    }
     if (profitFiatRangeCents == null) {
       return ordersAfterDurationFilter;
     }
@@ -1751,7 +1866,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       const cents = profitFiatToCents(orderNetProfitFiat(order, mode));
       return cents >= lo && cents <= hi;
     });
-  }, [ordersAfterDurationFilter, profitFiatRangeCents, mode]);
+  }, [ordersAfterDurationFilter, profitRangeUnit, profitPctRangeScaled, profitFiatRangeCents, mode]);
 
   const filteredSummary = useMemo(
     () => computeFilteredSummary(filteredOrders, mode),
@@ -1905,16 +2020,26 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     setExpandedScenarioMode('full');
     persistedDurationRef.current = { min: null, max: null };
     persistedProfitFiatRef.current = { minCents: null, maxCents: null };
+    persistedProfitPctRef.current = { minHundredths: null, maxHundredths: null };
     profitFiatBoundsInitializedRef.current = false;
+    profitPctBoundsInitializedRef.current = false;
     lastProfitFiatBoundsRef.current = null;
+    lastProfitPctBoundsRef.current = null;
+    setProfitRangeUnit(DEFAULT_INSIGHTS_FILTERS.profitRangeUnit);
     if (durationBounds.hasData) {
       setDurationRange([durationBounds.min, durationBounds.max]);
     }
     if (profitFiatBounds.hasData) {
-      setProfitFiatRangeCents([profitFiatBounds.minCents, profitFiatBounds.maxCents]);
+      setProfitFiatRangeCents([profitFiatBounds.minScaled, profitFiatBounds.maxScaled]);
       profitFiatBoundsInitializedRef.current = true;
     } else {
       setProfitFiatRangeCents(null);
+    }
+    if (profitPctBounds.hasData) {
+      setProfitPctRangeScaled([profitPctBounds.minScaled, profitPctBounds.maxScaled]);
+      profitPctBoundsInitializedRef.current = true;
+    } else {
+      setProfitPctRangeScaled(null);
     }
   }, [
     resetLiveFilters,
@@ -1922,8 +2047,11 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     durationBounds.min,
     durationBounds.max,
     profitFiatBounds.hasData,
-    profitFiatBounds.minCents,
-    profitFiatBounds.maxCents,
+    profitFiatBounds.minScaled,
+    profitFiatBounds.maxScaled,
+    profitPctBounds.hasData,
+    profitPctBounds.minScaled,
+    profitPctBounds.maxScaled,
   ]);
 
   const initialAnalyticsPending = !stats
@@ -2049,17 +2177,52 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                 disabled={!durationBounds.hasData || durationRange == null}
                 disabledMessage="No duration data in this window"
               />
-              <DualRangeFilter
-                label={`Net profit ${fiat}`}
-                description="Filter profitable trades by net profit per order in fiat"
-                min={profitFiatBounds.minCents}
-                max={profitFiatBounds.sliderMaxCents}
-                value={profitFiatRangeCents ?? [profitFiatBounds.minCents, profitFiatBounds.maxCents]}
-                onChange={setProfitFiatRangeCents}
-                formatValue={value => fmtFiat(profitFiatFromCents(value), fiat)}
-                disabled={!profitFiatBounds.hasData || profitFiatRangeCents == null}
-                disabledMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No profit data in this window'}
-              />
+              <div className="flex items-center justify-between gap-2" role="group" aria-label="Net profit range unit">
+                <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted" title="Switch the profit range slider between fiat amounts and net premium percentage">Unit</span>
+                <span className="inline-flex shrink-0 items-center rounded border border-border bg-bg/70 p-0.5">
+                  <button
+                    type="button"
+                    aria-pressed={profitRangeUnit === 'fiat'}
+                    onClick={() => setProfitRangeUnit('fiat')}
+                    className={unitToggleButtonClass(profitRangeUnit === 'fiat')}
+                  >
+                    {fiat}
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={profitRangeUnit === 'pct'}
+                    onClick={() => setProfitRangeUnit('pct')}
+                    className={unitToggleButtonClass(profitRangeUnit === 'pct')}
+                  >
+                    %
+                  </button>
+                </span>
+              </div>
+              {profitRangeUnit === 'pct' ? (
+                <DualRangeFilter
+                  label="Net premium %"
+                  description="Filter profitable trades by net premium percentage per order"
+                  min={profitPctBounds.minScaled}
+                  max={profitPctBounds.sliderMaxScaled}
+                  value={profitPctRangeScaled ?? [profitPctBounds.minScaled, profitPctBounds.maxScaled]}
+                  onChange={setProfitPctRangeScaled}
+                  formatValue={value => `${profitPctFromHundredths(value).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}%`}
+                  disabled={!profitPctBounds.hasData || profitPctRangeScaled == null}
+                  disabledMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No premium data in this window'}
+                />
+              ) : (
+                <DualRangeFilter
+                  label={`Net profit ${fiat}`}
+                  description="Filter profitable trades by net profit per order in fiat"
+                  min={profitFiatBounds.minScaled}
+                  max={profitFiatBounds.sliderMaxScaled}
+                  value={profitFiatRangeCents ?? [profitFiatBounds.minScaled, profitFiatBounds.maxScaled]}
+                  onChange={setProfitFiatRangeCents}
+                  formatValue={value => fmtFiat(profitFiatFromCents(value), fiat)}
+                  disabled={!profitFiatBounds.hasData || profitFiatRangeCents == null}
+                  disabledMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No profit data in this window'}
+                />
+              )}
               <SelectGroup
                 label="Premium mode"
                 description="Net full uses full order size. Net capped applies your max fiat position limit where needed."
