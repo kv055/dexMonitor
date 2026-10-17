@@ -58,7 +58,7 @@ func (s *Service) fetchKraken(ctx context.Context, fiat string, hours int, inter
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		fmt.Printf("[OHLC] read error: %v\n", err)
 		return nil
@@ -137,7 +137,7 @@ func (s *Service) fetchBinance(ctx context.Context, fiat string, hours int, inte
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil
 	}
@@ -182,7 +182,7 @@ func (s *Service) fetchBitstamp(ctx context.Context, fiat string, hours int, int
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil
 	}
@@ -235,7 +235,7 @@ func (s *Service) fetchCoinbase(ctx context.Context, fiat string, hours int, int
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return nil
 	}

@@ -319,7 +319,7 @@ func main() {
 	handler := tracing.WrapHandler(
 		metricsReg.Middleware(
 			authSvc.LoadAndSave(
-				authSvc.Gate(auth.Protected)(tracing.RouteNamer(mux)),
+				authSvc.Gate(auth.Protected)(tracing.RouteNamer(limitRequestBody(mux))),
 			),
 		),
 		serviceName,
@@ -3451,6 +3451,21 @@ func loadTradingBankAccountByID(ctx context.Context, id int64) (*tradingBankAcco
 // maxJSONBodyBytes bounds request bodies so a client can't stream an unbounded
 // payload into memory before decoding.
 const maxJSONBodyBytes = 1 << 20 // 1 MiB
+
+// limitRequestBody caps the body of state-changing requests at
+// maxJSONBodyBytes (generated handlers included). Handlers that need a
+// stricter limit apply their own MaxBytesReader on top.
+func limitRequestBody(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case http.MethodPost, http.MethodPut, http.MethodPatch:
+			if r.Body != nil {
+				r.Body = http.MaxBytesReader(w, r.Body, maxJSONBodyBytes)
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
+}
 
 func decodeJSON(r *http.Request, dest any) error {
 	defer r.Body.Close()

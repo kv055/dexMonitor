@@ -22,6 +22,10 @@ import (
 const (
 	minUsernameLen = 3
 	minPasswordLen = 8
+
+	// maxAuthBodyBytes bounds credential payloads; anything larger is not a
+	// plausible username/password body.
+	maxAuthBodyBytes = 1 << 16
 )
 
 // Service owns the dashboard login: it embeds the shared session manager (so the
@@ -89,7 +93,7 @@ func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var body credentials
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAuthBodyBytes)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
@@ -132,7 +136,7 @@ func (s *Service) handleRegister(w http.ResponseWriter, r *http.Request) {
 // Lookup miss and bad password return the same 401 to avoid leaking which usernames exist.
 func (s *Service) handleLogin(w http.ResponseWriter, r *http.Request) {
 	var body credentials
-	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, maxAuthBodyBytes)).Decode(&body); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
