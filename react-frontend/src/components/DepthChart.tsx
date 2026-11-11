@@ -13,14 +13,7 @@ import { LoadingSpinner } from './LoadingSpinner';
 import { toUtcSec } from '../utils/formatters';
 import { formatFiat } from '../utils/currency';
 import { getBtcMax, getFirstSeen, getLastSeen, getOfferPrice, getRefPrice, isOfferLive } from '../utils/offerAccess';
-
-function niceStep(range: number, targetSteps: number): number {
-  const rough = range / targetSteps;
-  const pow = Math.pow(10, Math.floor(Math.log10(rough)));
-  const norm = rough / pow;
-  const nice = norm < 1.5 ? 1 : norm < 3 ? 2 : norm < 7 ? 5 : 10;
-  return nice * pow;
-}
+import { niceStep, priceLevelAt, priceLevelStats, priceLevelStep } from '../utils/priceLevels';
 
 function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -39,12 +32,24 @@ const MIN_ZOOM = 0.1;
 const MAX_ZOOM = 20;
 const clampZoom = (z: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 
+// Plot margins; the left (price-label) margin narrows on small containers.
+function plotLayout(W: number, H: number) {
+  const ML = W < 340 ? 48 : 70, MR = 15, MT = 10, MB = 28;
+  return { ML, MR, MT, MB, PW: W - ML - MR, PH: H - MT - MB };
+}
+
+const TOOLTIP_W = 190;
+const TOOLTIP_H = 110;
+
 function DepthChartInner() {
   const { depthOffers, filters, loading, hoveredOhlcTime } = useFilters();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasMetricsRef = useRef<{ w: number; h: number; dpr: number } | null>(null);
-  const [resizeTick, setResizeTick] = useState(0);
+  const [size, setSize] = useState({ w: 0, h: 0 });
+  // Pointer position (canvas px) while hovering the plot; drives the
+  // highlighted price level and its tooltip.
+  const [hover, setHover] = useState<{ x: number; y: number } | null>(null);
   // Axis zoom (1 = default window) and vertical pan expressed as a fraction of
   // the natural price range, so it stays stable across zoom levels.
   const [xZoom, setXZoom] = useState(1.0);
@@ -63,6 +68,8 @@ function DepthChartInner() {
   // Plot geometry published by the draw pass so pointer handlers can tell the
   // axis margins from the plot area and convert pointer movement to scale.
   const layoutRef = useRef<{ ML: number; MT: number; PW: number; PH: number } | null>(null);
+  // Pixel bounds of the selected price level, for tap-to-dismiss on touch.
+  const hoveredLevelRef = useRef<{ top: number; bottom: number } | null>(null);
 
   const showReset = Math.abs(xZoom - 1) > 0.001 ||
     Math.abs(yZoom - 1) > 0.001 ||
@@ -109,7 +116,9 @@ function DepthChartInner() {
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const ro = new ResizeObserver(() => setResizeTick(t => t + 1));
+    const ro = new ResizeObserver(() => {
+      setSize({ w: container.clientWidth, h: container.clientHeight });
+    });
     ro.observe(container);
     return () => ro.disconnect();
   }, []);
@@ -118,6 +127,9 @@ function DepthChartInner() {
   //   · wheel over the plot or price axis zooms the price scale
   //   · dragging vertically on the left price-axis margin scales it
   //   · dragging vertically inside the plot pans up/down
+  // Touch has no hover, so a tap selects the price level under the finger
+  // (tap it again or tap outside the chart to dismiss) and swipes keep
+  // scrolling the page instead of panning the chart.
   // X-axis gestures use the dedicated interaction layer rendered over its
   // labels below, ensuring the whole visible axis is a reliable drag target.
   useEffect(() => {
@@ -138,7 +150,22 @@ function DepthChartInner() {
       startPan: 0,
     };
 
-    const onWindowMove = (e: MouseEvent) => {
+    const tap = { pointerId: -1, x: 0, y: 0, moved: false };
+    const TAP_SLOP_PX = 10;
+
+    const plotPoint = (e: PointerEvent) => {
+      const layout = layoutRef.current;
+      const rect = canvas.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const y = e.clientY - rect.top;
+      const overYAxis = !!layout && x < layout.ML &&
+        y >= layout.MT && y <= layout.MT + layout.PH;
+      const insidePlot = !!layout && x >= layout.ML && x <= layout.ML + layout.PW &&
+        y >= layout.MT && y <= layout.MT + layout.PH;
+      return { x, y, overYAxis, insidePlot };
+    };
+
+    const onWindowMove = (e: PointerEvent) => {
       const layout = layoutRef.current;
       if (!drag.active || !layout) return;
       const dy = e.clientY - drag.startY;
@@ -153,54 +180,82 @@ function DepthChartInner() {
       if (!drag.active) return;
       drag.active = false;
       canvas.style.cursor = 'default';
-      window.removeEventListener('mousemove', onWindowMove);
-      window.removeEventListener('mouseup', onWindowUp);
+      window.removeEventListener('pointermove', onWindowMove);
+      window.removeEventListener('pointerup', onWindowUp);
+      window.removeEventListener('pointercancel', onWindowUp);
     };
-    const onDown = (e: MouseEvent) => {
-      const layout = layoutRef.current;
-      if (!layout) return;
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const overYAxis = x < layout.ML &&
-        y >= layout.MT && y <= layout.MT + layout.PH;
-      const insidePlot = x >= layout.ML && x <= layout.ML + layout.PW &&
-        y >= layout.MT && y <= layout.MT + layout.PH;
+    const onDown = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') {
+        if (e.isPrimary) Object.assign(tap, { pointerId: e.pointerId, x: e.clientX, y: e.clientY, moved: false });
+        return;
+      }
+      if (e.button !== 0 || !layoutRef.current) return;
+      const { overYAxis, insidePlot } = plotPoint(e);
       if (!overYAxis && !insidePlot) return;
 
       drag.active = true;
+      setHover(null);
       drag.startY = e.clientY;
       drag.startPan = panFracRef.current;
       drag.mode = overYAxis ? 'zoom-y' : 'pan-y';
       drag.startZoom = yZoomRef.current;
       canvas.style.cursor = drag.mode === 'zoom-y' ? 'ns-resize' : 'grabbing';
       e.preventDefault();
-      window.addEventListener('mousemove', onWindowMove);
-      window.addEventListener('mouseup', onWindowUp);
+      window.addEventListener('pointermove', onWindowMove);
+      window.addEventListener('pointerup', onWindowUp);
+      window.addEventListener('pointercancel', onWindowUp);
     };
-    const onHover = (e: MouseEvent) => {
+    const onHover = (e: PointerEvent) => {
+      if (e.pointerType === 'touch') {
+        if (e.pointerId === tap.pointerId &&
+          Math.hypot(e.clientX - tap.x, e.clientY - tap.y) > TAP_SLOP_PX) {
+          tap.moved = true;
+        }
+        return;
+      }
       if (drag.active) return;
-      const layout = layoutRef.current;
-      if (!layout) { canvas.style.cursor = 'default'; return; }
-      const rect = canvas.getBoundingClientRect();
-      const x = e.clientX - rect.left;
-      const y = e.clientY - rect.top;
-      const overYAxis = x < layout.ML &&
-        y >= layout.MT && y <= layout.MT + layout.PH;
-      const insidePlot = x >= layout.ML && x <= layout.ML + layout.PW &&
-        y >= layout.MT && y <= layout.MT + layout.PH;
+      if (!layoutRef.current) { canvas.style.cursor = 'default'; return; }
+      const { x, y, overYAxis, insidePlot } = plotPoint(e);
       canvas.style.cursor = overYAxis ? 'ns-resize' : insidePlot ? 'grab' : 'default';
+      setHover(insidePlot ? { x, y } : null);
+    };
+    const onUp = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch' || e.pointerId !== tap.pointerId) return;
+      tap.pointerId = -1;
+      if (tap.moved) return;
+      const { x, y, insidePlot } = plotPoint(e);
+      if (!insidePlot) { setHover(null); return; }
+      // Tapping the selected level again dismisses it.
+      setHover(prev => {
+        const level = hoveredLevelRef.current;
+        if (prev && level && y >= level.top && y <= level.bottom) return null;
+        return { x, y };
+      });
+    };
+    // Touch leaves the canvas on every lift, so only a mouse leaving clears it.
+    const onLeave = (e: PointerEvent) => {
+      if (e.pointerType !== 'touch') setHover(null);
+    };
+    const onDocumentDown = (e: PointerEvent) => {
+      if (e.pointerType === 'touch' && e.target !== canvas) setHover(null);
     };
 
     canvas.addEventListener('wheel', onWheel, { passive: false });
-    canvas.addEventListener('mousedown', onDown);
-    canvas.addEventListener('mousemove', onHover);
+    canvas.addEventListener('pointerdown', onDown);
+    canvas.addEventListener('pointermove', onHover);
+    canvas.addEventListener('pointerup', onUp);
+    canvas.addEventListener('pointerleave', onLeave);
+    document.addEventListener('pointerdown', onDocumentDown);
     return () => {
       canvas.removeEventListener('wheel', onWheel);
-      canvas.removeEventListener('mousedown', onDown);
-      canvas.removeEventListener('mousemove', onHover);
-      window.removeEventListener('mousemove', onWindowMove);
-      window.removeEventListener('mouseup', onWindowUp);
+      canvas.removeEventListener('pointerdown', onDown);
+      canvas.removeEventListener('pointermove', onHover);
+      canvas.removeEventListener('pointerup', onUp);
+      canvas.removeEventListener('pointerleave', onLeave);
+      document.removeEventListener('pointerdown', onDocumentDown);
+      window.removeEventListener('pointermove', onWindowMove);
+      window.removeEventListener('pointerup', onWindowUp);
+      window.removeEventListener('pointercancel', onWindowUp);
     };
   }, []);
 
@@ -266,6 +321,7 @@ function DepthChartInner() {
     const lowestAsk = rawAsks[0]?.price ?? null;
 
     return {
+      open,
       rawBids,
       rawAsks,
       bids,
@@ -279,6 +335,25 @@ function DepthChartInner() {
       spread: highestBid && lowestAsk ? lowestAsk - highestBid : null,
     };
   }, [displayOffers, hoveredOhlcTime, xZoom, yZoom, panFrac]);
+
+  // Price level under the pointer: the band between the two price-axis labels
+  // around it. Counts every offer in the displayed book (premium or not).
+  const hoveredLevel = useMemo(() => {
+    if (!hover || !chartData || size.h === 0) return null;
+    const { MT, PH } = plotLayout(size.w, size.h);
+    const { priceMin, priceMax } = chartData;
+    const price = priceMax - ((hover.y - MT) / PH) * (priceMax - priceMin);
+    const level = priceLevelAt(price, priceLevelStep(priceMin, priceMax));
+    const stats = priceLevelStats(chartData.open, level, {
+      price: getOfferPrice,
+      btc: o => getBtcMax(o) || 0,
+      isBid: o => o.direction === 'bid',
+    });
+    // Pixel bounds of the band, so a second tap on it can dismiss the tooltip.
+    const yOf = (p: number) => MT + (1 - (p - priceMin) / (priceMax - priceMin)) * PH;
+    return { ...level, ...stats, top: yOf(level.high), bottom: yOf(level.low) };
+  }, [hover, chartData, size]);
+  useEffect(() => { hoveredLevelRef.current = hoveredLevel; }, [hoveredLevel]);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -305,18 +380,16 @@ function DepthChartInner() {
     const ctx = canvas.getContext('2d')!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
-    // --- Layout --- (narrower left margin on small containers)
-    const ML = W < 340 ? 48 : 70, MR = 15, MT = 10, MB = 28;
+    const { ML, MT, PW, PH } = plotLayout(W, H);
     const grid = cssVar('--app-grid', '#21262d');
     const muted = cssVar('--app-muted', '#8b949e');
+    const text = cssVar('--app-text', '#e6edf3');
 
     // Keep canvas transparent so theme background swaps instantly via CSS.
     ctx.clearRect(0, 0, W, H);
     if (!chartData) return;
 
     const { bids, asks, midPrice, maxVol, priceMin, priceMax } = chartData;
-    const PW = W - ML - MR;
-    const PH = H - MT - MB;
 
     // Publish geometry for the pointer handlers (axis margin vs plot, px↔price).
     layoutRef.current = { ML, MT, PW, PH };
@@ -328,8 +401,25 @@ function DepthChartInner() {
     ctx.font = `10px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif`;
     ctx.lineWidth = 1;
 
+    // Price levels: alternate shading between adjacent price labels so each
+    // level reads as a band; the hovered level is highlighted.
+    const priceStep = priceLevelStep(priceMin, priceMax);
+    ctx.save();
+    ctx.beginPath();
+    ctx.rect(ML, MT, PW, PH);
+    ctx.clip();
+    for (let low = Math.floor(priceMin / priceStep) * priceStep; low < priceMax; low += priceStep) {
+      const isHovered = hoveredLevel != null && Math.abs(hoveredLevel.low - low) < priceStep / 2;
+      const isOdd = Math.round(low / priceStep) % 2 !== 0;
+      if (!isHovered && !isOdd) continue;
+      const top = yOf(low + priceStep);
+      ctx.globalAlpha = isHovered ? 0.18 : 0.35;
+      ctx.fillStyle = isHovered ? text : grid;
+      ctx.fillRect(ML, top, PW, yOf(low) - top);
+    }
+    ctx.restore();
+
     // Y (price) gridlines + labels
-    const priceStep = niceStep(priceMax - priceMin, 6);
     ctx.textAlign = 'right';
     ctx.textBaseline = 'middle';
     for (let p = Math.ceil(priceMin / priceStep) * priceStep; p <= priceMax; p += priceStep) {
@@ -421,7 +511,7 @@ function DepthChartInner() {
     ctx.textBaseline = 'bottom';
     ctx.fillText('Cumulative BTC', ML + PW / 2, H - 2);
 
-	}, [chartData, filters.fiat, resizeTick]);
+	}, [chartData, filters.fiat, size, hoveredLevel]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -447,6 +537,41 @@ function DepthChartInner() {
             transition: 'opacity 0.35s ease',
           }}
         />
+        {hoveredLevel && hover && (
+          <div
+            data-testid="depth-price-level-tooltip"
+            className="pointer-events-none absolute z-[6] rounded-md border border-border bg-surface/95 px-2 py-1 text-[0.68rem] tabular-nums text-text shadow-lg"
+            style={{
+              width: TOOLTIP_W,
+              left: hover.x + 12 + TOOLTIP_W > size.w ? hover.x - 12 - TOOLTIP_W : hover.x + 12,
+              top: Math.max(0, Math.min(hover.y - 28, size.h - TOOLTIP_H)),
+            }}
+          >
+            <div className="font-medium">
+              {formatFiat(hoveredLevel.low, filters.fiat, { maximumFractionDigits: 0 })}
+              {' – '}
+              {formatFiat(hoveredLevel.high, filters.fiat, { maximumFractionDigits: 0 })}
+            </div>
+            <div className="text-muted">
+              {hoveredLevel.bids.count + hoveredLevel.asks.count} offers in level
+            </div>
+            <div>
+              <span className="text-green">Bids {hoveredLevel.bids.count}</span>
+              <span className="text-muted"> · {hoveredLevel.bids.btc.toFixed(3)} BTC</span>
+            </div>
+            <div>
+              <span className="text-red">Asks {hoveredLevel.asks.count}</span>
+              <span className="text-muted"> · {hoveredLevel.asks.btc.toFixed(3)} BTC</span>
+            </div>
+            {/* Matches the x axis: depth accumulated from the top of the book through this level. */}
+            <div className="mt-1 border-t border-border pt-1 text-muted">
+              Cumulative{' '}
+              <span className="text-green">{hoveredLevel.bids.cumBtc.toFixed(3)}</span>
+              {' / '}
+              <span className="text-red">{hoveredLevel.asks.cumBtc.toFixed(3)}</span> BTC
+            </div>
+          </div>
+        )}
         <div
           data-axis-zoom="x"
           title="Drag to zoom cumulative BTC axis"
