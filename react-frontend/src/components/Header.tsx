@@ -48,7 +48,7 @@ export function Header({ activeTab, onTabChange, onOpenSettings, wssConnected, p
       <div className="flex items-center justify-between gap-2 sm:contents">
         <img
           src={theme === 'dark' ? '/brand/mark-dark.svg' : '/brand/mark-light.svg'}
-          alt="dexArbPendulum"
+          alt="dexPendulum"
           className="h-7 w-auto shrink-0 sm:order-1 sm:h-8"
         />
 

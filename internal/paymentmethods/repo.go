@@ -102,7 +102,7 @@ type UpdatePayload struct {
 }
 
 // WalletAddressRow is a wallet_addresses row (CEX/hop deposit addresses).
-// dexMonitor only reads this table; writes stay with dexMmController.
+// dexMonitor only reads this table; writes stay with dexTakerController.
 type WalletAddressRow struct {
 	ID      int64  `json:"id"`
 	Label   string `json:"label"`

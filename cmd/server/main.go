@@ -2443,7 +2443,7 @@ func handleTradingPaymentMethodChatTemplateByExchange(w http.ResponseWriter, r *
 }
 
 // handleTradingWalletAddresses serves the wallet_addresses list
-// (read-only; dexMmController owns writes).
+// (read-only; dexTakerController owns writes).
 func handleTradingWalletAddresses(w http.ResponseWriter, r *http.Request) {
 	rows, err := pmRepo.ListWalletAddresses(r.Context())
 	if err != nil {
@@ -2594,7 +2594,7 @@ func handleMmControllerCexPreTradeCheck(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleMmControllerBisqPaymentAccounts proxies GET (list) and POST (create) of the bisq1
-// daemon's own payment-account profile to dexMmController, which owns the bisq gRPC client.
+// daemon's own payment-account profile to dexTakerController, which owns the bisq gRPC client.
 func handleMmControllerBisqPaymentAccounts(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/bisq/payment-accounts")
 }
@@ -2666,7 +2666,7 @@ func handleMmControllerBisqWalletUnlock(w http.ResponseWriter, r *http.Request) 
 }
 
 // handleMmControllerTelegramConfig proxies GET/PUT of the shared Telegram bot
-// configuration (token, chat_id, per-service webhook URLs) to dexMmController.
+// configuration (token, chat_id, per-service webhook URLs) to dexTakerController.
 func handleMmControllerTelegramConfig(w http.ResponseWriter, r *http.Request) {
 	forwardMMControllerJSON(w, r, "/api/telegram/config")
 }
