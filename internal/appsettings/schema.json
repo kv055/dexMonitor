@@ -1,6 +1,6 @@
 {
   "$schema": "http://json-schema.org/draft-07/schema#",
-  "title": "dexArbTrading user-facing settings",
+  "title": "dexPendulum user-facing settings",
   "description": "Single source of truth for the dexMonitor Settings page and its /api/app-settings endpoints. Every key MUST also be documented in the root .env.example. Keys in this file are the only ones the settings API will ever read or write (whitelist). Exchange API credentials, the LND wallet password and similar operator secrets are NOT here: they live in Postgres and are managed via the Accounts panel.",
   "sections": [
     {

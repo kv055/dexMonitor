@@ -43,7 +43,7 @@ export function LoginPage() {
       <div className="w-full max-w-sm bg-surface border border-border rounded-lg p-6 sm:p-8 flex flex-col items-center gap-6">
         <div className="flex flex-col items-center gap-3">
           <img src={markSrc} alt="" aria-hidden className="h-16 w-auto" />
-          <img src={wordmarkSrc} alt="dexArbPendulum" className="h-6 w-auto" />
+          <img src={wordmarkSrc} alt="dexPendulum" className="h-6 w-auto" />
         </div>
 
         <form onSubmit={onSubmit} className="w-full flex flex-col gap-3">

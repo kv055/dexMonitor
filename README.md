@@ -1,8 +1,8 @@
 # dexMonitor
 
-`dexMonitor` serves the operator dashboard and its monitor-facing API for the dexArbTrading stack.
+`dexMonitor` serves the operator dashboard and its monitor-facing API for the dexPendulum stack.
 
-It reads the shared Postgres database populated by `dexUnifiedApi`, serves the React/Vite frontend, exposes historical and live offer endpoints, computes trade-cost overlays, and proxies selected `dexMmController` transaction data for the UI.
+It reads the shared Postgres database populated by `dexUnifiedApi`, serves the React/Vite frontend, exposes historical and live offer endpoints, computes trade-cost overlays, and proxies selected `dexTakerController` transaction data for the UI.
 
 The monitor no longer owns the Bisq node, Tor container, snapshot worker, or shared schema setup. Those runtime responsibilities live in `dexUnifiedApi` and the root Compose stack.
 
@@ -23,7 +23,7 @@ dexMonitor/
 +-- cmd/bisqstats/           # Optional closed-trades stats helper
 +-- internal/accounthealth/  # Account health models used by dashboard flows
 +-- internal/lifecycle/      # Offer lifecycle repository
-+-- internal/mmproxy/        # Proxy client for dexMmController
++-- internal/mmproxy/        # Proxy client for dexTakerController
 +-- internal/ohlc/           # OHLC aggregation
 +-- internal/pastorders/     # Historical order aggregation
 +-- internal/paymentmethods/ # Payment method grouping service

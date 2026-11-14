@@ -4,8 +4,8 @@ info:
   version: 1.0.0
   description: Handwritten source-of-truth contract for this runtime.
   contact:
-    name: dexArbTrading maintainers
-    url: https://github.com/kv055/dexArbTrading
+    name: dexPendulum maintainers
+    url: https://github.com/kv055/dexPendulum
 servers:
   - url: http://localhost:5002
 paths:

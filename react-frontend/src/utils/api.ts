@@ -371,7 +371,7 @@ export function fetchTradingWalletAddresses() {
   return request<{ wallet_addresses: TradingWalletAddress[] }>('/api/trading/wallet_addresses');
 }
 
-// --- Bisq1 payment-account profile (proxied to dexMmController) ---
+// --- Bisq1 payment-account profile (proxied to dexTakerController) ---
 
 export function fetchBisqPaymentAccounts() {
   return request<{ payment_accounts: BisqPaymentAccount[] }>('/api/mm-controller/bisq/payment-accounts');
