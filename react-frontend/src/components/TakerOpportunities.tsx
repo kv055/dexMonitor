@@ -2196,7 +2196,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                 onChange={setProfitPctRangeScaled}
                 hasData={profitPctBounds.hasData}
                 description="Filter profitable trades by net premium percentage per order"
-                emptyMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No premium data in this window'}
+                emptyMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No premium data for the current filters'}
               />
             ) : (
               <ProfitRangeFilter
@@ -2209,7 +2209,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                 onChange={setProfitFiatRangeCents}
                 hasData={profitFiatBounds.hasData}
                 description="Filter profitable trades by net profit per order in fiat"
-                emptyMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No profit data in this window'}
+                emptyMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No profit data for the current filters'}
               />
             )
           ) : undefined}

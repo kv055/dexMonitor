@@ -1,4 +1,5 @@
 import { test, expect, gotoAndWaitForData, controlPanel, openControlPanel, jsClick, jsFill } from '../fixtures/base-fixture';
+import { MOCK_LIVE_OFFERS } from '../fixtures/mock-data';
 
 async function selectMenuOption(
   page: import('@playwright/test').Page,
@@ -242,5 +243,29 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     const offersRequest = page.waitForRequest(req => req.url().includes('/api/past_offers'));
     await cp.locator('button').filter({ hasText: '↻ Refresh' }).click();
     await offersRequest;
+  });
+
+  test('untouched live range follows the bounds when offers change', async ({ page }) => {
+    const cp = controlPanel(page);
+    let fullBook = false;
+    // Start with a single premium offer (narrow range), then serve the full book.
+    await page.route('**/api/live_offers?*', route =>
+      route.fulfill({ json: fullBook ? MOCK_LIVE_OFFERS : [MOCK_LIVE_OFFERS[0]] }),
+    );
+    await page.reload();
+    await openControlPanel(page);
+    await selectMenuOption(page, cp.getByTitle('Show all methods, linked methods, or selected linked methods'), 'All methods');
+    await jsClick(cp.getByRole('group', { name: 'Range unit' }).getByRole('button', { name: '%', exact: true }));
+    const minSlider = cp.getByRole('slider', { name: 'Premium % minimum' });
+    const maxSlider = cp.getByRole('slider', { name: 'Premium % maximum' });
+    await expect(minSlider).toBeVisible();
+    const narrowMin = await minSlider.getAttribute('min');
+
+    fullBook = true;
+    await selectMenuOption(page, cp.getByTitle('Show live and past offers quoted in this currency'), 'USD');
+    await expect.poll(() => minSlider.getAttribute('min')).not.toBe(narrowMin);
+    // The untouched slider spans the new full range instead of sticking to the old one.
+    await expect.poll(async () => (await minSlider.inputValue()) === (await minSlider.getAttribute('min'))).toBe(true);
+    await expect.poll(async () => (await maxSlider.inputValue()) === (await maxSlider.getAttribute('max'))).toBe(true);
   });
 });

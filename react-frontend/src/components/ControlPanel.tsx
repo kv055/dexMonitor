@@ -461,18 +461,35 @@ export function LiveProfitRange() {
     };
   }, [boundOffers, metric, filters.premiumMode, profitScenario]);
 
+  // Same tracking rules as the Past range: reset on a premium category (or
+  // metric) change, follow the bounds while the slider spans the full range,
+  // otherwise keep the user's selection clamped into the new bounds.
+  const lastBoundsRef = useRef<{ key: string; min: number; max: number } | null>(null);
   useEffect(() => {
     if (bounds == null) return;
     const categoryChanged = prevCategoryRef.current !== categoryKey;
     prevCategoryRef.current = categoryKey;
-    // Reset the active range whenever the premium category changes so min/max
-    // match the offers in that category (e.g. Net Full vs all offers).
-    if (categoryChanged || filters[minKey] === '' || filters[maxKey] === '') {
-      setFilters({
-        [minKey]: (bounds.min / 100).toFixed(2),
-        [maxKey]: (bounds.max / 100).toFixed(2),
-      });
+    const last = lastBoundsRef.current;
+    lastBoundsRef.current = { key: minKey, min: bounds.min, max: bounds.max };
+
+    const toFilter = (lo: number, hi: number) => ({ [minKey]: (lo / 100).toFixed(2), [maxKey]: (hi / 100).toFixed(2) });
+    const storedMin = parseFloat(filters[minKey]);
+    const storedMax = parseFloat(filters[maxKey]);
+    if (categoryChanged || Number.isNaN(storedMin) || Number.isNaN(storedMax)) {
+      setFilters(toFilter(bounds.min, bounds.max));
+      return;
     }
+    const lo = Math.round(storedMin * 100);
+    const hi = Math.round(storedMax * 100);
+    const sameMetric = last != null && last.key === minKey;
+    const boundsChanged = sameMetric && (last.min !== bounds.min || last.max !== bounds.max);
+    if (boundsChanged && lo === last.min && hi === last.max) {
+      setFilters(toFilter(bounds.min, bounds.max));
+      return;
+    }
+    const clampedLo = Math.max(bounds.min, Math.min(lo, bounds.max));
+    const clampedHi = Math.max(clampedLo, Math.min(hi, bounds.max));
+    if (clampedLo !== lo || clampedHi !== hi) setFilters(toFilter(clampedLo, clampedHi));
   }, [bounds, categoryKey, filters, minKey, maxKey, setFilters]);
 
   const min = bounds?.min ?? 0;
@@ -495,7 +512,7 @@ export function LiveProfitRange() {
       description={metric === 'profit'
         ? `Filter offers in the selected premium category by net profit (${filters.premiumMode === 'net_capped' ? 'capped size' : 'full size'})`
         : 'Filter offers in the selected premium category by premium percentage'}
-      emptyMessage={`No ${metric === 'profit' ? 'profit' : 'premium'} data in this premium category`}
+      emptyMessage={`No ${metric === 'profit' ? 'profit' : 'premium'} data for the current filters`}
     />
   );
 }
@@ -599,7 +616,7 @@ export function PaymentMethodScopeDropdown() {
             role="menuitemradio"
             aria-checked={allActive}
             className={menuItemCls(allActive)}
-            onClick={() => setFilters({ paymentScope: 'all', selectedLinkedPaymentMethods: [] })}
+            onClick={() => { setFilters({ paymentScope: 'all', selectedLinkedPaymentMethods: [] }); setOpen(false); }}
           >
             <span aria-hidden="true" className="w-3 text-center">{allActive ? '✓' : ''}</span>
             All methods
@@ -609,6 +626,7 @@ export function PaymentMethodScopeDropdown() {
             role="menuitemradio"
             aria-checked={linkedActive}
             className={menuItemCls(linkedActive)}
+            // Stays open: the linked-method checkboxes below are picked next.
             onClick={() => setFilters({ paymentScope: 'linked', selectedLinkedPaymentMethods: [] })}
           >
             <span aria-hidden="true" className="w-3 text-center">{linkedActive ? '✓' : ''}</span>
