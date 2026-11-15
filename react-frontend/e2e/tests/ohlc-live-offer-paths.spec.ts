@@ -124,7 +124,7 @@ test.describe('OHLC live offer price paths', () => {
     // premium range so negative premiums pass.
     await openControlPanel(page);
     const cp = controlPanel(page);
-    await jsClick(cp.locator('button').filter({ hasText: 'Net Premium Full' }));
+    await jsClick(cp.getByTitle(/Raw is the quoted premium/));
     await page.locator('.absolute button').filter({ hasText: 'Incl. non premium offers' }).click();
     await jsClick(cp.getByRole('button', { name: '%', exact: true }));
     await expect(cp.getByRole('slider', { name: 'Premium % minimum' })).toBeVisible();

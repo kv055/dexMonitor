@@ -48,7 +48,16 @@ import { copyableOfferId } from '../features/trading/providerRegistry';
 import { getDexOfferLink } from '../utils/dexOfferLinks';
 import { ExchangeTag } from './ExchangeTag';
 import { LoadingSpinner } from './LoadingSpinner';
-import { CustomDateRangeFilter, DualRangeFilter, SelectGroup } from './ControlPanel';
+import {
+  CustomDateRangeFilter,
+  DualRangeFilter,
+  FilterSelect,
+  PremiumSelect,
+  ProfitRangeFilter,
+  SegmentedToggle,
+  type ProfitRangeUnit,
+} from './ControlPanel';
+import { premiumModeLabel } from '../utils/premiumModes';
 import { OfferFilterRail, type DirectionFilter } from './OfferFilterRail';
 import { DepthChart } from './DepthChart';
 import { CounterpartyStakeBadge, SellerRatingBadge } from './SellerRatingBadge';
@@ -237,8 +246,6 @@ const DEFAULT_SORT_DIR: Record<SortColumn, SortDir> = {
 
 type NetProfitUnit = 'btc' | 'fiat';
 type SizeUnit = 'btc' | 'fiat';
-/** Unit of the Insights net-profit range slider: fiat amounts or net premium percentage. */
-type ProfitRangeUnit = 'fiat' | 'pct';
 
 const INSIGHTS_FILTERS_STORAGE_KEY = 'dex-insights-filters';
 const CUSTOM_TIMEFRAME = 'custom';
@@ -625,16 +632,13 @@ function TradeRowMetric({ value, valueClassName = 'text-text', className = '' }:
   );
 }
 
-function unitToggleButtonClass(active: boolean): string {
-  return `rounded-sm px-1.5 py-0.5 normal-case leading-none transition-colors ${active ? 'bg-accent/15 text-accent font-semibold' : 'text-muted hover:text-text'}`;
-}
-
 function UnitToggle({ fiat, unit, onChange }: { fiat: string; unit: SizeUnit; onChange: (unit: SizeUnit) => void }) {
   return (
-    <span className="inline-flex shrink-0 items-center rounded border border-border bg-bg/70 p-0.5">
-      <button type="button" aria-pressed={unit === 'btc'} onClick={() => onChange('btc')} className={unitToggleButtonClass(unit === 'btc')}>BTC</button>
-      <button type="button" aria-pressed={unit === 'fiat'} onClick={() => onChange('fiat')} className={unitToggleButtonClass(unit === 'fiat')}>{fiat}</button>
-    </span>
+    <SegmentedToggle
+      options={[{ value: 'btc', label: 'BTC' }, { value: 'fiat', label: fiat }]}
+      value={unit}
+      onChange={onChange}
+    />
   );
 }
 
@@ -1400,7 +1404,6 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
   const [sizeUnit, setSizeUnit] = useState<SizeUnit>(initialFilters.sizeUnit);
   const [summaryUnit, setSummaryUnit] = useState<SizeUnit>(initialFilters.summaryUnit);
   const [durationRange, setDurationRange] = useState<[number, number] | null>(null);
-  const [profitRangeUnit, setProfitRangeUnit] = useState<ProfitRangeUnit>(initialFilters.profitRangeUnit);
   const [profitFiatRangeCents, setProfitFiatRangeCents] = useState<[number, number] | null>(null);
   const [profitPctRangeScaled, setProfitPctRangeScaled] = useState<[number, number] | null>(null);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -1537,6 +1540,18 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       excludedExchanges: disabledExchanges,
     });
   }, [setFilters, directionFilter, disabledExchanges, liveFilters.direction, liveFilters.excludedExchanges]);
+
+  // The range unit (fiat / %) is shared with Live mode via FiltersContext, so
+  // switching modes keeps the selected unit. Apply the persisted unit once.
+  const profitRangeUnit: ProfitRangeUnit = liveFilters.rangeMetric === 'premium' ? 'pct' : 'fiat';
+  const setProfitRangeUnit = useCallback(
+    (unit: ProfitRangeUnit) => setFilters({ rangeMetric: unit === 'pct' ? 'premium' : 'profit' }),
+    [setFilters],
+  );
+  useEffect(() => {
+    setProfitRangeUnit(initialFilters.profitRangeUnit);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- mount only
+  }, []);
 
   const sharedDirectionKey = `${liveFilters.direction}|${liveFilters.excludedExchanges.join(',')}`;
   const previousSharedDirectionKeyRef = useRef(sharedDirectionKey);
@@ -2025,7 +2040,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     profitPctBoundsInitializedRef.current = false;
     lastProfitFiatBoundsRef.current = null;
     lastProfitPctBoundsRef.current = null;
-    setProfitRangeUnit(DEFAULT_INSIGHTS_FILTERS.profitRangeUnit);
+    // resetLiveFilters() already restores the shared range unit (fiat).
     if (durationBounds.hasData) {
       setDurationRange([durationBounds.min, durationBounds.max]);
     }
@@ -2144,9 +2159,63 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
           onRefresh={onRefreshLive}
           lastUpdatedAt={lastUpdatedAt}
           onReset={resetFilters}
-          extra={(
+          maxFiatLimit={maxFiatLimit}
+          premium={viewMode === 'past' ? (
+            <PremiumSelect
+              options={[
+                { value: 'net_full', label: premiumModeLabel('net_full') },
+                {
+                  value: 'net_capped',
+                  label: premiumModeLabel('net_capped', fiat, maxFiatLimit),
+                  disabled: !cappedModeAvailable,
+                  title: !capAvailable
+                    ? 'Set a Max Position Size (Fiat) in Settings to enable capped mode'
+                    : cappedOffersPending
+                      ? 'Capped offers are still loading'
+                      : undefined,
+                },
+                {
+                  value: 'net_min',
+                  label: premiumModeLabel('net_min'),
+                  title: 'Use each offer’s minimum executable volume',
+                },
+              ]}
+              selected={mode}
+              onChange={v => setMode(v as TakerOpportunityMode)}
+            />
+          ) : undefined}
+          range={viewMode === 'past' ? (
+            profitRangeUnit === 'pct' ? (
+              <ProfitRangeFilter
+                fiat={fiat}
+                unit="pct"
+                onUnitChange={setProfitRangeUnit}
+                min={profitPctBounds.minScaled}
+                max={profitPctBounds.sliderMaxScaled}
+                value={profitPctBounds.hasData ? profitPctRangeScaled : null}
+                onChange={setProfitPctRangeScaled}
+                hasData={profitPctBounds.hasData}
+                description="Filter profitable trades by net premium percentage per order"
+                emptyMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No premium data for the current filters'}
+              />
+            ) : (
+              <ProfitRangeFilter
+                fiat={fiat}
+                unit="fiat"
+                onUnitChange={setProfitRangeUnit}
+                min={profitFiatBounds.minScaled}
+                max={profitFiatBounds.sliderMaxScaled}
+                value={profitFiatBounds.hasData ? profitFiatRangeCents : null}
+                onChange={setProfitFiatRangeCents}
+                hasData={profitFiatBounds.hasData}
+                description="Filter profitable trades by net profit per order in fiat"
+                emptyMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No profit data for the current filters'}
+              />
+            )
+          ) : undefined}
+          extra={viewMode === 'past' ? (
             <>
-              <SelectGroup
+              <FilterSelect
                 label="Timeframe"
                 description="Show offers closed within a preset window or a custom date range"
                 options={[
@@ -2177,78 +2246,8 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                 disabled={!durationBounds.hasData || durationRange == null}
                 disabledMessage="No duration data in this window"
               />
-              <div className="flex items-center justify-between gap-2" role="group" aria-label="Net profit range unit">
-                <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted" title="Switch the profit range slider between fiat amounts and net premium percentage">Unit</span>
-                <span className="inline-flex shrink-0 items-center rounded border border-border bg-bg/70 p-0.5">
-                  <button
-                    type="button"
-                    aria-pressed={profitRangeUnit === 'fiat'}
-                    onClick={() => setProfitRangeUnit('fiat')}
-                    className={unitToggleButtonClass(profitRangeUnit === 'fiat')}
-                  >
-                    {fiat}
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={profitRangeUnit === 'pct'}
-                    onClick={() => setProfitRangeUnit('pct')}
-                    className={unitToggleButtonClass(profitRangeUnit === 'pct')}
-                  >
-                    %
-                  </button>
-                </span>
-              </div>
-              {profitRangeUnit === 'pct' ? (
-                <DualRangeFilter
-                  label="Net premium %"
-                  description="Filter profitable trades by net premium percentage per order"
-                  min={profitPctBounds.minScaled}
-                  max={profitPctBounds.sliderMaxScaled}
-                  value={profitPctRangeScaled ?? [profitPctBounds.minScaled, profitPctBounds.maxScaled]}
-                  onChange={setProfitPctRangeScaled}
-                  formatValue={value => `${profitPctFromHundredths(value).toLocaleString('de-DE', { minimumFractionDigits: 1, maximumFractionDigits: 2 })}%`}
-                  disabled={!profitPctBounds.hasData || profitPctRangeScaled == null}
-                  disabledMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No premium data in this window'}
-                />
-              ) : (
-                <DualRangeFilter
-                  label={`Net profit ${fiat}`}
-                  description="Filter profitable trades by net profit per order in fiat"
-                  min={profitFiatBounds.minScaled}
-                  max={profitFiatBounds.sliderMaxScaled}
-                  value={profitFiatRangeCents ?? [profitFiatBounds.minScaled, profitFiatBounds.maxScaled]}
-                  onChange={setProfitFiatRangeCents}
-                  formatValue={value => fmtFiat(profitFiatFromCents(value), fiat)}
-                  disabled={!profitFiatBounds.hasData || profitFiatRangeCents == null}
-                  disabledMessage={scenarioDataPending ? 'Selected-volume profit is still being calculated' : 'No profit data in this window'}
-                />
-              )}
-              <SelectGroup
-                label="Premium mode"
-                description="Net full uses full order size. Net capped applies your max fiat position limit where needed."
-                options={[
-                  { value: 'net_full', label: 'Net Full' },
-                  {
-                    value: 'net_capped',
-                    label: maxFiatLimit != null && maxFiatLimit > 0 ? `Net Capped ${fmtFiat(maxFiatLimit, fiat)}` : 'Net Capped',
-                    disabled: !cappedModeAvailable,
-                    title: !capAvailable
-                      ? 'Set a Max Position Size (Fiat) in Settings to enable capped mode'
-                      : cappedOffersPending
-                        ? 'Capped offers are still loading'
-                        : undefined,
-                  },
-                  {
-                    value: 'net_min',
-                    label: 'Net Min',
-                    title: 'Use each offer’s minimum executable volume',
-                  },
-                ]}
-                selected={mode}
-                onChange={v => setMode(v as TakerOpportunityMode)}
-              />
             </>
-          )}
+          ) : undefined}
           footer={viewMode === 'past' ? (
             <div className="shrink-0 overflow-hidden rounded-lg border border-border bg-bg/20">
               <div className="flex items-center justify-between gap-2 border-b border-border bg-surface/70 px-3 py-2 text-[0.65rem] font-semibold uppercase tracking-wide text-muted">

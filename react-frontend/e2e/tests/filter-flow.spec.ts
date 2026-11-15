@@ -150,7 +150,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
 
     // Include non-premium offers.
     await openControlPanel(page);
-    await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'Net Premium Full' }), 'Incl. non premium offers');
+    await selectDropdownOption(page, cp.getByTitle(/Raw is the quoted premium/), 'Incl. non premium offers');
     await closeControlPanel(page);
     await page.waitForTimeout(300);
 
@@ -159,7 +159,7 @@ test.describe('Filter Flow — Cross-component integration', () => {
 
     // Switch back to the default premium-only metric.
     await openControlPanel(page);
-    await selectDropdownOption(page, cp.locator('button').filter({ hasText: 'Incl. non premium offers' }), 'Net Premium Full');
+    await selectDropdownOption(page, cp.getByTitle(/Raw is the quoted premium/), 'Net Full');
     await closeControlPanel(page);
     await page.waitForTimeout(300);
 

@@ -1,7 +1,16 @@
 import { useState, type ReactNode } from 'react';
 import { useFilters } from '../hooks/useFilters';
+import { useTimezone } from '../hooks/useTimezone';
 import { formatFiat } from '../utils/currency';
-import { LiveOfferFilters, PastOfferFilters, SharedOfferFilters } from './ControlPanel';
+import { formatTimeOnly } from '../utils/formatters';
+import {
+  FiatSelect,
+  FilterLabel,
+  LivePremiumSelect,
+  LiveProfitRange,
+  PaymentMethodScopeDropdown,
+  ReferenceSourceSelect,
+} from './ControlPanel';
 
 export type OfferFilterRailScope = 'live' | 'past' | 'all';
 export type DirectionFilter = 'both' | 'bid' | 'ask';
@@ -31,7 +40,7 @@ function PillGroup({ label, description, options, selected, onChange }: PillGrou
   const disabledCls = 'border-border bg-bg/40 text-muted opacity-40 cursor-not-allowed';
   return (
     <div className="flex flex-col gap-1">
-      <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
+      <FilterLabel>{label}</FilterLabel>
       <div className="flex flex-wrap items-center gap-1">
         {options.map(o => (
           <button
@@ -78,7 +87,7 @@ function ExchangeFilterGroup({
   return (
     <div className="flex flex-col gap-1">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">{label}</span>
+        <FilterLabel>{label}</FilterLabel>
         {exchanges.length > 0 && (
           <div className="flex items-center gap-1.5">
             <button type="button" onClick={onEnableAll} className="text-[0.6rem] font-medium text-muted hover:text-accent">
@@ -127,12 +136,29 @@ export interface OfferFilterRailProps {
   onRefresh: () => void;
   lastUpdatedAt: string;
   onReset: () => void;
+  /**
+   * Premium selector. Defaults to the live selector (bound to FiltersContext)
+   * for the live and combined scopes; past views pass their own.
+   */
+  premium?: ReactNode;
+  /** Range slider. Defaults to the live range for the live and combined scopes. */
+  range?: ReactNode;
+  /** Mode-specific controls rendered after the shared ones (timeframe, duration…). */
   extra?: ReactNode;
   footer?: ReactNode;
   ariaLabel?: string;
   showReferenceSource?: boolean;
+  /** Shown in the live "Net Capped" option label. */
+  maxFiatLimit?: number | null;
 }
 
+/**
+ * Offer filter rail shared by Live and Past mode. Every mode renders the same
+ * sections in the same order; only the mode-specific block differs:
+ *
+ *   Reference price · Direction · Exchanges · Fiat · Payment methods ·
+ *   Premium · Range · [mode-specific] · [Refresh — live] · Reset · [footer]
+ */
 export function OfferFilterRail({
   scope,
   directionFilter,
@@ -146,14 +172,22 @@ export function OfferFilterRail({
   onRefresh,
   lastUpdatedAt,
   onReset,
+  premium,
+  range,
   extra,
   footer,
   ariaLabel = 'Insights filters',
   showReferenceSource = true,
+  maxFiatLimit,
 }: OfferFilterRailProps) {
   const { filters, refPrice } = useFilters();
+  const { timezone } = useTimezone();
   const [filtersCollapsed, setFiltersCollapsed] = useState(false);
   const disabledExchangeSet = new Set(disabledExchanges);
+  const includesLive = scope === 'live' || scope === 'all';
+  const premiumControl = premium ?? (includesLive ? <LivePremiumSelect maxFiatLimit={maxFiatLimit} /> : null);
+  const rangeControl = range ?? (includesLive ? <LiveProfitRange /> : null);
+  const lastUpdated = lastUpdatedAt ? `Updated ${formatTimeOnly(lastUpdatedAt, timezone)}` : '';
 
   if (filtersCollapsed) {
     return (
@@ -172,7 +206,7 @@ export function OfferFilterRail({
   return (
     <aside aria-label={ariaLabel} className="flex shrink-0 flex-col gap-3 rounded-lg border border-border bg-bg/20 p-3 lg:w-48 xl:w-56 lg:overflow-y-auto">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[0.65rem] font-semibold uppercase tracking-wide text-muted">Filters</span>
+        <FilterLabel>Filters</FilterLabel>
         <button
           type="button"
           aria-label={`Hide ${ariaLabel}`}
@@ -218,15 +252,28 @@ export function OfferFilterRail({
         onEnableAll={onEnableAllExchanges}
         onDisableAll={onDisableAllExchanges}
       />
-      <SharedOfferFilters scope={scope} />
-      {(scope === 'live' || scope === 'all') && (
-        <LiveOfferFilters onRefresh={onRefresh} lastUpdatedAt={lastUpdatedAt} showReferenceSource={showReferenceSource} />
-      )}
-      {(scope === 'past' || scope === 'all') && (
-        <>
-          {scope === 'past' && <PastOfferFilters />}
+      <FiatSelect />
+      <PaymentMethodScopeDropdown />
+      {premiumControl}
+      {rangeControl}
+      {(extra || (includesLive && showReferenceSource)) && (
+        <div className="flex flex-col gap-3 border-t border-border/70 pt-3">
+          {includesLive && showReferenceSource && <ReferenceSourceSelect />}
           {extra}
-        </>
+        </div>
+      )}
+
+      {includesLive && (
+        <div className="flex items-center justify-between gap-2 border-t border-border/70 pt-2">
+          <span className="text-[0.68rem] text-muted truncate">{lastUpdated}</span>
+          <button
+            type="button"
+            onClick={onRefresh}
+            className="shrink-0 rounded border border-accent bg-accent px-2.5 py-1 text-[0.72rem] font-semibold text-black transition-opacity hover:opacity-85"
+          >
+            ↻ Refresh
+          </button>
+        </div>
       )}
 
       <button

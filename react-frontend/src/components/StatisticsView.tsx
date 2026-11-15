@@ -15,7 +15,8 @@ import {
   PaymentMethodsCard,
   PremiumsCard,
 } from './GeneralStats';
-import { CustomDateRangeFilter, DualRangeFilter, SelectGroup } from './ControlPanel';
+import { CustomDateRangeFilter, DualRangeFilter, FilterSelect, PremiumSelect } from './ControlPanel';
+import { premiumModeLabel } from '../utils/premiumModes';
 import { OfferFilterRail, type DirectionFilter, type OfferFilterRailScope } from './OfferFilterRail';
 
 function SectionHeader({ title, subtitle }: { title: string; subtitle?: string }) {
@@ -447,9 +448,16 @@ export function StatisticsView({ lastUpdatedAt = '' }: { lastUpdatedAt?: string 
             onDisableAllExchanges={() => applyDisabledExchanges([...railExchangeFilter.exchanges])}
             onRefresh={handleRefresh}
             lastUpdatedAt={statsUpdatedAt}
-            extra={(
+            premium={mode === 'past' ? (
+              <PremiumSelect
+                options={(['raw', 'net_full', 'net_capped'] as const).map(value => ({ value, label: premiumModeLabel(value) }))}
+                selected={filters.premiumMode}
+                onChange={value => setFilters({ premiumMode: value as PremiumFilterMode })}
+              />
+            ) : undefined}
+            extra={applyPastWindow ? (
               <>
-                <SelectGroup
+                <FilterSelect
                   label="Timeframe"
                   description="Show offers closed within a preset window or a custom date range"
                   options={[
@@ -483,21 +491,8 @@ export function StatisticsView({ lastUpdatedAt = '' }: { lastUpdatedAt?: string 
                   disabled={!durationBounds.hasData || durationRange == null}
                   disabledMessage="No duration data in this window"
                 />
-                {mode === 'past' && (
-                  <SelectGroup
-                    label="Premium mode"
-                    description="Net full uses full order size. Net capped applies your max fiat position limit where needed."
-                    options={[
-                      { value: 'raw', label: 'Raw' },
-                      { value: 'net_full', label: 'Net Full' },
-                      { value: 'net_capped', label: 'Net Capped' },
-                    ]}
-                    selected={filters.premiumMode}
-                    onChange={value => setFilters({ premiumMode: value as PremiumFilterMode })}
-                  />
-                )}
               </>
-            )}
+            ) : undefined}
             onReset={() => {
               resetFilters();
               setSelectedTimeframe('24h');
