@@ -91,10 +91,11 @@ export default defineConfig({
     host: '127.0.0.1',
     port: 5173,
     strictPort: true,
+    // No host/protocol/port pin: the client derives the HMR endpoint from the
+    // page URL, so hot reload works both locally (ws://…:5173) and through
+    // the tailnet HTTPS endpoint (wss://…:8443). Pinning any of these to a
+    // loopback address silently breaks hot reload on the other origin.
     hmr: {
-      protocol: 'ws',
-      host: '127.0.0.1',
-      clientPort: 5173,
       path: '/__vite_hmr',
     },
     proxy: {
