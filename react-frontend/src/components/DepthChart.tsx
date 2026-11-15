@@ -13,7 +13,7 @@ import { LoadingSpinner } from './LoadingSpinner';
 import { toUtcSec } from '../utils/formatters';
 import { formatFiat } from '../utils/currency';
 import { getBtcMax, getFirstSeen, getLastSeen, getOfferPrice, getRefPrice, isOfferLive } from '../utils/offerAccess';
-import { niceStep, priceLevelAt, priceLevelStats, priceLevelStep } from '../utils/priceLevels';
+import { isSamePriceLevel, niceStep, priceLevelAt, priceLevelStats, priceLevelStep, type PriceLevel } from '../utils/priceLevels';
 
 function cssVar(name: string, fallback: string): string {
   const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -39,10 +39,12 @@ function plotLayout(W: number, H: number) {
 }
 
 const TOOLTIP_W = 190;
-const TOOLTIP_H = 110;
+const TOOLTIP_H = 126;
+// Pointer travel (px) below which a press on the plot is a click, not a pan.
+const CLICK_SLOP_PX = 4;
 
 function DepthChartInner() {
-  const { depthOffers, filters, loading, hoveredOhlcTime } = useFilters();
+  const { depthOffers, filters, loading, hoveredOhlcTime, selectedPriceLevel, setSelectedPriceLevel } = useFilters();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const canvasMetricsRef = useRef<{ w: number; h: number; dpr: number } | null>(null);
@@ -68,16 +70,25 @@ function DepthChartInner() {
   // Plot geometry published by the draw pass so pointer handlers can tell the
   // axis margins from the plot area and convert pointer movement to scale.
   const layoutRef = useRef<{ ML: number; MT: number; PW: number; PH: number } | null>(null);
-  // Pixel bounds of the selected price level, for tap-to-dismiss on touch.
-  const hoveredLevelRef = useRef<{ top: number; bottom: number } | null>(null);
+  // Visible price window published by the draw pass, so a click can resolve
+  // the price level under the pointer.
+  const priceWindowRef = useRef<{ priceMin: number; priceMax: number } | null>(null);
+  // Clicking a price level pins it and filters the offers list to it;
+  // clicking it again (or resetting the view) clears the selection.
+  const selectedLevelRef = useRef(selectedPriceLevel);
+  useEffect(() => { selectedLevelRef.current = selectedPriceLevel; }, [selectedPriceLevel]);
+  const setSelectedLevelRef = useRef(setSelectedPriceLevel);
+  useEffect(() => { setSelectedLevelRef.current = setSelectedPriceLevel; }, [setSelectedPriceLevel]);
 
   const showReset = Math.abs(xZoom - 1) > 0.001 ||
     Math.abs(yZoom - 1) > 0.001 ||
-    Math.abs(panFrac) > 0.001;
+    Math.abs(panFrac) > 0.001 ||
+    selectedPriceLevel != null;
   const resetView = () => {
     setXZoom(1);
     setYZoom(1);
     setPanFrac(0);
+    setSelectedPriceLevel(null);
   };
 
   const handleXAxisPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
@@ -145,6 +156,10 @@ function DepthChartInner() {
     const drag = {
       active: false,
       mode: 'pan-y' as DragMode,
+      // Stays false while the pointer is within CLICK_SLOP_PX of the press,
+      // so a plain click selects a price level instead of panning.
+      moved: false,
+      startX: 0,
       startY: 0,
       startZoom: 1,
       startPan: 0,
@@ -152,6 +167,26 @@ function DepthChartInner() {
 
     const tap = { pointerId: -1, x: 0, y: 0, moved: false };
     const TAP_SLOP_PX = 10;
+
+    // The price level at canvas y, using the geometry of the last draw.
+    const levelAtY = (y: number): PriceLevel | null => {
+      const layout = layoutRef.current;
+      const priceWindow = priceWindowRef.current;
+      if (!layout || !priceWindow) return null;
+      const { priceMin, priceMax } = priceWindow;
+      const price = priceMax - ((y - layout.MT) / layout.PH) * (priceMax - priceMin);
+      return priceLevelAt(price, priceLevelStep(priceMin, priceMax));
+    };
+    // Selects the level at y, or clears it when it is already selected.
+    // Returns whether the level is selected afterwards.
+    const toggleLevelAt = (y: number): boolean => {
+      const level = levelAtY(y);
+      if (!level) return false;
+      const current = selectedLevelRef.current;
+      const selected = !(current && isSamePriceLevel(current, level));
+      setSelectedLevelRef.current(selected ? level : null);
+      return selected;
+    };
 
     const plotPoint = (e: PointerEvent) => {
       const layout = layoutRef.current;
@@ -169,6 +204,10 @@ function DepthChartInner() {
       const layout = layoutRef.current;
       if (!drag.active || !layout) return;
       const dy = e.clientY - drag.startY;
+      if (!drag.moved) {
+        if (Math.hypot(e.clientX - drag.startX, dy) <= CLICK_SLOP_PX) return;
+        drag.moved = true;
+      }
       if (drag.mode === 'zoom-y') {
         setYZoom(clampZoom(drag.startZoom * Math.exp(-dy / 150)));
       } else {
@@ -176,10 +215,17 @@ function DepthChartInner() {
         setPanFrac(drag.startPan + (dy / layout.PH) * (2 / drag.startZoom));
       }
     };
-    const onWindowUp = () => {
+    const onWindowUp = (e: PointerEvent) => {
       if (!drag.active) return;
       drag.active = false;
       canvas.style.cursor = 'default';
+      if (e.type === 'pointerup' && drag.mode === 'pan-y' && !drag.moved) {
+        const { x, y, insidePlot } = plotPoint(e);
+        if (insidePlot) {
+          toggleLevelAt(y);
+          setHover({ x, y });
+        }
+      }
       window.removeEventListener('pointermove', onWindowMove);
       window.removeEventListener('pointerup', onWindowUp);
       window.removeEventListener('pointercancel', onWindowUp);
@@ -194,7 +240,9 @@ function DepthChartInner() {
       if (!overYAxis && !insidePlot) return;
 
       drag.active = true;
+      drag.moved = false;
       setHover(null);
+      drag.startX = e.clientX;
       drag.startY = e.clientY;
       drag.startPan = panFracRef.current;
       drag.mode = overYAxis ? 'zoom-y' : 'pan-y';
@@ -225,12 +273,9 @@ function DepthChartInner() {
       if (tap.moved) return;
       const { x, y, insidePlot } = plotPoint(e);
       if (!insidePlot) { setHover(null); return; }
-      // Tapping the selected level again dismisses it.
-      setHover(prev => {
-        const level = hoveredLevelRef.current;
-        if (prev && level && y >= level.top && y <= level.bottom) return null;
-        return { x, y };
-      });
+      // A tap selects the level (showing its tooltip); tapping the selected
+      // level again clears the selection and dismisses the tooltip.
+      setHover(toggleLevelAt(y) ? { x, y } : null);
     };
     // Touch leaves the canvas on every lift, so only a mouse leaving clears it.
     const onLeave = (e: PointerEvent) => {
@@ -349,11 +394,9 @@ function DepthChartInner() {
       btc: o => getBtcMax(o) || 0,
       isBid: o => o.direction === 'bid',
     });
-    // Pixel bounds of the band, so a second tap on it can dismiss the tooltip.
-    const yOf = (p: number) => MT + (1 - (p - priceMin) / (priceMax - priceMin)) * PH;
-    return { ...level, ...stats, top: yOf(level.high), bottom: yOf(level.low) };
-  }, [hover, chartData, size]);
-  useEffect(() => { hoveredLevelRef.current = hoveredLevel; }, [hoveredLevel]);
+    const isSelected = selectedPriceLevel != null && isSamePriceLevel(selectedPriceLevel, level);
+    return { ...level, ...stats, isSelected };
+  }, [hover, chartData, size, selectedPriceLevel]);
 
   useLayoutEffect(() => {
     const canvas = canvasRef.current;
@@ -387,6 +430,9 @@ function DepthChartInner() {
 
     // Keep canvas transparent so theme background swaps instantly via CSS.
     ctx.clearRect(0, 0, W, H);
+    priceWindowRef.current = chartData
+      ? { priceMin: chartData.priceMin, priceMax: chartData.priceMax }
+      : null;
     if (!chartData) return;
 
     const { bids, asks, midPrice, maxVol, priceMin, priceMax } = chartData;
@@ -416,6 +462,22 @@ function DepthChartInner() {
       ctx.globalAlpha = isHovered ? 0.18 : 0.35;
       ctx.fillStyle = isHovered ? text : grid;
       ctx.fillRect(ML, top, PW, yOf(low) - top);
+    }
+    // The selected level keeps its own absolute price bounds, so it stays put
+    // while zooming changes the band step.
+    if (selectedPriceLevel) {
+      const accent = cssVar('--color-accent', '#f7931a');
+      const top = yOf(selectedPriceLevel.high);
+      const bottom = yOf(selectedPriceLevel.low);
+      ctx.globalAlpha = 0.2;
+      ctx.fillStyle = accent;
+      ctx.fillRect(ML, top, PW, bottom - top);
+      ctx.globalAlpha = 0.8;
+      ctx.strokeStyle = accent;
+      ctx.beginPath();
+      ctx.moveTo(ML, top); ctx.lineTo(ML + PW, top);
+      ctx.moveTo(ML, bottom); ctx.lineTo(ML + PW, bottom);
+      ctx.stroke();
     }
     ctx.restore();
 
@@ -511,7 +573,7 @@ function DepthChartInner() {
     ctx.textBaseline = 'bottom';
     ctx.fillText('Cumulative BTC', ML + PW / 2, H - 2);
 
-	}, [chartData, filters.fiat, size, hoveredLevel]);
+	}, [chartData, filters.fiat, size, hoveredLevel, selectedPriceLevel]);
 
   return (
     <div className="flex flex-col h-full min-h-0">
@@ -569,6 +631,9 @@ function DepthChartInner() {
               <span className="text-green">{hoveredLevel.bids.cumBtc.toFixed(3)}</span>
               {' / '}
               <span className="text-red">{hoveredLevel.asks.cumBtc.toFixed(3)}</span> BTC
+            </div>
+            <div className="text-muted">
+              {hoveredLevel.isSelected ? 'Click to show all offers' : 'Click to filter offers'}
             </div>
           </div>
         )}

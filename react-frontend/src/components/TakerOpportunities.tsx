@@ -60,6 +60,8 @@ import {
 import { premiumModeLabel } from '../utils/premiumModes';
 import { OfferFilterRail, type DirectionFilter } from './OfferFilterRail';
 import { DepthChart } from './DepthChart';
+import { formatFiat } from '../utils/currency';
+import { isPriceInLevel } from '../utils/priceLevels';
 import { CounterpartyStakeBadge, SellerRatingBadge } from './SellerRatingBadge';
 
 const TradeTracingPanel = lazy(() => import('./TradeTracingPanel').then(module => ({ default: module.TradeTracingPanel })));
@@ -1375,6 +1377,8 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     hideAllChartOffers,
     linkedPaymentMethods,
     linkedPaymentMethodOptions,
+    selectedPriceLevel,
+    setSelectedPriceLevel,
   } = useFilters();
   // All chart-visibility interactions here belong to the Insights scope,
   // where offers are hidden by default and render only when ticked.
@@ -1862,7 +1866,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
     profitPctBounds.hasData,
   ]);
 
-  const filteredOrders = useMemo(() => {
+  const ordersAfterProfitFilter = useMemo(() => {
     if (profitRangeUnit === 'pct') {
       if (profitPctRangeScaled == null) {
         return ordersAfterDurationFilter;
@@ -1882,6 +1886,24 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       return cents >= lo && cents <= hi;
     });
   }, [ordersAfterDurationFilter, profitRangeUnit, profitPctRangeScaled, profitFiatRangeCents, mode]);
+
+  // Narrow to the price level selected on the depth chart (if any).
+  const filteredOrders = useMemo(() => {
+    if (selectedPriceLevel == null) return ordersAfterProfitFilter;
+    return ordersAfterProfitFilter.filter(order => {
+      const price = order.pricing?.offer_price ?? order.pricing?.avg_offer_price;
+      return price != null && isPriceInLevel(price, selectedPriceLevel);
+    });
+  }, [ordersAfterProfitFilter, selectedPriceLevel]);
+
+  // Live offers shown in the list, narrowed to the depth chart's selected
+  // price level. The context's filteredOffers stays unfiltered so offer keys
+  // (and the selected offer) resolve the same way with or without a level.
+  const listedLiveOffers = useMemo(() => {
+    const live = filteredOffers.filter(isOfferLive);
+    if (selectedPriceLevel == null) return live;
+    return live.filter(offer => isPriceInLevel(getOfferPrice(offer), selectedPriceLevel));
+  }, [filteredOffers, selectedPriceLevel]);
 
   const filteredSummary = useMemo(
     () => computeFilteredSummary(filteredOrders, mode),
@@ -2123,9 +2145,31 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
         </div>
       )}
       <div className="mb-3 flex items-center justify-between gap-3 shrink-0">
-        <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">
-          {viewMode === 'live' ? 'Live Offers' : 'Past Offers'}
-        </h3>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted">
+            {viewMode === 'live' ? 'Live Offers' : 'Past Offers'}
+          </h3>
+          {selectedPriceLevel != null && (
+            <span
+              data-testid="price-level-filter"
+              className="inline-flex items-center gap-1 rounded-md border border-accent/60 bg-accent/10 px-1.5 py-0.5 text-[0.65rem] tabular-nums text-text"
+            >
+              Price level{' '}
+              {formatFiat(selectedPriceLevel.low, liveFilters.fiat, { maximumFractionDigits: 0 })}
+              {' – '}
+              {formatFiat(selectedPriceLevel.high, liveFilters.fiat, { maximumFractionDigits: 0 })}
+              <button
+                type="button"
+                aria-label="Clear price level filter"
+                title="Show all offers"
+                onClick={() => setSelectedPriceLevel(null)}
+                className="ml-0.5 leading-none text-muted transition-colors hover:text-text"
+              >
+                ✕
+              </button>
+            </span>
+          )}
+        </div>
         <div className="flex items-center gap-1" role="group" aria-label="Offer view mode">
           {(['live', 'past'] as const).map(option => (
             <button
@@ -2349,7 +2393,11 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                     type="button"
                     aria-label="Hide orderbook depth chart"
                     aria-expanded={true}
-                    onClick={() => setDepthCollapsed(true)}
+                    onClick={() => {
+                      // A hidden depth chart can't show or clear its selection.
+                      setSelectedPriceLevel(null);
+                      setDepthCollapsed(true);
+                    }}
                     className="absolute right-1 top-1 z-10 rounded border border-border bg-surface px-1.5 py-0.5 text-[0.75rem] leading-none text-muted transition-colors hover:text-text"
                     title="Hide depth chart"
                   >
@@ -2386,7 +2434,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
           >
           {viewMode === 'live' ? (
             <LiveOffersList
-              offers={filteredOffers.filter(isOfferLive)}
+              offers={listedLiveOffers}
               observedLiveCount={contextOffers.filter(isOfferLive).length}
               fiat={liveFilters.fiat}
               timezone={timezone}
@@ -2464,7 +2512,11 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                   <LoadingSpinner size={112} label="Loading profitable trades" />
                 </div>
               ) : sortedOrders.length === 0 ? (
-                <div className="px-3 py-4 text-[0.75rem] text-muted">No profitable closed trades in this window for the selected net mode.</div>
+                <div className="px-3 py-4 text-[0.75rem] text-muted">
+                  {selectedPriceLevel != null
+                    ? 'No profitable closed trades in the selected price level.'
+                    : 'No profitable closed trades in this window for the selected net mode.'}
+                </div>
               ) : (
                 <div
                   className="relative min-w-[40rem] sm:min-w-[48rem] lg:min-w-0 lg:w-full"

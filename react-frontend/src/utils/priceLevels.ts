@@ -75,3 +75,17 @@ export function priceLevelStats<T>(
   }
   return stats;
 }
+
+/** Whether `price` lies inside the [low, high) band, matching priceLevelStats. */
+export function isPriceInLevel(price: number, level: PriceLevel): boolean {
+  return price >= level.low && price < level.high;
+}
+
+/**
+ * Whether two levels describe the same band. Bands come from floating-point
+ * step arithmetic, so compare with a tolerance relative to the band width.
+ */
+export function isSamePriceLevel(a: PriceLevel, b: PriceLevel): boolean {
+  const eps = Math.max(a.high - a.low, b.high - b.low) * 1e-6;
+  return Math.abs(a.low - b.low) <= eps && Math.abs(a.high - b.high) <= eps;
+}

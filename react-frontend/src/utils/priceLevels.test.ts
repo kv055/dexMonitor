@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { niceStep, priceLevelAt, priceLevelStats, priceLevelStep } from './priceLevels';
+import { isPriceInLevel, isSamePriceLevel, niceStep, priceLevelAt, priceLevelStats, priceLevelStep } from './priceLevels';
 
 describe('priceLevels', () => {
   it('uses 1/2/5 steps that match the axis labels', () => {
@@ -52,5 +52,22 @@ describe('priceLevels', () => {
     });
     expect(stats.bids).toEqual({ count: 1, btc: 0.5, cumBtc: 4.5 });
     expect(stats.asks).toEqual({ count: 1, btc: 0.25, cumBtc: 2.25 });
+  });
+
+  it('matches a price against the half-open [low, high) band', () => {
+    const level = { low: 71000, high: 72000 };
+    expect(isPriceInLevel(71000, level)).toBe(true);
+    expect(isPriceInLevel(71999.99, level)).toBe(true);
+    expect(isPriceInLevel(72000, level)).toBe(false);
+    expect(isPriceInLevel(70999.99, level)).toBe(false);
+  });
+
+  it('treats floating-point rounding of the same band as the same level', () => {
+    const step = 0.1 + 0.2; // 0.30000000000000004
+    const a = priceLevelAt(0.31, step);
+    expect(isSamePriceLevel(a, { low: 0.3, high: 0.6 })).toBe(true);
+    expect(isSamePriceLevel({ low: 71000, high: 72000 }, { low: 72000, high: 73000 })).toBe(false);
+    // Same low edge but a different step (after zooming) is a different level.
+    expect(isSamePriceLevel({ low: 71000, high: 72000 }, { low: 71000, high: 71500 })).toBe(false);
   });
 });

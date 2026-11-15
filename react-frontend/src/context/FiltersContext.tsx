@@ -10,6 +10,7 @@ import { INITIAL_FILTERS, filtersReducer } from './filtersState';
 import { getRefPrice, hasZeroTrustScore, isOfferLive } from '../utils/offerAccess';
 import { applyOfferFilters, countOffersByPaymentMethod } from '../features/insights/filterOffers';
 import { fetchPaymentMethods } from '../utils/api';
+import type { PriceLevel } from '../utils/priceLevels';
 
 // ── Provider ───────────────────────────────────────────────────────────────
 
@@ -25,6 +26,7 @@ export function FiltersProvider({ offers, loading, groups, hideZeroTrustScore, c
   const [filters, dispatch] = useReducer(filtersReducer, INITIAL_FILTERS);
   const [selectedOfferKey, setSelectedOfferKey] = useState<string | null>(null);
   const [hoveredOhlcTime, setHoveredOhlcTime] = useState<number | null>(null);
+  const [selectedPriceLevel, setSelectedPriceLevel] = useState<PriceLevel | null>(null);
   const [linkedPaymentMethods, setLinkedPaymentMethods] = useState<Set<string> | null>(null);
   const [linkedPaymentMethodOptions, setLinkedPaymentMethodOptions] = useState<LinkedPaymentMethodOption[] | null>(null);
 
@@ -191,6 +193,8 @@ export function FiltersProvider({ offers, loading, groups, hideZeroTrustScore, c
     setSelectedOfferKey,
     hoveredOhlcTime,
     setHoveredOhlcTime,
+    selectedPriceLevel,
+    setSelectedPriceLevel,
     loading,
     refPrice,
     zeroTrustHiddenCount,
@@ -214,6 +218,7 @@ export function FiltersProvider({ offers, loading, groups, hideZeroTrustScore, c
     groups,
     selectedOfferKey,
     hoveredOhlcTime,
+    selectedPriceLevel,
     loading,
     refPrice,
     zeroTrustHiddenCount,

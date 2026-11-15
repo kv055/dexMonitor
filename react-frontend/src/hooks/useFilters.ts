@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react';
 import type { Filters, Offer, PaymentMethodGroup } from '../types';
+import type { PriceLevel } from '../utils/priceLevels';
 
 /**
  * Chart-overlay visibility is tracked per view: the Monitor chart shows all
@@ -37,6 +38,12 @@ export interface FiltersContextValue {
   setSelectedOfferKey: (key: string | null) => void;
   hoveredOhlcTime: number | null;
   setHoveredOhlcTime: (t: number | null) => void;
+  /**
+   * Price level clicked on the depth chart; the offers list (live and past)
+   * narrows to offers priced inside it. Null shows every offer.
+   */
+  selectedPriceLevel: PriceLevel | null;
+  setSelectedPriceLevel: (level: PriceLevel | null) => void;
   loading: boolean;
   refPrice: number | null;
   /** Score-0 offers in the current monitor filter view (premium, direction, etc.). */

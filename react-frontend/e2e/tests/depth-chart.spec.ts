@@ -129,4 +129,42 @@ test.describe('DepthChart', () => {
     const after = await canvas.screenshot();
     expect(Buffer.compare(before, after)).not.toBe(0);
   });
+
+  test('clicking a price level filters the offers list until deselected or reset', async ({ page }) => {
+    const panel = depthPanel(page);
+    await waitForChartReady(panel, page);
+
+    const rows = page.getByTestId('live-offers-row');
+    await expect(rows.first()).toBeVisible();
+    const allCount = await rows.count();
+    const levelChip = page.getByTestId('price-level-filter');
+    await expect(levelChip).toHaveCount(0);
+
+    const canvas = panel.locator('canvas');
+    const box = await canvas.boundingBox();
+    expect(box).not.toBeNull();
+    // The book centres on the mid price, so the plot's middle holds offers.
+    const x = box!.x + box!.width / 2;
+    const y = box!.y + box!.height / 2;
+
+    // Click selects the level and narrows the list.
+    await page.mouse.click(x, y);
+    await expect(levelChip).toBeVisible();
+    await expect(panel.getByTestId('depth-price-level-tooltip')).toContainText('Click to show all offers');
+    expect(await rows.count()).toBeLessThan(allCount);
+
+    // Clicking the same level again restores every offer.
+    await page.mouse.click(x, y);
+    await expect(levelChip).toHaveCount(0);
+    await expect(rows).toHaveCount(allCount);
+
+    // Moving the mouse away keeps a selection; Reset view clears it.
+    await page.mouse.click(x, y);
+    await page.mouse.move(box!.x + box!.width / 2, box!.y - 40);
+    await expect(levelChip).toBeVisible();
+    await panel.getByRole('button', { name: /Reset view/ }).click();
+    await expect(levelChip).toHaveCount(0);
+    await expect(rows).toHaveCount(allCount);
+  });
 });
+
