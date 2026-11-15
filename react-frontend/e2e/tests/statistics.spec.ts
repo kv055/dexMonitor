@@ -50,8 +50,7 @@ test.describe('Statistics', () => {
     await expect(page.getByRole('heading', { name: 'Past Offers', exact: true })).toBeVisible();
     await expect(statsFilters.getByText('Timeframe', { exact: true })).toBeVisible();
     await expect(statsFilters.getByText('Duration', { exact: true })).toBeVisible();
-    await expect(statsFilters.getByText('Premium mode', { exact: true })).toBeVisible();
-    await expect(statsFilters.getByText('Premium', { exact: true })).toHaveCount(0);
+    await expect(statsFilters.getByText('Premium', { exact: true })).toBeVisible();
     await expect(statsFilters.getByText('Range', { exact: true })).toHaveCount(0);
 
     await page.getByRole('button', { name: 'All Offers', exact: true }).click();

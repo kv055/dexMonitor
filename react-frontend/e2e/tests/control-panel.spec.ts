@@ -43,10 +43,11 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await jsClick(page.getByRole('button', { name: 'Past Offers', exact: true }));
     await expect(page.getByRole('heading', { name: 'Past Offers' })).toBeVisible();
     await expect(label('Timeframe')).toBeVisible();
-    await expect(label('Premium mode')).toBeVisible();
-    await expect(cp.getByTitle(/Net full uses full order size/)).toContainText('Net Full');
-    await expect(label('Premium')).toHaveCount(0);
-    await expect(cp.locator('button').filter({ hasText: 'Net Premium Full' })).toHaveCount(0);
+    // Same Premium / Range controls as Live, with past-specific options.
+    await expect(label('Premium')).toBeVisible();
+    await expect(cp.getByTitle(/Raw is the quoted premium/)).toContainText('Net Full');
+    await expect(label('Range')).toBeVisible();
+    await expect(label('Net profit EUR')).toBeVisible();
     const payments = cp.getByTitle('Show all methods, linked methods, or selected linked methods');
     await expect(payments).toContainText('Linked methods');
     await expect(label('Payment methods')).toBeVisible();
@@ -60,7 +61,7 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await expect(label('Payment methods')).toBeVisible();
     await expect(label('Reference source')).toBeVisible();
     await expect(label('Premium')).toBeVisible();
-    await expect(cp.locator('button').filter({ hasText: 'Net Premium Full' })).toBeVisible();
+    await expect(cp.getByTitle(/Raw is the quoted premium/)).toContainText('Net Full');
     await expect(label('Timeframe')).toHaveCount(0);
   });
 
@@ -205,17 +206,15 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
 
   test('premium dropdown can include non premium offers', async ({ page }) => {
     const cp = controlPanel(page);
-    const premiumDropdown = cp.locator('button').filter({ hasText: 'Net Premium Full' });
+    const premiumDropdown = cp.getByTitle(/Raw is the quoted premium/);
 
-    await expect(premiumDropdown).toBeVisible();
+    await expect(premiumDropdown).toContainText('Net Full');
 
-    await jsClick(premiumDropdown);
-    await page.locator('.absolute button').filter({ hasText: 'Incl. non premium offers' }).click();
-    await expect(cp.locator('button').filter({ hasText: 'Incl. non premium offers' })).toBeVisible();
+    await selectMenuOption(page, premiumDropdown, 'Incl. non premium offers');
+    await expect(premiumDropdown).toContainText('Incl. non premium offers');
 
-    await jsClick(cp.locator('button').filter({ hasText: 'Incl. non premium offers' }));
-    await page.locator('.absolute button').filter({ hasText: 'Raw Premium' }).click();
-    await expect(cp.locator('button').filter({ hasText: 'Raw Premium' })).toBeVisible();
+    await selectMenuOption(page, premiumDropdown, 'Raw');
+    await expect(premiumDropdown).toContainText('Raw');
   });
 
   test('reset button restores default filters', async ({ page }) => {
@@ -235,7 +234,7 @@ test.describe('ControlPanel (Insights filter sidebar)', () => {
     await expect(cp.getByRole('slider', { name: 'Premium % minimum' })).toHaveCount(0);
     await expect(cp.getByRole('button', { name: 'EUR', exact: true })).toHaveAttribute('aria-pressed', 'true');
     await expect(cp.locator('span.uppercase').filter({ hasText: /^Net profit EUR$/ })).toBeVisible();
-    await expect(cp.locator('button').filter({ hasText: 'Net Premium Full' })).toBeVisible();
+    await expect(cp.getByTitle(/Raw is the quoted premium/)).toContainText('Net Full');
   });
 
   test('refresh button triggers API calls', async ({ page }) => {
