@@ -5,6 +5,7 @@ const EXCHANGE_STYLES: Record<string, string> = {
   bisq2: 'bg-[#1a2a3a99] text-blue',
   peachbitcoin: 'bg-[#2d1a0e99] text-peach',
   mostro: 'bg-[#0e2d2a99] text-[#2dd4bf]',
+  noones: 'bg-[#3a1a1a99] text-red',
 };
 
 const EXCHANGE_LABELS: Record<string, string> = {

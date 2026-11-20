@@ -24,9 +24,10 @@ const EXCHANGE_COLOR: Record<string, string> = {
   robosats: '#9b59b6',
   peachbitcoin: '#FF6B35',
   mostro: '#2dd4bf',
+  noones: '#f85149',
 };
 
-const EXPECTED_EXCHANGES = ['bisq', 'bisq2', 'hodlhodl', 'robosats', 'peachbitcoin', 'mostro'];
+const EXPECTED_EXCHANGES = ['bisq', 'bisq2', 'hodlhodl', 'robosats', 'peachbitcoin', 'mostro', 'noones'];
 
 function exchangeColor(name: string) {
   return EXCHANGE_COLOR[name] ?? '#888';
@@ -39,6 +40,7 @@ function exchangeLabel(name: string) {
   if (name === 'robosats') return 'RoboSats';
   if (name === 'peachbitcoin') return 'Peach Bitcoin';
   if (name === 'mostro') return 'Mostro';
+  if (name === 'noones') return 'Noones';
   return name;
 }
 

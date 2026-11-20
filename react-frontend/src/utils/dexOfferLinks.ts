@@ -85,6 +85,19 @@ export function getDexOfferLink(offer: DexOfferRef): DexOfferLink | null {
           : 'Opens the Mostro order (Nostr event) in a new tab',
       };
     }
+    case 'noones': {
+      // Offer pages are addressable by the public offer hash, e.g.
+      // https://noones.com/offer/Agq1Bpw7oX9 (the pattern the API itself
+      // returns as offer_link). Rows that only carried the numeric offer_id
+      // have no resolvable web page, so they stay unlinked like Peach.
+      const id = trimmed(offer.offer_id);
+      if (!id || /^\d+$/.test(id)) return null;
+      return {
+        url: `https://noones.com/offer/${encodeURIComponent(id)}`,
+        label: 'View on Noones',
+        title: `Opens offer ${id} on Noones in a new tab`,
+      };
+    }
     default:
       return null;
   }
