@@ -24,7 +24,7 @@ const EXCHANGE_COLOR: Record<string, string> = {
   robosats: '#9b59b6',
   peachbitcoin: '#FF6B35',
   mostro: '#2dd4bf',
-  noones: '#f85149',
+  noones: '#f778ba',
 };
 
 const EXPECTED_EXCHANGES = ['bisq', 'bisq2', 'hodlhodl', 'robosats', 'peachbitcoin', 'mostro', 'noones'];
