@@ -1,5 +1,5 @@
 # Stage 1: Build React frontend
-FROM node:24-alpine AS frontend
+FROM node:26-alpine AS frontend
 
 WORKDIR /build
 COPY dexMonitor/react-frontend/package*.json ./
@@ -15,7 +15,7 @@ ENV COMMIT_DATE=${COMMIT_DATE}
 RUN npm run build
 
 # Stage 2: Build Go binary
-FROM golang:1.26-alpine AS builder
+FROM golang:1.27-alpine AS builder
 # Fall through on any proxy error: proxy.golang.org may be unreachable on some
 # hosts, while goproxy.io can intermittently return 5xx responses.
 ARG GOPROXY=https://proxy.golang.org|https://goproxy.io|direct
@@ -35,7 +35,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
     sh -ec 'for attempt in 1 2 3; do CGO_ENABLED=0 go build -ldflags="-s -w" -o server ./cmd/server && exit 0; echo "go build attempt $attempt failed, retrying..."; sleep $((attempt * 10)); done; exit 1'
 
 # Stage 3: Minimal runtime
-FROM alpine:3.21
+FROM alpine:3.24
 
 RUN apk add --no-cache curl tzdata
 
