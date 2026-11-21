@@ -22,7 +22,6 @@ function exchangeFilterLabel(name: string): string {
   if (name === 'robosats') return 'RoboSats';
   if (name === 'peachbitcoin') return 'Peach';
   if (name === 'mostro') return 'Mostro';
-  if (name === 'noones') return 'Noones';
   return name;
 }
 

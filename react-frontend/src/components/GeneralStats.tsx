@@ -44,7 +44,6 @@ const EXCHANGE_COLOR: Record<string, string> = {
   robosats: 'text-purple',
   peachbitcoin: 'text-peach',
   mostro: 'text-blue',
-  noones: 'text-[#f778ba]',
 };
 
 const EXCHANGE_HEX: Record<string, string> = {
@@ -54,7 +53,6 @@ const EXCHANGE_HEX: Record<string, string> = {
   robosats: '#bc8cff',
   peachbitcoin: '#FF6B35',
   mostro: '#2dd4bf',
-  noones: '#f778ba',
 };
 
 function exchangeColor(name: string): string {

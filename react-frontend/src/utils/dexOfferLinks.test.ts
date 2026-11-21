@@ -62,19 +62,6 @@ describe('getDexOfferLink', () => {
     expect(getDexOfferLink({ exchange: 'mostro', direction: 'ask', offer_id: 'order-1', source_event_id: 'not-an-event' })).toBeNull();
   });
 
-  it('links Noones offers by their public offer hash', () => {
-    expect(getDexOfferLink({ exchange: 'noones', offer_id: 'Agq1Bpw7oX9' })).toEqual({
-      url: 'https://noones.com/offer/Agq1Bpw7oX9',
-      label: 'View on Noones',
-      title: 'Opens offer Agq1Bpw7oX9 on Noones in a new tab',
-    });
-  });
-
-  it('returns null for Noones rows that only carry a numeric offer id', () => {
-    expect(getDexOfferLink({ exchange: 'noones', offer_id: '12345' })).toBeNull();
-    expect(getDexOfferLink({ exchange: 'noones', offer_id: null })).toBeNull();
-  });
-
   it('returns null for local-app and app-only venues', () => {
     expect(getDexOfferLink({ exchange: 'bisq', offer_id: 'x' })).toBeNull();
     expect(getDexOfferLink({ exchange: 'bisq2', offer_id: 'x' })).toBeNull();
