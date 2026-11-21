@@ -26,7 +26,7 @@ const schema = {
 };
 
 const values = {
-  PUBLIC_HOSTNAME: 'dexmonitor.live',
+  PUBLIC_HOSTNAME: 'dex.example.com',
   SESSION_COOKIE_SECURE: 'true',
   TELEGRAM_BOT_TOKEN: '***',
   PAYMENT_EMAIL_MODE: 'capture',
@@ -66,7 +66,7 @@ describe('AppSettingsPage', () => {
     expect(screen.getByText('Notifications')).toBeTruthy();
 
     const hostInput = screen.getByLabelText('Public hostname') as HTMLInputElement;
-    expect(hostInput.value).toBe('dexmonitor.live');
+    expect(hostInput.value).toBe('dex.example.com');
 
     const saveButton = screen.getByRole('button', { name: 'Save' });
     expect(saveButton.hasAttribute('disabled')).toBe(true);

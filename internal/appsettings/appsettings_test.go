@@ -29,7 +29,7 @@ func TestValidate(t *testing.T) {
 		value   string
 		wantErr bool
 	}{
-		{"PUBLIC_HOSTNAME", "dexmonitor.live", false},
+		{"PUBLIC_HOSTNAME", "dex.example.com", false},
 		{"PUBLIC_HOSTNAME", "not a host!", true},
 		{"PUBLIC_HOSTNAME", "", true}, // required
 		{"LETSENCRYPT_EMAIL", "ops@example.com", false},
