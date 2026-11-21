@@ -11,7 +11,7 @@
         {
           "key": "PUBLIC_HOSTNAME",
           "label": "Public hostname",
-          "description": "Public HTTPS hostname served by nginx (e.g. dexmonitor.live).",
+          "description": "Public HTTPS hostname served by nginx (e.g. dex.example.com).",
           "type": "hostname",
           "required": true,
           "restartServices": [
