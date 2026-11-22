@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import type { Offer, PastProfitableOrder } from '../types';
-import { asJsonObject, getCounterpartyStakePct, getSellerRatingScore, hasZeroTrustScore, pastProfitableOrderAsOffer } from './offerAccess';
+import { asJsonObject, getCounterpartyStakePct, getOfferVolume, getSellerRatingScore, hasZeroTrustScore, pastProfitableOrderAsOffer, volumeUnitOf } from './offerAccess';
 
 function baseOffer(overrides: Partial<Offer> = {}): Offer {
   return {
@@ -133,5 +133,50 @@ describe('pastProfitableOrderAsOffer', () => {
     expect(offer.seller_rating_signals).toEqual({ source: 'hodlhodl', online_status: 'online' });
     expect(offer.counterparty_stake_pct).toBe(0.03);
     expect(offer.counterparty_stake_btc).toBe(0.0003);
+  });
+});
+
+describe('volumeUnitOf', () => {
+  it('maps BTC and fiat codes, and leaves unrecorded denominations unknown', () => {
+    expect(volumeUnitOf('BTC')).toBe('btc');
+    expect(volumeUnitOf('eur')).toBe('fiat');
+    expect(volumeUnitOf('CAD')).toBe('fiat');
+    expect(volumeUnitOf(null)).toBeNull();
+    expect(volumeUnitOf('')).toBeNull();
+  });
+});
+
+describe('getOfferVolume', () => {
+  // "Buy up to €87,000": the BTC side is only the conversion at the current price.
+  const fiatOffer = baseOffer({
+    pricing: { price_type: 'floating', fiat_currency: 'EUR', offer_price: 50000, ref_price: 52000, raw_premium_percent: -3.8 },
+    volume_limits: { btc_min: 0.002, btc_max: 1.74, fiat_min: 100, fiat_max: 87000, volume_denomination: 'EUR' },
+  });
+
+  it('shows a fiat-denominated volume exactly in fiat and marks BTC as the conversion', () => {
+    expect(getOfferVolume(fiatOffer, 'full', 'fiat')).toEqual({ value: 87000, exactUnit: 'fiat' });
+    expect(getOfferVolume(fiatOffer, 'min', 'fiat')).toEqual({ value: 100, exactUnit: 'fiat' });
+    expect(getOfferVolume(fiatOffer, 'full', 'btc')).toEqual({ value: 1.74, exactUnit: 'fiat' });
+  });
+
+  it('values a BTC-denominated volume at the reference price in fiat', () => {
+    const btcOffer = baseOffer({
+      exchange: 'peachbitcoin',
+      pricing: { price_type: 'floating', fiat_currency: 'EUR', offer_price: 55000, ref_price: 52000, raw_premium_percent: 5.8 },
+      volume_limits: { btc_min: 0.01, btc_max: 0.01, fiat_min: 550, fiat_max: 550, volume_denomination: 'BTC' },
+    });
+    expect(getOfferVolume(btcOffer, 'full', 'btc')).toEqual({ value: 0.01, exactUnit: 'btc' });
+    expect(getOfferVolume(btcOffer, 'full', 'fiat')).toEqual({ value: 520, exactUnit: 'btc' });
+  });
+
+  it('treats a capped trade as exact in fiat', () => {
+    const capped = baseOffer({
+      ...fiatOffer,
+      analysis: {
+        full_volume: { trade_size_btc: 1.74, trade_size_fiat: 90480 } as never,
+        capped_volume: { cap_fiat: 5000, trade_size_btc: 0.0962, trade_size_fiat: 5000 } as never,
+      },
+    });
+    expect(getOfferVolume(capped, 'capped', 'fiat')).toEqual({ value: 5000, exactUnit: 'fiat' });
   });
 });

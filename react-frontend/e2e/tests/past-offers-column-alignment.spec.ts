@@ -54,7 +54,7 @@ test('past-offer headers align with their left-aligned values', async ({ page })
     { title: 'first seen', rowIndex: 4 },
     { title: 'last seen', rowIndex: 5 },
     { title: 'duration', rowIndex: 6 },
-    { title: 'size', rowIndex: 7 },
+    { title: 'volume', rowIndex: 7 },
     { title: 'net profit', rowIndex: 8 },
   ];
   for (const { title, rowIndex } of columns) {
@@ -71,7 +71,7 @@ test('past-offer headers align with their left-aligned values', async ({ page })
   await expect(header.locator('button[title="Sort by premium"]:visible')).toBeVisible();
   await expect(rowCells.nth(2)).toHaveText('3.3%');
 
-  for (const title of ['size', 'net profit']) {
+  for (const title of ['volume', 'net profit']) {
     const sortButton = header.locator(`button[title="Sort by ${title}"]:visible`);
     const unitToggle = sortButton.locator('xpath=following-sibling::*[1]');
     const [sortBox, toggleBox] = await Promise.all([

@@ -110,7 +110,7 @@ func computeStatisticsOfferMetrics(
 	if avgRefPrice <= 0 {
 		avgRefPrice = offerRefPrice(offer)
 	}
-	fullTradeSizeBTC := selectBTCTradeSize(offerFloatPtr(offer, "btc_max"), offerFloatPtr(offer, "btc_min"))
+	fullTradeSizeBTC := pastOfferFullTradeSizeBTC(offer, agg.AvgOfferPrice)
 	if avgRefPrice <= 0 || fullTradeSizeBTC <= 0 {
 		return metrics
 	}
@@ -193,6 +193,11 @@ func estimateProfitFiat(offer map[string]any, netPremiumPct float64, liveLifecyc
 
 func statisticsOfferVolumeBTC(offer map[string]any) float64 {
 	volume := offerFloat(offer, "btc_max")
+	if !offerBool(offer, "is_live") {
+		// A closed fiat-denominated offer's btc_max is its last snapshot's
+		// conversion; use its whole-life volume like the past-offer analysis.
+		_, volume = derefBounds(pastOfferBTCBounds(offer, 0))
+	}
 	if volume <= 0 {
 		volume = offerFloat(offer, "avg_btc_amount")
 	}

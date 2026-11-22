@@ -199,6 +199,49 @@ export function hasCappedScenario(offer: Offer): boolean {
   return !!offer.analysis?.capped_volume || !!offer.cost_breakdown_capped;
 }
 
+export type VolumeUnit = 'btc' | 'fiat';
+
+/** Unit a volume denomination ("BTC" or a fiat code) is exact in; null when unrecorded. */
+export function volumeUnitOf(denomination: string | null | undefined): VolumeUnit | null {
+  const code = denomination?.trim().toUpperCase();
+  if (!code) return null;
+  return code === 'BTC' ? 'btc' : 'fiat';
+}
+
+/** Unit the maker fixed this offer's volume in; null for offers recorded before it was tracked. */
+export function getVolumeUnit(offer: Offer): VolumeUnit | null {
+  return volumeUnitOf(offer.volume_limits?.volume_denomination);
+}
+
+export interface VolumeAmount {
+  value: number | null;
+  /** Unit the volume is exact in; showing it in the other unit is a price conversion. */
+  exactUnit: VolumeUnit | null;
+}
+
+/**
+ * An offer scenario's trade volume in `unit`. The unit the maker fixed is shown
+ * exactly: a fiat-denominated offer's own fiat limit rather than its BTC
+ * conversion revalued at the reference price. A capped trade is exact in fiat
+ * because the cap is a fiat amount.
+ */
+export function getOfferVolume(offer: Offer, sel: ScenarioSelector, unit: VolumeUnit): VolumeAmount {
+  const kind = scenarioKind(sel);
+  const cappedScenario = kind === 'capped' ? offer.analysis?.capped_volume ?? null : null;
+  const exactUnit: VolumeUnit | null = cappedScenario ? 'fiat' : getVolumeUnit(offer);
+  const btc = getTradeSizeBtc(offer, sel);
+  if (unit === 'btc') return { value: btc, exactUnit };
+  if (cappedScenario) {
+    const cap = cappedScenario.cap_fiat ?? cappedScenario.trade_size_fiat;
+    if (cap != null && cap > 0) return { value: cap, exactUnit };
+  } else if (exactUnit === 'fiat') {
+    const fixed = kind === 'min' ? getFiatMin(offer) : getFiatMax(offer) ?? getFiatMin(offer);
+    if (fixed != null && fixed > 0) return { value: fixed, exactUnit };
+  }
+  const ref = getRefPrice(offer);
+  return { value: btc != null && ref != null ? btc * ref : null, exactUnit };
+}
+
 export function getMinTradeSizeBtc(offer: Offer): number | null {
   return offer.analysis?.min_volume?.trade_size_btc ?? null;
 }
@@ -302,11 +345,14 @@ export function pastProfitableOrderAsOffer(order: PastProfitableOrder): Offer {
     first_seen: order.status.first_seen,
     last_seen: order.status.last_seen,
     is_live: order.status.is_live,
-    volume_limits: {
+    // Prefer the server's whole-life volume limits: for past offers the
+    // unfixed side is converted at the average offer price, not the last one.
+    volume_limits: order.volume_limits ?? {
       btc_min: num('btc_min'),
       btc_max: num('btc_max'),
       fiat_min: num('fiat_min'),
       fiat_max: num('fiat_max'),
+      volume_denomination: str('volume_denomination'),
     },
     seller_rating_score: num('seller_rating_score'),
     seller_rating_confidence: asSellerRatingConfidence(raw.seller_rating_confidence),

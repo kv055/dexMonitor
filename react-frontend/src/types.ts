@@ -199,6 +199,9 @@ export interface LiveOfferVolumeLimits {
   btc_max: number | null;
   fiat_min: number | null;
   fiat_max: number | null;
+  /** Unit the maker fixed the volume in: "BTC" or the fiat code. The other
+   *  pair is a price conversion. Absent for offers recorded before it existed. */
+  volume_denomination?: string | null;
 }
 
 export interface LiveOfferBTCNetworkFee {
@@ -291,6 +294,8 @@ export interface LiveOfferScenario {
   assumptions?: string[] | null;
   trade_size_btc: number;
   trade_size_fiat: number;
+  /** Unit the trade size is exact in ("BTC" or the fiat code); past offers only. */
+  volume_denomination?: string | null;
   route: LiveOfferRoute;
   premium: LiveOfferPremium;
   profit: LiveOfferProfit;
@@ -723,6 +728,7 @@ export interface PastProfitableOrderSummary {
   net_profit_fiat: number;
   trade_size_btc: number;
   trade_size_fiat: number;
+  volume_denomination?: string | null;
   net_percent: number;
   cap_fiat?: number | null;
 }
@@ -737,6 +743,7 @@ export interface PastProfitableOrder {
   pricing: LiveOfferPricing;
   summary: PastProfitableOrderSummary;
   analysis: LiveOfferAnalysis;
+  volume_limits?: LiveOfferVolumeLimits;
   observation_count?: number;
   offer: Record<string, unknown>;
 }

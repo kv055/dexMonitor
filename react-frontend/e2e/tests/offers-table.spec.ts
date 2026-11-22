@@ -9,7 +9,7 @@ test.describe('Live offers list', () => {
 
   test('renders the current grid headers and offer rows', async ({ page }) => {
     const panel = offersPanel(page);
-    for (const header of ['Offer', 'Dir', 'Premium', 'Payment method', 'First seen', 'Reputation', 'Stake', 'Age', 'Size', 'Net profit']) {
+    for (const header of ['Offer', 'Dir', 'Premium', 'Payment method', 'First seen', 'Reputation', 'Stake', 'Age', 'Volume', 'Net profit']) {
       await expect(panel.getByText(header, { exact: true }).first()).toBeVisible();
     }
     expect(await panel.getByTestId('live-offers-row').count()).toBeGreaterThan(0);

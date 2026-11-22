@@ -40,6 +40,7 @@ CREATE TABLE offers (
     btc_max REAL,
     fiat_min INTEGER,
     fiat_max INTEGER,
+    volume_denomination TEXT,
     payment_method TEXT,
     payment_methods TEXT,
     offer_id TEXT,

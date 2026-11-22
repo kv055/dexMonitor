@@ -16,6 +16,10 @@ import {
   getEstimatedProfitFiat,
   getFiatMax,
   getFiatMin,
+  getOfferVolume,
+  getVolumeUnit,
+  volumeUnitOf,
+  type VolumeUnit,
   getFirstSeen,
   getLastSeen,
   getMinTradeSizeBtc,
@@ -104,6 +108,25 @@ function fmtFiat(value: number | null | undefined, currency: string): string {
   return value.toLocaleString('de-DE', { style: 'currency', currency, maximumFractionDigits: 2 });
 }
 
+/**
+ * Formats a volume in the selected unit. A volume shown in the unit the maker
+ * did not fix is a price conversion, so it is marked "≈" with a tooltip.
+ */
+function fmtVolume(value: number | null | undefined, unit: VolumeUnit, exactUnit: VolumeUnit | null, fiat: string): { text: string; title: string } {
+  const text = unit === 'btc' ? fmtBTC(value) : fmtFiat(value, fiat);
+  if (value == null || exactUnit == null || exactUnit === unit) return { text, title: text };
+  return {
+    text: `≈ ${text}`,
+    title: `${text}, converted at the offer's price. This volume is fixed in ${exactUnit === 'btc' ? 'BTC' : fiat}.`,
+  };
+}
+
+/** Marks a volume range shown in the unit the maker did not fix as a conversion. */
+function markConvertedRange(range: string | null, unit: VolumeUnit, exactUnit: VolumeUnit | null): string | null {
+  if (range == null || exactUnit == null || exactUnit === unit) return range;
+  return `≈ ${range}`;
+}
+
 function labelForTimeframe(timeframe: string): string {
   switch (timeframe) {
     case '1h': return 'Past 1h';
@@ -179,6 +202,7 @@ function orderScenarioSummary(order: DisplayOrder, mode: TakerOpportunityMode) {
     return {
       tradeSizeBTC: scenario.trade_size_btc,
       tradeSizeFiat: scenario.trade_size_fiat,
+      volumeUnit: volumeUnitOf(scenario.volume_denomination),
       profitBTC: scenario.profit.avg_btc ?? 0,
       profitFiat: scenario.profit.avg_fiat ?? 0,
       netPercent: scenario.premium.avg_net_percent ?? 0,
@@ -187,6 +211,7 @@ function orderScenarioSummary(order: DisplayOrder, mode: TakerOpportunityMode) {
   return {
     tradeSizeBTC: order.summary.trade_size_btc,
     tradeSizeFiat: order.summary.trade_size_fiat,
+    volumeUnit: volumeUnitOf(order.summary.volume_denomination),
     profitBTC: order.summary.net_profit_btc,
     profitFiat: order.summary.net_profit_fiat,
     netPercent: order.summary.net_percent,
@@ -624,11 +649,12 @@ interface TradeRowMetricProps {
   value: string;
   valueClassName?: string;
   className?: string;
+  title?: string;
 }
 
-function TradeRowMetric({ value, valueClassName = 'text-text', className = '' }: TradeRowMetricProps) {
+function TradeRowMetric({ value, valueClassName = 'text-text', className = '', title }: TradeRowMetricProps) {
   return (
-    <span className={`block min-w-0 truncate text-left mono-nums tabular-nums ${valueClassName} ${className}`} title={value}>
+    <span className={`block min-w-0 truncate text-left mono-nums tabular-nums ${valueClassName} ${className}`} title={title ?? value}>
       {value}
     </span>
   );
@@ -709,7 +735,7 @@ function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUni
         <SortHeaderButton label="Duration" column="duration" sort={sort} onSort={onSort} />
       </span>
       <span className={`${th} hidden items-center justify-start gap-1 sm:flex lg:hidden`}>
-		<SortHeaderButton label="Size" column="size" sort={sort} onSort={onSort} fitContent />
+		<SortHeaderButton label="Volume" column="size" sort={sort} onSort={onSort} fitContent />
 		<UnitToggle fiat={fiat} unit={sizeUnit} onChange={onSizeUnitChange} />
       </span>
       <span className={`${th} hidden items-center justify-start gap-1 sm:flex lg:hidden`}>
@@ -717,13 +743,13 @@ function ProfitableTradesHeader({ fiat, sizeUnit, onSizeUnitChange, netProfitUni
 		<UnitToggle fiat={fiat} unit={netProfitUnit} onChange={onNetProfitUnitChange} />
       </span>
       <span className={`${th} flex items-center justify-start gap-1 sm:hidden`}>
-        <SortHeaderButton label="Size" column="size" sort={sort} onSort={onSort} />
+        <SortHeaderButton label="Volume" column="size" sort={sort} onSort={onSort} />
       </span>
       <span className={`${th} flex items-center justify-start gap-1 sm:hidden`}>
         <SortHeaderButton label="Profit" column="net_profit" sort={sort} onSort={onSort} />
       </span>
       <span className={`${th} hidden items-center justify-start gap-1 lg:flex`}>
-		<SortHeaderButton label="Size" column="size" sort={sort} onSort={onSort} fitContent />
+		<SortHeaderButton label="Volume" column="size" sort={sort} onSort={onSort} fitContent />
 		<UnitToggle fiat={fiat} unit={sizeUnit} onChange={onSizeUnitChange} />
       </span>
       <span className={`${th} hidden items-center justify-start gap-1 lg:flex`}>
@@ -796,8 +822,12 @@ function PastOfferOverview({ order, offer, fiat, timezone, amountUnit }: {
   const btcRange = formatRange(fmtBTC(getBtcMin(offer)), fmtBTC(getBtcMax(offer)));
   const firstSeen = getFirstSeen(offer);
   const lastSeen = getLastSeen(offer);
-  const volumeRange = amountUnit === 'btc' ? btcRange : fiatRange;
-  const averageVolume = avgObservedBtc == null
+  const exactUnit = getVolumeUnit(offer);
+  const volumeRange = markConvertedRange(amountUnit === 'btc' ? btcRange : fiatRange, amountUnit, exactUnit);
+  // A fixed volume has no lifetime average worth showing; only the converted
+  // side moved with the price.
+  const showAverage = exactUnit == null || exactUnit !== amountUnit;
+  const averageVolume = avgObservedBtc == null || !showAverage
     ? null
     : amountUnit === 'btc'
       ? fmtBTC(avgObservedBtc)
@@ -823,7 +853,9 @@ function PastOfferOverview({ order, offer, fiat, timezone, amountUnit }: {
             label="Volume"
             value={volumeRange}
             detail={averageVolume != null ? `${averageVolume} average` : undefined}
-            hint="Offered range and lifecycle average while the offer was live"
+            hint={exactUnit == null || exactUnit === amountUnit
+              ? 'Offered range and lifecycle average while the offer was live'
+              : `Converted at the offer's average price; the maker fixed this volume in ${exactUnit === 'btc' ? 'BTC' : fiat}`}
           />
         )}
       </dl>
@@ -943,6 +975,8 @@ function LiveOfferOverview({ offer, fiat, amountUnit }: {
   const refPrice = getRefPrice(offer);
   const fiatRange = formatRange(fmtFiat(getFiatMin(offer), fiat), fmtFiat(getFiatMax(offer), fiat));
   const btcRange = formatRange(fmtBTC(getBtcMin(offer)), fmtBTC(getBtcMax(offer)));
+  const liveExactUnit = getVolumeUnit(offer);
+  const liveVolumeRange = markConvertedRange(amountUnit === 'btc' ? btcRange : fiatRange, amountUnit, liveExactUnit);
 
   return (
       <dl className="flex flex-col gap-2">
@@ -954,11 +988,13 @@ function LiveOfferOverview({ offer, fiat, amountUnit }: {
             detail={refPrice != null ? `ref ${fmtFiat(refPrice, fiat)}` : undefined}
           />
         )}
-        {(amountUnit === 'btc' ? btcRange : fiatRange) != null && (
+        {liveVolumeRange != null && (
           <PastOfferMetric
             label="Volume"
-            value={amountUnit === 'btc' ? btcRange! : fiatRange!}
-            hint="Offer volume limits"
+            value={liveVolumeRange}
+            hint={liveExactUnit == null || liveExactUnit === amountUnit
+              ? 'Offer volume limits'
+              : `Converted at the current price; the maker fixed this volume in ${liveExactUnit === 'btc' ? 'BTC' : fiat}`}
           />
         )}
       </dl>
@@ -1286,7 +1322,7 @@ function LiveOffersList({ offers, observedLiveCount, fiat, timezone, loading, ch
         <span className={headerClass} title="Maker reputation score">Reputation</span>
         <span className={headerClass} title="Counterparty security deposit / bond">Stake</span>
         <SortHeaderButton label="Age" column="age" sort={sort} onSort={handleSort} />
-        <span className={`${headerClass} flex items-center gap-1`}><SortHeaderButton label="Size" column="size" sort={sort} onSort={handleSort} fitContent /><UnitToggle fiat={fiat} unit={sizeUnit} onChange={setSizeUnit} /></span>
+        <span className={`${headerClass} flex items-center gap-1`}><SortHeaderButton label="Volume" column="size" sort={sort} onSort={handleSort} fitContent /><UnitToggle fiat={fiat} unit={sizeUnit} onChange={setSizeUnit} /></span>
         <span className={`${headerClass} flex items-center gap-1`}><SortHeaderButton label="Net profit" column="net_profit" sort={sort} onSort={handleSort} fitContent /><UnitToggle fiat={fiat} unit={netProfitUnit} onChange={setNetProfitUnit} /></span>
         <span className="flex items-center justify-center">
           {chartEnabled && (
@@ -1309,7 +1345,8 @@ function LiveOffersList({ offers, observedLiveCount, fiat, timezone, loading, ch
       ) : sortedOffers.map((offer, index) => {
         const stableKey = stableKeys[index];
         const premium = getRawPremiumPercent(offer);
-        const tradeSize = getTradeSizeBtc(offer, scenarioMode);
+        const volumeAmount = getOfferVolume(offer, scenarioMode, sizeUnit);
+        const volume = fmtVolume(volumeAmount.value, sizeUnit, volumeAmount.exactUnit, fiat);
         const priced = resolveTradeBreakdown(offer, scenarioMode, tradeMode, manualSelection).breakdown;
         const netProfitBtc = priced?.estimated_profit_btc ?? getEstimatedProfitBtc(offer, scenarioMode);
         const refPrice = getRefPrice(offer);
@@ -1342,7 +1379,7 @@ function LiveOffersList({ offers, observedLiveCount, fiat, timezone, loading, ch
                 <span className="min-w-0 truncate"><SellerRatingBadge score={offer.seller_rating_score} confidence={offer.seller_rating_confidence} raw={offer.seller_rating_raw} compact /></span>
                 <span className="min-w-0 truncate"><CounterpartyStakeBadge pct={getCounterpartyStakePct(offer)} /></span>
                 <TradeRowMetric value={formatDuration(getFirstSeen(offer), new Date().toISOString())} />
-                <TradeRowMetric value={sizeUnit === 'btc' ? fmtBTC(tradeSize) : fmtFiat(tradeSize != null && getRefPrice(offer) != null ? tradeSize * getRefPrice(offer)! : null, fiat)} />
+                <TradeRowMetric value={volume.text} title={volume.title} />
                 <TradeRowMetric value={netProfitUnit === 'btc' ? fmtBTC(netProfitBtc) : fmtFiat(netProfitFiat, fiat)} valueClassName="text-green" />
                 <span className="flex shrink-0 items-center justify-center" onClick={event => event.stopPropagation()}>
                   {chartEnabled && <input type="checkbox" checked={isChartOfferVisible(stableKey)} onChange={() => toggleChartOfferKey(stableKey)} title="Show on OHLC chart" />}
@@ -2121,7 +2158,7 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
       className: 'text-green',
     },
     {
-      label: 'Avg Size',
+      label: 'Avg Volume',
       value: scenarioDataPending ? 'Calculating…' : summaryUnit === 'btc' ? fmtBTC(filteredSummary.average_order_size_btc) : fmtFiat(filteredSummary.average_order_size_fiat, fiat),
       className: 'text-text',
     },
@@ -2575,9 +2612,16 @@ export function TakerOpportunities({ stats, statsNetCapped, statsNetMin, fastOrd
                           <TradeRowMetric value={firstSeenLabel} className="hidden lg:block" />
                           <TradeRowMetric value={seenLabel} className="hidden lg:block" />
                           <TradeRowMetric value={order.status.duration?.display || '—'} className="hidden sm:block" />
-                          <TradeRowMetric
-                            value={scenarioDataPending ? 'Calculating…' : sizeUnit === 'btc' ? fmtBTC(activeScenario.tradeSizeBTC) : fmtFiat(activeScenario.tradeSizeFiat, fiat)}
-                          />
+                          {(() => {
+                            if (scenarioDataPending) return <TradeRowMetric value="Calculating…" />;
+                            const volume = fmtVolume(
+                              sizeUnit === 'btc' ? activeScenario.tradeSizeBTC : activeScenario.tradeSizeFiat,
+                              sizeUnit,
+                              activeScenario.volumeUnit,
+                              fiat,
+                            );
+                            return <TradeRowMetric value={volume.text} title={volume.title} />;
+                          })()}
                           <TradeRowMetric
                             value={scenarioDataPending ? 'Calculating…' : netProfitUnit === 'btc' ? fmtBTC(activeScenario.profitBTC) : fmtFiat(activeScenario.profitFiat, fiat)}
                             valueClassName="text-green"

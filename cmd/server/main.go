@@ -80,7 +80,7 @@ const closedAnalyzedOffersQuery = "SELECT * FROM offers WHERE is_live = FALSE AN
 const analyticsOffersQuery = `
 SELECT
 	id, exchange, fiat_currency, direction, price,
-	btc_min, btc_max, fiat_min, fiat_max,
+	btc_min, btc_max, fiat_min, fiat_max, volume_denomination,
 	payment_methods, offer_id,
 	first_seen, last_seen, is_live, duration, historical_analysis_status,
 	avg_ref_price, avg_premium_pct, avg_trade_cost_pct, avg_trade_cost_btc,
@@ -592,12 +592,13 @@ func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
 }
 
 type pastProfitableOrderSummary struct {
-	NetProfitBTC  float64  `json:"net_profit_btc"`
-	NetProfitFiat float64  `json:"net_profit_fiat"`
-	TradeSizeBTC  float64  `json:"trade_size_btc"`
-	TradeSizeFiat float64  `json:"trade_size_fiat"`
-	NetPercent    float64  `json:"net_percent"`
-	CapFiat       *float64 `json:"cap_fiat,omitempty"`
+	NetProfitBTC       float64  `json:"net_profit_btc"`
+	NetProfitFiat      float64  `json:"net_profit_fiat"`
+	TradeSizeBTC       float64  `json:"trade_size_btc"`
+	TradeSizeFiat      float64  `json:"trade_size_fiat"`
+	VolumeDenomination string   `json:"volume_denomination,omitempty"`
+	NetPercent         float64  `json:"net_percent"`
+	CapFiat            *float64 `json:"cap_fiat,omitempty"`
 }
 
 type pastProfitableOrderAPI struct {
@@ -610,6 +611,7 @@ type pastProfitableOrderAPI struct {
 	Pricing        pastOfferPricing           `json:"pricing"`
 	Summary        pastProfitableOrderSummary `json:"summary"`
 	Analysis       pastOfferAnalysisAPI       `json:"analysis"`
+	VolumeLimits   pastOfferVolumeLimits      `json:"volume_limits"`
 	Offer          map[string]any             `json:"offer"`
 }
 
@@ -1051,7 +1053,7 @@ func buildPastPremiumAndLifetimeStats(
 			if avgRefPrice <= 0 {
 				avgRefPrice = offerRefPrice(offer)
 			}
-			fullTradeSizeBTC := selectBTCTradeSize(offerFloatPtr(offer, "btc_max"), offerFloatPtr(offer, "btc_min"))
+			fullTradeSizeBTC := pastOfferFullTradeSizeBTC(offer, agg.AvgOfferPrice)
 			if avgRefPrice > 0 && fullTradeSizeBTC > 0 {
 				btcCap := maxFiatLimitEUR / avgRefPrice
 				if !cappedTradeIsExecutable(offer, btcCap, maxFiatLimitEUR) {
@@ -1158,6 +1160,16 @@ type pastOfferAnalysis struct {
 	btcSizeMin            float64
 	estimatedProfitBTCMin float64
 	hasMin                bool
+	// fiatSize/fiatSizeMin/fiatSizeCapped are the fiat side of each trade
+	// size: exactly the maker's fixed fiat amount for fiat-denominated offers,
+	// the cap itself when capped, otherwise the BTC size at refPrice.
+	fiatSize       float64
+	fiatSizeMin    float64
+	fiatSizeCapped float64
+	// volumeDenomination is the unit the maker fixed ("BTC", the fiat code,
+	// or "" for legacy rows); fiatCurrency is the offer's currency.
+	volumeDenomination string
+	fiatCurrency       string
 }
 
 type takerOpportunityMode string
@@ -1181,14 +1193,35 @@ func (a pastOfferAnalysis) valuesForMode(mode takerOpportunityMode) (float64, fl
 	return a.btcSize, a.estimatedProfitBTC
 }
 
+// volumeForMode returns the trade size the mode analyses in BTC and fiat, and
+// the unit that size is exact in. A capped trade is exact in fiat (the cap).
+func (a pastOfferAnalysis) volumeForMode(mode takerOpportunityMode) (btcSize, fiatSize float64, denomination string) {
+	if mode == takerOpportunityModeNetCapped && !a.cappedTradeExecutable {
+		return 0, 0, a.fiatCurrency
+	}
+	if mode == takerOpportunityModeNetCapped && a.hasCap {
+		return a.btcSizeCapped, a.fiatSizeCapped, a.fiatCurrency
+	}
+	if mode == takerOpportunityModeNetMin && a.hasMin {
+		return a.btcSizeMin, a.fiatSizeMin, a.volumeDenomination
+	}
+	return a.btcSize, a.fiatSize, a.volumeDenomination
+}
+
+// cappedTradeIsExecutable reports whether a fiat cap still reaches the offer's
+// minimum volume. Only the side the maker fixed is compared: the other side
+// is a price conversion that drifts over the offer's life. Legacy rows with
+// no recorded denomination check both sides.
 func cappedTradeIsExecutable(o map[string]any, btcCap, fiatCap float64) bool {
 	if btcCap <= 0 {
 		return false
 	}
-	if btcMin := offerFloat(o, "btc_min"); btcMin > btcCap {
+	checkBTC := !offerVolumeFixedInFiat(o)
+	checkFiat := !offerVolumeFixedInBTC(o)
+	if btcMin := offerFloat(o, "btc_min"); checkBTC && btcMin > btcCap {
 		return false
 	}
-	if fiatMin := offerInt64Ptr(o, "fiat_min"); fiatMin != nil && float64(*fiatMin) > fiatCap {
+	if fiatMin := offerInt64Ptr(o, "fiat_min"); checkFiat && fiatMin != nil && float64(*fiatMin) > fiatCap {
 		return false
 	}
 	return true
@@ -1220,11 +1253,15 @@ type pastOfferPricing struct {
 	AvgPremiumPercent float64 `json:"avg_premium_percent"`
 }
 
+// pastOfferVolumeLimits are a closed offer's volume bounds. The pair named by
+// VolumeDenomination ("BTC" or the fiat code) is what the maker fixed; the
+// other pair is its conversion at the whole-life average offer price.
 type pastOfferVolumeLimits struct {
-	BTCMin  *float64 `json:"btc_min"`
-	BTCMax  *float64 `json:"btc_max"`
-	FiatMin *int64   `json:"fiat_min"`
-	FiatMax *int64   `json:"fiat_max"`
+	BTCMin             *float64 `json:"btc_min"`
+	BTCMax             *float64 `json:"btc_max"`
+	FiatMin            *int64   `json:"fiat_min"`
+	FiatMax            *int64   `json:"fiat_max"`
+	VolumeDenomination string   `json:"volume_denomination,omitempty"`
 }
 
 type pastOfferBTCNetworkFee struct {
@@ -1287,16 +1324,19 @@ type pastOfferScenarioCosts struct {
 }
 
 type pastOfferScenario struct {
-	CapFiat       *float64                      `json:"cap_fiat,omitempty"`
-	CostPolicy    string                        `json:"cost_policy,omitempty"`
-	Assumptions   []string                      `json:"assumptions,omitempty"`
-	TradeSizeBTC  float64                       `json:"trade_size_btc"`
-	TradeSizeFiat float64                       `json:"trade_size_fiat"`
-	Route         pastOfferRoute                `json:"route"`
-	Premium       pastOfferPremium              `json:"premium"`
-	Profit        pastOfferProfit               `json:"profit"`
-	Costs         pastOfferScenarioCosts        `json:"costs"`
-	Capital       *tradecost.CapitalRequirement `json:"capital,omitempty"`
+	CapFiat       *float64 `json:"cap_fiat,omitempty"`
+	CostPolicy    string   `json:"cost_policy,omitempty"`
+	Assumptions   []string `json:"assumptions,omitempty"`
+	TradeSizeBTC  float64  `json:"trade_size_btc"`
+	TradeSizeFiat float64  `json:"trade_size_fiat"`
+	// VolumeDenomination is the unit the trade size is exact in ("BTC" or the
+	// fiat code); the other trade size is a conversion. Empty for legacy rows.
+	VolumeDenomination string                        `json:"volume_denomination,omitempty"`
+	Route              pastOfferRoute                `json:"route"`
+	Premium            pastOfferPremium              `json:"premium"`
+	Profit             pastOfferProfit               `json:"profit"`
+	Costs              pastOfferScenarioCosts        `json:"costs"`
+	Capital            *tradecost.CapitalRequirement `json:"capital,omitempty"`
 }
 
 type pastOfferAnalysisAPI struct {
@@ -1346,13 +1386,7 @@ func addPastOfferCostFieldsFull(o map[string]any, agg pastLifecycleAggregate, re
 		o["price_diff_percent"] = priceDiff
 	}
 
-	var btcMaxPtr, btcMinPtr *float64
-	if v := offerFloat(o, "btc_max"); v > 0 {
-		btcMaxPtr = &v
-	}
-	if v := offerFloat(o, "btc_min"); v > 0 {
-		btcMinPtr = &v
-	}
+	btcMinPtr, btcMaxPtr := pastOfferBTCBounds(o, agg.AvgOfferPrice)
 
 	btcSize := selectBTCTradeSize(btcMaxPtr, btcMinPtr)
 	storedTradeCostPct := nonZeroFloat(offerFloat(o, "avg_trade_cost_pct"), offerFloat(o, "trade_cost_pct"))
@@ -1413,6 +1447,15 @@ func addPastOfferCostFieldsFull(o map[string]any, agg pastLifecycleAggregate, re
 		}
 	}
 
+	fullFiatKey := "fiat_max"
+	if btcMaxPtr == nil {
+		fullFiatKey = "fiat_min"
+	}
+	var fiatSizeCapped float64
+	if hasCap {
+		fiatSizeCapped = maxFiatLimitEUR
+	}
+
 	return pastOfferAnalysis{
 		hasPositiveRawSpread:     priceDiff > 0,
 		btcSize:                  btcSize,
@@ -1424,6 +1467,11 @@ func addPastOfferCostFieldsFull(o map[string]any, agg pastLifecycleAggregate, re
 		cappedTradeExecutable:    cappedTradeExecutable,
 		btcSizeMin:               btcSizeMin,
 		estimatedProfitBTCMin:    estimatedProfitBTCMin,
+		fiatSize:                 pastOfferVolumeFiat(o, fullFiatKey, btcSize, refPrice),
+		fiatSizeMin:              pastOfferVolumeFiat(o, "fiat_min", btcSizeMin, refPrice),
+		fiatSizeCapped:           fiatSizeCapped,
+		volumeDenomination:       offerVolumeDenomination(o),
+		fiatCurrency:             offerFiatCode(o),
 		hasMin:                   hasMin,
 	}
 }
@@ -1470,16 +1518,13 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 	}
 	avgNetworkPct := agg.AvgNetworkPct
 
-	var btcMinPtr, btcMaxPtr *float64
-	if v := offerFloat(o, "btc_min"); v > 0 {
-		btcMinPtr = &v
-	}
-	if v := offerFloat(o, "btc_max"); v > 0 {
-		btcMaxPtr = &v
-	}
+	volumeLimits := pastOfferVolumeLimitsFor(o, agg.AvgOfferPrice)
+	btcMinPtr, btcMaxPtr := volumeLimits.BTCMin, volumeLimits.BTCMax
+	volumeDenomination := volumeLimits.VolumeDenomination
 	fullTradeSizeBTC := selectBTCTradeSize(btcMaxPtr, btcMinPtr)
-	if btcMaxPtr != nil && *btcMaxPtr > 0 {
-		fullTradeSizeBTC = *btcMaxPtr
+	fullFiatKey := "fiat_max"
+	if btcMaxPtr == nil {
+		fullFiatKey = "fiat_min"
 	}
 	fullRep := buildStoredPastBreakdown(o, fullTradeSizeBTC, avgRefPrice, avgTradeCostPct, avgTradeCostBTC, avgNetPercent, avgProfitBTC,
 		agg.AvgHedgeNotionalEUR, agg.AvgLeverageUsed, agg.AvgRecommendedCollateral)
@@ -1487,12 +1532,13 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 	if avgNetworkPct == 0 {
 		avgNetworkPct = tradecost.Round4(routingFeeSumPct(fullRep))
 	}
-	fullTradeSizeFiat := tradecost.Round4(fullTradeSizeBTC * avgRefPrice)
+	fullTradeSizeFiat := tradecost.Round4(pastOfferVolumeFiat(o, fullFiatKey, fullTradeSizeBTC, avgRefPrice))
 
 	fullScenario := pastOfferScenario{
-		CostPolicy:    "historical_persisted",
-		TradeSizeBTC:  tradecost.Round8(fullTradeSizeBTC),
-		TradeSizeFiat: fullTradeSizeFiat,
+		CostPolicy:         "historical_persisted",
+		TradeSizeBTC:       tradecost.Round8(fullTradeSizeBTC),
+		TradeSizeFiat:      fullTradeSizeFiat,
+		VolumeDenomination: volumeDenomination,
 		Route: pastOfferRoute{
 			CEX:        offerString(o, "best_route_cex"),
 			Settlement: offerRoutingSettlement(o),
@@ -1528,11 +1574,12 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 			cappedAvgNetworkPct := tradecost.Round4(routingFeeSumPct(cappedRep))
 			capFiat := tradecost.Round4(maxFiatLimitEUR)
 			cappedScenario = &pastOfferScenario{
-				CapFiat:       &capFiat,
-				CostPolicy:    "historical_route_fixed_transfer_recomputed_size_proportional",
-				Assumptions:   []string{"historical route", "fixed historical transfer/network assumptions", "recalculated hedge and proportional trading fees for capped BTC size"},
-				TradeSizeBTC:  cappedTradeSizeBTC,
-				TradeSizeFiat: tradecost.Round4(cappedTradeSizeBTC * avgRefPrice),
+				CapFiat:            &capFiat,
+				CostPolicy:         "historical_route_fixed_transfer_recomputed_size_proportional",
+				Assumptions:        []string{"historical route", "fixed historical transfer/network assumptions", "recalculated hedge and proportional trading fees for capped BTC size"},
+				TradeSizeBTC:       cappedTradeSizeBTC,
+				TradeSizeFiat:      capFiat,
+				VolumeDenomination: offerFiatCode(o),
 				Route: pastOfferRoute{
 					CEX:        offerString(o, "best_route_cex"),
 					Settlement: offerRoutingSettlement(o),
@@ -1573,15 +1620,16 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 			minProfitFiat = tradecost.Round4(offerFloat(o, "avg_min_estimated_profit_fiat"))
 		}
 		minScenario = &pastOfferScenario{
-			CostPolicy:    "historical_min_volume",
-			Assumptions:   []string{"minimum executable offer volume", "historical route", "fixed historical transfer/network assumptions"},
-			TradeSizeBTC:  minTradeSizeBTC,
-			TradeSizeFiat: tradecost.Round4(minTradeSizeBTC * avgRefPrice),
-			Route:         pastOfferRoute{CEX: offerString(o, "best_route_cex"), Settlement: offerRoutingSettlement(o)},
-			Premium:       pastOfferPremium{AvgTradeCostPercent: minTradeCostPct, AvgNetPercent: minNetPct},
-			Profit:        pastOfferProfit{AvgBTC: minProfitBTC, AvgFiat: minProfitFiat},
-			Costs:         buildPastScenarioCosts(minRep, tradecost.Round4(routingFeeSumPct(minRep)), minTradeCostPct, minTradeCostBTC),
-			Capital:       minCapital,
+			CostPolicy:         "historical_min_volume",
+			Assumptions:        []string{"minimum executable offer volume", "historical route", "fixed historical transfer/network assumptions"},
+			TradeSizeBTC:       minTradeSizeBTC,
+			TradeSizeFiat:      tradecost.Round4(pastOfferVolumeFiat(o, "fiat_min", minTradeSizeBTC, avgRefPrice)),
+			VolumeDenomination: volumeDenomination,
+			Route:              pastOfferRoute{CEX: offerString(o, "best_route_cex"), Settlement: offerRoutingSettlement(o)},
+			Premium:            pastOfferPremium{AvgTradeCostPercent: minTradeCostPct, AvgNetPercent: minNetPct},
+			Profit:             pastOfferProfit{AvgBTC: minProfitBTC, AvgFiat: minProfitFiat},
+			Costs:              buildPastScenarioCosts(minRep, tradecost.Round4(routingFeeSumPct(minRep)), minTradeCostPct, minTradeCostBTC),
+			Capital:            minCapital,
 		}
 	}
 
@@ -1604,12 +1652,7 @@ func buildPastOfferAPI(o map[string]any, agg pastLifecycleAggregate, requiredCon
 			AvgRefPrice:       avgRefPrice,
 			AvgPremiumPercent: avgPremiumPercent,
 		},
-		VolumeLimits: pastOfferVolumeLimits{
-			BTCMin:  btcMinPtr,
-			BTCMax:  btcMaxPtr,
-			FiatMin: offerInt64Ptr(o, "fiat_min"),
-			FiatMax: offerInt64Ptr(o, "fiat_max"),
-		},
+		VolumeLimits:  volumeLimits,
 		BTCNetworkFee: buildPastBTCNetworkFee(fullRep, requiredConfirmations),
 		Analysis: pastOfferAnalysisAPI{
 			FullVolume:             fullScenario,
@@ -1646,14 +1689,6 @@ func buildPastOfferCompactAPI(o map[string]any) pastOfferCompactAPI {
 	firstTime := parseDBTime(firstSeen)
 	lastTime := parseDBTime(lastSeen)
 
-	var btcMinPtr, btcMaxPtr *float64
-	if v := offerFloat(o, "btc_min"); v > 0 {
-		btcMinPtr = &v
-	}
-	if v := offerFloat(o, "btc_max"); v > 0 {
-		btcMaxPtr = &v
-	}
-
 	return pastOfferCompactAPI{
 		ID:             int64(offerFloat(o, "id")),
 		Exchange:       offerString(o, "exchange"),
@@ -1673,12 +1708,7 @@ func buildPastOfferCompactAPI(o map[string]any) pastOfferCompactAPI {
 			AvgRefPrice:       tradecost.Round4(offerRefPrice(o)),
 			AvgPremiumPercent: tradecost.Round4(nonZeroFloat(offerFloat(o, "avg_premium_pct"), offerFloat(o, "price_diff_percent"))),
 		},
-		VolumeLimits: pastOfferVolumeLimits{
-			BTCMin:  btcMinPtr,
-			BTCMax:  btcMaxPtr,
-			FiatMin: offerInt64Ptr(o, "fiat_min"),
-			FiatMax: offerInt64Ptr(o, "fiat_max"),
-		},
+		VolumeLimits: pastOfferVolumeLimitsFor(o, 0),
 	}
 }
 
@@ -1696,18 +1726,21 @@ func buildPastProfitableOrderAPI(o map[string]any, analysis pastOfferAnalysis, a
 		Pricing:        pastOffer.Pricing,
 		Summary:        summary,
 		Analysis:       pastOffer.Analysis,
+		VolumeLimits:   pastOffer.VolumeLimits,
 		Offer:          buildOfferTablePayload(o),
 	}
 }
 
 func buildPastProfitableOrderSummary(analysis pastOfferAnalysis, offerAnalysis pastOfferAnalysisAPI, mode takerOpportunityMode) pastProfitableOrderSummary {
-	tradeSizeBTC, netProfitBTC := analysis.valuesForMode(mode)
+	_, netProfitBTC := analysis.valuesForMode(mode)
+	tradeSizeBTC, tradeSizeFiat, volumeDenomination := analysis.volumeForMode(mode)
 	summary := pastProfitableOrderSummary{
-		NetProfitBTC:  tradecost.Round8(netProfitBTC),
-		NetProfitFiat: tradecost.Round4(netProfitBTC * analysis.refPrice),
-		TradeSizeBTC:  tradecost.Round8(tradeSizeBTC),
-		TradeSizeFiat: tradecost.Round4(tradeSizeBTC * analysis.refPrice),
-		NetPercent:    offerAnalysis.FullVolume.Premium.AvgNetPercent,
+		NetProfitBTC:       tradecost.Round8(netProfitBTC),
+		NetProfitFiat:      tradecost.Round4(netProfitBTC * analysis.refPrice),
+		TradeSizeBTC:       tradecost.Round8(tradeSizeBTC),
+		TradeSizeFiat:      tradecost.Round4(tradeSizeFiat),
+		VolumeDenomination: volumeDenomination,
+		NetPercent:         offerAnalysis.FullVolume.Premium.AvgNetPercent,
 	}
 	if mode == takerOpportunityModeNetCapped && offerAnalysis.CappedVolume != nil {
 		summary.NetPercent = offerAnalysis.CappedVolume.Premium.AvgNetPercent
@@ -1725,8 +1758,9 @@ func buildPastProfitableOrderCompactAPI(o map[string]any, analysis pastOfferAnal
 	pastOffer := buildPastOfferCompactAPI(o)
 	offerAnalysis := pastOfferAnalysisAPI{
 		FullVolume: pastOfferScenario{
-			TradeSizeBTC:  tradecost.Round8(analysis.btcSize),
-			TradeSizeFiat: tradecost.Round4(analysis.btcSize * analysis.refPrice),
+			TradeSizeBTC:       tradecost.Round8(analysis.btcSize),
+			TradeSizeFiat:      tradecost.Round4(analysis.fiatSize),
+			VolumeDenomination: analysis.volumeDenomination,
 			Premium: pastOfferPremium{
 				AvgNetPercent: tradecost.Round4(nonZeroFloat(offerFloat(o, "avg_net_premium_pct"), offerFloat(o, "net_premium_percent"))),
 			},
@@ -3590,6 +3624,7 @@ func buildOfferTablePayload(o map[string]any) map[string]any {
 		"btc_max":                       offerFloatPtr(o, "btc_max"),
 		"fiat_min":                      offerInt64Ptr(o, "fiat_min"),
 		"fiat_max":                      offerInt64Ptr(o, "fiat_max"),
+		"volume_denomination":           offerString(o, "volume_denomination"),
 		"payment_methods":               offerStringSlice(o, "payment_methods"),
 		"offer_id":                      offerStringPtr(o, "offer_id"),
 		"first_seen":                    nilIfEmpty(offerString(o, "first_seen")),

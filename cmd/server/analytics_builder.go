@@ -157,13 +157,6 @@ func (bc *analyticsBuildContext) derivedOffer(o map[string]any) analyticsOfferDe
 	}
 	firstSeenRaw := offerString(o, "first_seen")
 	lastSeenRaw := offerString(o, "last_seen")
-	var btcMaxPtr, btcMinPtr *float64
-	if v := offerFloat(o, "btc_max"); v > 0 {
-		btcMaxPtr = &v
-	}
-	if v := offerFloat(o, "btc_min"); v > 0 {
-		btcMinPtr = &v
-	}
 	derived := analyticsOfferDerived{
 		id:             id,
 		paymentMethods: offerStringSlice(o, "payment_methods"),
@@ -171,7 +164,7 @@ func (bc *analyticsBuildContext) derivedOffer(o map[string]any) analyticsOfferDe
 		lastSeenRaw:    lastSeenRaw,
 		firstSeen:      parseDBTime(firstSeenRaw),
 		lastSeen:       parseDBTime(lastSeenRaw),
-		fullTradeSize:  selectBTCTradeSize(btcMaxPtr, btcMinPtr),
+		fullTradeSize:  pastOfferFullTradeSizeBTC(o, 0),
 		excluded:       offerHasExcludedPaymentMethod(o, bc.params.ExcludePaymentMethods),
 	}
 	bc.derivedByID[id] = derived
