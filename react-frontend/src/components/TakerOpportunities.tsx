@@ -46,7 +46,7 @@ import {
   shouldExplainMissingRoute,
 } from '../utils/routeAvailability';
 import { useCEXPermissions } from '../hooks/useCEXPermissions';
-import { CostBreakdownPanel, SizeToggle, type SizeMode } from './OfferBreakdownPanel';
+import { CostBreakdownPanel, DetailFact, DetailFacts, SizeToggle, type SizeMode } from './OfferBreakdownPanel';
 import { CopyOfferIdButton } from './CopyOfferIdButton';
 import { copyableOfferId } from '../features/trading/providerRegistry';
 import { getDexOfferLink } from '../utils/dexOfferLinks';
@@ -786,21 +786,12 @@ function formatRange(minLabel: string, maxLabel: string): string | null {
   return `up to ${maxLabel}`;
 }
 
-function PastOfferMetric({ label, value, detail, hint }: {
-  label: ReactNode;
-  value: string;
-  detail?: string;
-  hint?: string;
-}) {
-  return (
-    <div className="flex items-start justify-between gap-3">
-      <dt className="shrink-0 text-[0.58rem] font-semibold uppercase tracking-widest text-muted">{label}</dt>
-      <dd className="min-w-0 text-right text-[0.68rem] font-medium leading-snug text-text mono-nums tabular-nums" title={hint ?? value}>
-        {value}
-        {detail && <div className="font-normal text-muted">{detail}</div>}
-      </dd>
-    </div>
-  );
+function offerPriceDetail(refPrice: number | null, premiumPct: number | null, fiat: string): string | undefined {
+  if (refPrice == null) return undefined;
+  const premium = premiumPct != null && Number.isFinite(premiumPct)
+    ? ` · ${premiumPct > 0 ? '+' : ''}${premiumPct.toFixed(2)}% vs ref`
+    : '';
+  return `ref ${fmtFiat(refPrice, fiat)}${premium}`;
 }
 
 function PastOfferOverview({ order, offer, fiat, timezone, amountUnit }: {
@@ -834,22 +825,22 @@ function PastOfferOverview({ order, offer, fiat, timezone, amountUnit }: {
       : fmtFiat(refPrice == null ? null : avgObservedBtc * refPrice, fiat);
 
   return (
-      <dl className="flex flex-col gap-2">
-        <PastOfferMetric label="Payment" value={order.payment_methods?.join(', ') || '—'} />
-        <PastOfferMetric
+      <DetailFacts>
+        <DetailFact label="Payment" value={order.payment_methods?.join(', ') || '—'} mono={false} />
+        <DetailFact
           label="Observed"
           value={`${formatTime(firstSeen, timezone)} – ${formatTime(lastSeen, timezone)}`}
           detail={`${formatDuration(firstSeen, lastSeen)}${getPriceType(offer) ? ` · ${getPriceType(offer)} price` : ''}`}
         />
         {(offerPrice > 0 || refPrice != null) && (
-          <PastOfferMetric
-            label="Offer / reference"
+          <DetailFact
+            label="Offer price"
             value={offerPrice > 0 ? fmtFiat(offerPrice, fiat) : '—'}
-            detail={refPrice != null ? `ref ${fmtFiat(refPrice, fiat)}` : undefined}
+            detail={offerPriceDetail(refPrice, getRawPremiumPercent(offer), fiat)}
           />
         )}
         {volumeRange != null && (
-          <PastOfferMetric
+          <DetailFact
             label="Volume"
             value={volumeRange}
             detail={averageVolume != null ? `${averageVolume} average` : undefined}
@@ -858,7 +849,7 @@ function PastOfferOverview({ order, offer, fiat, timezone, amountUnit }: {
               : `Converted at the offer's average price; the maker fixed this volume in ${exactUnit === 'btc' ? 'BTC' : fiat}`}
           />
         )}
-      </dl>
+      </DetailFacts>
   );
 }
 
@@ -937,7 +928,7 @@ function PastOrderBreakdown({ order, scenarioMode, onScenarioModeChange }: {
         </div>
       ) : (
         <>
-          <section aria-label="Offer information" className="flex flex-col gap-2">
+          <section aria-label="Offer information" className="@container flex flex-col gap-3">
             <div className="border-b border-border/70 pb-2 text-[0.63rem] font-medium text-text">
               Historical offer <span className="text-muted">· ID {order.id}</span>
             </div>
@@ -979,17 +970,17 @@ function LiveOfferOverview({ offer, fiat, amountUnit }: {
   const liveVolumeRange = markConvertedRange(amountUnit === 'btc' ? btcRange : fiatRange, amountUnit, liveExactUnit);
 
   return (
-      <dl className="flex flex-col gap-2">
-        <PastOfferMetric label="Payment" value={offer.payment_methods?.join(', ') || '—'} />
+      <DetailFacts>
+        <DetailFact label="Payment" value={offer.payment_methods?.join(', ') || '—'} mono={false} />
         {(offerPrice > 0 || refPrice != null) && (
-          <PastOfferMetric
-            label="Offer / reference"
+          <DetailFact
+            label="Offer price"
             value={offerPrice > 0 ? fmtFiat(offerPrice, fiat) : '—'}
-            detail={refPrice != null ? `ref ${fmtFiat(refPrice, fiat)}` : undefined}
+            detail={offerPriceDetail(refPrice, getRawPremiumPercent(offer), fiat)}
           />
         )}
         {liveVolumeRange != null && (
-          <PastOfferMetric
+          <DetailFact
             label="Volume"
             value={liveVolumeRange}
             hint={liveExactUnit == null || liveExactUnit === amountUnit
@@ -997,7 +988,7 @@ function LiveOfferOverview({ offer, fiat, amountUnit }: {
               : `Converted at the current price; the maker fixed this volume in ${liveExactUnit === 'btc' ? 'BTC' : fiat}`}
           />
         )}
-      </dl>
+      </DetailFacts>
   );
 }
 
@@ -1016,21 +1007,21 @@ function TradeModeToggle({ mode, onChange, hasHedgeless, hedgefullAvailable = tr
       disabled={disabled}
       title={disabled ? 'No hedge (futures) venue is available' : undefined}
       onClick={() => onChange(value)}
-      className={`rounded-sm px-2 py-1 text-[0.62rem] transition-colors ${
+      className={`whitespace-nowrap rounded px-2 py-0.5 text-[0.66rem] transition-colors ${
         disabled
           ? 'cursor-not-allowed text-muted/50'
           : mode === value
             ? 'bg-accent/15 text-accent font-semibold'
-            : 'text-muted hover:text-text'
+            : 'font-medium text-muted hover:text-text'
       }`}
     >
       {label}
     </button>
   );
   return (
-    <div className="flex items-center gap-1.5">
-      <span className="shrink-0 text-[0.58rem] uppercase tracking-wide text-muted">Mode</span>
-      <span role="group" aria-label="Trade mode" className="inline-flex items-center rounded border border-border bg-surface/70 p-0.5">
+    <div className="flex items-center gap-2">
+      <span className="shrink-0 text-[0.66rem] font-medium text-muted">Mode</span>
+      <span role="group" aria-label="Trade mode" className="inline-flex items-center rounded-md border border-border bg-bg p-0.5">
         {btn('hedgefull_single_collateral', 'Hedgefull', !hedgefullAvailable)}
         {btn('hedgeless_double_collateral', 'Hedgeless')}
       </span>
@@ -1045,13 +1036,14 @@ function ManualRouteControls({ options, selection, onChange, isAsk, hideHedge = 
   isAsk: boolean;
   hideHedge?: boolean;
 }) {
-  const selectClass = 'min-w-0 rounded border border-border bg-surface px-1.5 py-1 text-[0.62rem] text-text';
+  const selectClass = 'min-w-0 rounded-md border border-border bg-bg px-2 py-1.5 text-[0.72rem] text-text';
   return (
-    <div className="flex flex-col gap-2 text-[0.62rem]">
-      <div className="text-[0.62rem] font-semibold uppercase tracking-widest text-muted">Route analysis overrides</div>
-      <p className="text-[0.58rem] leading-snug text-muted">Overrides this estimate and pre-trade checks; live ranking keeps the automatic route.</p>
-      <div className="grid gap-2">
-        <label className="grid gap-0.5 text-[0.58rem] text-muted">Spot CEX{isAsk ? '' : ' + withdrawal'}
+    <div className="flex flex-col gap-3">
+      <p className="text-[0.68rem] leading-snug text-muted">
+        Overrides apply to this estimate and the pre-trade checks; live ranking keeps the automatic route.
+      </p>
+      <div className="grid gap-3 @2xl:grid-cols-2">
+        <label className="grid gap-1 text-[0.66rem] font-medium text-muted">Spot CEX{isAsk ? '' : ' + withdrawal'}
           <select className={selectClass} value={selection.spot} onChange={event => onChange({ ...selection, spot: event.target.value })}>
             <option value="auto">Auto (cheapest)</option>
             {(options.spot_taker_fees ?? []).map(option => {
@@ -1062,7 +1054,7 @@ function ManualRouteControls({ options, selection, onChange, isAsk, hideHedge = 
           </select>
         </label>
         {!hideHedge && (
-          <label className="grid gap-0.5 text-[0.58rem] text-muted">Hedge
+          <label className="grid gap-1 text-[0.66rem] font-medium text-muted">Hedge
             <select className={selectClass} value={selection.hedge} onChange={event => onChange({ ...selection, hedge: event.target.value })}>
               <option value="auto">Auto (cheapest)</option>
               {(options.hedge_costs ?? []).map(option => <option key={option.hedge.venue} value={option.hedge.venue} disabled={option.disabled}>{option.hedge.venue} · {option.hedge.fee_sum_pct.toFixed(4)}%{option.disabled ? ' (excluded)' : ''}</option>)}
@@ -1186,7 +1178,7 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
         </div>
       ) : (
         <>
-          <section aria-label="Offer information" className="flex flex-col gap-2">
+          <section aria-label="Offer information" className="@container flex flex-col gap-3">
             <div className="border-b border-border/70 pb-2 text-[0.63rem] font-medium text-text">
               Live offer <span className="text-muted">· ID {offer.offer_id || offer.id}</span>
             </div>

@@ -1,10 +1,10 @@
 import type { SellerRatingConfidence } from '../types';
 
-const CLASS_GREEN = 'bg-[#1a3a2a99] text-green';
-const CLASS_AMBER = 'bg-[#3a2a1a99] text-accent';
-const CLASS_RED = 'bg-[#3a1a1a99] text-red';
-export const CLASS_STAKE = 'bg-[#2a1a3a99] text-purple';
-export const CLASS_UNSTAKED = 'bg-[#2a2a2a99] text-muted';
+const CLASS_GREEN = 'bg-green/15 text-green';
+const CLASS_AMBER = 'bg-accent/15 text-accent';
+const CLASS_RED = 'bg-red/15 text-red';
+export const CLASS_STAKE = 'bg-purple/15 text-purple';
+export const CLASS_UNSTAKED = 'bg-muted/15 text-muted';
 
 export type Bisq2ReputationRaw = {
   totalScore: number;
