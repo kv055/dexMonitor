@@ -807,8 +807,8 @@ func pastTakerParamsFromRequest(r *http.Request) pastTakerQueryParams {
 	}
 }
 
-func loadPastTakerBuildContext(maxFiatLimitEUR float64) (*analyticsBuildContext, error) {
-	closedOffers, err := loadClosedOffers168h()
+func loadPastTakerBuildContext(fiatCurrency string) (*analyticsBuildContext, error) {
+	closedOffers, err := loadClosedOffers168h(fiatCurrency)
 	if err != nil {
 		return nil, err
 	}
@@ -824,7 +824,7 @@ func loadPastTakerBuildContext(maxFiatLimitEUR float64) (*analyticsBuildContext,
 }
 
 func buildPastOrderStatsForQuery(p pastTakerQueryParams) (pastorders.StatsResponse, error) {
-	bc, err := loadPastTakerBuildContext(p.MaxFiatLimitEUR)
+	bc, err := loadPastTakerBuildContext(p.Fiat)
 	if err != nil {
 		return pastorders.StatsResponse{}, err
 	}
@@ -851,7 +851,7 @@ func buildPastOrderStatsForQuery(p pastTakerQueryParams) (pastorders.StatsRespon
 }
 
 func buildPastProfitableOrdersForQuery(p pastTakerQueryParams) ([]pastProfitableOrderAPI, error) {
-	bc, err := loadPastTakerBuildContext(p.MaxFiatLimitEUR)
+	bc, err := loadPastTakerBuildContext(p.Fiat)
 	if err != nil {
 		return nil, err
 	}

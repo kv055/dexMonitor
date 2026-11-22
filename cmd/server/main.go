@@ -72,10 +72,14 @@ const dashboardCacheTTL = 30 * time.Second
 
 const defaultCEX = "kraken"
 
-const closedAnalyzedOffersQuery = "SELECT * FROM offers WHERE is_live = FALSE AND last_seen >= ? AND historical_analysis_status = 'analyzed' ORDER BY last_seen DESC"
+const closedAnalyzedOffersQuery = "SELECT * FROM offers WHERE is_live = FALSE AND fiat_currency = ? AND last_seen >= ? AND historical_analysis_status = 'analyzed' ORDER BY last_seen DESC"
+
+// analyticsOffersQuery must select fiat_currency: callers filter rows by the
+// requested fiat in Go, and a missing column reads as "" which falls back to
+// EUR, mixing every currency's native amounts into the EUR view.
 const analyticsOffersQuery = `
 SELECT
-	id, exchange, direction, price,
+	id, exchange, fiat_currency, direction, price,
 	btc_min, btc_max, fiat_min, fiat_max,
 	payment_methods, offer_id,
 	first_seen, last_seen, is_live, duration, historical_analysis_status,
@@ -573,6 +577,10 @@ func fetchPastOfferLifecycleAggregates(ids []int64) map[int64]pastLifecycleAggre
 }
 
 func handlePastOrderStats(w http.ResponseWriter, r *http.Request) {
+	if _, ok := fiat.Normalize(r.URL.Query().Get("fiat")); !ok {
+		http.Error(w, "invalid fiat currency", http.StatusBadRequest)
+		return
+	}
 	p := pastTakerParamsFromRequest(r)
 	p.ApplyPaymentExclusions = len(p.ExcludePaymentMethods) > 0
 	stats, err := buildPastOrderStatsForQuery(p)
@@ -617,6 +625,10 @@ type pastProfitableOrderCompactAPI struct {
 }
 
 func handlePastProfitableOrders(w http.ResponseWriter, r *http.Request) {
+	if _, ok := fiat.Normalize(r.URL.Query().Get("fiat")); !ok {
+		http.Error(w, "invalid fiat currency", http.StatusBadRequest)
+		return
+	}
 	p := pastTakerParamsFromRequest(r)
 	p.ApplyPaymentExclusions = len(p.ExcludePaymentMethods) > 0
 	result, err := buildPastProfitableOrdersForQuery(p)

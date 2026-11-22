@@ -330,9 +330,10 @@ func (p dashboardAnalyticsParams) hasCustomPastRange() bool {
 	return !p.pastRangeStart.IsZero() && !p.pastRangeEnd.IsZero()
 }
 
-func loadClosedOffers168h() ([]map[string]any, error) {
+func loadClosedOffers168h(fiatCurrency string) ([]map[string]any, error) {
 	rows, err := db.Query(
 		rebind(closedAnalyzedOffersQuery),
+		fiatCurrency,
 		time.Now().Add(-168*time.Hour),
 	)
 	if err != nil {

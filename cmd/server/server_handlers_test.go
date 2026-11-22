@@ -1145,6 +1145,82 @@ func TestDashboardAnalyticsCustomRangeLoadsRetainedHistoryAtDayBoundaries(t *tes
 	}
 }
 
+// Regression: analyticsOffersQuery once omitted fiat_currency, so the Go-side
+// fiat filter defaulted every row to EUR and the EUR view listed USD/CAD
+// offers with their native-currency sizes and profits labelled as euros.
+func TestDashboardAnalyticsPastOrdersOnlyIncludeRequestedFiat(t *testing.T) {
+	withTempOrdersDB(t)
+
+	if _, err := db.Exec(`
+		INSERT INTO offers (exchange, fiat_currency, direction, price, btc_min, btc_max, fiat_min, fiat_max, payment_method, offer_id, avg_ref_price, avg_premium_pct, avg_net_premium_pct, historical_analysis_status, first_seen, last_seen, is_live)
+		VALUES
+			('hodlhodl', 'EUR', 'bid', 105, .1, 1, 10, 100, 'SEPA', 'fiat-eur', 100, 5, 3, 'analyzed', datetime('now', '-3 hours'), datetime('now', '-1 hour'), 0),
+			('hodlhodl', 'USD', 'bid', 105, .1, 10, 10, 1000, 'Cash App', 'fiat-usd', 100, 5, 3, 'analyzed', datetime('now', '-3 hours'), datetime('now', '-1 hour'), 0),
+			('hodlhodl', 'CAD', 'bid', 105, .1, 10, 10, 1000, 'Interac e-transfer', 'fiat-cad', 100, 5, 3, 'analyzed', datetime('now', '-3 hours'), datetime('now', '-1 hour'), 0)
+	`); err != nil {
+		t.Fatalf("insert multi-fiat offers: %v", err)
+	}
+
+	fiatOfferIDs := func(orders []pastProfitableOrderCompactAPI) map[string]string {
+		got := map[string]string{}
+		for _, o := range orders {
+			if o.OfferID != nil && strings.HasPrefix(*o.OfferID, "fiat-") {
+				got[*o.OfferID] = o.Pricing.FiatCurrency
+			}
+		}
+		return got
+	}
+
+	for _, tc := range []struct {
+		fiat string
+		want string
+	}{{"EUR", "fiat-eur"}, {"USD", "fiat-usd"}, {"CAD", "fiat-cad"}} {
+		body := `{"hours":24,"cex":"kraken","fiat":"` + tc.fiat + `","sections":["taker_orders_full"]}`
+		req := httptest.NewRequest(http.MethodPost, "/api/dashboard/analytics", strings.NewReader(body))
+		rec := httptest.NewRecorder()
+		handleDashboardAnalytics(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("fiat=%s status=%d body=%s", tc.fiat, rec.Code, rec.Body.String())
+		}
+		var resp dashboardAnalyticsResponse
+		if err := json.Unmarshal(rec.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("fiat=%s decode: %v", tc.fiat, err)
+		}
+		got := fiatOfferIDs(resp.PastProfitableOrdersCompact)
+		if len(got) != 1 || got[tc.want] != tc.fiat {
+			t.Fatalf("fiat=%s orders=%v, want only %s serialized as %s", tc.fiat, got, tc.want, tc.fiat)
+		}
+	}
+
+	for _, tc := range []struct {
+		fiat string
+		want string
+	}{{"EUR", "fiat-eur"}, {"usd", "fiat-usd"}} {
+		req := httptest.NewRequest(http.MethodGet, "/api/past_profitable_orders?fiat="+tc.fiat, nil)
+		rec := httptest.NewRecorder()
+		handlePastProfitableOrders(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET fiat=%s status=%d body=%s", tc.fiat, rec.Code, rec.Body.String())
+		}
+		var orders []pastProfitableOrderCompactAPI
+		if err := json.Unmarshal(rec.Body.Bytes(), &orders); err != nil {
+			t.Fatalf("GET fiat=%s decode: %v", tc.fiat, err)
+		}
+		got := fiatOfferIDs(orders)
+		if len(got) != 1 || got[tc.want] == "" {
+			t.Fatalf("GET fiat=%s orders=%v, want only %s", tc.fiat, got, tc.want)
+		}
+	}
+
+	for _, handler := range []http.HandlerFunc{handlePastProfitableOrders, handlePastOrderStats} {
+		rec := httptest.NewRecorder()
+		handler(rec, httptest.NewRequest(http.MethodGet, "/api/past?fiat=XYZ", nil))
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("invalid fiat status=%d, want %d", rec.Code, http.StatusBadRequest)
+		}
+	}
+}
+
 func TestDashboardAnalyticsRejectsInvalidCustomRanges(t *testing.T) {
 	withTempOrdersDB(t)
 	for _, body := range []string{
