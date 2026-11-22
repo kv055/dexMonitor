@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   fetchAppSettings,
   revealAppSetting,
@@ -6,6 +6,7 @@ import {
   type AppSettingField,
   type AppSettings,
 } from '../utils/api';
+import { appSettingDescriptions } from '../utils/appSettingDescriptions';
 import { CollapsibleSection } from './accounts/AccountDetailPrimitives';
 
 const MASKED = '***';
@@ -48,6 +49,115 @@ function parseOwner(owner: string | undefined): string[] {
   if (!owner) return [];
   return owner.split('/').map((part) => part.trim().toLowerCase()).filter(Boolean);
 }
+
+// InfoIcon shows a field's description in a small popover: on hover when using
+// a mouse, on tap on touch devices. One tooltip is open at a time (the parent
+// tracks the open key); a second tap or an outside pointerdown closes it.
+// The tooltip is position: fixed so it never gets clipped by the section's
+// overflow-hidden; placement is applied imperatively to avoid re-render loops.
+function InfoIcon({
+  label,
+  text,
+  open,
+  onOpen,
+  onClose,
+}: {
+  label: string;
+  text: string;
+  open: boolean;
+  onOpen: () => void;
+  onClose: () => void;
+}) {
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const tipRef = useRef<HTMLDivElement>(null);
+  // Tracks whether the tooltip is open because the mouse is over the icon;
+  // a click then must not toggle it closed (it stays until the mouse leaves).
+  const hoveredRef = useRef(false);
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    const place = () => {
+      const btn = btnRef.current;
+      const tip = tipRef.current;
+      if (!btn || !tip) return;
+      const rect = btn.getBoundingClientRect();
+      const width = tip.offsetWidth;
+      const height = tip.offsetHeight;
+      const left = Math.max(8, Math.min(rect.left, window.innerWidth - width - 8));
+      // Zero gap to the icon so hovering into the tip does not close it.
+      const below = rect.bottom + height + 8 <= window.innerHeight;
+      const top = below ? rect.bottom : Math.max(8, rect.top - height);
+      tip.style.left = `${left}px`;
+      tip.style.top = `${top}px`;
+      tip.style.visibility = 'visible';
+    };
+    place();
+    const onDocPointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (target && (btnRef.current?.contains(target) || tipRef.current?.contains(target))) return;
+      onClose();
+    };
+    document.addEventListener('pointerdown', onDocPointerDown, true);
+    window.addEventListener('resize', place);
+    return () => {
+      document.removeEventListener('pointerdown', onDocPointerDown, true);
+      window.removeEventListener('resize', place);
+    };
+  }, [open, onClose]);
+
+  return (
+    <span
+      className="relative inline-flex"
+      onPointerEnter={(event) => {
+        if (event.pointerType === 'mouse') {
+          hoveredRef.current = true;
+          onOpen();
+        }
+      }}
+      onPointerLeave={(event) => {
+        if (event.pointerType === 'mouse') {
+          hoveredRef.current = false;
+          onClose();
+        }
+      }}
+    >
+      <button
+        ref={btnRef}
+        type="button"
+        aria-label={`Info about ${label}`}
+        aria-expanded={open}
+        onClick={() => (open && !hoveredRef.current ? onClose() : onOpen())}
+        className="shrink-0 text-muted transition hover:text-text"
+      >
+        <svg
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="h-3.5 w-3.5"
+          aria-hidden="true"
+        >
+          <circle cx="12" cy="12" r="10" />
+          <path d="M12 16v-4" />
+          <path d="M12 8h.01" />
+        </svg>
+      </button>
+      {open ? (
+        <div
+          ref={tipRef}
+          role="tooltip"
+          style={{ visibility: 'hidden' }}
+          className="fixed z-50 w-72 max-w-[calc(100vw-1rem)] rounded-md border border-border bg-surface p-2 text-xs leading-snug text-text shadow-lg"
+        >
+          {text}
+        </div>
+      ) : null}
+    </span>
+  );
+}
+
 
 function FieldInput({
   field,
@@ -146,6 +256,8 @@ export function AppSettingsPage() {
   const [closedSections, setClosedSections] = useState<Record<string, boolean>>({});
   const [query, setQuery] = useState('');
   const [serviceFilter, setServiceFilter] = useState('all');
+  // Key of the setting whose info tooltip is currently shown (hover or tap).
+  const [infoKey, setInfoKey] = useState<string | null>(null);
 
   const toggleSection = useCallback((id: string) => {
     setClosedSections((prev) => ({ ...prev, [id]: !(prev[id] ?? false) }));
@@ -200,7 +312,7 @@ export function AppSettingsPage() {
           return (
             field.key.toLowerCase().includes(needle) ||
             field.label.toLowerCase().includes(needle) ||
-            (field.description ?? '').toLowerCase().includes(needle) ||
+            (appSettingDescriptions[field.key] ?? '').toLowerCase().includes(needle) ||
             (field.owner ?? '').toLowerCase().includes(needle)
           );
         }),
@@ -383,6 +495,7 @@ export function AppSettingsPage() {
             {section.fields.map((field) => {
               const current = edits[field.key] ?? baseValues[field.key] ?? '';
               const dirty = dirtyKeys.includes(field.key);
+              const infoText = appSettingDescriptions[field.key];
               return (
                 <div
                   key={field.key}
@@ -394,6 +507,15 @@ export function AppSettingsPage() {
                         {field.label}
                         {field.required ? <span className="text-red"> *</span> : null}
                       </label>
+                      {infoText ? (
+                        <InfoIcon
+                          label={field.label}
+                          text={infoText}
+                          open={infoKey === field.key}
+                          onOpen={() => setInfoKey(field.key)}
+                          onClose={() => setInfoKey((prev) => (prev === field.key ? null : prev))}
+                        />
+                      ) : null}
                       {dirty ? <span className="text-[0.65rem] font-normal text-peach">● modified</span> : null}
                     </div>
                     <div className="flex items-center gap-x-2">
@@ -414,7 +536,6 @@ export function AppSettingsPage() {
                         setEdits((prev) => ({ ...prev, [field.key]: value }))
                       }
                     />
-                    {field.description ? <p className={helpCls}>{field.description}</p> : null}
                     {fileKeySet.has(field.key) ? (
                       <p className={`${helpCls} text-peach`}>
                         File-backed: a new version push overwrites .env — port changes into .env.enc as well.

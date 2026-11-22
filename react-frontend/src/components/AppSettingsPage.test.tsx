@@ -2,6 +2,7 @@ import { cleanup, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { AppSettingsPage } from './AppSettingsPage';
+import { appSettingDescriptions } from '../utils/appSettingDescriptions';
 
 const schema = {
   sections: [
@@ -136,4 +137,33 @@ describe('AppSettingsPage', () => {
     expect(screen.queryByText('Public hostname')).toBeNull();
     expect(screen.getByText('2 of 4 shown')).toBeTruthy();
   });
+
+  it('shows the field info tooltip on hover and closes it on pointer-out or outside click', async () => {
+    mockRequest.mockResolvedValue({ writableFile: true, db: true, file: '/settings/root.env', fileKeys: [], schema, values });
+
+    render(<AppSettingsPage />);
+    await screen.findByText('Public edge');
+
+    const icon = screen.getByRole('button', { name: 'Info about Public hostname' });
+    const description = appSettingDescriptions.PUBLIC_HOSTNAME;
+
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    // Hovering the info icon opens the tooltip with the field's description.
+    await userEvent.hover(icon);
+    expect(screen.getByRole('tooltip')?.textContent).toBe(description);
+
+    // Moving the pointer away closes it again.
+    await userEvent.unhover(icon);
+    expect(screen.queryByRole('tooltip')).toBeNull();
+
+    // Clicking opens (pins) the tooltip …
+    await userEvent.click(icon);
+    expect(screen.getByRole('tooltip')?.textContent).toBe(description);
+
+    // … and a click anywhere outside closes it.
+    await userEvent.click(screen.getByLabelText('Search settings'));
+    expect(screen.queryByRole('tooltip')).toBeNull();
+  });
 });
+
