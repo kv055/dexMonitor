@@ -41,8 +41,7 @@ export function TelegramBotSection() {
 
   useEffect(() => {
     let active = true;
-    setStatus('idle');
-    setMessage('');
+    // status 'idle' and an empty message are already the initial state.
     fetchTelegramConfig()
       .then(cfg => {
         if (!active) return;

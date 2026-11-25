@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import { closeLNDChannel, createMagmaLSPOrder, fetchCexBalances, fetchCexDepositAddresses, fetchCexHedgePositions, fetchDexPendingLiquidity, fetchLNDChannelPresets, fetchLNDWalletStatus, fetchLSPChannel, fetchLSPChannelStatus, fetchMagmaLSPInfo, fetchMagmaLSPOrder, fetchMagmaOffers, fetchSubmarineSwaps, fetchTradingAccounts, fetchTransactionalLiquiditySettings, openLNDChannel, payMagmaLSPOrder, updateLSPChannel, updateTransactionalLiquiditySettings } from '../utils/api';
 import type { CexAssetBalance, CexDepositAddress, CexHedgePosition, LNDChannelPreset, LNDWalletChannelSummary, LNDWalletStatus, LSPChannelConfig, LSPChannelStatus, MagmaLSPInfo, MagmaLSPOrder, MagmaOffer, SubmarineSwapRecord, TradeMode, TradingAccount, TransactionalLiquidityAmountSource, TransactionalLiquiditySettings, TransactionalLiquiditySource, TransactionalLiquidityTargetDirection, TransactionalRoutingProfile } from '../types';
 import { useFilters } from '../hooks/useFilters';
@@ -320,11 +320,13 @@ export function LiquidityWorkspace() {
   const [lndLiquidityError, setLndLiquidityError] = useState<string | null>(null);
   const [dexPendingLiquidity, setDexPendingLiquidity] = useState<{ btc_value: number; transaction_count: number } | null>(null);
   const [dexLiquidityError, setDexLiquidityError] = useState<string | null>(null);
-  const [selectedExchangeID, setSelectedExchangeID] = useState('');
-  const [selectedDestination, setSelectedDestination] = useState('');
-  const [depositAddresses, setDepositAddresses] = useState<CexDepositAddress[]>([]);
+  // The operator's picks. The effective exchange and destination are derived
+  // below from the options that exist (selectedExchangeID, selectedDestination).
+  const [exchangeChoice, setSelectedExchangeID] = useState('');
+  const [destinationChoice, setSelectedDestination] = useState('');
+  // The last BTC deposit-address lookup, keyed by exchange account id.
+  const [depositFetch, setDepositFetch] = useState<{ exchangeID: string; addresses: CexDepositAddress[] } | null>(null);
   const [loadingAccounts, setLoadingAccounts] = useState(true);
-  const [loadingDestination, setLoadingDestination] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
   const [channelForm, setChannelForm] = useState({ nodePubkey: '', peerHost: '', fundingSats: '', pushSats: '', feeRate: '2', private: false });
@@ -342,17 +344,19 @@ export function LiquidityWorkspace() {
   const [lspNotice, setLspNotice] = useState<string | null>(null);
   const [lspError, setLspError] = useState<string | null>(null);
   const [magmaInfo, setMagmaInfo] = useState<MagmaLSPInfo | null>(null);
-  const [magmaInfoLoading, setMagmaInfoLoading] = useState(false);
-  const [magmaInfoError, setMagmaInfoError] = useState<string | null>(null);
+  // The request (pool) whose Magma info last settled, and its error. Loading and
+  // error are derived from it, so the fetch effect sets state only when a
+  // request settles.
+  const [magmaInfoSettled, setMagmaInfoSettled] = useState<{ key: string; error: string | null } | null>(null);
   const [magmaForm, setMagmaForm] = useState({ pool: 'recommended', inboundSats: '', privateChannel: true, expiryBlocks: String(DEFAULT_MAGMA_EXPIRY_BLOCKS) });
   const [magmaOrder, setMagmaOrder] = useState<MagmaLSPOrder | null>(null);
   const [creatingMagmaOrder, setCreatingMagmaOrder] = useState(false);
   const [payingMagmaOrder, setPayingMagmaOrder] = useState(false);
   const [magmaNotice, setMagmaNotice] = useState<string | null>(null);
   const [magmaOffers, setMagmaOffers] = useState<MagmaOffer[]>([]);
-  const [magmaOffersLoading, setMagmaOffersLoading] = useState(false);
-  const [magmaOffersError, setMagmaOffersError] = useState<string | null>(null);
   const [magmaOffersReload, setMagmaOffersReload] = useState(0);
+  // Same scheme as magmaInfoSettled; the key is the reload count.
+  const [magmaOffersSettled, setMagmaOffersSettled] = useState<{ key: number; error: string | null } | null>(null);
   const [transactionalSettings, setTransactionalSettings] = useState<TransactionalLiquiditySettings | null>(null);
   const [transactionalForm, setTransactionalForm] = useState({ fiat_currency: 'EUR', amount_source: 'custom' as TransactionalLiquidityAmountSource, amount_fiat: '', trade_mode: 'hedgefull_single_collateral' as TradeMode, target_direction: 'bid' as TransactionalLiquidityTargetDirection, lightning_liquidity_source: 'own_channels' as TransactionalLiquiditySource, supported_routing_profiles: [...DEFAULT_ROUTING_PROFILES], fee_tier: 'economic' as const, coupled_hedge: false });
   const [transactionalLoading, setTransactionalLoading] = useState(true);
@@ -375,7 +379,15 @@ export function LiquidityWorkspace() {
     return accounts.filter(account => account.category === 'CEX' && eligibleAccountIDs.has(account.id));
   }, [accounts, cexPolicies, cexPoliciesReady]);
   const lndAddresses = useMemo(() => lndWallet?.addresses.filter(address => address.kind === 'onchain') ?? [], [lndWallet]);
+  // Keep the pick while that exchange is connected, else fall back to the first.
+  const selectedExchangeID = connectedExchanges.some(account => String(account.id) === exchangeChoice)
+    ? exchangeChoice
+    : (connectedExchanges[0] ? String(connectedExchanges[0].id) : '');
   const selectedExchange = connectedExchanges.find(account => String(account.id) === selectedExchangeID) ?? null;
+  // A drain to an exchange needs that exchange's BTC deposit addresses.
+  const needsDepositAddresses = action !== 'fill' && transferRoute !== 'manual' && selectedExchangeID !== '';
+  const depositAddresses = needsDepositAddresses && depositFetch?.exchangeID === selectedExchangeID ? depositFetch.addresses : [];
+  const loadingDestination = needsDepositAddresses && depositFetch?.exchangeID !== selectedExchangeID;
   const channels = lndWallet?.channels ?? [];
   const pendingChannels = lndWallet?.pending_channels ?? [];
   const selectedChannelPreset = channelPresets.find(preset => preset.id === selectedChannelPresetID);
@@ -408,6 +420,11 @@ export function LiquidityWorkspace() {
   const destinationOptions = action === 'fill'
     ? lndAddresses.map(address => ({ address: address.address, label: address.label || 'LND on-chain address', network: 'Bitcoin' }))
     : depositAddresses.map(address => ({ address: address.address, label: 'CEX BTC deposit address', network: address.network || 'Bitcoin' }));
+  // Keep the picked address while it is offered, else the first one. A manual
+  // drain types its own address and has no selected destination.
+  const selectedDestination = action !== 'fill' && transferRoute === 'manual'
+    ? ''
+    : (destinationOptions.some(option => option.address === destinationChoice) ? destinationChoice : (destinationOptions[0]?.address ?? ''));
   const sourceLabel = action === 'fill'
     ? (transferRoute === 'exchange' ? `${selectedExchange?.provider ?? 'Selected exchange'} BTC wallet` : 'External BTC wallet')
     : 'LND on-chain wallet';
@@ -540,14 +557,16 @@ export function LiquidityWorkspace() {
     return () => { active = false; };
   }, []);
 
+  const magmaInfoLoading = lightningPath === 'lsp_channel' && magmaInfoSettled?.key !== magmaForm.pool;
+  const magmaInfoError = lightningPath === 'lsp_channel' && magmaInfoSettled?.key === magmaForm.pool ? magmaInfoSettled.error : null;
   useEffect(() => {
     if (lightningPath !== 'lsp_channel') return;
     let active = true;
-    setMagmaInfoLoading(true);
-    setMagmaInfoError(null);
-    void fetchMagmaLSPInfo(magmaForm.pool)
+    const key = magmaForm.pool;
+    void fetchMagmaLSPInfo(key)
       .then(info => {
         if (!active) return;
+        setMagmaInfoSettled({ key, error: null });
         setMagmaInfo(info);
         const minInbound = Number(info.info.min_initial_lsp_balance_sat || 0);
         setMagmaForm(current => ({
@@ -558,28 +577,35 @@ export function LiquidityWorkspace() {
       })
       .catch(error => {
         if (!active) return;
-        setMagmaInfoError(error instanceof Error ? error.message : 'Could not load Amboss Magma quote info.');
-      })
-      .finally(() => { if (active) setMagmaInfoLoading(false); });
+        setMagmaInfoSettled({ key, error: error instanceof Error ? error.message : 'Could not load Amboss Magma quote info.' });
+      });
     return () => { active = false; };
   }, [lightningPath, magmaForm.pool]);
 
+  const magmaOffersLoading = lightningPath === 'lsp_channel' && magmaOffersSettled?.key !== magmaOffersReload;
+  const magmaOffersError = lightningPath === 'lsp_channel' && magmaOffersSettled?.key === magmaOffersReload ? magmaOffersSettled.error : null;
   useEffect(() => {
     if (lightningPath !== 'lsp_channel') return;
     let active = true;
-    setMagmaOffersLoading(true);
-    setMagmaOffersError(null);
+    const key = magmaOffersReload;
     void fetchMagmaOffers()
       .then(offers => {
-        if (active) setMagmaOffers(offers);
+        if (!active) return;
+        setMagmaOffersSettled({ key, error: null });
+        setMagmaOffers(offers);
       })
       .catch(error => {
         if (!active) return;
-        setMagmaOffersError(error instanceof Error ? error.message : 'Could not load the Amboss Magma offer book.');
-      })
-      .finally(() => { if (active) setMagmaOffersLoading(false); });
+        setMagmaOffersSettled({ key, error: error instanceof Error ? error.message : 'Could not load the Amboss Magma offer book.' });
+      });
     return () => { active = false; };
   }, [lightningPath, magmaOffersReload]);
+
+  // Declared before the Magma order poll below, which calls it.
+  const refreshLndWallet = useCallback(async () => {
+    const nextWallet = await fetchLNDWalletStatus();
+    setLndWallet(nextWallet);
+  }, []);
 
   const magmaOrderId = magmaOrder?.id;
   const magmaOrderState = magmaOrder?.order_state;
@@ -606,7 +632,7 @@ export function LiquidityWorkspace() {
     void poll();
     const interval = window.setInterval(() => { void poll(); }, 5000);
     return () => { active = false; window.clearInterval(interval); };
-  }, [magmaOrderId, magmaOrderState]);
+  }, [magmaOrderId, magmaOrderState, refreshLndWallet]);
 
   useEffect(() => {
     let active = true;
@@ -802,51 +828,24 @@ export function LiquidityWorkspace() {
     return () => { active = false; window.clearInterval(interval); };
   }, []);
 
+  // (Re)load the BTC deposit addresses whenever a drain to an exchange needs
+  // them. The list, its loading state and the picked destination are derived.
   useEffect(() => {
-    if (connectedExchanges.length === 0) {
-      setSelectedExchangeID('');
-      return;
-    }
-    if (!connectedExchanges.some(account => String(account.id) === selectedExchangeID)) {
-      setSelectedExchangeID(String(connectedExchanges[0].id));
-    }
-  }, [connectedExchanges, selectedExchangeID]);
-
-  useEffect(() => {
-    if (action === 'fill') {
-      setSelectedDestination(current => lndAddresses.some(address => address.address === current) ? current : (lndAddresses[0]?.address ?? ''));
-      setDepositAddresses([]);
-      return;
-    }
-    if (transferRoute === 'manual') {
-      setDepositAddresses([]);
-      setSelectedDestination('');
-      return;
-    }
-    if (!selectedExchangeID) {
-      setDepositAddresses([]);
-      setSelectedDestination('');
-      return;
-    }
-
+    if (!needsDepositAddresses) return;
     let active = true;
-    setLoadingDestination(true);
-    void fetchCexDepositAddresses(Number(selectedExchangeID))
+    const exchangeID = selectedExchangeID;
+    void fetchCexDepositAddresses(Number(exchangeID))
       .then(addresses => {
         if (!active) return;
-        const bitcoinAddresses = addresses.filter(address => address.asset.trim().toUpperCase() === 'BTC');
-        setDepositAddresses(bitcoinAddresses);
-        setSelectedDestination(current => bitcoinAddresses.some(address => address.address === current) ? current : (bitcoinAddresses[0]?.address ?? ''));
+        setDepositFetch({ exchangeID, addresses: addresses.filter(address => address.asset.trim().toUpperCase() === 'BTC') });
       })
       .catch(error => {
         if (!active) return;
         setLoadError(error instanceof Error ? error.message : 'Could not load the CEX BTC deposit address.');
-        setDepositAddresses([]);
-        setSelectedDestination('');
-      })
-      .finally(() => { if (active) setLoadingDestination(false); });
+        setDepositFetch({ exchangeID, addresses: [] });
+      });
     return () => { active = false; };
-  }, [action, selectedExchangeID, transferRoute, lndAddresses]);
+  }, [needsDepositAddresses, selectedExchangeID]);
 
   const selectAction = (next: PoolAction) => {
     setAction(next);
@@ -872,11 +871,6 @@ export function LiquidityWorkspace() {
       return;
     }
     setFeedback('A dedicated wallet-transfer API is not connected yet. No transfer was sent.');
-  };
-
-  const refreshLndWallet = async () => {
-    const nextWallet = await fetchLNDWalletStatus();
-    setLndWallet(nextWallet);
   };
 
   const saveLspChannel = async () => {

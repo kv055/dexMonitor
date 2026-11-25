@@ -158,7 +158,7 @@ export function PhonePushSetupSection() {
   const [setupMethod, setSetupMethod] = useState<'macrodroid' | 'relay'>('macrodroid');
   const [callbackHistoryFilter, setCallbackHistoryFilter] = useState<CallbackHistoryFilter>('all');
   const [error, setError] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(true);
 
   async function load() {
     setBusy(true);
@@ -172,8 +172,14 @@ export function PhonePushSetupSection() {
     }
   }
 
+  // Initial load: the same request as load(), with state set only once it
+  // settles. busy starts true, so the controls are disabled until then.
   useEffect(() => {
-    void load();
+    let active = true;
+    fetchPhonePushSetup()
+      .then(s => { if (active) setSetup(s); }, err => { if (active) setError(err instanceof Error ? err.message : String(err)); })
+      .finally(() => { if (active) setBusy(false); });
+    return () => { active = false; };
   }, []);
 
   async function reveal() {

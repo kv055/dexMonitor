@@ -57,6 +57,42 @@ type WalletData = {
   transactions: BisqWalletTransaction[];
 };
 
+type WalletLoad = { data: WalletData; error: string | null; designated?: string | null };
+
+// fetchWalletData loads the four wallet views. A failed view keeps its empty
+// value, and the first failure becomes the error. designated is undefined when
+// the funding destination could not be read, so the shown one is kept.
+async function fetchWalletData(): Promise<WalletLoad> {
+  const next: WalletData = { balances: null, addresses: [], transactions: [] };
+  const [balances, addresses, transactions, destination] = await Promise.allSettled([
+    fetchBisqWalletBalances(),
+    fetchBisqWalletAddresses(),
+    fetchBisqWalletTransactions(),
+    fetchBisqFundingDestination(),
+  ] as const);
+  let firstError: string | null = null;
+  if (balances.status === 'fulfilled') {
+    next.balances = balances.value;
+  } else {
+    firstError = balances.reason instanceof Error ? balances.reason.message : String(balances.reason);
+  }
+  if (addresses.status === 'fulfilled') {
+    next.addresses = addresses.value.addresses;
+  } else if (!firstError) {
+    firstError = addresses.reason instanceof Error ? addresses.reason.message : String(addresses.reason);
+  }
+  if (transactions.status === 'fulfilled') {
+    next.transactions = transactions.value.transactions;
+  } else if (!firstError) {
+    firstError = transactions.reason instanceof Error ? transactions.reason.message : String(transactions.reason);
+  }
+  return {
+    data: next,
+    error: firstError,
+    designated: destination.status === 'fulfilled' ? destination.value.destination?.address ?? null : undefined,
+  };
+}
+
 function BisqWalletPanel() {
   const [data, setData] = useState<WalletData>({ balances: null, addresses: [], transactions: [] });
   const [loading, setLoading] = useState(true);
@@ -74,43 +110,26 @@ function BisqWalletPanel() {
   const [withdrawError, setWithdrawError] = useState<string | null>(null);
   const [sentTx, setSentTx] = useState<BisqWalletTransaction | null>(null);
 
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    const next: WalletData = { balances: null, addresses: [], transactions: [] };
-    const [balances, addresses, transactions, destination] = await Promise.allSettled([
-      fetchBisqWalletBalances(),
-      fetchBisqWalletAddresses(),
-      fetchBisqWalletTransactions(),
-      fetchBisqFundingDestination(),
-    ] as const);
-    let firstError: string | null = null;
-    if (balances.status === 'fulfilled') {
-      next.balances = balances.value;
-    } else {
-      firstError = balances.reason instanceof Error ? balances.reason.message : String(balances.reason);
-    }
-    if (addresses.status === 'fulfilled') {
-      next.addresses = addresses.value.addresses;
-    } else if (!firstError) {
-      firstError = addresses.reason instanceof Error ? addresses.reason.message : String(addresses.reason);
-    }
-    if (transactions.status === 'fulfilled') {
-      next.transactions = transactions.value.transactions;
-    } else if (!firstError) {
-      firstError = transactions.reason instanceof Error ? transactions.reason.message : String(transactions.reason);
-    }
-    if (destination.status === 'fulfilled') {
-      setDesignated(destination.value.destination?.address ?? null);
-    }
-    setData(next);
-    setError(firstError);
+  const apply = useCallback((r: WalletLoad) => {
+    if (r.designated !== undefined) setDesignated(r.designated);
+    setData(r.data);
+    setError(r.error);
     setLoading(false);
   }, []);
 
+  const load = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    apply(await fetchWalletData());
+  }, [apply]);
+
+  // Initial load; loading already starts true, so the effect only sets state
+  // once the requests settle.
   useEffect(() => {
-    void load();
-  }, [load]);
+    let active = true;
+    void fetchWalletData().then(r => { if (active) apply(r); });
+    return () => { active = false; };
+  }, [apply]);
 
   const amountValid = /^\d*(\.\d{1,8})?$/.test(amount.trim()) && Number(amount) > 0;
   const addressValid = address.trim().length >= 20;

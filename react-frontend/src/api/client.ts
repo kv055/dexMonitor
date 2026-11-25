@@ -18,7 +18,7 @@ export async function fetchResponse(path: string, init?: RequestInit): Promise<R
   try {
     response = await fetch(path, { ...init, headers });
   } catch (error) {
-    if (isAuthEndpoint(path)) throw new Error(AUTH_UNAVAILABLE_MESSAGE);
+    if (isAuthEndpoint(path)) throw new Error(AUTH_UNAVAILABLE_MESSAGE, { cause: error });
     throw error;
   }
 
