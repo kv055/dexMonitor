@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type {
   PaymentMethodRow,
   PaymentMethodUpdatePayload,
@@ -116,10 +116,6 @@ export function PaymentMethodsPanel() {
       setLoading(false);
     }
   }, []);
-
-  useEffect(() => {
-    if (open) void load();
-  }, [open, load]);
 
   const filteredRows = useMemo(() => {
     const normalizedSearch = searchQuery.trim().toLocaleLowerCase();
@@ -296,7 +292,15 @@ export function PaymentMethodsPanel() {
               {loading ? 'Loading…' : 'Reload'}
             </button>
           )}
-          <button type="button" className={compactPrimaryButtonCls} onClick={() => setOpen(prev => !prev)}>
+          <button
+            type="button"
+            className={compactPrimaryButtonCls}
+            onClick={() => {
+              // Opening the catalog (re)loads it, as the open effect used to.
+              if (!open) void load();
+              setOpen(!open);
+            }}
+          >
             {open ? 'Hide' : 'Manage'}
           </button>
         </div>

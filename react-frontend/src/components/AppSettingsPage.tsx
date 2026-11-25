@@ -263,25 +263,38 @@ export function AppSettingsPage() {
     setClosedSections((prev) => ({ ...prev, [id]: !(prev[id] ?? false) }));
   }, []);
 
+  const applySettings = useCallback((data: AppSettings) => {
+    setSettings(data);
+    setEdits({});
+    setRestart([]);
+    setFileSynced(true);
+  }, []);
+  const loadFailed = useCallback((err: unknown) => {
+    setError(err instanceof Error ? err.message : 'Failed to load settings');
+  }, []);
+
+  // Manual reload: show the loading view again, then fetch.
   const load = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const data = await fetchAppSettings();
-      setSettings(data);
-      setEdits({});
-      setRestart([]);
-      setFileSynced(true);
+      applySettings(await fetchAppSettings());
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load settings');
+      loadFailed(err);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [applySettings, loadFailed]);
 
+  // Initial load. The initial state already shows the loading view, so the
+  // effect only sets state once the request settles.
   useEffect(() => {
-    void load();
-  }, [load]);
+    let active = true;
+    fetchAppSettings()
+      .then(data => { if (active) applySettings(data); }, err => { if (active) loadFailed(err); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [applySettings, loadFailed]);
 
   const baseValues = useMemo(() => settings?.values ?? {}, [settings]);
 

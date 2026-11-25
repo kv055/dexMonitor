@@ -3,11 +3,14 @@ import { toUtcSec } from '../utils/formatters';
 import { shiftOhlcCandlesForTimezone, shiftUtcSecForTimezone } from '../utils/ohlcTimezone';
 import {
   createChart,
+  CandlestickSeries,
   ColorType,
   CrosshairMode,
+  LineSeries,
   LineStyle,
   type IChartApi,
   type ISeriesApi,
+  type LineSeriesPartialOptions,
   type UTCTimestamp,
 } from 'lightweight-charts';
 import type { LifecyclePoint, Offer, OHLCData } from '../types';
@@ -403,7 +406,7 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
     appliedWindowRef.current = '';
 
     // Created here (before any offer line) so candles stay below offer paths.
-    candleSeriesRef.current = chart.addCandlestickSeries({
+    candleSeriesRef.current = chart.addSeries(CandlestickSeries, {
       upColor: '#3fb950',
       downColor: '#f85149',
       borderUpColor: '#3fb950',
@@ -593,8 +596,8 @@ function OHLCChartInner({ data, loadedHours, onNeedMoreData, allowExtend = true,
         utcByDisplaySecRef.current.set(displaySec, utcSec);
         return displaySec as UTCTimestamp;
       };
-      const addLine = (options: Parameters<IChartApi['addLineSeries']>[0]) => {
-        const series = chart.addLineSeries(options);
+      const addLine = (options: LineSeriesPartialOptions) => {
+        const series = chart.addSeries(LineSeries, options);
         offerSeriesRef.current.push(series);
         return series;
       };

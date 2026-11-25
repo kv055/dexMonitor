@@ -57,6 +57,25 @@ interface ChecksState {
   error?: string;
 }
 
+type BisqQuoteState = {
+  phase: 'idle' | 'loading' | 'done' | 'error';
+  quote?: Awaited<ReturnType<typeof quoteBisqExecution>>;
+  inputIdentity?: string;
+  error?: string;
+};
+
+// readSavedBisq reads the Bisq acceptance request saved under storageKey (the
+// reload recovery for a submitted trade), or null when there is none.
+function readSavedBisq(storageKey: string): { storageKey: string; request: BisqAcceptance | null } {
+  try {
+    const stored = JSON.parse(window.localStorage.getItem(storageKey) ?? 'null');
+    const valid = typeof stored?.quote_id === 'string' && typeof stored?.idempotency_key === 'string';
+    return { storageKey, request: valid ? stored : null };
+  } catch {
+    return { storageKey, request: null };
+  }
+}
+
 function fmtBtc(n: number): string {
   return stripTrailingZeros(n.toFixed(8));
 }
@@ -406,28 +425,22 @@ export function TradeTracingPanel({
   const [checks, setChecks] = useState<ChecksState>({ phase: 'idle' });
   const [quote, setQuote] = useState<ExecutionQuote | null>(null);
   const [quoteError, setQuoteError] = useState<string | null>(null);
-  const [quoteLoading, setQuoteLoading] = useState(false);
   const quoteSeq = useRef(0);
   const checksSeq = useRef(0);
   const [checkedQuoteID, setCheckedQuoteID] = useState<string | null>(null);
-  const [quoteNow, setQuoteNow] = useState(Date.now());
+  const [quoteNow, setQuoteNow] = useState(() => Date.now());
   const [admitted, setAdmitted] = useState<{ id: number; status: string; reason?: string } | null>(null);
   const submitting = useRef(false);
-  const [bisqQuote, setBisqQuote] = useState<{ phase: 'idle' | 'loading' | 'done' | 'error'; quote?: Awaited<ReturnType<typeof quoteBisqExecution>>; inputIdentity?: string; error?: string }>({ phase: 'idle' });
+  // The last Bisq quote response, tagged with the request it answers; the
+  // effective bisqQuote is derived from it once quotePayload is known.
+  const [bisqQuoteResult, setBisqQuoteResult] = useState<(BisqQuoteState & { key: string }) | null>(null);
   const recoveryKey = `bisq-acceptance:${offer.offer_id ?? ''}`;
-  const [savedBisq, setSavedBisq] = useState<{ storageKey: string; request: BisqAcceptance } | null>(() => {
-    try {
-      const stored = JSON.parse(window.localStorage.getItem(recoveryKey) ?? 'null');
-      return typeof stored?.quote_id === 'string' && typeof stored?.idempotency_key === 'string' ? { storageKey: recoveryKey, request: stored } : null;
-    } catch { return null; }
-  });
-  const pendingBisq = savedBisq?.storageKey === recoveryKey ? savedBisq.request : null;
-  useEffect(() => {
-    try {
-      const stored = JSON.parse(window.localStorage.getItem(recoveryKey) ?? 'null');
-      setSavedBisq(typeof stored?.quote_id === 'string' && typeof stored?.idempotency_key === 'string' ? { storageKey: recoveryKey, request: stored } : null);
-    } catch { setSavedBisq(null); }
-  }, [recoveryKey]);
+  // The saved Bisq acceptance for this offer, tagged with the storage key it
+  // was read for. When the offer (and so the key) changes, it is re-read during
+  // render, which replaces the effect that synced it after the commit.
+  const [savedBisq, setSavedBisq] = useState(() => readSavedBisq(recoveryKey));
+  if (savedBisq.storageKey !== recoveryKey) setSavedBisq(readSavedBisq(recoveryKey));
+  const pendingBisq = savedBisq.storageKey === recoveryKey ? savedBisq.request : null;
   const submittingBisq = useRef(false);
 
   useEffect(() => {
@@ -560,18 +573,22 @@ export function TradeTracingPanel({
   }
 
   // Keep the volume draft aligned when the parent changes size scenario (e.g. Size
-  // toggle in the expanded live offer) without going through toggleSize.
-  useEffect(() => {
-    if (controlledSizeMode == null) return;
-    const nextBtc = bd?.btc_amount ?? btcMax ?? btcMin ?? 0;
-    if (unit === 'fiat' && canUseFiat) {
-      setDraft(nextBtc > 0 ? (nextBtc * refPrice!).toFixed(2) : '');
-    } else {
-      setDraft(nextBtc > 0 ? fmtBtc(nextBtc) : '');
+  // toggle in the expanded live offer) without going through toggleSize. Only
+  // re-sync when the controlled scenario or resolved trade size changes; done
+  // during render (React's "adjust state when a prop changes"), not in an effect.
+  const draftSyncKey = controlledSizeMode == null ? null : `${controlledSizeMode}|${effectiveMode}|${bd?.btc_amount ?? ''}`;
+  const [syncedDraftKey, setSyncedDraftKey] = useState<string | null | undefined>(undefined);
+  if (draftSyncKey !== syncedDraftKey) {
+    setSyncedDraftKey(draftSyncKey);
+    if (draftSyncKey != null) {
+      const nextBtc = bd?.btc_amount ?? btcMax ?? btcMin ?? 0;
+      if (unit === 'fiat' && canUseFiat) {
+        setDraft(nextBtc > 0 ? (nextBtc * refPrice!).toFixed(2) : '');
+      } else {
+        setDraft(nextBtc > 0 ? fmtBtc(nextBtc) : '');
+      }
     }
-    // Only re-sync when the controlled scenario or resolved trade size changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [controlledSizeMode, effectiveMode, bd?.btc_amount]);
+  }
 
   const canTrade = !!resolvedRoute?.provider
     && resolvedRoute.btc_amount > 0
@@ -580,11 +597,26 @@ export function TradeTracingPanel({
     && hasResolvedExecutionRoute
     && (!isBisq || !pendingBisq)
     && submit.phase !== 'submitting';
+  const quotePaymentMethod = checks.phase === 'done' && checks.report?.ok
+    ? resolvedPaymentMethod || checks.report.resolved_payment_method || '' : '';
+  const quotePayload = confirmOpen && isBisq && resolvedRoute && quotePaymentMethod ? JSON.stringify({
+    offer_id: offer.offer_id ?? '', btc_amount: clampedBtc,
+    trade_mode: resolvedRoute.trade_mode, payment_method: quotePaymentMethod,
+    fiat_currency: resolvedRoute.fiat_currency, provider: resolvedRoute.provider,
+    resolved_route: resolvedRoute,
+    selected_offer: { offer_id: offer.offer_id, exchange: offer.exchange, metadata: offer.metadata },
+  }) : '';
+  // The live Bisq quote: idle without a payload, loading until the response for
+  // this exact payload and input arrives, then that response (done or error).
+  const bisqQuoteKey = quotePayload ? `${quotePayload}|${bisqInputIdentity}` : '';
+  const bisqQuote: BisqQuoteState = !quotePayload
+    ? { phase: 'idle' }
+    : bisqQuoteResult?.key === bisqQuoteKey ? bisqQuoteResult : { phase: 'loading' };
   const checksPassed = checks.phase === 'done'
     && !!checks.report?.ok
     && (!isHedgeless || !!checks.report.checks.some(c => c.name === 'liquidity_pool' && c.passed))
     && (!isLightningRoute || !!checks.report.checks.some(c => (c.name === 'lightning_liquidity' || c.name === 'lsp_channel') && c.passed))
-    && (!isBisq || (bisqQuote.phase === 'done' && bisqQuote.inputIdentity === bisqInputIdentity && !!bisqQuote.quote && Date.parse(bisqQuote.quote.expires_at) > Date.now()));
+    && (!isBisq || (bisqQuote.phase === 'done' && bisqQuote.inputIdentity === bisqInputIdentity && !!bisqQuote.quote && Date.parse(bisqQuote.quote.expires_at) > quoteNow));
   const quoteFresh = !!quote && Date.parse(quote.expires_at) > quoteNow && quote.executable && !!quote.resolved_route;
   const canConfirm = isRobosats
     ? checksPassed && checkedQuoteID === quote?.quote_id && quoteFresh && !quoteError && !admitted
@@ -596,26 +628,34 @@ export function TradeTracingPanel({
 
   const quoteInputKey = `${offer.id}|${offer.offer_id ?? ''}|${offer.venue_coordinator_id ?? ''}|${offer.exchange}|${unit}|${draft}|${resolvedPaymentMethod}`;
 
-  useEffect(() => {
+  // The input whose quote request last settled (see quoteLoading below).
+  const [quoteSettledKey, setQuoteSettledKey] = useState<string | null>(null);
+  // A new quote input drops the previous quote and check results, during render.
+  const [quoteResetKey, setQuoteResetKey] = useState(quoteInputKey);
+  if (quoteResetKey !== quoteInputKey) {
+    setQuoteResetKey(quoteInputKey);
     setQuote(null);
     setQuoteError(null);
+    setQuoteSettledKey(null);
     setChecks({ phase: 'idle' });
     setCheckedQuoteID(null);
+  }
+  // ...and invalidates any pre-trade check still in flight for the old input.
+  // A ref cannot change during render, so this part stays an effect.
+  useEffect(() => {
     ++checksSeq.current;
   }, [quoteInputKey]);
 
+  // The quote is loading while a quote is wanted for the current input and its
+  // response has not arrived; quoteSettledKey is the input of the last response.
+  const draftAmount = parseFloat(draft.replace(',', '.'));
+  const wantsQuote = (isRobosats || isBisq) && Number.isFinite(draftAmount) && draftAmount > 0 && hasResolvedExecutionRoute;
+  const quoteLoading = wantsQuote && quoteSettledKey !== quoteInputKey;
+
   useEffect(() => {
-    if (!isRobosats && !isBisq) {
-      setQuoteLoading(false);
-      return;
-    }
+    if (!wantsQuote) return;
     const seq = ++quoteSeq.current;
-    const parsed = parseFloat(draft.replace(',', '.'));
-    if (!Number.isFinite(parsed) || parsed <= 0 || !hasResolvedExecutionRoute) {
-      setQuoteLoading(false);
-      return;
-    }
-    setQuoteLoading(true);
+    const key = quoteInputKey;
     const timer = window.setTimeout(() => {
       void createExecutionQuote({
         offer_db_id: offer.id,
@@ -629,16 +669,16 @@ export function TradeTracingPanel({
         if (quoteSeq.current !== seq) return;
         setQuote(next);
         setQuoteError(next.executable ? null : (next.blocked_reason || 'Quote is not executable'));
-        setQuoteLoading(false);
+        setQuoteSettledKey(key);
       }).catch(err => {
         if (quoteSeq.current !== seq) return;
         setQuote(null);
         setQuoteError(err instanceof Error ? err.message : String(err));
-        setQuoteLoading(false);
+        setQuoteSettledKey(key);
       });
     }, 300);
     return () => { window.clearTimeout(timer); ++quoteSeq.current; };
-  }, [quoteInputKey, hasResolvedExecutionRoute, isRobosats, isBisq, offer.id, offer.offer_id, offer.venue_coordinator_id, offer.exchange, unit, draft, resolvedPaymentMethod]);
+  }, [wantsQuote, quoteInputKey, offer.id, offer.offer_id, offer.venue_coordinator_id, offer.exchange, unit, draft, resolvedPaymentMethod]);
 
   // Opening the confirm dialog immediately kicks off the (read-only) pre-trade checks
   // so their results are shown in the same card before the operator confirms.
@@ -697,8 +737,10 @@ export function TradeTracingPanel({
   // route directly (their confirmation does not consume a generic quote).
   useEffect(() => {
     if (!confirmOpen || !hasResolvedExecutionRoute || (isRobosats && !quoteFresh)) return;
-    void runPreTradeChecks();
-    return () => { ++checksSeq.current; };
+    // Started from a zero-delay timer, so the checks' state changes (running,
+    // then the result) come from a callback and not from the effect body.
+    const timer = window.setTimeout(() => { void runPreTradeChecks(); }, 0);
+    return () => { window.clearTimeout(timer); ++checksSeq.current; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [
     confirmOpen,
@@ -712,36 +754,26 @@ export function TradeTracingPanel({
     quoteFresh,
   ]);
 
-  const quotePaymentMethod = checks.phase === 'done' && checks.report?.ok
-    ? resolvedPaymentMethod || checks.report.resolved_payment_method || '' : '';
-  const quotePayload = confirmOpen && isBisq && resolvedRoute && quotePaymentMethod ? JSON.stringify({
-    offer_id: offer.offer_id ?? '', btc_amount: clampedBtc,
-    trade_mode: resolvedRoute.trade_mode, payment_method: quotePaymentMethod,
-    fiat_currency: resolvedRoute.fiat_currency, provider: resolvedRoute.provider,
-    resolved_route: resolvedRoute,
-    selected_offer: { offer_id: offer.offer_id, exchange: offer.exchange, metadata: offer.metadata },
-  }) : '';
   useEffect(() => {
-    if (!quotePayload) {
-      setBisqQuote({ phase: 'idle' });
-      return;
-    }
+    if (!quotePayload) return;
     let cancelled = false;
-    setBisqQuote({ phase: 'loading' });
+    const key = bisqQuoteKey;
+    const inputIdentity = bisqInputIdentity;
     const timer = setTimeout(() => { void quoteBisqExecution(JSON.parse(quotePayload)).then(quote => {
-      if (!cancelled) setBisqQuote({ phase: 'done', quote, inputIdentity: bisqInputIdentity });
+      if (!cancelled) setBisqQuoteResult({ key, phase: 'done', quote, inputIdentity });
     }).catch(err => {
-      if (!cancelled) setBisqQuote({ phase: 'error', error: err instanceof Error ? err.message : String(err) });
+      if (!cancelled) setBisqQuoteResult({ key, phase: 'error', error: err instanceof Error ? err.message : String(err) });
     }); }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
-  }, [quotePayload, bisqInputIdentity]);
+  }, [quotePayload, bisqInputIdentity, bisqQuoteKey]);
 
   useEffect(() => {
-    if (bisqQuote.phase !== 'done' || !bisqQuote.quote) return;
-    const delay = Date.parse(bisqQuote.quote.expires_at) - Date.now();
-    const timer = setTimeout(() => setBisqQuote({ phase: 'error', error: 'Quote expired. Close and reopen confirmation for a fresh quote.' }), Math.min(Math.max(0, delay), 2_147_483_647));
+    if (!bisqQuoteResult || bisqQuoteResult.phase !== 'done' || !bisqQuoteResult.quote) return;
+    const { key } = bisqQuoteResult;
+    const delay = Date.parse(bisqQuoteResult.quote.expires_at) - Date.now();
+    const timer = setTimeout(() => setBisqQuoteResult({ key, phase: 'error', error: 'Quote expired. Close and reopen confirmation for a fresh quote.' }), Math.min(Math.max(0, delay), 2_147_483_647));
     return () => clearTimeout(timer);
-  }, [bisqQuote]);
+  }, [bisqQuoteResult]);
 
   async function submitBisqAcceptance(pending: BisqAcceptance) {
     if (submittingBisq.current) return;
@@ -767,7 +799,7 @@ export function TradeTracingPanel({
       // Only an explicit expiry response proves this request was never accepted.
       if (message === 'bisq quote has expired' || message === 'Bisq execution expired') {
         window.localStorage.removeItem(recoveryKey);
-        setSavedBisq(null);
+        setSavedBisq({ storageKey: recoveryKey, request: null });
       }
     } finally { submittingBisq.current = false; }
   }
