@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { AuthContext, type AuthStatus } from '../hooks/useAuth';
 import {
   authLogin,
@@ -49,14 +49,36 @@ export function AuthProvider({ children }: Props) {
   }, [refreshRegistration]);
 
   // If a protected call 401s mid-session (cookie expired/cleared), drop to login.
+  // A 401 can also come from one endpoint misbehaving (for example a backend
+  // rejecting a service credential) while the session is still valid. So first
+  // ask /api/auth/me, and only drop to login when the session itself is gone.
+  // Several polls can 401 at once; they share one in-flight check.
+  const sessionCheckRef = useRef<Promise<void> | null>(null);
   useEffect(() => {
+    let disposed = false;
     const onUnauthorized = () => {
-      setStatus('anon');
-      setUsername(null);
-      void refreshRegistration();
+      if (sessionCheckRef.current) return;
+      sessionCheckRef.current = (async () => {
+        try {
+          const me = await authMe();
+          if (disposed) return;
+          console.warn('auth: a request returned 401 but the session is still valid; staying signed in');
+          setUsername(me.username);
+        } catch {
+          if (disposed) return;
+          setStatus('anon');
+          setUsername(null);
+          void refreshRegistration();
+        } finally {
+          sessionCheckRef.current = null;
+        }
+      })();
     };
     window.addEventListener('auth:unauthorized', onUnauthorized);
-    return () => window.removeEventListener('auth:unauthorized', onUnauthorized);
+    return () => {
+      disposed = true;
+      window.removeEventListener('auth:unauthorized', onUnauthorized);
+    };
   }, [refreshRegistration]);
 
   const login = useCallback(async (user: string, password: string) => {

@@ -105,6 +105,28 @@ func TestForwardJSONForwardsAuthBodyAndValidationResponse(t *testing.T) {
 	}
 }
 
+// An upstream 401 is a service-credential failure, not an expired browser
+// session: it must not reach the SPA as 401, or the dashboard drops to login.
+func TestForwardJSONMapsUpstreamUnauthorizedToBadGateway(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = io.WriteString(w, `{"error":"unauthorized"}`)
+	}))
+	t.Cleanup(srv.Close)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/execution-quotes", strings.NewReader(`{}`))
+	New(srv.URL).ForwardJSON(rec, req, "/internal/execution-quotes")
+
+	if rec.Code != http.StatusBadGateway {
+		t.Fatalf("status = %d, want %d", rec.Code, http.StatusBadGateway)
+	}
+	if !strings.Contains(rec.Body.String(), "internal credentials") {
+		t.Fatalf("body = %s", rec.Body.String())
+	}
+}
+
 func TestForwardJSONForwardsBisqFormPath(t *testing.T) {
 	var gotPath string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

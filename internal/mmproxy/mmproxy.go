@@ -89,6 +89,20 @@ func (p *Proxy) ForwardJSON(w http.ResponseWriter, r *http.Request, path string)
 	}
 	defer resp.Body.Close()
 
+	// The browser's session was already checked by dexMonitor's gate before this
+	// proxy ran, so an upstream 401 means a service-to-service credential was
+	// rejected (missing or wrong X-Internal-Secret, or a route that wants a cookie
+	// this server-side call never carries). Passing that 401 on would make the
+	// SPA treat it as an expired login and show the login page. Report it as a
+	// gateway failure instead.
+	if resp.StatusCode == http.StatusUnauthorized {
+		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = io.WriteString(w, `{"error":"upstream service rejected dexMonitor's internal credentials"}`)
+		return
+	}
+
 	for key, values := range resp.Header {
 		if strings.EqualFold(key, "Content-Length") {
 			continue

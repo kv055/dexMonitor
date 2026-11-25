@@ -10,7 +10,7 @@ import (
 
 func TestExecutionQuoteProductionProxy(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "POST" || r.URL.Path != "/api/execution-quotes" || r.Header.Get("X-Internal-Secret") != "test-secret" {
+		if r.Method != "POST" || r.URL.Path != "/internal/execution-quotes" || r.Header.Get("X-Internal-Secret") != "test-secret" {
 			t.Errorf("unexpected proxy request: %s %s", r.Method, r.URL.Path)
 		}
 		body, _ := io.ReadAll(r.Body)
