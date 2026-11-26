@@ -205,7 +205,7 @@ describe('LiquidityWorkspace', () => {
     expect(screen.getAllByText('Current')).toHaveLength(1);
     expect(screen.getByText('Current inventory')).toBeTruthy();
     expect(screen.getByText('Current balance')).toBeTruthy();
-    expect(screen.getByText('Current channel balance')).toBeTruthy();
+    expect(screen.getByText('Channel balance')).toBeTruthy();
     expect(screen.getAllByText('Target')).toHaveLength(4);
     expect(screen.getAllByText('Not configured')).toHaveLength(3);
     expect(screen.getAllByText('0 BTC')).toHaveLength(1);
@@ -262,7 +262,7 @@ describe('LiquidityWorkspace', () => {
 
     renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'bid', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
 
-    expect(await screen.findByText('EUR 100')).toBeTruthy();
+    expect((await screen.findAllByText('100 EUR')).length).toBeGreaterThan(0);
     expect(screen.getAllByText('0 BTC')).toHaveLength(4);
     expect(screen.queryByText('no LND pool required')).toBeNull();
     expect(screen.getAllByText('0 BTC')).toHaveLength(4);
@@ -322,10 +322,10 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace([{ id: 1, exchange: 'Bisq', direction: 'bid', payment_methods: [], offer_id: 'offer-1', is_live: true, ref_price: 50000 }]);
 
-    await screen.findByText('EUR 100');
+    await screen.findAllByText('100 EUR');
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     expect(screen.getByRole('button', { name: 'Direct routing' })).toBeTruthy();
-    await user.selectOptions(screen.getByLabelText('Trade mode'), 'hedgeless_double_collateral');
+    await user.click(screen.getByRole('radio', { name: 'Hedgeless' }));
     expect(screen.queryByRole('button', { name: 'Direct routing' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Save' }));
     expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({
@@ -344,10 +344,10 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await screen.findByText('EUR 100');
+    await screen.findAllByText('100 EUR');
     await user.click(screen.getByRole('button', { name: 'Edit' }));
-    await screen.findByDisplayValue('Custom');
-    await user.selectOptions(screen.getByLabelText('Target direction'), 'ask');
+    expect(screen.getByRole('radio', { name: 'Custom' })).toHaveProperty('checked', true);
+    await user.click(screen.getByRole('radio', { name: 'Ask' }));
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({ target_direction: 'ask' }));
@@ -362,9 +362,9 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await screen.findByText('EUR 100');
+    await screen.findAllByText('100 EUR');
     await user.click(screen.getByRole('button', { name: 'Edit' }));
-    await user.selectOptions(screen.getByLabelText('Amount source'), 'capped_volume');
+    await user.click(screen.getByRole('radio', { name: 'Max position' }));
 
     const amountInput = screen.getByRole('spinbutton', { name: /Transactional liquidity/ });
     expect((amountInput as HTMLInputElement).value).toBe('500');
@@ -382,9 +382,9 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await screen.findByText('EUR 100');
+    await screen.findAllByText('100 EUR');
     await user.click(screen.getByRole('button', { name: 'Edit' }));
-    await user.selectOptions(screen.getByLabelText('Amount source'), 'capped_volume');
+    await user.click(screen.getByRole('radio', { name: 'Max position' }));
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByText('Set a positive Max Position Size (Fiat) in Settings before saving capped volume.')).toBeTruthy();
@@ -399,17 +399,15 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await screen.findByText('EUR 100');
+    await screen.findAllByText('100 EUR');
     await user.click(screen.getByRole('button', { name: 'Edit' }));
-    const source = screen.getByLabelText('Lightning liquidity source');
-    expect(source.getAttribute('required')).not.toBeNull();
-    expect(screen.getByRole('option', { name: 'Own Collateral' })).toBeTruthy();
-    expect(screen.getByRole('option', { name: 'LSP Collateral' })).toBeTruthy();
-    await user.selectOptions(source, 'lsp_channel');
+    expect(screen.getByRole('radiogroup', { name: 'Lightning liquidity source' })).toBeTruthy();
+    expect(screen.getByRole('radio', { name: 'Own collateral' })).toHaveProperty('checked', true);
+    await user.click(screen.getByRole('radio', { name: 'LSP collateral' }));
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(updateTransactionalLiquiditySettings).toHaveBeenCalledWith(expect.objectContaining({ lightning_liquidity_source: 'lsp_channel' }));
-    expect(await screen.findByText('LSP Collateral')).toBeTruthy();
+    expect(await screen.findByText('LSP collateral')).toBeTruthy();
   });
 
   it('persists the selected routing profiles and hides Lightning when Swap is off', async () => {
@@ -424,7 +422,7 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await screen.findByText('EUR 100');
+    await screen.findAllByText('100 EUR');
     await user.click(screen.getByRole('button', { name: 'Edit' }));
     expect(screen.getByLabelText('Lightning liquidity source')).toBeTruthy();
     await user.click(screen.getByRole('button', { name: 'Swap routing' }));
@@ -461,7 +459,7 @@ describe('LiquidityWorkspace', () => {
     expect(screen.getByText('0.05 BTC')).toBeTruthy();
     expect(screen.getAllByText('0.0125 BTC')).not.toHaveLength(0);
     expect(screen.getByText('0.01 BTC')).toBeTruthy();
-    await user.click(screen.getByRole('button', { name: /current channel balance/i }));
+    await user.click(screen.getByRole('button', { name: /^channel balance/i }));
     expect(screen.getByText('Own liquidity')).toBeTruthy();
     expect(screen.getByText('600,000 sats')).toBeTruthy();
     expect(screen.getByText('400,000 sats')).toBeTruthy();
@@ -598,7 +596,7 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await user.click(screen.getByRole('button', { name: /current channel balance/i }));
+    await user.click(screen.getByRole('button', { name: /^channel balance/i }));
     expect(within(screen.getByLabelText('Lightning channel workspace')).getByText('Hub')).toBeTruthy();
     expect(screen.getByRole('tab', { name: /own liquidity/i })).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Open a channel' })).toBeTruthy();
@@ -626,7 +624,7 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await user.click(screen.getByRole('button', { name: /current channel balance/i }));
+    await user.click(screen.getByRole('button', { name: /^channel balance/i }));
     await user.click(screen.getByRole('tab', { name: /lsp channel/i }));
     expect(await screen.findByText('LSP channel active')).toBeTruthy();
     expect(screen.getByRole('heading', { name: 'Registered LSP channel' })).toBeTruthy();
@@ -641,11 +639,23 @@ describe('LiquidityWorkspace', () => {
     expect(await screen.findByText('LSP channel monitoring configuration saved.')).toBeTruthy();
   });
 
+  it('keeps the workspace rendered when Magma info omits its info block', async () => {
+    vi.mocked(fetchMagmaLSPInfo).mockResolvedValueOnce({ pool: 'recommended', public_key: '02abc', synced_to_chain: true, synced_to_graph: true, block_height: 1, chain_ready: true } as unknown as Awaited<ReturnType<typeof fetchMagmaLSPInfo>>);
+    const user = userEvent.setup();
+    renderWorkspace();
+
+    await user.click(screen.getByRole('button', { name: /^channel balance/i }));
+    await user.click(screen.getByRole('tab', { name: /lsp channel/i }));
+
+    expect(await screen.findByText(/Inbound range/)).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'Open via Amboss Magma' })).toBeTruthy();
+  });
+
   it('loads Magma quote info and creates plus pays an order from the LSP tab', async () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await user.click(screen.getByRole('button', { name: /current channel balance/i }));
+    await user.click(screen.getByRole('button', { name: /^channel balance/i }));
     await user.click(screen.getByRole('tab', { name: /lsp channel/i }));
 
     expect(await screen.findByText(/Inbound range/)).toBeTruthy();
@@ -674,7 +684,7 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await user.click(screen.getByRole('button', { name: /current channel balance/i }));
+    await user.click(screen.getByRole('button', { name: /^channel balance/i }));
     await user.click(screen.getByRole('tab', { name: /lsp channel/i }));
 
     expect(screen.getByRole('heading', { name: 'Open via Amboss Magma' })).toBeTruthy();
@@ -710,7 +720,7 @@ describe('LiquidityWorkspace', () => {
     const user = userEvent.setup();
     renderWorkspace();
 
-    await user.click(screen.getByRole('button', { name: /current channel balance/i }));
+    await user.click(screen.getByRole('button', { name: /^channel balance/i }));
     await user.click(screen.getByRole('tab', { name: /lsp channel/i }));
 
     expect(await screen.findByText(/no spendable Lightning balance/i)).toBeTruthy();
