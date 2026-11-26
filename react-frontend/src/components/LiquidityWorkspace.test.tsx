@@ -584,7 +584,10 @@ describe('LiquidityWorkspace', () => {
     await user.click(screen.getByRole('button', { name: 'Expand Mainnet Hub liquidity' }));
     await user.click(screen.getByRole('button', { name: /drain lnd pool/i }));
     await user.click(screen.getByRole('button', { name: 'Manual address' }));
-    await user.type(screen.getByPlaceholderText('Paste a Bitcoin address'), 'bc1qexternaldestination0000000000000000');
+    // Paste the address like an operator would; typing it key by key re-renders
+    // the whole workspace per character and can exceed the test timeout under load.
+    await user.click(screen.getByPlaceholderText('Paste a Bitcoin address'));
+    await user.paste('bc1qexternaldestination0000000000000000');
     await user.type(screen.getByPlaceholderText('0.00000000'), '0.01');
 
     expect(screen.getByText('External BTC address')).toBeTruthy();
