@@ -16,6 +16,7 @@ import { LoginPage } from './components/LoginPage';
 import { LoadingSpinner } from './components/LoadingSpinner';
 import { ErrorBoundary, LazyView } from './components/ErrorBoundary';
 import { Header } from './components/Header';
+import { ResizableColumns } from './components/ResizableColumns';
 import type { Tab } from './components/Header';
 import { TakerOpportunities } from './components/TakerOpportunities';
 
@@ -31,19 +32,27 @@ const AppSettingsPage = lazy(() => import('./components/AppSettingsPage').then(m
 function MmControllerView() {
   return (
     <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
-      <div className="lg:flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-2 gap-2 sm:gap-3">
-        <section className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-104 xl:min-h-0 overflow-hidden">
-          <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Transactions</h3>
-          <div className="relative flex-1 min-h-0">
-            <LazyView view="transactions" label="Loading transactions"><MmTransactionsLog /></LazyView>
+      <ResizableColumns
+        className="lg:flex-1"
+        storageKey="dex-taker-controller-split"
+        minRightPx={600}
+        label="Resize transactions and liquidity panels"
+        left={(
+          <section className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-104 xl:min-h-0 overflow-hidden">
+            <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Transactions</h3>
+            <div className="relative flex-1 min-h-0">
+              <LazyView view="transactions" label="Loading transactions"><MmTransactionsLog /></LazyView>
+            </div>
+          </section>
+        )}
+        right={(
+          <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-104 xl:min-h-0 overflow-hidden">
+            <div className="relative flex-1 min-h-0">
+              <LazyView view="liquidity workspace" label="Loading liquidity workspace"><LiquidityWorkspace /></LazyView>
+            </div>
           </div>
-        </section>
-        <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-104 xl:min-h-0 overflow-hidden">
-          <div className="relative flex-1 min-h-0">
-            <LazyView view="liquidity workspace" label="Loading liquidity workspace"><LiquidityWorkspace /></LazyView>
-          </div>
-        </div>
-      </div>
+        )}
+      />
     </div>
   );
 }

@@ -1221,3 +1221,29 @@ button.lw-card__current:focus-visible { outline: 2px solid var(--liquidity-accen
   .liquidity-workspace .routing-matrix__header p { display: none; }
   .liquidity-workspace .lt-summary { margin-top: 0.5rem; padding-top: 0.5rem; }
 }
+
+/* Two panes with a draggable divider (dex Taker Controller). Stacked below xl. */
+.split-columns { display: flex; flex-direction: column; gap: 0.5rem; min-height: 0; }
+.split-columns__pane { display: flex; flex: 0 0 auto; flex-direction: column; min-height: 0; min-width: 0; }
+.split-columns__pane > * { flex: 1 1 auto; }
+.split-columns__handle { display: none; }
+@media (min-width: 40rem) { .split-columns { gap: 0.75rem; } }
+@media (min-width: 80rem) {
+  .split-columns { flex-direction: row; gap: 0; }
+  .split-columns__pane--left { flex: 0 1 calc((100% - var(--split-gutter)) * var(--split-ratio)); min-width: var(--split-min-left); }
+  .split-columns__pane--right { flex: 1 1 0; min-width: var(--split-min-right); }
+  .split-columns__handle {
+    align-items: center;
+    cursor: ew-resize;
+    display: flex;
+    flex: 0 0 var(--split-gutter);
+    justify-content: center;
+    outline: none;
+    touch-action: none;
+  }
+  .split-columns__handle span { background: var(--app-border); border-radius: 999px; height: 4rem; transition: background-color 120ms ease; width: 0.25rem; }
+  .split-columns__handle:hover span,
+  .split-columns__handle:focus-visible span,
+  .split-columns.is-dragging .split-columns__handle span { background: var(--color-accent); }
+}
+.is-resizing-columns, .is-resizing-columns * { cursor: ew-resize !important; user-select: none !important; }
