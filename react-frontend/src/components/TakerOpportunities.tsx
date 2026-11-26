@@ -1100,26 +1100,26 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
   // Bisq 1 / Bisq 2 are local GUI apps with no web offer pages, so instead
   // of a deep link the user gets the offer id to find it in the local app.
   const bisqOfferId = copyableOfferId(offer.exchange, offer.offer_id);
+  const offerActions = (dexLink || bisqOfferId) ? (
+    <>
+      {dexLink && (
+        <a
+          href={dexLink.url}
+          target="_blank"
+          rel="noopener noreferrer"
+          title={dexLink.title}
+          data-testid="view-on-dex"
+          className="inline-flex items-center gap-1 rounded border border-border px-2 py-0.5 text-[0.66rem] font-semibold text-accent transition-colors hover:bg-accent/10 hover:underline"
+        >
+          {dexLink.label} <span aria-hidden="true">↗</span>
+        </a>
+      )}
+      {bisqOfferId && <CopyOfferIdButton offerId={bisqOfferId} />}
+    </>
+  ) : undefined;
 
   return (
     <div data-testid="live-offer-detail" className="flex flex-col gap-3">
-      {(dexLink || bisqOfferId) && (
-        <div className="flex flex-wrap items-center gap-2">
-          {dexLink && (
-            <a
-              href={dexLink.url}
-              target="_blank"
-              rel="noopener noreferrer"
-              title={dexLink.title}
-              data-testid="view-on-dex"
-              className="inline-flex items-center gap-1 rounded border border-border px-2 py-1 text-[0.7rem] font-semibold text-accent transition-colors hover:bg-accent/10 hover:underline"
-            >
-              {dexLink.label} <span aria-hidden="true">↗</span>
-            </a>
-          )}
-          {bisqOfferId && <CopyOfferIdButton offerId={bisqOfferId} />}
-        </div>
-      )}
       {displayedBreakdown ? (
         <div className="flex flex-col gap-3">
           <CostBreakdownPanel
@@ -1152,6 +1152,7 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
             overview={<LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} />}
             contextLabel="Live offer"
             contextId={offer.offer_id || offer.id}
+            offerActions={offerActions}
             routeControls={options ? (
               <ManualRouteControls
                 options={options}
@@ -1179,8 +1180,9 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
       ) : (
         <>
           <section aria-label="Offer information" className="@container flex flex-col gap-3">
-            <div className="border-b border-border/70 pb-2 text-[0.63rem] font-medium text-text">
-              Live offer <span className="text-muted">· ID {offer.offer_id || offer.id}</span>
+            <div className="flex flex-wrap items-center gap-2 border-b border-border/70 pb-2 text-[0.63rem] font-medium text-text">
+              <span>Live offer <span className="text-muted">· ID {offer.offer_id || offer.id}</span></span>
+              {offerActions}
             </div>
             <LiveOfferOverview offer={offer} fiat={fiat} amountUnit={amountUnit} />
           </section>

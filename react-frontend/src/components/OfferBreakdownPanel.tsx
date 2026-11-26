@@ -794,6 +794,7 @@ export function CostBreakdownPanel({
   contextLabel,
   contextDetail,
   contextId,
+  offerActions,
   toolbar,
   tradeModeToggle,
   routeControls,
@@ -815,13 +816,15 @@ export function CostBreakdownPanel({
   contextLabel?: string;
   contextDetail?: string | null;
   contextId?: string | number | null;
+  /** Offer links (e.g. "View on RoboSats") shown next to the ID in the Offer tab header. */
+  offerActions?: React.ReactNode;
   /** Size-scenario controls rendered in the offer header. */
   toolbar?: React.ReactNode;
   /** Hedgefull/Hedgeless switch rendered at the top of the Trade economics tab. */
   tradeModeToggle?: React.ReactNode;
   /** Live-only controls that override the effective route used by the estimate. */
   routeControls?: React.ReactNode;
-  /** Warning shown when no CEX route could be priced. */
+  /** Warning shown in the Offer tab when no CEX route could be priced. */
   routeNotice?: React.ReactNode;
   // Live offers show these in the Trade Tracing panel's Preview tab instead
   // (where the trader is actually about to act on them); past offers have no
@@ -923,9 +926,8 @@ export function CostBreakdownPanel({
 
   return (
     <div className="flex flex-col gap-3 text-[0.72rem]">
-      {routeNotice}
-
-      <div className="@container overflow-hidden rounded-lg border border-border bg-surface">
+      {/* No frame of its own: both callers render it inside the bordered offers card. */}
+      <div className="@container">
         {/* pr-11 keeps the controls clear of the panel's absolute close button. */}
         <div className="flex flex-wrap items-center justify-between gap-x-3 border-b border-border pl-1 pr-11">
           <BreakdownTabBar tabs={tabs} activeId={activeTab} onSelect={setSelectedTab} />
@@ -937,7 +939,7 @@ export function CostBreakdownPanel({
             className="my-1.5"
           />
         </div>
-        <div className="p-3 @xl:p-4">
+        <div className="pt-3 @xl:pt-4">
           {activeTab === 'summary' && (
             <section
               role="tabpanel"
@@ -960,6 +962,7 @@ export function CostBreakdownPanel({
                     </span>
                   )}
                   {contextId != null && <span className="mono-nums text-[0.68rem] text-muted">ID {contextId}</span>}
+                  {offerActions}
                 </div>
                 {toolbar && (
                   <div className="flex items-center gap-2">
@@ -968,6 +971,8 @@ export function CostBreakdownPanel({
                   </div>
                 )}
               </header>
+
+              {routeNotice}
 
               <div className="grid grid-cols-2 gap-2 @3xl:grid-cols-4">
                 <Kpi
