@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { Offer, CexSpotBuyResult, CexHedgeOpenResult, CexTradeflowResult, HedgePositionUpdate, PreTradeCheckReport, PreTradeCheckResult, TradeMode, WithdrawalTrackResult } from '../types';
 import { ExchangeTag } from './ExchangeTag';
+import { ErrorText } from './ErrorText';
+import { toShownError, type ShownError } from '../utils/shownError';
 import { stripTrailingZeros } from '../utils/numberFormat';
 import { premiumClass } from '../utils/formatters';
 import { acceptBisqExecution, cexTradeflow, cexPreTradeCheck, fetchMMTransaction, createExecutionQuote, quoteBisqExecution, type BisqAcceptance, type ExecutionQuote } from '../api/execution';
@@ -31,14 +33,17 @@ type Tab = 'preview' | 'spot' | 'hedge' | 'wallet';
 interface SubmitState {
   phase: 'idle' | 'submitting' | 'done' | 'error';
   result?: CexSpotBuyResult;
-  error?: string;
+  error?: ShownError;
+  /** Shown when this leg completed but a later leg failed (no result is returned then). */
+  note?: string;
 }
 
 interface HedgeState {
   phase: 'idle' | 'submitting' | 'done' | 'error';
   result?: CexHedgeOpenResult;
   funding?: CexTradeflowResult['dex_funding'];
-  error?: string;
+  error?: ShownError;
+  note?: string;
 }
 
 interface WalletState {
@@ -48,21 +53,43 @@ interface WalletState {
   poolRefill?: CexTradeflowResult['pool_refill'];
   accepted?: boolean;
   txStatus?: string;
-  error?: string;
+  error?: ShownError;
 }
 
 interface ChecksState {
   phase: 'idle' | 'running' | 'done' | 'error';
   report?: PreTradeCheckReport;
-  error?: string;
+  error?: ShownError;
 }
 
 type BisqQuoteState = {
   phase: 'idle' | 'loading' | 'done' | 'error';
   quote?: Awaited<ReturnType<typeof quoteBisqExecution>>;
   inputIdentity?: string;
-  error?: string;
+  error?: ShownError;
 };
+
+// The legs of a CEX trade, in execution order, and the tab that shows each.
+const TRADE_LEGS = ['spot', 'hedge', 'withdrawal'] as const;
+type TradeLeg = typeof TRADE_LEGS[number];
+const LEG_TAB: Record<TradeLeg, Tab> = { spot: 'spot', hedge: 'hedge', withdrawal: 'wallet' };
+const LEG_LABEL: Record<TradeLeg, string> = { spot: 'spot buy', hedge: 'hedge', withdrawal: 'withdrawal' };
+
+// Bisq answers these codes (older backends: these messages) only when the
+// saved acceptance was never accepted, so it is safe to discard.
+const BISQ_NEVER_ACCEPTED_CODES = new Set(['quote_expired', 'bisq_execution_expired']);
+const BISQ_NEVER_ACCEPTED_MESSAGES = new Set(['bisq quote has expired', 'Bisq execution expired']);
+
+/**
+ * A trade submission that got no definite answer (unreachable server, gateway
+ * timeout, or a gateway error the backend did not explain) may still have
+ * started on the server, so the operator must check before retrying.
+ */
+function withUnknownOutcomeWarning(error: ShownError): ShownError {
+  const unknown = error.status === 0 || ((error.status === 502 || error.status === 504) && !error.code) || error.code === 'timeout';
+  if (!unknown) return error;
+  return { ...error, message: `${error.message} The trade may still have started; check the Transactions panel before submitting it again.` };
+}
 
 // readSavedBisq reads the Bisq acceptance request saved under storageKey (the
 // reload recovery for a submitted trade), or null when there is none.
@@ -163,7 +190,7 @@ function PreTradeChecksPanel({
 }: {
   phase: ChecksState['phase'];
   report?: PreTradeCheckReport;
-  error?: string;
+  error?: ShownError;
   isHedgeless?: boolean;
   isLightningRoute?: boolean;
 }) {
@@ -196,8 +223,8 @@ function PreTradeChecksPanel({
             Verifying capital, exchange, payment, and operations…
           </div>
         )}
-        {phase === 'error' && (
-          <span className="text-red text-[0.72rem] wrap-break-word">{error}</span>
+        {phase === 'error' && error && (
+          <ErrorText error={error} className="text-[0.72rem]" />
         )}
         {phase === 'done' && (
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -424,7 +451,7 @@ export function TradeTracingPanel({
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [checks, setChecks] = useState<ChecksState>({ phase: 'idle' });
   const [quote, setQuote] = useState<ExecutionQuote | null>(null);
-  const [quoteError, setQuoteError] = useState<string | null>(null);
+  const [quoteError, setQuoteError] = useState<ShownError | null>(null);
   const quoteSeq = useRef(0);
   const checksSeq = useRef(0);
   const [checkedQuoteID, setCheckedQuoteID] = useState<string | null>(null);
@@ -668,12 +695,12 @@ export function TradeTracingPanel({
       }).then(next => {
         if (quoteSeq.current !== seq) return;
         setQuote(next);
-        setQuoteError(next.executable ? null : (next.blocked_reason || 'Quote is not executable'));
+        setQuoteError(next.executable ? null : { message: next.blocked_reason || 'This amount has no executable route. Try another amount or offer.' });
         setQuoteSettledKey(key);
       }).catch(err => {
         if (quoteSeq.current !== seq) return;
         setQuote(null);
-        setQuoteError(err instanceof Error ? err.message : String(err));
+        setQuoteError(toShownError(err));
         setQuoteSettledKey(key);
       });
     }, 300);
@@ -708,7 +735,7 @@ export function TradeTracingPanel({
     setCheckedQuoteID(null);
     const route = quote?.resolved_route ?? resolvedRoute;
     if (!route?.settlement) {
-      setChecks({ phase: 'error', error: routeUnavailableMessage });
+      setChecks({ phase: 'error', error: { message: routeUnavailableMessage } });
       return;
     }
     setChecks({ phase: 'running' });
@@ -728,7 +755,7 @@ export function TradeTracingPanel({
       }
     } catch (err) {
       if (checksSeq.current !== seq) return;
-      setChecks({ phase: 'error', error: err instanceof Error ? err.message : String(err) });
+      setChecks({ phase: 'error', error: toShownError(err) });
     }
   }
 
@@ -762,7 +789,7 @@ export function TradeTracingPanel({
     const timer = setTimeout(() => { void quoteBisqExecution(JSON.parse(quotePayload)).then(quote => {
       if (!cancelled) setBisqQuoteResult({ key, phase: 'done', quote, inputIdentity });
     }).catch(err => {
-      if (!cancelled) setBisqQuoteResult({ key, phase: 'error', error: err instanceof Error ? err.message : String(err) });
+      if (!cancelled) setBisqQuoteResult({ key, phase: 'error', error: toShownError(err) });
     }); }, 350);
     return () => { cancelled = true; clearTimeout(timer); };
   }, [quotePayload, bisqInputIdentity, bisqQuoteKey]);
@@ -771,7 +798,7 @@ export function TradeTracingPanel({
     if (!bisqQuoteResult || bisqQuoteResult.phase !== 'done' || !bisqQuoteResult.quote) return;
     const { key } = bisqQuoteResult;
     const delay = Date.parse(bisqQuoteResult.quote.expires_at) - Date.now();
-    const timer = setTimeout(() => setBisqQuoteResult({ key, phase: 'error', error: 'Quote expired. Close and reopen confirmation for a fresh quote.' }), Math.min(Math.max(0, delay), 2_147_483_647));
+    const timer = setTimeout(() => setBisqQuoteResult({ key, phase: 'error', error: { message: 'This Bisq quote expired (quotes last 60 seconds). Close and reopen the confirmation for a fresh quote.' } }), Math.min(Math.max(0, delay), 2_147_483_647));
     return () => clearTimeout(timer);
   }, [bisqQuoteResult]);
 
@@ -786,18 +813,20 @@ export function TradeTracingPanel({
       window.localStorage.setItem(recoveryKey, JSON.stringify(pending));
       setSavedBisq({ storageKey: recoveryKey, request: pending });
       const result = await acceptBisqExecution(pending);
-      if (!result.accepted || !result.transaction_id) throw new Error('Invalid acceptance response; retry the saved request.');
+      if (!result.accepted || !result.transaction_id) throw new Error('The Taker Controller answered without confirming the Bisq acceptance. Use "Recover saved request" to fetch the real result before trying anything else.');
       setSubmit({ phase: 'done' });
       setHedgeSubmit({ phase: 'done' });
       setWalletSubmit({ phase: 'done', transactionId: result.transaction_id, accepted: true, txStatus: result.stage });
       setActiveTab('wallet');
       // Keep the saved key for reload recovery. A retry returns the same trade.
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setSubmit({ phase: 'error', error: message });
-      setWalletSubmit({ phase: 'error', error: message });
+      const failure = toShownError(err);
       // Only an explicit expiry response proves this request was never accepted.
-      if (message === 'bisq quote has expired' || message === 'Bisq execution expired') {
+      const neverAccepted = (failure.code != null && BISQ_NEVER_ACCEPTED_CODES.has(failure.code)) || BISQ_NEVER_ACCEPTED_MESSAGES.has(failure.message);
+      const shown = neverAccepted ? failure : withUnknownOutcomeWarning(failure);
+      setSubmit({ phase: 'error', error: shown });
+      setWalletSubmit({ phase: 'error', error: shown });
+      if (neverAccepted) {
         window.localStorage.removeItem(recoveryKey);
         setSavedBisq({ storageKey: recoveryKey, request: null });
       }
@@ -910,10 +939,30 @@ export function TradeTracingPanel({
       });
       setActiveTab('spot');
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err);
-      setSubmit({ phase: 'error', error: message });
-      setHedgeSubmit({ phase: 'error', error: message });
-      setWalletSubmit({ phase: 'error', error: message });
+      const failure = withUnknownOutcomeWarning(toShownError(err));
+      const failedLeg = TRADE_LEGS.find(leg => leg === failure.leg);
+      if (!failedLeg) {
+        // Nothing reports a leg when the trade was refused before it started.
+        const notStarted: ShownError = { message: 'Not started: the trade was stopped before this step (see the Spot tab).' };
+        setSubmit({ phase: 'error', error: failure });
+        setHedgeSubmit({ phase: 'error', error: notStarted });
+        setWalletSubmit({ phase: 'error', error: notStarted });
+        setActiveTab('spot');
+        return;
+      }
+      // Earlier legs completed, the failed leg carries the message, later legs never ran.
+      const failedIndex = TRADE_LEGS.indexOf(failedLeg);
+      const stateFor = (leg: TradeLeg) => {
+        const index = TRADE_LEGS.indexOf(leg);
+        if (index < failedIndex) return { phase: 'done' as const, note: `The ${LEG_LABEL[leg]} went through. The ${LEG_LABEL[failedLeg]} failed afterwards; see its tab.` };
+        if (index === failedIndex) return { phase: 'error' as const, error: failure };
+        return { phase: 'error' as const, error: { message: `Not started because the ${LEG_LABEL[failedLeg]} failed.` } };
+      };
+      setSubmit(stateFor('spot'));
+      setHedgeSubmit(stateFor('hedge'));
+      const wallet = stateFor('withdrawal');
+      setWalletSubmit(wallet.phase === 'done' ? { phase: 'error', error: { message: wallet.note } } : wallet);
+      setActiveTab(LEG_TAB[failedLeg]);
     } finally {
       submitting.current = false;
     }
@@ -926,12 +975,12 @@ export function TradeTracingPanel({
         {admitted.reason && <p>{admitted.reason}</p>}
         <p>Admission is not a fill or funding confirmation. Do not submit a second trade while this job is active.</p>
       </div>}
-      {isBisq && submit.phase === 'error' && !pendingBisq && <p role="alert" className="text-xs text-red">{submit.error}</p>}
+      {isBisq && submit.phase === 'error' && !pendingBisq && submit.error && <div role="alert" className="text-xs"><ErrorText error={submit.error} /></div>}
       {isBisq && pendingBisq && !walletSubmit.transactionId && (
         <div role="status" className="rounded-md border border-border p-2 text-xs">
           A Bisq acceptance request is saved. Recover its result before starting another trade.
           <button type="button" disabled={submit.phase === 'submitting'} onClick={() => void submitBisqAcceptance(pendingBisq)} className="ml-2 underline">Recover saved request</button>
-          {submit.phase === 'error' && <p>{submit.error}</p>}
+          {submit.phase === 'error' && submit.error && <ErrorText error={submit.error} className="mt-1" />}
         </div>
       )}
       <div className="flex items-center justify-between mb-2 shrink-0">
@@ -1067,7 +1116,8 @@ export function TradeTracingPanel({
             <>
               {submit.phase === 'idle' && <span className="text-muted">Submit a trade to begin.</span>}
               {submit.phase === 'submitting' && <span className="text-accent">{isHedgeless ? `Funding DEX, then buying replacement BTC on ${cexLabel}…` : `Placing market buy on ${cexLabel}…`}</span>}
-              {submit.phase === 'error' && <span className="text-red wrap-break-word">{submit.error}</span>}
+              {submit.phase === 'error' && submit.error && <ErrorText error={submit.error} />}
+              {submit.phase === 'done' && submit.note && <span className="text-muted">{submit.note}</span>}
               {submit.phase === 'done' && submit.result && (
                 <div className="flex flex-col gap-1.5 text-text">
                   <div className="flex justify-between gap-2"><span className="text-muted">Status</span><span className="text-green font-medium">{submit.result.status || 'submitted'}</span></div>
@@ -1114,7 +1164,8 @@ export function TradeTracingPanel({
               {hedgeSubmit.phase === 'idle' && submit.phase !== 'idle' && !bd?.hedge?.venue && <span className="text-muted">No hedge venue in offer breakdown.</span>}
               {hedgeSubmit.phase === 'idle' && submit.phase === 'done' && !!bd?.hedge?.venue && <span className="text-muted">Hedge not triggered.</span>}
               {hedgeSubmit.phase === 'submitting' && <span className="text-accent">Opening {bd?.hedge?.side ?? ''} on {bd?.hedge?.venue ?? ''}…</span>}
-              {hedgeSubmit.phase === 'error' && <span className="text-red wrap-break-word">{hedgeSubmit.error}</span>}
+              {hedgeSubmit.phase === 'error' && hedgeSubmit.error && <ErrorText error={hedgeSubmit.error} />}
+              {hedgeSubmit.phase === 'done' && hedgeSubmit.note && <span className="text-muted">{hedgeSubmit.note}</span>}
               {hedgeSubmit.phase === 'done' && hedgeSubmit.result && (
                 <div className="flex flex-col gap-1.5 text-text">
                   <div className="flex justify-between gap-2"><span className="text-muted">Status</span><span className="text-green font-medium">{hedgeSubmit.result.status || 'submitted'}</span></div>
@@ -1132,7 +1183,7 @@ export function TradeTracingPanel({
               )}
                 </>
               )}
-              {isHedgeless && hedgeSubmit.phase === 'error' && <span className="text-red wrap-break-word">{hedgeSubmit.error}</span>}
+              {isHedgeless && hedgeSubmit.phase === 'error' && hedgeSubmit.error && <ErrorText error={hedgeSubmit.error} />}
             </>
           )}
           {activeTab === 'wallet' && (
@@ -1154,7 +1205,7 @@ export function TradeTracingPanel({
                   )}
                 </div>
               )}
-              {walletSubmit.phase === 'error' && <span className="text-red wrap-break-word">{walletSubmit.error}</span>}
+              {walletSubmit.phase === 'error' && walletSubmit.error && <ErrorText error={walletSubmit.error} />}
               {walletSubmit.phase === 'done' && walletSubmit.accepted && !walletSubmit.result && (
                 <div className="flex flex-col gap-1.5 text-text">
                   <div className="flex justify-between gap-2">
@@ -1268,7 +1319,7 @@ export function TradeTracingPanel({
               <p className="shrink-0 text-[0.68rem] text-muted">Requesting the live Bisq funding quote…</p>
             )}
             {isBisq && bisqQuote.phase === 'error' && (
-              <div className="shrink-0 rounded-lg border border-red/35 bg-red/10 px-3 py-2 text-[0.7rem] text-red leading-snug">{bisqQuote.error}</div>
+              <div className="shrink-0 rounded-lg border border-red/35 bg-red/10 px-3 py-2 text-[0.7rem] leading-snug">{bisqQuote.error && <ErrorText error={bisqQuote.error} />}</div>
             )}
             {isBisq && bisqQuote.quote && (
               <div className="shrink-0 rounded-lg border border-border bg-bg px-3 py-2 grid grid-cols-2 sm:grid-cols-4 gap-x-3 gap-y-1.5 text-[0.7rem]">
@@ -1295,7 +1346,7 @@ export function TradeTracingPanel({
               </p>
             )}
             {quoteError && (
-              <p className="shrink-0 text-[0.68rem] text-red">{quoteError}</p>
+              <ErrorText error={quoteError} className="shrink-0 text-[0.68rem]" />
             )}
 
             <div className="min-h-0 flex-1 overflow-hidden flex flex-col">

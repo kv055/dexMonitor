@@ -56,7 +56,7 @@ func (p *Proxy) ForwardWebSocket(w http.ResponseWriter, r *http.Request, path st
 		if resp != nil {
 			resp.Body.Close()
 		}
-		http.Error(w, "mm controller websocket dial failed: "+err.Error(), http.StatusBadGateway)
+		writeUnreachable(w, err, 0)
 		return
 	}
 	defer upstream.Close()

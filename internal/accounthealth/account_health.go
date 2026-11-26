@@ -1,12 +1,14 @@
 package accounthealth
 
 import (
+	"commons/apierror"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 )
 
@@ -43,6 +45,8 @@ type Service struct {
 	// InternalSecret is sent as X-Internal-Secret; mm-controller rejects the
 	// health-check call without it.
 	InternalSecret string
+	// Name is the checked service in operator messages, e.g. "the Taker Controller".
+	Name string
 }
 
 // NewService creates a service.
@@ -57,6 +61,19 @@ func NewService(baseURL string) *Service {
 func (s *Service) WithInternalSecret(secret string) *Service {
 	s.InternalSecret = secret
 	return s
+}
+
+// WithName sets the service name used in error messages.
+func (s *Service) WithName(name string) *Service {
+	s.Name = name
+	return s
+}
+
+func (s *Service) name() string {
+	if s.Name == "" {
+		return "the Taker Controller"
+	}
+	return s.Name
 }
 
 // Check checks value.
@@ -86,7 +103,7 @@ func (s *Service) Check(ctx context.Context, provider string) (*MMControllerResp
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, http.StatusBadGateway, fmt.Errorf("mm controller health request failed: %w", err)
+		return nil, http.StatusBadGateway, apierror.Wrapf(err, "health_service_unreachable", "Couldn't reach %s to check this account's health. It may be restarting; try again in a moment.", s.name())
 	}
 	defer resp.Body.Close()
 
@@ -95,12 +112,19 @@ func (s *Service) Check(ctx context.Context, provider string) (*MMControllerResp
 		if err := json.NewDecoder(resp.Body).Decode(&body); err == nil && body["error"] != "" {
 			return nil, resp.StatusCode, errors.New(body["error"])
 		}
-		return nil, resp.StatusCode, fmt.Errorf("mm controller health request returned HTTP %d", resp.StatusCode)
+		return nil, resp.StatusCode, apierror.Wrapf(apierror.FromBody(resp.StatusCode, nil, s.name()), "account_health_failed", "%s couldn't check this account's health (HTTP %d) and didn't say why. Check its log.", capitalizeFirst(s.name()), resp.StatusCode)
 	}
 
 	var result MMControllerResponse
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return nil, http.StatusBadGateway, fmt.Errorf("decode mm controller health response: %w", err)
+		return nil, http.StatusBadGateway, apierror.Wrapf(err, "account_health_failed", "%s sent an account-health answer the dashboard can't read. Make sure both services run the same release.", capitalizeFirst(s.name()))
 	}
 	return &result, http.StatusOK, nil
+}
+
+func capitalizeFirst(v string) string {
+	if v == "" {
+		return v
+	}
+	return strings.ToUpper(v[:1]) + v[1:]
 }

@@ -1,8 +1,13 @@
 package mmproxy
 
 import (
+	"commons/apierror"
 	"commons/tracing"
+	"context"
+	"encoding/json"
+	"errors"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -37,18 +42,18 @@ func (p *Proxy) WithInternalSecret(secret string) *Proxy {
 func (p *Proxy) ForwardJSON(w http.ResponseWriter, r *http.Request, path string) {
 	baseURL, err := url.Parse(p.BaseURL)
 	if err != nil {
-		http.Error(w, "mm controller api url is invalid", http.StatusInternalServerError)
+		writeProxyError(w, http.StatusInternalServerError, "taker_controller_misconfigured", "The dashboard server's Taker Controller address (MM_CONTROLLER_API_URL) is invalid, so requests can't be forwarded. Fix it and restart dexMonitor.", err)
 		return
 	}
 	targetURL, err := baseURL.Parse(path)
 	if err != nil {
-		http.Error(w, "mm controller request path is invalid", http.StatusInternalServerError)
+		writeProxyError(w, http.StatusInternalServerError, apierror.CodeInternal, "The dashboard server built an invalid Taker Controller request path. Report this with the technical details.", err)
 		return
 	}
 	if incoming := strings.TrimSpace(r.URL.RawQuery); incoming != "" {
 		query, err := url.ParseQuery(incoming)
 		if err != nil {
-			http.Error(w, "mm controller request query is invalid", http.StatusBadRequest)
+			writeProxyError(w, http.StatusBadRequest, "invalid_request", "The request's query string couldn't be read. Reload the page and try again.", err)
 			return
 		}
 		merged := targetURL.Query()
@@ -67,7 +72,7 @@ func (p *Proxy) ForwardJSON(w http.ResponseWriter, r *http.Request, path string)
 
 	req, err := http.NewRequestWithContext(r.Context(), r.Method, targetURL.String(), body)
 	if err != nil {
-		http.Error(w, "failed to create mm controller request", http.StatusInternalServerError)
+		writeProxyError(w, http.StatusInternalServerError, apierror.CodeInternal, "The dashboard server couldn't build the request to the Taker Controller. Report this with the technical details.", err)
 		return
 	}
 	req.Header.Set("Accept", "application/json")
@@ -84,7 +89,7 @@ func (p *Proxy) ForwardJSON(w http.ResponseWriter, r *http.Request, path string)
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		http.Error(w, "mm controller request failed: "+err.Error(), http.StatusBadGateway)
+		writeUnreachable(w, err, client.Timeout)
 		return
 	}
 	defer resp.Body.Close()
@@ -99,7 +104,10 @@ func (p *Proxy) ForwardJSON(w http.ResponseWriter, r *http.Request, path string)
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 1<<16))
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(http.StatusBadGateway)
-		_, _ = io.WriteString(w, `{"error":"upstream service rejected dexMonitor's internal credentials"}`)
+		_ = json.NewEncoder(w).Encode(apierror.Body{
+			Error: "The Taker Controller rejected the dashboard server's internal credentials, so this request couldn't be forwarded. Make sure INTERNAL_API_SECRET is the same for dexMonitor and the Taker Controller, then restart them.",
+			Code:  "internal_auth_failed",
+		})
 		return
 	}
 
@@ -116,4 +124,35 @@ func (p *Proxy) ForwardJSON(w http.ResponseWriter, r *http.Request, path string)
 	}
 	w.WriteHeader(resp.StatusCode)
 	io.Copy(w, resp.Body)
+}
+
+// writeProxyError answers with the shared {"error","code","detail"} shape.
+func writeProxyError(w http.ResponseWriter, status int, code, message string, cause error) {
+	body := apierror.Body{Error: message, Code: code}
+	if cause != nil {
+		body.Detail = cause.Error()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
+}
+
+// writeUnreachable explains a Taker Controller that did not answer at all.
+func writeUnreachable(w http.ResponseWriter, err error, timeout time.Duration) {
+	if errors.Is(err, context.Canceled) {
+		writeProxyError(w, 499, apierror.CodeCancelled, "The request was cancelled before the Taker Controller answered.", err)
+		return
+	}
+	var netErr net.Error
+	if errors.Is(err, context.DeadlineExceeded) || (errors.As(err, &netErr) && netErr.Timeout()) {
+		wait := "in time"
+		if timeout > 0 {
+			wait = "within " + timeout.String()
+		}
+		writeProxyError(w, http.StatusGatewayTimeout, apierror.CodeTimeout,
+			"The Taker Controller didn't answer "+wait+". It may be busy (exchange or Tor calls can be slow) or restarting; try again in a moment.", err)
+		return
+	}
+	writeProxyError(w, http.StatusBadGateway, "taker_controller_unreachable",
+		"The Taker Controller isn't reachable right now (it may be restarting). Try again in a moment; if it stays down, check its container.", err)
 }

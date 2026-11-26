@@ -12,6 +12,7 @@ vi.mock('../api/execution', () => ({
 }));
 
 import { acceptBisqExecution, cexPreTradeCheck, cexTradeflow, createExecutionQuote, fetchMMTransaction, quoteBisqExecution } from '../api/execution';
+import { ApiError } from '../api/client';
 import { FiltersProvider } from '../context/FiltersContext';
 import type { Offer } from '../types';
 import { TradeTracingPanel } from './TradeTracingPanel';
@@ -290,6 +291,45 @@ describe('TradeTracingPanel execution route snapshot', () => {
     expect(acceptBisqExecution).toHaveBeenNthCalledWith(2, pending);
     expect(quoteBisqExecution).not.toHaveBeenCalled();
     expect(await screen.findByText(/Closing this page does not cancel/)).toBeTruthy();
+  });
+});
+
+describe('TradeTracingPanel trade errors', () => {
+  it('shows a hedge failure on the hedge tab and marks the filled spot buy as done', async () => {
+    vi.mocked(cexPreTradeCheck).mockResolvedValue({ ok: true, checks: [{ name: 'capital', label: 'Capital', passed: true, message: 'ok' }] });
+    vi.mocked(cexTradeflow).mockRejectedValueOnce(new ApiError('Opening the hedge on kraken_futures failed after the spot buy filled.', {
+      status: 502, code: 'hedge_failed', leg: 'hedge', detail: 'kraken futures: Kraken Futures returned HTTP 400: insufficientAvailableFunds',
+    }));
+    const user = userEvent.setup();
+    renderPanel(offer(snapshotRoute, { exchange: 'HodlHodl' }));
+    await user.click(screen.getByRole('button', { name: 'Start trade' }));
+    await user.click(await screen.findByRole('button', { name: 'Confirm buy' }));
+
+    expect(await screen.findByText('Opening the hedge on kraken_futures failed after the spot buy filled.')).toBeTruthy();
+    expect(screen.getByText('Technical details')).toBeTruthy();
+    expect(screen.getByText(/insufficientAvailableFunds/)).toBeTruthy();
+    await user.click(screen.getByRole('button', { name: /^Spot/ }));
+    expect(screen.getByText('The spot buy went through. The hedge failed afterwards; see its tab.')).toBeTruthy();
+  });
+
+  it('warns that an unanswered submission may still have started', async () => {
+    vi.mocked(cexPreTradeCheck).mockResolvedValue({ ok: true, checks: [{ name: 'capital', label: 'Capital', passed: true, message: 'ok' }] });
+    vi.mocked(cexTradeflow).mockRejectedValueOnce(new ApiError('Could not reach the dashboard server.', { status: 0, detail: 'Failed to fetch' }));
+    const user = userEvent.setup();
+    renderPanel(offer(snapshotRoute, { exchange: 'HodlHodl' }));
+    await user.click(screen.getByRole('button', { name: 'Start trade' }));
+    await user.click(await screen.findByRole('button', { name: 'Confirm buy' }));
+    expect(await screen.findByText(/The trade may still have started; check the Transactions panel/)).toBeTruthy();
+  });
+
+  it('discards a saved Bisq acceptance when the backend reports the quote expired', async () => {
+    const user = userEvent.setup();
+    window.localStorage.setItem('bisq-acceptance:offer-1', JSON.stringify({ quote_id: 'old', idempotency_key: 'k' }));
+    vi.mocked(acceptBisqExecution).mockRejectedValueOnce(new ApiError('This Bisq quote expired before the trade was confirmed.', { status: 409, code: 'quote_expired' }));
+    renderPanel(offer());
+    await user.click(screen.getByRole('button', { name: 'Recover saved request' }));
+    expect(await screen.findByText('This Bisq quote expired before the trade was confirmed.')).toBeTruthy();
+    expect(window.localStorage.getItem('bisq-acceptance:offer-1')).toBeNull();
   });
 });
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"archive/tar"
+	"commons/apierror"
 	"compress/gzip"
 	"context"
 	"database/sql"
@@ -4190,11 +4191,23 @@ func writeJSON(w http.ResponseWriter, data any) {
 	json.NewEncoder(w).Encode(data)
 }
 
+// apiErrorOptions keep unexpected causes out of responses: raw errors can carry
+// DB/driver internals. The cause is logged under the reference in the response.
+var apiErrorOptions = apierror.Options{Service: "the dashboard server"}
+
 func writeError(w http.ResponseWriter, err error) {
-	// Log the real error server-side but return a generic message: raw err.Error()
-	// can carry DB/driver internals (table names, connection strings, SQL state).
-	slog.Error("request failed", "err", err)
-	http.Error(w, "internal server error", http.StatusInternalServerError)
+	writeAPIError(w, http.StatusInternalServerError, err)
+}
+
+// writeAPIError answers with the shared {"error","code","detail","ref"} shape.
+func writeAPIError(w http.ResponseWriter, status int, err error) {
+	status, body, ref := apierror.Describe(err, status, apiErrorOptions)
+	if ref != "" || status >= http.StatusInternalServerError {
+		slog.Error("request failed", "status", status, "ref", ref, "code", body.Code, "err", err)
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 // writeRepoError distinguishes rejected user input from internal failures:

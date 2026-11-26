@@ -1,6 +1,7 @@
 package main
 
 import (
+	"commons/apierror"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -89,11 +90,13 @@ func writeJSON(w http.ResponseWriter, payload any) {
 }
 
 func writeError(w http.ResponseWriter, status int, err error) {
+	status, body, ref := apierror.Describe(err, status, apierror.Options{Service: "the Bisq statistics service"})
+	if ref != "" {
+		log.Printf("bisqstats: request failed (ref %s): %v", ref, err)
+	}
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(map[string]any{
-		"error": err.Error(),
-	})
+	_ = json.NewEncoder(w).Encode(body)
 }
 
 func envOr(key, fallback string) string {

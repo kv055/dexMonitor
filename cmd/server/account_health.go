@@ -35,12 +35,14 @@ func handleTradingAccountHealthCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	healthAPIURL := mmControllerAPIURL
+	healthService := "the Taker Controller"
 	if strings.EqualFold(account.Provider, "Bisq") {
 		healthAPIURL = unifiedAPIURL
+		healthService = "the Unified API"
 	}
-	result, status, err := accounthealth.NewService(healthAPIURL).WithInternalSecret(mmInternalSecret).Check(r.Context(), account.Provider)
+	result, status, err := accounthealth.NewService(healthAPIURL).WithInternalSecret(mmInternalSecret).WithName(healthService).Check(r.Context(), account.Provider)
 	if err != nil {
-		http.Error(w, err.Error(), status)
+		writeAPIError(w, status, err)
 		return
 	}
 
