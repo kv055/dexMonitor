@@ -21,7 +21,6 @@ import { TakerOpportunities } from './components/TakerOpportunities';
 
 const OHLCChart = lazy(() => import('./components/OHLCChart').then(module => ({ default: module.OHLCChart })));
 const SettingsOverlay = lazy(() => import('./components/SettingsOverlay').then(module => ({ default: module.SettingsOverlay })));
-const SnapshotLog = lazy(() => import('./components/SnapshotLog').then(module => ({ default: module.SnapshotLog })));
 const MmTransactionsLog = lazy(() => import('./components/MmTransactionsLog').then(module => ({ default: module.MmTransactionsLog })));
 const LiquidityWorkspace = lazy(() => import('./components/LiquidityWorkspace').then(module => ({ default: module.LiquidityWorkspace })));
 const TradingAccountsPanel = lazy(() => import('./components/TradingAccountsPanel').then(module => ({ default: module.TradingAccountsPanel })));
@@ -33,20 +32,12 @@ function MmControllerView() {
   return (
     <div className="lg:flex-1 lg:min-h-0 flex flex-col gap-2 sm:gap-3">
       <div className="lg:flex-1 min-h-0 grid grid-cols-1 xl:grid-cols-2 gap-2 sm:gap-3">
-        <div className="flex flex-col gap-2 sm:gap-3 min-h-104 xl:min-h-0 overflow-hidden">
-          <section className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-52 xl:min-h-0 xl:flex-1 overflow-hidden">
-            <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Transactions</h3>
-            <div className="relative flex-1 min-h-0">
-              <LazyView view="transactions" label="Loading transactions"><MmTransactionsLog /></LazyView>
-            </div>
-          </section>
-          <section className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-52 xl:min-h-0 xl:flex-1 overflow-hidden">
-            <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Snapshot Log</h3>
-            <div className="relative flex-1 min-h-0">
-              <LazyView view="snapshot log" label="Loading snapshot log"><SnapshotLog /></LazyView>
-            </div>
-          </section>
-        </div>
+        <section className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-104 xl:min-h-0 overflow-hidden">
+          <h3 className="text-[0.65rem] uppercase tracking-widest font-semibold text-muted mb-2 shrink-0">Transactions</h3>
+          <div className="relative flex-1 min-h-0">
+            <LazyView view="transactions" label="Loading transactions"><MmTransactionsLog /></LazyView>
+          </div>
+        </section>
         <div className="bg-surface border border-border rounded-lg p-3 flex flex-col min-h-104 xl:min-h-0 overflow-hidden">
           <div className="relative flex-1 min-h-0">
             <LazyView view="liquidity workspace" label="Loading liquidity workspace"><LiquidityWorkspace /></LazyView>

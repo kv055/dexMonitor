@@ -2,7 +2,7 @@
 
 This is the React/Vite dashboard for `dexMonitor`.
 
-The frontend is an operator interface for live DEX offers, historical offer analysis, account and secret administration, snapshot logs, MM controller transactions, and trade-cost/premium views.
+The frontend is an operator interface for live DEX offers, historical offer analysis, account and secret administration, taker controller transactions, and trade-cost/premium views.
 
 ## Tech Stack
 
@@ -63,7 +63,6 @@ The UI expects the monitor server to expose endpoints such as:
 - `/api/past_offers`
 - `/api/past_order_stats`
 - `/api/general_stats/overview`
-- `/api/snapshot-log`
 - `/api/payment_method_groups`
 - `/api/trade_cost_config`
 - `/api/mm-controller/transactions`

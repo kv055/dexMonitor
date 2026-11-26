@@ -35,7 +35,7 @@ const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
   { id: 'insights', label: 'dex Monitor', color: 'text-blue', disabled: false },
   { id: 'statistics', label: 'Statistics', color: 'text-peach', disabled: false },
   { id: 'trading', label: 'Trading Accounts', color: 'text-purple', disabled: false },
-  { id: 'mmcontroller', label: 'dex Mm Controller', color: 'text-green', disabled: false },
+  { id: 'mmcontroller', label: 'dex Taker Controller', color: 'text-green', disabled: false },
   { id: 'settings', label: 'Settings', color: 'text-muted', disabled: false },
 ];
 
