@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { usePreferences } from '../hooks/usePreferences';
 import { useFilters } from '../hooks/useFilters';
 import { useCEXPermissions } from '../hooks/useCEXPermissions';
+import { isPublicEdition } from '../edition';
 import { fiatSymbol } from '../utils/currency';
 interface Props {
   open: boolean;
@@ -185,6 +186,7 @@ export function SettingsOverlay({
     reload: reloadCEXPermissions,
   } = useCEXPermissions();
   const [expandedCEXes, setExpandedCEXes] = useState<Set<string>>(() => new Set());
+  const publicEdition = isPublicEdition();
 
   const toggleCEXCollapse = (exchange: string) =>
     setExpandedCEXes(prev => {
@@ -290,6 +292,9 @@ export function SettingsOverlay({
             </div>
           </section>
 
+          {/* The exchange switches write the shared routing policy, so the
+              public monitor (no login, many viewers) leaves them out. */}
+          {!publicEdition && (
           <section className="rounded-lg border border-border bg-bg/50 p-2.5">
             <div className="mb-2 lg:flex lg:items-baseline lg:gap-3">
               <div className="shrink-0">
@@ -417,6 +422,7 @@ export function SettingsOverlay({
               <p className="text-[0.65rem] text-muted">No cost-supported exchanges are configured.</p>
             )}
           </section>
+          )}
 
           <section className="rounded-lg border border-border bg-bg/50 p-2.5">
             <div className="mb-1.5 lg:flex lg:items-baseline lg:gap-3">

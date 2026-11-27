@@ -41,14 +41,23 @@ type Config struct {
 	// prod (HTTPS); set false only for local HTTP dev, where browsers drop Secure
 	// cookies served over http:// and the session would never persist.
 	CookieSecure bool
+
+	// DisableSessionCleanup turns off the session store's background cleanup
+	// goroutine. Set for the public edition: its dex_monitor_public role
+	// cannot write the sessions table (so the goroutine would log a
+	// permission error every 5 minutes) and it never creates sessions.
+	DisableSessionCleanup bool
 }
 
 // New builds the auth Service: the shared Postgres-backed session manager plus
 // the user repository on the same *sql.DB.
 func New(db *sql.DB, cfg Config) *Service {
 	return &Service{
-		Manager: session.NewManager(db, session.Config{CookieSecure: cfg.CookieSecure}),
-		repo:    &userRepo{db: db},
+		Manager: session.NewManager(db, session.Config{
+			CookieSecure:   cfg.CookieSecure,
+			DisableCleanup: cfg.DisableSessionCleanup,
+		}),
+		repo: &userRepo{db: db},
 	}
 }
 
@@ -60,6 +69,36 @@ func Protected(path string) bool {
 		return false
 	}
 	return strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/ws/")
+}
+
+// publicReadPaths are the read routes the public monitor's dex Monitor and
+// Statistics tabs call. /api/past_offers/{id}/lifecycle is matched separately.
+var publicReadPaths = map[string]bool{
+	"/api/past_offers":           true,
+	"/api/ohlc":                  true,
+	"/api/payment_method_groups": true,
+	"/api/dashboard/analytics":   true,
+	"/api/statistics":            true,
+}
+
+// PublicProtected is the gate predicate for the public monitor deployment
+// (PUBLIC_EDITION=true): only the public read routes are open. Everything else
+// under /api/ or /ws/ needs a session, including the auth endpoints, so nobody
+// can register or log in, and the public deployment has no users.
+func PublicProtected(path string) bool {
+	if publicReadPaths[path] || isPastOfferLifecyclePath(path) {
+		return false
+	}
+	return strings.HasPrefix(path, "/api/") || strings.HasPrefix(path, "/ws/")
+}
+
+func isPastOfferLifecyclePath(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/api/past_offers/")
+	if !ok {
+		return false
+	}
+	id, tail, found := strings.Cut(rest, "/")
+	return found && id != "" && tail == "lifecycle"
 }
 
 // RegisterRoutes wires the five /api/auth/* endpoints onto the mux. These must be

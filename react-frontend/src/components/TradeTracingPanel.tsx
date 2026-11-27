@@ -9,6 +9,7 @@ import { acceptBisqExecution, cexTradeflow, cexPreTradeCheck, fetchMMTransaction
 import { useFilters } from '../hooks/useFilters';
 import { useHedgeStream } from '../hooks/useHedgeStream';
 import { useWithdrawalTrack } from '../hooks/useWithdrawalTrack';
+import { isPublicEdition, PUBLIC_TRADING_UNAVAILABLE } from '../edition';
 import { CapitalRequiredSection, AbortCostSection, SizeToggle } from './OfferBreakdownPanel';
 import type { SizeMode } from './OfferBreakdownPanel';
 import {
@@ -422,8 +423,12 @@ export function TradeTracingPanel({
   // breakdowns (including manual what-if route choices) are deliberately not
   // a source for settlement or execution fees.
   const hasResolvedExecutionRoute = !!resolvedRoute?.settlement;
-  const routeUnavailableMessage = offer.metadata?.route_resolution?.reason
-    ?? 'This offer has no resolved execution route. Refresh or recompute it in the Unified API before trading.';
+  // The route resolution reasons are written for the operator ("save a positive
+  // fiat amount"); public viewers cannot act on them.
+  const routeUnavailableMessage = isPublicEdition()
+    ? PUBLIC_TRADING_UNAVAILABLE
+    : offer.metadata?.route_resolution?.reason
+      ?? 'This offer has no resolved execution route. Refresh or recompute it in the Unified API before trading.';
   const cexLabel = routeCex ? routeCex.charAt(0).toUpperCase() + routeCex.slice(1) : '—';
   const netPremium = bd?.estimated_profit_pct ?? null;
   const btcMin = getBtcMin(offer);

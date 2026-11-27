@@ -43,8 +43,10 @@ import {
 import {
   explainMissingTradeRoute,
   hasEffectiveHedgeVenue,
+  PUBLIC_MISSING_ROUTE,
   shouldExplainMissingRoute,
 } from '../utils/routeAvailability';
+import { isPublicEdition } from '../edition';
 import { useCEXPermissions } from '../hooks/useCEXPermissions';
 import { CostBreakdownPanel, DetailFact, DetailFacts, SizeToggle, type SizeMode } from './OfferBreakdownPanel';
 import { CopyOfferIdButton } from './CopyOfferIdButton';
@@ -1093,7 +1095,7 @@ function LiveOfferBreakdown({ offer, fiat, scenarioMode, onScenarioModeChange, t
     ? displayedBreakdown.estimated_profit_pct
     : getNetPremiumPercent(offer, effectiveMode);
   const routeUnavailable = shouldExplainMissingRoute(rawPremium, displayedBreakdown)
-    ? explainMissingTradeRoute(exchanges, offer.metadata?.route_resolution)
+    ? (isPublicEdition() ? PUBLIC_MISSING_ROUTE : explainMissingTradeRoute(exchanges, offer.metadata?.route_resolution))
     : null;
   const showTradeModeToggle = !!hedgelessVariant || !hedgeAvailable;
   const dexLink = getDexOfferLink(offer);

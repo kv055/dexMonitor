@@ -6,6 +6,15 @@ export interface MissingRouteExplanation {
   detail: string;
 }
 
+/**
+ * The public monitor's version of explainMissingTradeRoute: the operator
+ * explanations point at settings and fee snapshots public viewers cannot see.
+ */
+export const PUBLIC_MISSING_ROUTE: MissingRouteExplanation = {
+  title: 'No priced route for this offer',
+  detail: "Trade costs and net premium can't be estimated for this offer right now.",
+};
+
 interface RouteResolution {
   status: 'resolved' | 'blocked' | 'out_of_scope';
   code?: string;

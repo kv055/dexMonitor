@@ -7,13 +7,17 @@ import {
   authRegister,
   authRegistrationAvailable,
 } from '../api/auth';
+import { isPublicEdition } from '../edition';
 
 interface Props {
   children: ReactNode;
 }
 
 export function AuthProvider({ children }: Props) {
-  const [status, setStatus] = useState<AuthStatus>('loading');
+  // The public monitor has no users: skip /api/auth/* entirely and never drop
+  // to the login page on a stray 401.
+  const [publicEdition] = useState(isPublicEdition);
+  const [status, setStatus] = useState<AuthStatus>(() => (publicEdition ? 'public' : 'loading'));
   const [username, setUsername] = useState<string | null>(null);
   const [registrationAvailable, setRegistrationAvailable] = useState(false);
 
@@ -29,6 +33,7 @@ export function AuthProvider({ children }: Props) {
 
   // On mount, ask "who am I?". A 401 (thrown by request()) means anonymous.
   useEffect(() => {
+    if (publicEdition) return;
     let cancelled = false;
     void (async () => {
       try {
@@ -46,7 +51,7 @@ export function AuthProvider({ children }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [refreshRegistration]);
+  }, [publicEdition, refreshRegistration]);
 
   // If a protected call 401s mid-session (cookie expired/cleared), drop to login.
   // A 401 can also come from one endpoint misbehaving (for example a backend
@@ -55,6 +60,7 @@ export function AuthProvider({ children }: Props) {
   // Several polls can 401 at once; they share one in-flight check.
   const sessionCheckRef = useRef<Promise<void> | null>(null);
   useEffect(() => {
+    if (publicEdition) return;
     let disposed = false;
     const onUnauthorized = () => {
       if (sessionCheckRef.current) return;
@@ -79,7 +85,7 @@ export function AuthProvider({ children }: Props) {
       disposed = true;
       window.removeEventListener('auth:unauthorized', onUnauthorized);
     };
-  }, [refreshRegistration]);
+  }, [publicEdition, refreshRegistration]);
 
   const login = useCallback(async (user: string, password: string) => {
     const me = await authLogin(user, password);

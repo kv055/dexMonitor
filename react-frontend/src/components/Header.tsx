@@ -1,6 +1,7 @@
 
 import { usePreferences } from '../hooks/usePreferences';
 import { useAuth } from '../hooks/useAuth';
+import { isPublicEdition } from '../edition';
 
 export type Tab = 'insights' | 'mmcontroller' | 'trading' | 'statistics' | 'settings';
 
@@ -39,9 +40,14 @@ const tabs: { id: Tab; label: string; color: string; disabled: boolean }[] = [
   { id: 'settings', label: 'Settings', color: 'text-muted', disabled: false },
 ];
 
+/** The only tabs the public monitor deployment shows. */
+const PUBLIC_TABS: ReadonlySet<Tab> = new Set<Tab>(['insights', 'statistics']);
+
 export function Header({ activeTab, onTabChange, onOpenSettings, wssConnected, pollError }: Props) {
   const { theme, toggleTheme } = usePreferences();
   const { username, logout } = useAuth();
+  const publicEdition = isPublicEdition();
+  const visibleTabs = publicEdition ? tabs.filter(tab => PUBLIC_TABS.has(tab.id)) : tabs;
 
   return (
     <header className="bg-surface border border-border rounded-lg px-2 py-1.5 sm:px-3 sm:py-1 flex flex-col gap-1.5 sm:flex-row sm:items-center sm:gap-1.5 shrink-0 min-w-0">
@@ -68,6 +74,7 @@ export function Header({ activeTab, onTabChange, onOpenSettings, wssConnected, p
               </span>
             )}
           </span>
+          {!publicEdition && (
           <a
             href="/grafana/"
             target="_blank"
@@ -78,6 +85,7 @@ export function Header({ activeTab, onTabChange, onOpenSettings, wssConnected, p
           >
             Metrics
           </a>
+          )}
           <button
             type="button"
             className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 cursor-pointer hover:bg-bg"
@@ -94,6 +102,7 @@ export function Header({ activeTab, onTabChange, onOpenSettings, wssConnected, p
           >
             ⚙️
           </button>
+          {!publicEdition && (
           <button
             type="button"
             className="bg-transparent border border-border rounded-md text-text text-base px-1.5 py-0.5 cursor-pointer hover:bg-bg"
@@ -102,6 +111,7 @@ export function Header({ activeTab, onTabChange, onOpenSettings, wssConnected, p
           >
             🚪
           </button>
+          )}
         </div>
       </div>
 
@@ -109,7 +119,7 @@ export function Header({ activeTab, onTabChange, onOpenSettings, wssConnected, p
         aria-label="Dashboard sections"
         className="flex items-center overflow-x-auto w-full min-w-0 gap-0.5 sm:order-2 sm:flex-1 [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
-        {tabs.map(tab => (
+        {visibleTabs.map(tab => (
           <button
             type="button"
             key={tab.id}

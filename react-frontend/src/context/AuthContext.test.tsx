@@ -2,7 +2,8 @@ import { act, cleanup, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AuthProvider } from './AuthContext';
 import { useAuth } from '../hooks/useAuth';
-import { authMe } from '../api/auth';
+import { authMe, authRegistrationAvailable } from '../api/auth';
+import { clearEditionMeta, setPublicEditionMeta } from '../test/edition';
 
 vi.mock('../api/auth', () => ({
   authMe: vi.fn(),
@@ -57,5 +58,29 @@ describe('AuthProvider auth:unauthorized handling', () => {
     });
 
     await waitFor(() => expect(screen.getByTestId('status').textContent).toBe('anon'));
+  });
+});
+
+describe('AuthProvider in the public monitor edition', () => {
+  beforeEach(() => {
+    mockedMe.mockReset();
+    setPublicEditionMeta();
+  });
+  afterEach(() => {
+    cleanup();
+    clearEditionMeta();
+  });
+
+  it('skips the login check and never drops to the login page', async () => {
+    render(<AuthProvider><Status /></AuthProvider>);
+    expect(screen.getByTestId('status').textContent).toBe('public');
+
+    await act(async () => {
+      window.dispatchEvent(new Event('auth:unauthorized'));
+    });
+
+    expect(screen.getByTestId('status').textContent).toBe('public');
+    expect(mockedMe).not.toHaveBeenCalled();
+    expect(vi.mocked(authRegistrationAvailable)).not.toHaveBeenCalled();
   });
 });

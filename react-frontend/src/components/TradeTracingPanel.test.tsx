@@ -16,6 +16,8 @@ import { ApiError } from '../api/client';
 import { FiltersProvider } from '../context/FiltersContext';
 import type { Offer } from '../types';
 import { TradeTracingPanel } from './TradeTracingPanel';
+import { PUBLIC_TRADING_UNAVAILABLE } from '../edition';
+import { clearEditionMeta, setPublicEditionMeta } from '../test/edition';
 
 const snapshotRoute = {
   config_version: 1,
@@ -164,6 +166,29 @@ describe('TradeTracingPanel execution route snapshot', () => {
     expect(screen.getByRole('status').textContent).toContain('This offer has no resolved execution route. Refresh or recompute it in the Unified API before trading.');
     expect(screen.getByRole('button', { name: 'Start trade' })).toHaveProperty('disabled', true);
     expect(cexPreTradeCheck).not.toHaveBeenCalled();
+  });
+
+  it('shows public viewers a plain notice instead of the operator route reason', () => {
+    setPublicEditionMeta();
+    try {
+      renderPanel(offer(undefined, {
+        metadata: {
+          route_resolution: {
+            status: 'blocked',
+            code: 'incomplete_settings',
+            reason: 'Transactional routing settings are incomplete; save a positive fiat amount.',
+          },
+        },
+      }));
+
+      const notice = screen.getByRole('status').textContent ?? '';
+      expect(notice).toContain(PUBLIC_TRADING_UNAVAILABLE);
+      expect(notice).not.toContain('save a positive fiat amount');
+      expect(screen.getByRole('button', { name: 'Start trade' })).toHaveProperty('disabled', true);
+      expect(cexPreTradeCheck).not.toHaveBeenCalled();
+    } finally {
+      clearEditionMeta();
+    }
   });
 
   it('uses the quoted settlement and fee allowance for pre-trade checks', async () => {

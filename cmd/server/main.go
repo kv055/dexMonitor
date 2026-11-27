@@ -176,6 +176,7 @@ func coreTablesReady() bool {
 // --- Init & Main ---
 
 func init() {
+	publicEdition = readPublicEdition()
 	databaseURL = os.Getenv("DATABASE_URL")
 	if databaseURL == "" {
 		databaseURL = "postgres://postgres:postgres@localhost:5432/dexarb?sslmode=disable"
@@ -235,25 +236,39 @@ func main() {
 	// queueing and proxy 502s under burst (unified-api uses 12).
 	db.SetMaxOpenConns(12)
 	db.SetMaxIdleConns(4)
+	if publicEdition {
+		// Shares Postgres with the trading stack: a smaller pool bounds the
+		// load public viewers can put on it.
+		db.SetMaxOpenConns(publicMaxOpenConns)
+	}
 	lifecycleRepo = lifecycle.NewRepository(db)
 	ohlcService = ohlc.NewService()
 	snapshotLogRepo = snapshotlog.NewRepository(db)
 	mmProxy = mmproxy.New(mmControllerAPIURL).WithInternalSecret(mmInternalSecret)
 	tradingAccountRepo = tradingaccounts.NewRepository(db)
-	if err := tradingAccountRepo.EncryptLegacySecrets(context.Background()); err != nil {
-		slog.Error("failed to encrypt legacy account secrets", "err", err)
-		os.Exit(1)
+	// The public instance runs as dex_monitor_public, which can only read
+	// market tables, and holds no encryption key: no secret maintenance.
+	if !publicEdition {
+		if err := tradingAccountRepo.EncryptLegacySecrets(context.Background()); err != nil {
+			slog.Error("failed to encrypt legacy account secrets", "err", err)
+			os.Exit(1)
+		}
 	}
-	authSvc := auth.New(db, auth.Config{CookieSecure: sessionCookieSecure})
+	authSvc := auth.New(db, auth.Config{CookieSecure: sessionCookieSecure, DisableSessionCleanup: publicEdition})
 	settingsAuth = authSvc // attribute Settings-page writes in the audit log
 
 	// Db-backed settings (app_settings table): ensure the schema, seed absent
 	// keys from the deploy bundle (never overwriting operator edits), then
 	// load this process's own runtime keys DB-first so UI edits survive
-	// deploys that replace the .env files.
+	// deploys that replace the .env files. The public instance cannot read
+	// app_settings and takes its two runtime keys from its environment.
 	appSettingsStore = appsettings.NewSQLStore(db)
 	startupCtx := context.Background()
-	if err := appSettingsStore.EnsureSchema(startupCtx); err != nil {
+	if publicEdition {
+		appSettingsStore = nil
+		loadPublicRuntimeConfig()
+		slog.Info("public edition: read-only, only the dex Monitor and Statistics read routes are open without a login")
+	} else if err := appSettingsStore.EnsureSchema(startupCtx); err != nil {
 		if errors.Is(err, appsettings.ErrSchemaNotManaged) {
 			// Deploy-managed table, not yet migrated and uncreatable by
 			// this role: stay up with environment-only settings. GET
@@ -324,7 +339,7 @@ func main() {
 	handler := tracing.WrapHandler(
 		metricsReg.Middleware(
 			authSvc.LoadAndSave(
-				authSvc.Gate(auth.Protected)(tracing.RouteNamer(limitRequestBody(mux))),
+				authSvc.Gate(gatePredicate())(tracing.RouteNamer(limitRequestBody(mux))),
 			),
 		),
 		serviceName,
@@ -354,6 +369,10 @@ func main() {
 
 func serveFrontend(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
+	if publicEdition {
+		servePublicIndex(w, r)
+		return
+	}
 	http.ServeFile(w, r, filepath.Join(frontendDir, "index.html"))
 }
 
